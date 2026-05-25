@@ -20,6 +20,7 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
 vi.mock('@/lib/api', () => ({
   AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_CONFIG: { baseURL: 'https://api.test' },
+  API_ENDPOINTS: { auth: { refresh: '/auth/refresh' } },
 }));
 
 // Minimal EventSource mock

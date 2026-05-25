@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { AdvisorResultPanel } from './AdvisorResultPanel';
 import { IteratorResultPanel } from './IteratorResultPanel';
 import { StepComponents } from './StepComponents';
+import { PortArtifactPane } from './PortArtifactPane';
+import { PortContentViewer } from './PortContentViewer';
+import { ReplayReportPanel } from './ReplayReportPanel';
+import { ReplayContextMappingCard } from './ReplayContextMappingCard';
+import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -14,10 +19,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { MessageProvider } from '@/components/ai-elements/message-context';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
-import type { TaskResult, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
+import type {
+  AdvisorIntentApplyRequest,
+  AdvisorRemediationItem,
+  AdvisorRemediationMode,
+  PlaybookEvaluationExecution,
+  PlaybookExecution,
+  PlaybookPageMode,
+  RemediationCategory,
+  TaskArtifact,
+  TaskResult,
+  ValidatedTaskReplay,
+} from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
+
+const MAX_ADVISOR_INTENT_LENGTH = 4000;
 
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   structure: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -29,14 +49,70 @@ const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
 };
 
+type JudgeResultLike = {
+  missingFacts?: string[];
+  incoherences?: string[];
+  unsupportedClaims?: string[];
+  handoffRisks?: string[];
+  toolSelectionIssues?: string[];
+  missingToolCalls?: string[];
+  redundantToolCalls?: string[];
+  toolOutputUseIssues?: string[];
+  toolSequencingIssues?: string[];
+  toolUsageStrengths?: string[];
+  rewriteHints?: string[];
+};
+
+function buildLocalRemediationItems(
+  judgeResult: JudgeResultLike | null,
+  mode: AdvisorRemediationMode,
+  taskId?: string,
+): AdvisorRemediationItem[] {
+  if (!judgeResult) return [];
+  const items: AdvisorRemediationItem[] = [];
+  const scope = mode === 'optimize-step' ? 'task' as const : 'playbook' as const;
+  const targetTaskId = mode === 'optimize-step' ? (taskId ?? null) : null;
+  const mappings: Array<{ entries: string[]; category: RemediationCategory; defaultSelected: boolean }> = [
+    { entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true },
+    { entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true },
+    { entries: judgeResult.unsupportedClaims || [], category: 'contract', defaultSelected: true },
+    { entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true },
+    { entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false },
+    { entries: judgeResult.toolOutputUseIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false },
+    { entries: judgeResult.rewriteHints || [], category: 'prompt', defaultSelected: true },
+  ];
+  for (const { entries, category, defaultSelected } of mappings) {
+    entries.forEach((description, index) => {
+      items.push({
+        id: `local-${category}-${index}`,
+        category,
+        scope,
+        targetTaskId,
+        title: description.length > 80 ? description.slice(0, 80) + '...' : description,
+        description,
+        editable: true,
+        defaultSelected,
+        source: { kind: 'judge_result', field: category, index },
+      });
+    });
+  }
+  return items;
+}
+
 function RemediationItemRow({
   text,
   category,
   onApply,
+  disabled = false,
 }: {
   text: string;
   category: RemediationCategory;
   onApply: () => void;
+  disabled?: boolean;
 }) {
   const { t } = useModuleTranslation('playbook');
   return (
@@ -48,7 +124,7 @@ function RemediationItemRow({
       </div>
       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{text}</p>
       <div className="mt-2 flex justify-end">
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply}>
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply} disabled={disabled}>
           <CheckSquare className="mr-1 h-3 w-3" />
           {t('detail.remediation.apply')}
         </Button>
@@ -67,7 +143,8 @@ function ArtifactListItem({
   const Icon = colors?.icon || FileText;
 
   const handleDownload = () => {
-    if (!artifact.url && !artifact.content) return;
+    const safeUrl = getSafeArtifactUrl(artifact.url);
+    if (!safeUrl && !artifact.content) return;
     if (artifact.content) {
       const blob = new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -76,9 +153,9 @@ function ArtifactListItem({
       a.download = artifact.filename || `artifact-${artifact.portId}`;
       a.click();
       URL.revokeObjectURL(url);
-    } else if (artifact.url) {
+    } else if (safeUrl) {
       const a = document.createElement('a');
-      a.href = artifact.url;
+      a.href = safeUrl;
       a.download = artifact.filename || `artifact-${artifact.portId}`;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
@@ -86,7 +163,7 @@ function ArtifactListItem({
     }
   };
 
-  const hasDownload = !!(artifact.url || artifact.content);
+  const hasDownload = !!(getSafeArtifactUrl(artifact.url) || artifact.content);
   const kindLabel = t(`artifactKind.${artifact.artifactKind}`);
 
   return (
@@ -127,6 +204,8 @@ function ArtifactListItem({
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
 import { downloadStepResultHtml, downloadStepResultPdf, renderStepResultHtml } from '../utils/renderStepResultHtml';
+import { getSafeArtifactUrl } from '../utils/safe-artifact-url';
+import { getPreferredStepResultText } from '../utils/step-result-display';
 
 interface EvaluationArtifactPayload {
   type: 'playbook_evaluation_result';
@@ -152,13 +231,17 @@ interface Props {
   step: TaskResult | null;
   execution?: PlaybookExecution | null;
   pageMode?: PlaybookPageMode;
+  iterationIndex?: number;
+  onSelectIteration?: (taskId: string, iterationIndex: number) => void;
   onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
-  onRequestRunAdvisorEvaluation?: (taskId: string) => void;
+  onRequestRunAdvisorEvaluation?: (taskId: string, iteration?: number) => void;
   onRequestGrabOutputFormat?: (taskId: string) => void;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
+  onApplyAdvisorIntent?: (request: AdvisorIntentApplyRequest) => Promise<void>;
+  onOpenCanvasForAdvisorApply?: () => void;
   isRunningEvaluation?: boolean;
   activeTab?: string;
   onActiveTabChange?: (value: string) => void;
@@ -321,12 +404,14 @@ function buildCurrentStepExecution(step: TaskResult) {
     attemptNumber: step.attemptNumber ?? null,
     status: step.status,
     output: step.output,
+    displayText: step.displayText ?? null,
     error: step.error,
     durationMs: step.durationMs,
     startedAt: step.startedAt,
     completedAt: step.completedAt,
     components: step.components || [],
     toolTrace: step.toolTrace || [],
+    reasoningChain: step.reasoningChain || [],
     llmPromptTrace: step.llmPromptTrace || [],
     inputTokens: step.inputTokens ?? null,
     outputTokens: step.outputTokens ?? null,
@@ -340,6 +425,8 @@ export function ExecutionStepDetail({
   step,
   execution = null,
   pageMode = 'run',
+  iterationIndex = 0,
+  onSelectIteration,
   onBackToRunMode,
   onRequestValidateReplay,
   onRequestRunEvaluation,
@@ -347,6 +434,8 @@ export function ExecutionStepDetail({
   onRequestGrabOutputFormat,
   onOpenOutputFormatEditor,
   onStepReplayModeChange,
+  onApplyAdvisorIntent,
+  onOpenCanvasForAdvisorApply,
   isRunningEvaluation = false,
   activeTab = 'results',
   onActiveTabChange,
@@ -355,19 +444,21 @@ export function ExecutionStepDetail({
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
-  const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
-  const deleteStepExecution = usePlaybookStore((s) => s.deleteStepExecution);
-  const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
-  const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
-  const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
+  const replayPlanning = step ? execution?.replayPlanningByTask?.[step.taskId] ?? null : null;
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
-  const designPlaybookAction = usePlaybookStore((s) => s.designPlaybook);
   const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
+  const traceReplayExecution = usePlaybookStore((s) => s.traceReplayExecution);
+  const portInspection = usePlaybookStore((s) => s.portInspection);
+  const closePortInspection = usePlaybookStore((s) => s.closePortInspection);
+  const [detailInspectTaskId, setDetailInspectTaskId] = useState<string | null>(null);
+  const [detailInspectArtifacts, setDetailInspectArtifacts] = useState<TaskArtifact[]>([]);
+  const [detailInspectPortName, setDetailInspectPortName] = useState('');
+  const [detailInspectPortKind, setDetailInspectPortKind] = useState<import('../types').ArtifactKind>('text');
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
@@ -377,9 +468,9 @@ export function ExecutionStepDetail({
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
-  const [judgeActionLoading, setJudgeActionLoading] = useState<'update' | 'generate' | 'optimize' | null>(null);
+  const [detailActiveTab, setDetailActiveTab] = useState(activeTab);
   const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
-  const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
+  const [remediationDialogMode, setRemediationDialogMode] = useState<AdvisorRemediationMode>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
   const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
@@ -392,17 +483,28 @@ export function ExecutionStepDetail({
     return tasks.find((task) => task.id === step?.taskId) || null;
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
-  const currentTask = (executionSnapshotTask || playbookTask || null) as any;
+  const currentTask = (playbookTask || executionSnapshotTask || null) as any;
+  const iterationCount = useMemo(() => {
+    if (!step || !execution) return 1;
+    return execution.taskResults.filter((r) => r.taskId === step.taskId).length;
+  }, [step?.taskId, execution?.taskResults]);
+  const showIterationSelector = iterationCount > 1;
+  useEffect(() => {
+    setStepReplayModeValue(currentTask?.stepReplayMode ?? 'live');
+  }, [currentTask?.id, currentTask?.stepReplayMode]);
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
   const stepJudgeStatus = step?.judgeStatus || 'idle';
   const stepJudgeError = step?.judgeError || null;
+  const canRunAdvisorEvaluation = step?.status === 'completed';
   const judgeSummary = execution?.judgeSummary || null;
   const advisorAutopilotActive = execution?.advisorAutopilotEnabled === true;
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
   const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
-  const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const stepJudgeResult = stepJudgeStatus === 'evaluating'
+    ? null
+    : (selectedJudgeHistory?.judgeResult || step?.judgeResult || null);
   const normalizedExpectedResultSource = normalizeExpectedResultSource(stepJudgeResult?.expectedResultSource);
   const normalizedExpectedResultType = normalizeExpectedResultType(stepJudgeResult?.expectedResultType);
   const normalizedResultMatchingScore = normalizeAdvisorScore(stepJudgeResult?.resultMatchingScore);
@@ -502,7 +604,8 @@ export function ExecutionStepDetail({
     () => missingAdvisorTaskIds.map((taskId) => playbookTaskTitleMap.get(taskId) || taskId),
     [missingAdvisorTaskIds, playbookTaskTitleMap],
   );
-  const remediationCount = stepJudgeResult?.rewriteHints.length ?? 0;
+  const canApplyAdvisorChanges = typeof onApplyAdvisorIntent === 'function';
+  const remediationCount = stepJudgeResult?.rewriteHints?.length ?? 0;
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
@@ -511,6 +614,15 @@ export function ExecutionStepDetail({
     }
     return items;
   }, [step?.llmPromptTrace, baselineReplay?.llmPromptTrace]);
+
+  useEffect(() => {
+    setDetailActiveTab(activeTab);
+  }, [activeTab]);
+
+  const handleActiveTabChange = useCallback((value: string) => {
+    setDetailActiveTab(value);
+    onActiveTabChange?.(value);
+  }, [onActiveTabChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -675,27 +787,7 @@ export function ExecutionStepDetail({
     }
   }, [step, t]);
 
-  const handleApplyJudgeUpdate = useCallback(async () => {
-    if (!execution || !currentPlaybook) return;
-    setJudgeActionLoading('update');
-    try {
-      await updatePlaybookFromJudge(currentPlaybook.id, execution.id);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, updatePlaybookFromJudge]);
-
-  const handleOptimizeJudgeStep = useCallback(async () => {
-    if (!execution || !currentPlaybook || !step) return;
-    setJudgeActionLoading('optimize');
-    try {
-      await optimizeStepFromJudge(currentPlaybook.id, execution.id, step.taskId);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, optimizeStepFromJudge, step]);
-
-  const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
+  const openRemediationDialog = useCallback(async (mode: AdvisorRemediationMode) => {
     if (!execution || !currentPlaybook) return;
     if (mode === 'generate-new') {
       const taskResultsById = new Map((execution.taskResults || []).map((taskResult) => [taskResult.taskId, taskResult]));
@@ -715,13 +807,18 @@ export function ExecutionStepDetail({
     setRemediationDialogMode(mode);
     try {
       const taskId = mode === 'optimize-step' ? step?.taskId : undefined;
-      const items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      let items: AdvisorRemediationItem[];
+      try {
+        items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      } catch {
+        items = buildLocalRemediationItems(stepJudgeResult, mode, step?.taskId);
+      }
       setRemediationItems(items);
       setRemediationDialogOpen(true);
     } finally {
       setRemediationLoading(false);
     }
-  }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
+  }, [execution, currentPlaybook, step, fetchAdvisorRemediations, stepJudgeResult]);
 
   const handleGenerateJudgePlaybook = useCallback(async () => {
     await openRemediationDialog('generate-new');
@@ -745,10 +842,10 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, executePlaybook, t]);
 
-  const buildOptimizationQuery = useCallback((
+  const buildAdvisorIntent = useCallback((
     selectedIds: string[],
     editedItems: Map<string, string>,
-    mode: 'optimize-step' | 'update-current' | 'generate-new',
+    mode: AdvisorRemediationMode,
   ): string => {
     const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
     const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
@@ -787,8 +884,8 @@ export function ExecutionStepDetail({
 
     if (mode === 'generate-new') {
       return [
-        'Generate an optimized playbook based on these advisor findings.',
-        'Restructure the workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
+        'Plan a broader optimization of the current playbook based on these advisor findings.',
+        'Restructure the current workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
         'Preserve the user\'s original intent.',
         '',
         'Advisor findings:',
@@ -811,9 +908,25 @@ export function ExecutionStepDetail({
 
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
-    const query = buildOptimizationQuery(selectedIds, editedItems, remediationDialogMode);
-    return designPlaybookAction(currentPlaybook.id, { query });
-  }, [currentPlaybook, execution, remediationDialogMode, buildOptimizationQuery, designPlaybookAction]);
+
+    if (!onApplyAdvisorIntent) {
+      const message = t('detail.remediation.applyUnavailable');
+      showError(message);
+      throw new Error(message);
+    }
+
+    const intent = buildAdvisorIntent(selectedIds, editedItems, remediationDialogMode);
+    if (intent.length > MAX_ADVISOR_INTENT_LENGTH) {
+      const message = t('detail.remediation.intentTooLong', { max: MAX_ADVISOR_INTENT_LENGTH });
+      showError(message);
+      throw new Error(message);
+    }
+
+    return onApplyAdvisorIntent({
+      intent,
+      selectedTaskId: remediationDialogMode === 'optimize-step' ? step?.taskId : undefined,
+    });
+  }, [buildAdvisorIntent, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
 
   const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
     if (!currentPlaybook || !execution || !step) return;
@@ -880,6 +993,113 @@ export function ExecutionStepDetail({
     }
   }, [createEvaluationBaselineFromExecution, execution, step]);
 
+  const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
+  const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
+
+  const groupedArtifacts = useMemo(() => {
+    const artifacts = selectedStepExecution?.artifacts || [];
+    const groups: Record<string, { portId: string; portName: string; portKind: import('../types').ArtifactKind; artifacts: TaskArtifact[] }> = {};
+    const outputPorts = (currentTask as { outputPorts?: Array<{ id: string; name: string; artifactKind: import('../types').ArtifactKind }> } | null)?.outputPorts ?? [];
+    const portNameMap = new Map(outputPorts.map((p) => [p.id, p.name || p.id]));
+
+    for (const artifact of artifacts) {
+      const pid = artifact.portId || 'default';
+      if (!groups[pid]) {
+        groups[pid] = { portId: pid, portName: portNameMap.get(pid) || pid, portKind: artifact.artifactKind, artifacts: [] };
+      }
+      groups[pid].artifacts.push(artifact);
+    }
+    return Object.values(groups);
+  }, [selectedStepExecution?.artifacts, currentTask]);
+
+  const inputPortEntries = useMemo(() => {
+    if (!currentTask || !execution) return [];
+    const dataBindings = (currentPlaybook as { dataBindings?: import('../types').DataBinding[] } | null)?.dataBindings ?? [];
+    const inputPorts = (currentTask as { inputPorts?: Array<{ id: string; name: string; artifactKind: import('../types').ArtifactKind }> })?.inputPorts ?? [];
+    if (inputPorts.length === 0) return [];
+
+    const upstreamBindings = dataBindings.filter((b) => b.targetNode === step?.taskId);
+
+    return inputPorts.map((port) => {
+      const binding = upstreamBindings.find((b) => b.targetPort === port.id);
+      let artifacts: TaskArtifact[] = [];
+      let sourceLabel = '';
+
+      if (binding?.sourceNode) {
+        const sourceResults = execution.taskResults.filter((result) => result.taskId === binding.sourceNode);
+        const srcResult = sourceResults.find((result) => result.iteration === step?.iteration)
+          ?? sourceResults[sourceResults.length - 1]
+          ?? null;
+
+        if (!srcResult) {
+          return { portId: port.id, portName: port.name || port.id, portKind: port.artifactKind, artifacts, sourceLabel };
+        }
+
+        sourceLabel = srcResult.nodeTitle || binding.sourceNode;
+        artifacts = (srcResult.artifacts || []).filter((a) => !binding.sourcePort || a.portId === binding.sourcePort);
+        if (artifacts.length === 0 && srcResult.output) {
+          artifacts = [{
+            portId: binding.sourcePort || port.id,
+            artifactKind: port.artifactKind,
+            content: srcResult.output,
+          }];
+        }
+      } else if (binding?.sourceKind === 'constant' && binding.constantValue !== undefined) {
+        artifacts = [{
+          portId: port.id,
+          artifactKind: port.artifactKind,
+          content: typeof binding.constantValue === 'string'
+            ? binding.constantValue
+            : (binding.constantValue as Record<string, unknown>)?.text?.toString()
+              ?? JSON.stringify(binding.constantValue),
+        }];
+        sourceLabel = '(constant)';
+      }
+
+      return { portId: port.id, portName: port.name || port.id, portKind: port.artifactKind, artifacts, sourceLabel };
+    });
+  }, [currentTask, execution, currentPlaybook, step?.taskId]);
+
+  const handlePortInspection = useCallback((artifacts: TaskArtifact[], portName: string, portKind: import('../types').ArtifactKind, taskId: string) => {
+    setDetailInspectTaskId(taskId);
+    setDetailInspectArtifacts(artifacts);
+    setDetailInspectPortName(portName);
+    setDetailInspectPortKind(portKind);
+  }, []);
+
+  const handleCloseDetailInspect = useCallback(() => {
+    setDetailInspectTaskId(null);
+    setDetailInspectArtifacts([]);
+    setDetailInspectPortName('');
+    setDetailInspectPortKind('text');
+  }, []);
+
+  useEffect(() => {
+    if (!portInspection || !execution) return;
+    const taskResult = execution.taskResults.find((r) => r.taskId === portInspection.nodeId);
+    let artifacts: TaskArtifact[] = [];
+    if (portInspection.isInput) {
+      const entry = inputPortEntries.find((e) => e.portId === portInspection.portId);
+      artifacts = entry?.artifacts || [];
+    } else {
+      artifacts = (taskResult?.artifacts || []).filter((a) => a.portId === portInspection.portId);
+    }
+    setDetailInspectTaskId(portInspection.nodeId);
+    setDetailInspectArtifacts(artifacts);
+    setDetailInspectPortName(portInspection.portName);
+    setDetailInspectPortKind(portInspection.portKind);
+  }, [portInspection, execution, inputPortEntries]);
+
+  const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
+  const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
+  const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
+  const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step?.semanticMatch || null;
+  const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
+  const evaluationArtifact = getEvaluationArtifactPayload(step);
+  const isEvaluationPending = isRunningEvaluation || step?.status === 'running';
+  const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
+
   if (!step) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -888,16 +1108,6 @@ export function ExecutionStepDetail({
     );
   }
 
-  const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
-  const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
-  const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
-  const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
-  const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step.semanticMatch || null;
-  const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
-  const evaluationArtifact = getEvaluationArtifactPayload(step);
-  const isEvaluationPending = isRunningEvaluation || step.status === 'running';
-  const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
-  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -906,8 +1116,33 @@ export function ExecutionStepDetail({
         className="h-full overflow-y-auto p-6"
       >
         <div className="mb-6">
+          {showIterationSelector && (
+            <div className="mb-2 flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={iterationIndex <= 0}
+                onClick={() => onSelectIteration?.(step!.taskId, iterationIndex - 1)}
+              >
+                &larr;
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {t('execution.iteration')} {iterationIndex + 1} / {iterationCount}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={iterationIndex >= iterationCount - 1}
+                onClick={() => onSelectIteration?.(step!.taskId, iterationIndex + 1)}
+              >
+                &rarr;
+              </Button>
+            </div>
+          )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
+            <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                 {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -981,11 +1216,6 @@ export function ExecutionStepDetail({
                     <DropdownMenuContent align="start" className="w-[380px] p-1">
                       {stepExecutions.map((entry) => {
                         const isSelected = entry.id === selectedStepExecution?.id;
-                        const canDeleteEntry = Boolean(
-                          execution
-                          && entry.attemptNumber !== (step.attemptNumber ?? null)
-                          && !entry.id.startsWith('current:'),
-                        );
                         return (
                           <div
                             key={entry.id}
@@ -1004,29 +1234,6 @@ export function ExecutionStepDetail({
                               </div>
                               <div className="text-xs text-muted-foreground">{entry.status}</div>
                             </button>
-                            {canDeleteEntry && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 shrink-0"
-                                title={t('detail.results.deleteStepExecution')}
-                                onClick={async (event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
-                                    return;
-                                  }
-                                  setSelectedStepExecutionId((current) => {
-                                    if (current !== entry.id) return current;
-                                    const remaining = stepExecutions.filter((candidate) => candidate.id !== entry.id);
-                                    return remaining[0]?.id ?? null;
-                                  });
-                                  await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
                         );
                       })}
@@ -1048,7 +1255,7 @@ export function ExecutionStepDetail({
                     {t('detail.actions.saveReplay')}
                   </DropdownMenuItem>
                 )}
-                {execution && (
+                {execution && onRequestRunEvaluation && (
                   <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
                     <FileText className="mr-2 h-4 w-4" />
                     {t('detail.actions.runReplayEvaluation')}
@@ -1076,18 +1283,6 @@ export function ExecutionStepDetail({
                     </DropdownMenuItem>
                   </>
                 )}
-                {execution && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => void deleteExecution(execution.playbookId, execution.id)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {t('detail.actions.deleteExecution')}
-                    </DropdownMenuItem>
-                  </>
-                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -1107,7 +1302,16 @@ export function ExecutionStepDetail({
           </div>
         )}
 
-        <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
+        {step.status === 'completed' && hasReplayBaseline && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => execution && traceReplayExecution(execution.id)} disabled={isRunningEvaluation}>
+              <RotateCcw className="mr-1 h-4 w-4" />
+              {t('detail.actions.traceReplay')}
+            </Button>
+            <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.traceReplayHint')}</span>
+          </div>
+        )}
+        <Tabs value={detailActiveTab} onValueChange={handleActiveTabChange} className="gap-4">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
             <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
@@ -1135,11 +1339,27 @@ export function ExecutionStepDetail({
 
             {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
               <IteratorResultPanel step={step} />
-            ) : selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
-              </div>
-            ) : ((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) ? (
+            ) : (
+              <>
+                {selectedStepExecutionText && (
+                  <div
+                    data-testid="step-result-markdown"
+                    className="rounded-lg bg-muted/50 p-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap"
+                  >
+                    <MessageProvider fileViewerDisplayMode="floating">
+                      <AIMessageContent parts={[{ type: 'text', content: selectedStepExecutionText }]} />
+                    </MessageProvider>
+                  </div>
+                )}
+                {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                  </div>
+                )}
+              </>
+            )}
+
+            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
@@ -1147,16 +1367,73 @@ export function ExecutionStepDetail({
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
+                  {replayPlanning && (
+                    <div>
+                      {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
+                      {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
+                    </div>
+                  )}
                   {baselineReplay?.preserveOutputFormat && (
                     <div>{t('detail.provenance.outputFormat')}</div>
                   )}
                 </div>
               </div>
-            ) : selectedStepExecution?.output && (!selectedStepExecution.components || selectedStepExecution.components.length === 0) ? (
-              <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
-                {selectedStepExecution.output}
+            )}
+            {replayPlanning && (
+              <div className="space-y-3">
+                {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+                    {t('replayPlanning.unresolvedRequiredWarning')}
+                  </div>
+                )}
+                <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
+                <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
               </div>
-            ) : null}
+            )}
+            {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.title' as any)}</div>
+                <div className="space-y-2">
+                  {groupedArtifacts.map((group) => (
+                    <PortArtifactPane
+                      key={group.portId}
+                      portId={group.portId}
+                      portName={group.portName}
+                      portKind={group.portKind}
+                      artifacts={group.artifacts}
+                      onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {inputPortEntries.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Input artifacts' as any)}</div>
+                <div className="space-y-2">
+                  {inputPortEntries.map((entry) => (
+                    <PortArtifactPane
+                      key={entry.portId}
+                      portId={entry.portId}
+                      portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
+                      portKind={entry.portKind}
+                      artifacts={entry.artifacts}
+                      defaultOpen={false}
+                      onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <PortContentViewer
+              open={detailInspectTaskId !== null}
+              onOpenChange={(open) => { if (!open) { handleCloseDetailInspect(); closePortInspection(); } }}
+              portName={detailInspectPortName}
+              portKind={detailInspectPortKind}
+              artifacts={detailInspectArtifacts}
+            />
 
             {selectedStepExecution?.status === 'running' && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1216,17 +1493,19 @@ export function ExecutionStepDetail({
                     </Select>
                   </div>
                 )}
-                {execution && (
+                {execution && (onRequestRunEvaluation || currentTask?.taskType === 'evaluation') && (
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRequestRunEvaluation?.(step.taskId)}
-                      disabled={isRunningEvaluation}
-                      className="shrink-0"
-                    >
-                      {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
-                    </Button>
+                    {onRequestRunEvaluation && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRequestRunEvaluation(step.taskId)}
+                        disabled={isRunningEvaluation}
+                        className="shrink-0"
+                      >
+                        {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
+                      </Button>
+                    )}
                     {currentTask?.taskType === 'evaluation' && (
                       <Button
                         variant="outline"
@@ -1241,6 +1520,16 @@ export function ExecutionStepDetail({
                   </div>
                 )}
               </div>
+            )}
+
+            {execution?.id && step?.taskId && (
+              <ReplayReportPanel
+                playbookId={execution.playbookId}
+                taskId={step.taskId}
+                executionId={execution.id}
+                iteration={step.iteration ?? 0}
+                execution={execution}
+              />
             )}
 
             {currentTask?.taskType === 'evaluation' && (
@@ -1514,13 +1803,13 @@ export function ExecutionStepDetail({
           </TabsContent>
 
           <TabsContent value="judge" className="space-y-4">
-            {execution && (
+            {execution && onRequestRunAdvisorEvaluation && (
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
-                  disabled={isRunningEvaluation || stepJudgeStatus === 'evaluating'}
+                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId, step.iteration)}
+                  disabled={!canRunAdvisorEvaluation || stepJudgeStatus === 'evaluating'}
                 >
                   {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
                   {stepJudgeStatus === 'evaluating' ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
@@ -1673,7 +1962,7 @@ export function ExecutionStepDetail({
                       <p>{t('detail.judge.missingEvaluationDescription', { count: missingAdvisorTaskIds.length })}</p>
                       <p className="text-xs text-destructive/90">{missingAdvisorTaskTitles.join(', ')}</p>
                       <div>
-                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight || judgeActionLoading !== null}>
+                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight}>
                           {runningAdvisorPreflight && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                           {t('detail.judge.missingEvaluationRunCta')}
                         </Button>
@@ -1682,10 +1971,19 @@ export function ExecutionStepDetail({
                   </Alert>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
-                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.generateOptimizedPlaybook')}
-                  </Button>
+                  {canApplyAdvisorChanges ? (
+                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={remediationLoading}>
+                      {t('detail.judge.generateOptimizedPlaybook')}
+                    </Button>
+                  ) : onOpenCanvasForAdvisorApply ? (
+                    <Button size="sm" onClick={onOpenCanvasForAdvisorApply}>
+                      {t('detail.remediation.openCanvasCta')}
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled>
+                      {t('detail.judge.generateOptimizedPlaybook')}
+                    </Button>
+                  )}
                   {judgeHistory.length > 0 && (
                     <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
                       <SelectTrigger className="h-9 min-w-[260px] sm:w-[320px]">
@@ -1695,20 +1993,37 @@ export function ExecutionStepDetail({
                         {judgeHistory.map((entry) => (
                           <SelectItem key={entry.id} value={entry.id}>
                             {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} · {new Date(entry.createdAt).toLocaleString()} · {formatPercent(entry.judgeResult.overallScore)}
+                            {entry.scoringMode && ` · ${t(`detail.judge.scoring${entry.scoringMode === 'heuristic' ? 'Heuristic' : 'Llm'}`)}`}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   )}
-                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.previewChanges')}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.applyToCurrentPlaybook')}
-                  </Button>
+                  {canApplyAdvisorChanges ? (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.previewChanges')}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.applyToCurrentPlaybook')}
+                      </Button>
+                    </>
+                  ) : !onOpenCanvasForAdvisorApply ? (
+                    <>
+                      <Button size="sm" variant="outline" disabled>
+                        {t('detail.judge.previewChanges')}
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled>
+                        {t('detail.judge.applyToCurrentPlaybook')}
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
+                {!canApplyAdvisorChanges && (
+                  <div className="text-xs text-muted-foreground">{t('detail.remediation.applyUnavailable')}</div>
+                )}
 
                 <AdvisorResultPanel judgeResult={stepJudgeResult} />
 
@@ -1731,9 +2046,15 @@ export function ExecutionStepDetail({
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2 space-y-2 text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    {stepJudgeResult.rewriteHints.length > 0 ? (
+                    {stepJudgeResult.rewriteHints?.length ? (
                       stepJudgeResult.rewriteHints.map((hint, idx) => (
-                        <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
+                        <RemediationItemRow
+                          key={`rewrite-${idx}`}
+                          text={hint}
+                          category="prompt"
+                          onApply={() => openRemediationDialog('update-current')}
+                          disabled={!canApplyAdvisorChanges}
+                        />
                       ))
                     ) : (
                       <div className="text-muted-foreground">{t('detail.judge.none')}</div>
@@ -1819,6 +2140,38 @@ export function ExecutionStepDetail({
                 ) : (
                   <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
                     {t('detail.toolTrace.empty')}
+                  </div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+
+            <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.reasoning.title')}</div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                {step.reasoningChain && step.reasoningChain.length > 0 ? (
+                  <div className="space-y-3">
+                    {step.reasoningChain.map((item, index) => (
+                      <div key={item.id || `reasoning-${index}`} className="rounded-lg border bg-muted/30 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-sm">
+                          <span className="font-medium">{index + 1}.</span>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.type}</span>
+                          <span className="font-medium">{item.label}</span>
+                          {item.confidence != null && (
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                              {Math.round(item.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{item.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {t('detail.reasoning.empty')}
                   </div>
                 )}
               </CollapsibleContent>

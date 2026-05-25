@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, GitCompareArrows } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading, useExecutionHistory, useExecutionsLoading } from '../store';
+import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading, useExecutionHistoryForPlaybook, useExecutionsLoading } from '../store';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { useModuleTranslation } from '@/modules/localization';
 import { formatPlaybookDateTime } from '../utils/formatPlaybookDateTime';
@@ -19,14 +18,24 @@ function formatDuration(ms: number | null): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
+function getPlaybookIdFromHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const [, hash = ''] = window.location.href.split('#');
+  const segments = hash.split('?')[0].split('/').filter(Boolean);
+  return segments[0] === 'playbooks' && segments[1] ? segments[1] : null;
+}
+
+function navigateToHash(path: string): void {
+  window.location.hash = path;
+}
+
 export function PlaybookExecutionListPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const id = getPlaybookIdFromHash();
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
   const playbookLoading = useCurrentPlaybookLoading();
-  const executions = useExecutionHistory();
+  const executions = useExecutionHistoryForPlaybook(id ?? undefined);
   const executionsLoading = useExecutionsLoading();
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
@@ -64,13 +73,13 @@ export function PlaybookExecutionListPage() {
   const handleCompare = useCallback(() => {
     if (selectedIds.size !== 2) return;
     const [a, b] = Array.from(selectedIds);
-    navigate(`/playbooks/${id}/executions/compare?a=${a}&b=${b}`);
-  }, [selectedIds, id, navigate]);
+    navigateToHash(`/playbooks/${id}/executions/compare?a=${a}&b=${b}`);
+  }, [selectedIds, id]);
 
   return (
     <div className="flex flex-col h-full w-full">
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-        <Button variant="ghost" size="icon" onClick={() => navigate(`/playbooks/${id}`)}>
+        <Button variant="ghost" size="icon" onClick={() => navigateToHash(`/playbooks/${id}`)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-lg font-semibold flex-1">
@@ -125,7 +134,7 @@ export function PlaybookExecutionListPage() {
                     if (compareMode) {
                       handleToggleSelect(exec.id);
                     } else {
-                      navigate(`/playbooks/${id}/executions/${exec.id}`);
+                        navigateToHash(`/playbooks/${id}/executions/${exec.id}`);
                     }
                   }}
                 >

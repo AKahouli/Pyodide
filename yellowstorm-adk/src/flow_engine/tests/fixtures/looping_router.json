@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {"id": "step-1", "kind": "step", "label": "Start"},
+    {"id": "router-1", "kind": "router", "label": "Loop Router", "router_config": {"output_labels": ["retry", "done"]}},
+    {"id": "step-final", "kind": "step", "label": "Finalize"}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "step-1", "target": "router-1"},
+    {"id": "e2", "kind": "conditional", "source": "router-1", "target": "step-1", "router_label": "retry"},
+    {"id": "e3", "kind": "conditional", "source": "router-1", "target": "step-final", "router_label": "done"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

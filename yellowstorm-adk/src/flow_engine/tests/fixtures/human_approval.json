@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"id": "node-1", "kind": "step", "label": "Start", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-2", "kind": "human_approval", "label": "Review", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}, "human_approval_config": {"prompt_template": "Approve the result?", "timeout_seconds": 300}},
+    {"id": "node-3", "kind": "step", "label": "Finish", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "node-1", "target": "node-2"},
+    {"id": "e2", "kind": "sequential", "source": "node-2", "target": "node-3"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

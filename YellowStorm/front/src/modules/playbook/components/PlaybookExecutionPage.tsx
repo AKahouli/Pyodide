@@ -1,5 +1,5 @@
-import { useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useCallback, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import { Loader2 } from 'lucide-react';
 import {
@@ -17,6 +17,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 export function PlaybookExecutionPage() {
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
+  const navigate = useNavigate();
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -29,6 +30,8 @@ export function PlaybookExecutionPage() {
       : null;
   const executionLoading = useCurrentExecutionLoading();
   const selectedStepId = useSelectedStep();
+  const selectedIterationIndex = usePlaybookStore((s) => s.selectedIterationIndex);
+  const [activeDetailTab, setActiveDetailTab] = useState('results');
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
@@ -48,15 +51,30 @@ export function PlaybookExecutionPage() {
   }, [id, executionId, fetchExecution]);
 
   const handleSelectStep = useCallback(
-    (taskId: string) => {
-      selectStep(taskId);
+    (taskId: string, iterationIndex?: number) => {
+      selectStep(taskId, iterationIndex);
     },
     [selectStep],
   );
 
-  const selectedResult = execution?.taskResults.find(
-    (tr) => tr.taskId === selectedStepId,
-  ) || null;
+  const selectedResult = (() => {
+    if (!execution) return null;
+    const group = execution.taskResults.filter((tr) => tr.taskId === selectedStepId).sort((a, b) => a.order - b.order);
+    return group[selectedIterationIndex] || group[0] || null;
+  })();
+
+  const handleOpenCanvasForAdvisorApply = useCallback(() => {
+    if (!id || !execution) return;
+
+    const taskId = selectedResult?.taskId || selectedStepId || '';
+    const params = new URLSearchParams({ execution: execution.id });
+    if (taskId) {
+      params.set('task', taskId);
+      params.set('iteration', String(selectedIterationIndex));
+    }
+
+    navigate(`/playbooks/${id}?${params.toString()}`);
+  }, [execution, id, navigate, selectedIterationIndex, selectedResult?.taskId, selectedStepId]);
 
   if (!execution || executionLoading) {
     return (
@@ -74,9 +92,16 @@ export function PlaybookExecutionPage() {
         <ExecutionStepList
           taskResults={execution.taskResults}
           selectedStepId={selectedStepId}
+          selectedIterationIndex={selectedIterationIndex}
           onSelectStep={handleSelectStep}
         />
-        <ExecutionStepDetail step={selectedResult} execution={execution} />
+        <ExecutionStepDetail
+          step={selectedResult}
+          execution={execution}
+          onOpenCanvasForAdvisorApply={handleOpenCanvasForAdvisorApply}
+          activeTab={activeDetailTab}
+          onActiveTabChange={setActiveDetailTab}
+        />
       </div>
     </div>
   );

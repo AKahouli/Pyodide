@@ -25,10 +25,10 @@ def main():
     print(f"1. Parser has execution_mode getattr: {found_exec_mode}")
     print(f"2. Parser has selected_action getattr: {found_selected_action}")
 
-    with open("src/langgraph_engine/graph_builder.py", encoding="utf-8") as f:
+    with open("src/flow_engine/legacy/graph_builder.py", encoding="utf-8") as f:
         gb_source = f.read()
 
-    has_action_import = "from src.langgraph_engine.action_executor import execute_action_task" in gb_source
+    has_action_import = "from src.flow_engine.legacy.action_executor import execute_action_task" in gb_source
     has_action_branch = 'execution_mode_value == "action"' in gb_source
     has_action_call = "execute_action_task(" in gb_source
 
@@ -68,7 +68,7 @@ def main():
     print(f"13. Generated pb2 has execution_mode: {has_pb2_exec}")
     print(f"14. Generated pb2 has selected_action: {has_pb2_action}")
 
-    with open("src/langgraph_engine/action_executor.py", encoding="utf-8") as f:
+    with open("src/flow_engine/legacy/action_executor.py", encoding="utf-8") as f:
         ae_source = f.read()
     has_token_generation = "async def _generate_token()" in ae_source
     has_no_stdlib_logger_kwarg = "error=str(e)" not in ae_source

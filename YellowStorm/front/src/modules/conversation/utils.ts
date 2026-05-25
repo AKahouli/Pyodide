@@ -179,7 +179,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         code: (data.code as string) || '',
         output: (data.output as string) || '',
         error: (data.error as string) || '',
-        outputAvailable: data.outputAvailable === true,
+        outputAvailable: data.outputAvailable === true || data.output_available === true,
       };
     case 'webPreview':
       return {
@@ -189,7 +189,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'artifact':
       return {
         type: 'artifact',
-        filePath: (data.filePath as string) || '',
+        filePath: (data.filePath as string) || (data.file_path as string) || '',
         filename: (data.filename as string) || '',
       };
     default:

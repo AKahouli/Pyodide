@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    {"id": "node-1", "kind": "step", "label": "Start", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-2", "kind": "router", "label": "Loop Router", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}, "router_config": {"output_labels": ["loop", "exit"], "max_iterations": 3}},
+    {"id": "node-3", "kind": "step", "label": "Loop Body", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-4", "kind": "step", "label": "Exit", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "node-1", "target": "node-2"},
+    {"id": "e2", "kind": "conditional", "source": "node-2", "target": "node-3", "router_label": "loop"},
+    {"id": "e3", "kind": "sequential", "source": "node-3", "target": "node-2"},
+    {"id": "e4", "kind": "conditional", "source": "node-2", "target": "node-4", "router_label": "exit"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

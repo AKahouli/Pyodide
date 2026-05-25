@@ -54,12 +54,29 @@ export interface TaskTemplate {
   executionMode?: TaskExecutionMode;
   assignedAgentId?: string | null;
   selectedAction?: SelectedAction;
+  iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
+  humanApprovalConfig?: HumanApprovalConfig | null;
+  retryPolicy?: RetryPolicy | null;
+  modelId?: string | null;
 }
 
 // ===== Domain Entities =====
 
+export type PlaybookResourceKind = 'document' | 'folder' | 'workspace';
+
+export interface PlaybookResourceReference {
+  kind: PlaybookResourceKind;
+  id: string;
+  name: string;
+  workspaceId: string;
+  path?: string;
+  mimeType?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface InputFile {
-  type: 'workspace' | 'document';
+  type: 'workspace' | 'document' | 'folder';
   id: string;
   name: string;
   workspaceId?: string;
@@ -77,7 +94,13 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
-export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
+export type FlowNodeKind = 'step' | 'router' | 'iterator' | 'human_approval';
+export type ControlEdgeKind = 'sequential' | 'conditional';
+export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'constant' | 'expression';
+export type DataBindingIterationRef = 'current' | 'previous';
+export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+export type AdvisorScoringMode = 'llm' | 'heuristic';
 
 export type IteratorMode = 'item' | 'batch';
 export type IteratorErrorStrategy = 'stop' | 'continue';
@@ -204,6 +227,11 @@ export interface PlaybookTask {
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
   activeReplayLabel?: string | null;
+  activeReplayReplayConfig?: {
+    replayOutputFormat: boolean;
+    replayToolTrace: boolean;
+    replayReasoningChain: boolean;
+  };
   hasOutputFormatTemplate?: boolean;
   activeOutputFormatTemplateId?: string | null;
   activeOutputFormatTemplateVersion?: number | null;
@@ -223,6 +251,10 @@ export interface PlaybookTask {
   iteratorConfig?: PlaybookIteratorConfig | null;
   iteratorLayout?: PlaybookIteratorLayout | null;
   containerConfig?: PlaybookContainerConfig | null;
+  routerConfig?: RouterConfig | null;
+  humanApprovalConfig?: HumanApprovalConfig | null;
+  retryPolicy?: RetryPolicy | null;
+  modelId?: string | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
@@ -359,7 +391,7 @@ export interface PlaybookIntentSingleChangeSuggestion {
   reason: string;
   confidence: number;
   operationType: PlaybookIntentOperationType;
-  task: PlaybookIntentTaskDraft | null;
+  task: PlaybookIntentTaskDraft | Partial<PlaybookIntentTaskDraft> | null;
   targetTaskId: string | null;
   isDirectIntentFallback: boolean;
 }
@@ -400,6 +432,26 @@ export type PlaybookIntentWorkflowChange =
       targetNodeRef: string | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
+    }
+  | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
+      sourceKind: 'node-output';
+      sourceTaskId: string | null;
+      sourceNodeRef: string | null;
+      sourcePort: string | null;
+      iteration?: 'current' | 'previous';
+    }
+  | {
+      type: 'delete_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
+      sourceTaskId?: string | null;
+      sourceNodeRef?: string | null;
+      sourcePort?: string | null;
     };
 
 export interface PlaybookIntentWorkflowImpact {
@@ -408,6 +460,8 @@ export interface PlaybookIntentWorkflowImpact {
   nodesToDelete: number;
   edgesToCreate: number;
   edgesToDelete: number;
+  dataBindingsToCreate: number;
+  dataBindingsToDelete: number;
   affectedTaskIds: string[];
   businessOutcome: string;
 }
@@ -678,6 +732,7 @@ export interface Playbook {
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
   reflectionEnabled: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
@@ -690,6 +745,10 @@ export interface Playbook {
   advisorAutopilotMaxTurns?: number | null;
   createdAt: string;
   updatedAt: string;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  settings?: FlowSettings;
 }
 
 export interface CloneShareResult {
@@ -697,11 +756,97 @@ export interface CloneShareResult {
   failed: { email: string; reason: string }[];
 }
 
+export interface PublicReasoningTraceItem {
+  id: string;
+  type: string;
+  label: string;
+  description: string;
+  confidence?: number | null;
+}
+
 export interface ToolTraceItem {
   callIndex: number;
   toolName: string;
   args: Record<string, unknown>;
   outputSummary: string | null;
+  purpose?: string | null;
+}
+
+export interface ReplayContextMappingEntry {
+  variableKey: string;
+  key: string;
+  label: string;
+  source: 'task' | 'input_context' | 'tool_args' | 'unknown' | 'task_title' | 'task_description' | 'task_text';
+  valueType: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+  required: boolean;
+  baselineValue: string | null;
+  currentValue: string | number | boolean | Record<string, unknown> | unknown[] | null;
+  confidence: number;
+  reason: string;
+  value: string | number | boolean | Record<string, unknown> | unknown[] | null;
+  matched: boolean;
+}
+
+export interface ReplayPlanToolStep {
+  stepIndex: number;
+  toolName: string;
+  purpose: string;
+  required: boolean;
+  argumentShape: Record<string, unknown>;
+  argumentShapeKeys: string[];
+  expectedArgs: Record<string, unknown>;
+  sourceCallIndex?: number | null;
+}
+
+export interface ReplayToolCallComparison {
+  expectedStepIndex: number | null;
+  expectedToolName: string | null;
+  expectedPurpose: string | null;
+  expectedArgs: Record<string, unknown>;
+  observedCallIndex: number | null;
+  observedToolName: string | null;
+  observedPurpose?: string | null;
+  observedArgs: Record<string, unknown>;
+  status: 'matched' | 'warning' | 'failed' | 'missing' | 'extra';
+  reasons: string[];
+}
+
+export interface ReplaySemanticChecklistItem {
+  key: string;
+  description: string;
+  variables: string[];
+  severity: 'info' | 'warning' | 'fail';
+  source: 'intent' | 'reasoning' | 'quality_check' | 'output_contract' | 'context';
+}
+
+export interface ReplaySemanticFinding {
+  key?: string | null;
+  expected?: string | null;
+  observed?: string | null;
+  severity: 'info' | 'warning' | 'fail';
+}
+
+export interface ReplayExecutionPlan {
+  taskId: string;
+  replayId: string;
+  validationVersion: number;
+  intentKey: string | null;
+  intentLabel: string | null;
+  matchedContextCount: number;
+  missingRequiredContextCount: number;
+  requiredStageLabels: string[];
+  requiredOutputChecks: string[];
+  plannedToolSteps: ReplayPlanToolStep[];
+  semanticChecklist: ReplaySemanticChecklistItem[];
+}
+
+export interface ReplayPlanningSummary {
+  replayId: string;
+  validationVersion: number;
+  intentKey: string | null;
+  intentLabel: string | null;
+  contextMapping: ReplayContextMappingEntry[];
+  executionPlan: ReplayExecutionPlan;
 }
 
 export interface LLMPromptTraceItem {
@@ -718,6 +863,13 @@ export interface SemanticMatchResult {
   reason: string;
   missingPoints: string[];
   changedPoints: string[];
+  preservedPoints?: string[];
+  missingPointFindings?: ReplaySemanticFinding[];
+  changedPointFindings?: ReplaySemanticFinding[];
+  extraPointFindings?: ReplaySemanticFinding[];
+  staleContextReferenceFindings?: ReplaySemanticFinding[];
+  unsupportedClaimFindings?: ReplaySemanticFinding[];
+  evaluationSource?: 'instantiated_replay' | 'runtime' | 'unknown' | null;
   model: string;
   judgeUsed: boolean;
 }
@@ -737,12 +889,14 @@ export interface StepExecutionHistoryEntry {
   attemptNumber: number | null;
   status: StepStatus;
   output: string | null;
+  displayText?: string | null;
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
   completedAt: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -759,6 +913,7 @@ export interface IteratorChildResult {
   error?: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   artifacts?: TaskArtifact[];
 }
@@ -778,21 +933,26 @@ export interface TaskResult {
   nodeTitle: string;
   agentName: string;
   order: number;
+  iteration?: number;
   status: StepStatus;
   output: string | null;
+  displayText?: string | null;
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
   completedAt: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
   modelName?: string | null;
   semanticMatch?: SemanticMatchResult | null;
+  traceMetadata?: Record<string, unknown> | null;
   judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeScoringMode?: AdvisorScoringMode | null;
   judgeResult?: {
     accuracyScore: number;
     completenessScore: number;
@@ -826,6 +986,14 @@ export interface TaskResult {
     createdAt: string;
     attemptNumber: number | null;
     model: string | null;
+    scoringMode: AdvisorScoringMode;
+    usage?: {
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      model?: string | null;
+    } | null;
+    llmPromptTrace?: LLMPromptTraceItem[];
     judgeResult: {
       accuracyScore: number;
       completenessScore: number;
@@ -894,6 +1062,7 @@ export interface PlaybookExecution {
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   executionTrigger?: 'manual' | 'scheduled';
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -917,6 +1086,8 @@ export interface PlaybookExecution {
     reason: string;
   } | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
+  stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   taskResults: TaskResult[];
   attemptHistory?: Array<{
     attemptNumber: number;
@@ -941,6 +1112,11 @@ export interface PlaybookExecution {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
+  queuePosition?: number | null;
+  totalQueueSize?: number | null;
+  recursionBudgetUsed?: number | null;
+  recursionBudgetMax?: number | null;
+  routerDecisions?: RouterDecision[];
   createdAt: string;
   updatedAt: string;
 }
@@ -963,11 +1139,119 @@ export interface PlaybookExecutionSummary {
   updatedAt: string;
 }
 
+export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+
+export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
+
+export interface ReplayDriftFinding {
+  category: 'context' | 'reasoning' | 'tool_sequence' | 'argument_shape' | 'output_contract' | 'semantic';
+  severity: 'info' | 'warning' | 'fail';
+  reason: string;
+}
+
+export interface ReplaySignalStatus {
+  status: ReplaySignalEvaluationStatus;
+  reason?: string | null;
+}
+
+export interface ReplayRunReport {
+  id: string;
+  executionId: string;
+  flowId: string;
+  taskId: string;
+  iteration: number;
+  replayId: string;
+  validationVersion: number;
+  mode: ReplayMode;
+  applied: boolean;
+  confidenceScore: number;
+  appliedSections: string[];
+  skippedSections: string[];
+  invalidationReasons: string[];
+  confidenceFactors: Record<string, number>;
+  outputContractEvaluated: boolean;
+  outputContractPassed: boolean;
+  structuralDriftScore: number | null;
+  toolPolicyScore: number | null;
+  verdict?: ReplayRunVerdict | null;
+  overallScore?: number | null;
+  verdictReasons?: string[];
+  structuralDriftReasons: string[];
+  semanticMatch?: SemanticMatchResult | null;
+  matchedBaselineId?: string | null;
+  matchedBaselineVersion?: number | null;
+  intentKey?: string | null;
+  replayConfidence?: number | null;
+  toolSequenceMatch?: number | null;
+  argumentShapeMatch?: number | null;
+  reasoningMatch?: number | null;
+  outputFormatMatch?: number | null;
+  contextDrift?: number | null;
+  dataDrift?: number | null;
+  driftFindings?: ReplayDriftFinding[];
+  blockedBy?: string[];
+  expectedToolSteps?: ReplayPlanToolStep[];
+  observedToolCalls?: ToolTraceItem[];
+  toolCallComparisons?: ReplayToolCallComparison[];
+  instantiatedSemanticChecklist?: ReplaySemanticChecklistItem[];
+  intentStatus?: ReplaySignalStatus;
+  reasoningStatus?: ReplaySignalStatus;
+  toolSequenceStatus?: ReplaySignalStatus;
+  argumentShapeStatus?: ReplaySignalStatus;
+  outputContractStatus?: ReplaySignalStatus;
+  semanticStatus?: ReplaySignalStatus;
+  contextSubstitutionStatus?: ReplaySignalStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ValidatedReplayToolCall {
   callIndex: number;
   toolName: string;
   args: Record<string, unknown>;
   outputSummary: string | null;
+}
+
+export interface ReplayReasoningStage {
+  stageKey: string;
+  stageType: string;
+  label: string;
+  description: string;
+  confidence?: number | null;
+}
+
+export interface ReplayContextVariable {
+  key: string;
+  label: string;
+  source: 'task' | 'input_context' | 'tool_args' | 'unknown';
+  valueType: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+  required: boolean;
+  exampleValue?: string | null;
+}
+
+export interface ReplayToolTraceTemplateItem {
+  stepIndex: number;
+  toolName: string;
+  purpose: string;
+  argumentShape: Record<string, unknown>;
+  required: boolean;
+}
+
+export interface ReplayDriftPolicy {
+  requireSameIntent: boolean;
+  requireSameReasoningStages: boolean;
+  requireSameToolOrder: boolean;
+  allowAdditionalTools: boolean;
+  allowArgumentValueChanges: boolean;
+  enforceOutputContract: boolean;
+}
+
+export interface ReplayAcceptedExample {
+  referenceExecutionId: string;
+  referenceExecutionNumber: number;
+  summary: string;
+  outputPreview?: string | null;
 }
 
 export interface ValidatedTaskReplay {
@@ -981,20 +1265,60 @@ export interface ValidatedTaskReplay {
   referenceExecutionNumber: number;
   validationVersion: number;
   status: 'active' | 'inactive' | 'archived';
-  mode: 'strict_replay';
+  mode: ReplayMode | 'strict_replay';
   referenceTaskDescription?: string;
   referenceAssignedAgentId?: string | null;
   referenceWorkspaceIds?: string[];
   toolCalls: ValidatedReplayToolCall[];
   referenceOutput: string | null;
+  outputContract?: {
+    type: 'freeform' | 'markdown_sections' | 'json_schema';
+    requiredSections: string[];
+    forbiddenSections: string[];
+    jsonSchema?: Record<string, unknown> | null;
+    citationPolicy: 'required' | 'optional' | 'forbidden';
+  } | null;
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string | null;
   formatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   formatGuideError?: string | null;
   llmPromptTrace?: LLMPromptTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
+  intentKey?: string | null;
+  intentLabel?: string | null;
+  reasoningOutline?: ReplayReasoningStage[];
+  stableReasoningRules?: string[];
+  contextVariableSchema?: ReplayContextVariable[];
+  toolTraceTemplate?: ReplayToolTraceTemplateItem[];
+  driftPolicy?: ReplayDriftPolicy | null;
+  acceptedExamples?: ReplayAcceptedExample[];
+  referenceUsage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    model?: string | null;
+  } | null;
+  referenceSemanticMatch?: SemanticMatchResult | null;
+  fingerprints?: {
+    inputContextHash?: string | null;
+    flowSnapshotHash?: string | null;
+    nodeSnapshotHash?: string | null;
+    agentConfigHash?: string | null;
+    modelConfigHash?: string | null;
+    toolConfigHash?: string | null;
+    outputContractHash?: string | null;
+  } | null;
+  traceMetadata?: Record<string, unknown>;
+  referenceFlowRevision?: number;
+  referenceNodeSnapshot?: Record<string, unknown> | null;
   isStale?: boolean;
   staleReasons?: string[];
   label?: string | null;
+  replayConfig?: {
+    replayOutputFormat: boolean;
+    replayToolTrace: boolean;
+    replayReasoningChain: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -1017,8 +1341,8 @@ export interface OutputFormatTemplate {
 
 // ===== Enums =====
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted';
-export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted' | 'cancelled' | 'queued' | 'pending_approval';
+export type ExecutionStatus = 'queued' | 'pending' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 export type PlaybookPageMode = 'design' | 'run';
 export type PlaybookCopilotMode = 'design' | 'interrupt';
 
@@ -1088,6 +1412,7 @@ export interface PlaybookNodeData extends PlaybookTask {
   stepSemanticMatch?: SemanticMatchResult | null;
   stepJudgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   stepJudgeResult?: TaskResult['judgeResult'];
+  activeRouterLabel?: string;
   [key: string]: unknown;
 }
 
@@ -1099,7 +1424,9 @@ export interface PlaybookExecutionStartEvent {
   executionNumber: number;
   status: string;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1109,6 +1436,7 @@ export interface PlaybookExecutionStartEvent {
   advisorAutopilotLastError?: string | null;
   singleStepTaskId?: string | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
   taskResults?: TaskResult[];
 }
 
@@ -1147,18 +1475,21 @@ export interface PlaybookStepUpdateEvent {
 export interface PlaybookStepCompleteEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
   status: string;
   output?: string;
   error?: string;
   durationMs?: number;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
   modelName?: string;
   semanticMatch?: SemanticMatchResult | null;
+  traceMetadata?: Record<string, unknown>;
   iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
 }
@@ -1198,6 +1529,7 @@ export interface PlaybookIteratorChildStepCompleteEvent {
   durationMs?: number;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   artifacts?: TaskArtifact[];
 }
@@ -1212,12 +1544,16 @@ export interface PlaybookStepEvaluationUpdatedEvent {
 export interface PlaybookStepJudgeStartedEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
+  advisorScoringMode?: AdvisorScoringMode;
   judgeStatus: 'evaluating';
 }
 
 export interface PlaybookStepJudgeUpdatedEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
+  advisorScoringMode?: AdvisorScoringMode;
   judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   judgeResult?: TaskResult['judgeResult'];
   judgeError?: string | null;
@@ -1296,6 +1632,7 @@ export interface PlaybookSnapshot {
 export interface PlaybookUndoSnapshot {
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
+  dataBindings: DataBinding[];
   name: string;
   workspaces: string[];
 }
@@ -1323,34 +1660,55 @@ export interface UpdatePlaybookData {
   designSettings?: Partial<PlaybookDesignSettings>;
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  settings?: FlowSettings;
   workspaces?: string[];
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
 }
 
 export interface ExecutePlaybookData {
   singleStepTaskId?: string;
   query?: string;
-  executionMode?: 'live' | 'inherit';
+  executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   runEvaluation?: boolean;
   streaming?: boolean;
   runNodeReflection?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  modelIdOverride?: string;
 }
 
 export interface ValidateTaskReplayData {
   executionId: string;
+  iteration?: number;
+  mode?: 'replay_strict' | 'replay_flex' | 'replay_adaptive' | 'strict_replay';
   preserveOutputFormat?: boolean;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 export interface UpdateTaskReplayFormatData {
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 export interface GrabOutputFormatTemplateData {
@@ -1378,6 +1736,7 @@ export interface RerunStepData {
   executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   streaming?: boolean;
   runNodeReflection?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1408,9 +1767,11 @@ export interface AdvisorRemediationItem {
   };
 }
 
-export interface ApplyRemediationsData {
-  mode?: 'update-current' | 'generate-new';
-  selectedIds?: string[];
+export type AdvisorRemediationMode = 'optimize-step' | 'update-current' | 'generate-new';
+
+export interface AdvisorIntentApplyRequest {
+  intent: string;
+  selectedTaskId?: string;
 }
 
 // ===== Store =====
@@ -1420,6 +1781,14 @@ export interface PaginationMeta {
   limit: number;
   total: number;
   totalPages: number;
+}
+
+export interface PortInspection {
+  nodeId: string;
+  portId: string;
+  portName: string;
+  portKind: ArtifactKind;
+  isInput: boolean;
 }
 
 export interface PlaybookState {
@@ -1444,6 +1813,7 @@ export interface PlaybookState {
   isGenerating: boolean;
   generateRetryData: GeneratePlaybookData | null;
   selectedStepId: string | null;
+  selectedIterationIndex: number;
   pendingRerunTaskId: string | null;
   error: string | null;
   designMessages: DesignMessage[];
@@ -1474,6 +1844,14 @@ export interface PlaybookState {
   repeatability: PlaybookRepeatabilitySummary | null;
   repeatabilityLoading: boolean;
   intentSuggestionHistory: Record<string, IntentSuggestionHistoryEntry[]>;
+  /** Flow model fields (Phase 4) */
+  flowNodeTemplates: TaskTemplate[];
+  flowNodeTemplatesLoading: boolean;
+  flowNodeTemplatesLoadedAt: number;
+  flowNodeKinds: Array<{ kind: string; label: string }>;
+  flowNodeKindsLoading: boolean;
+  idempotencyKeyCounters: Record<string, number>;
+  portInspection: PortInspection | null;
 }
 
 export interface PlaybookActions {
@@ -1498,9 +1876,11 @@ export interface PlaybookActions {
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;
   updateEdges: (edges: PlaybookEdge[]) => void;
+  updateControlEdges: (controlEdges: ControlEdge[]) => void;
+  updateDataBindings: (dataBindings: DataBinding[]) => void;
   updateWorkspaces: (workspaces: string[]) => void;
   setDirty: (dirty: boolean) => void;
-  saveCurrentPlaybook: () => Promise<void>;
+  saveCurrentPlaybook: (options?: SavePlaybookOptions) => Promise<void>;
 
   // Execution
   executePlaybook: (id: string, data?: ExecutePlaybookData) => Promise<string>;
@@ -1528,7 +1908,7 @@ export interface PlaybookActions {
     playbookId: string,
     taskId: string,
     executionId: string,
-    options?: { preserveOutputFormat?: boolean },
+    options?: { preserveOutputFormat?: boolean; replayConfig?: { replayOutputFormat?: boolean; replayToolTrace?: boolean; replayReasoningChain?: boolean } },
   ) => Promise<ValidatedTaskReplay>;
   updateTaskReplayFormatGuide: (
     playbookId: string,
@@ -1540,6 +1920,8 @@ export interface PlaybookActions {
   activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
   deleteTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<{ removed: boolean; wasActive: boolean }>;
   renameTaskReplay: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<ValidatedTaskReplay>;
+  traceReplayExecution: (executionId: string) => Promise<any>;
+  reExecuteExecution: (executionId: string) => Promise<any>;
   fetchEvaluationExecutions: (playbookId: string, taskId?: string) => Promise<PlaybookEvaluationExecution[]>;
   fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
@@ -1553,17 +1935,15 @@ export interface PlaybookActions {
     data: GrabOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
   fetchOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<OutputFormatTemplate | null>;
+  refreshOutputFormatStatus: (playbookId: string, taskId: string) => Promise<void>;
   updateOutputFormatTemplate: (
     playbookId: string,
     taskId: string,
     data: UpdateOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
   deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
-  updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
-  generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
-  optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
+  runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
-  applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
   pendingRerunTaskId: string | null;
   setPendingRerunTaskId: (taskId: string | null) => void;
@@ -1592,7 +1972,7 @@ export interface PlaybookActions {
   // History
   fetchExecutions: (playbookId: string) => Promise<void>;
   fetchExecution: (playbookId: string, execId: string) => Promise<void>;
-  selectStep: (taskId: string | null) => void;
+  selectStep: (taskId: string | null, iterationIndex?: number) => void;
   setPageMode: (mode: PlaybookPageMode) => void;
 
   // Designer
@@ -1615,6 +1995,8 @@ export interface PlaybookActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
   removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+  bindResourceToInputPort: (taskId: string, portId: string, resource: PlaybookResourceReference) => void;
+  removeResourceBinding: (taskId: string, portId: string) => void;
 
   // Node Templates
   fetchNodeTemplates: () => Promise<void>;
@@ -1637,6 +2019,56 @@ export interface PlaybookActions {
 
   // Intent Suggestion History
   addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
+
+  // Flow model actions (Phase 4)
+  fetchFlowNodeTemplates: () => Promise<void>;
+  fetchFlowNodeKinds: () => Promise<void>;
+  invalidateFlowNodeTemplates: () => void;
+  generateIdempotencyKey: (flowId: string) => string;
+
+  // Flow evaluation/repeatability/trigger actions (Phase 5)
+  fetchFlowEvaluationExecutions: (flowId: string, taskId?: string) => Promise<any>;
+  fetchFlowEvaluationBaseline: (flowId: string, taskId: string) => Promise<any>;
+  createFlowEvaluationBaseline: (flowId: string, taskId: string, executionId: string, iteration?: number) => Promise<any>;
+  createFlowEvaluationBaselineFromCurrentExecution: (flowId: string, taskId: string, executionId: string, evaluationExecutionId: string, iteration?: number) => Promise<any>;
+  deleteFlowEvaluationBaseline: (flowId: string, taskId: string) => Promise<void>;
+  fetchFlowRepeatability: (flowId: string) => Promise<any>;
+  fetchFlowTaskRepeatability: (flowId: string, taskId: string) => Promise<any>;
+  fetchFlowTriggers: (flowId: string) => Promise<any>;
+  upsertFlowTriggerSchedule: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+  upsertFlowTriggerMail: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+  syncFlowMailSubscription: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+
+  // Flow CRUD/Execution/Replay/OutputFormat actions (Phase 6c)
+  fetchFlow: (id: string) => Promise<any>;
+  fetchFlows: (query?: PlaybookQueryParams) => Promise<any>;
+  createFlow: (data: any) => Promise<any>;
+  updateFlow: (id: string, data: any, idempotencyKey?: string) => Promise<any>;
+  deleteFlow: (id: string) => Promise<void>;
+  cloneFlow: (id: string) => Promise<any>;
+  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => Promise<any>;
+  fetchFlowExecutions: (flowId: string) => Promise<any>;
+  fetchFlowExecution: (executionId: string) => Promise<any>;
+  cancelFlowExecutionAction: (executionId: string) => Promise<void>;
+  validateFlowTaskReplay: (flowId: string, taskId: string, data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean }) => Promise<any>;
+  fetchFlowTaskReplays: (flowId: string, taskId: string) => Promise<any>;
+  activateFlowTaskReplay: (flowId: string, taskId: string, replayId: string) => Promise<any>;
+  updateFlowTaskReplayFormatGuide: (flowId: string, taskId: string, replayId: string, data: { preserveOutputFormat?: boolean; outputFormatGuide?: string }) => Promise<any>;
+  renameFlowTaskReplay: (flowId: string, taskId: string, replayId: string, label: string) => Promise<any>;
+  deleteFlowTaskReplay: (flowId: string, taskId: string, replayId: string) => Promise<void>;
+  grabFlowOutputFormatTemplate: (flowId: string, taskId: string, data: { executionId: string }) => Promise<any>;
+  fetchFlowOutputFormatTemplate: (flowId: string, taskId: string) => Promise<any>;
+  updateFlowOutputFormatTemplate: (flowId: string, taskId: string, data: { formatGuide?: string; preserveOutputFormat?: boolean }) => Promise<any>;
+  deleteFlowOutputFormatTemplate: (flowId: string, taskId: string) => Promise<void>;
+  generateFlow: (data: { name: string; prompt: string; workspaceIds?: string[] }) => Promise<any>;
+  designFlow: (id: string, data: { query: string }) => Promise<any>;
+
+  // Port inspection
+  openPortInspection: (inspection: PortInspection) => void;
+  closePortInspection: () => void;
+
+  // Import/Export
+  importPlaybookDefinition: (definition: PlaybookDefinitionExport) => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
@@ -1684,4 +2116,202 @@ export interface PlaybookRepeatabilitySummary {
   overallAdvisorScore: number | null;
   generatedAt: string;
   iterations: RepeatabilityIterationSummary[];
+}
+
+// ===== Phase 4: Flow Model Types =====
+
+export interface FlowNodePort {
+  id: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+}
+
+export interface FlowNodeInput {
+  raw?: string;
+  ports?: FlowNodePort[];
+}
+
+export interface FlowNodeOutput {
+  raw?: string;
+  ports?: FlowNodePort[];
+}
+
+export interface RouterCondition {
+  label: string;
+  sourceNode?: string;
+  sourcePort?: string;
+  path?: string;
+  operator: RouterConditionOperator;
+  value?: unknown;
+}
+
+export interface RouterConfig {
+  outputLabels: string[];
+  maxIterations: number;
+  conditions?: RouterCondition[];
+  defaultLabel?: string;
+}
+
+export interface FlowIteratorConfig {
+  collectionPath: string;
+  maxItems?: number;
+}
+
+export interface HumanApprovalConfig {
+  promptTemplate: string;
+  timeoutSeconds?: number | null;
+}
+
+export interface RetryPolicy {
+  maxRetries: number;
+  delayMs?: number;
+}
+
+export interface FlowNode {
+  id: string;
+  kind: FlowNodeKind;
+  label?: string;
+  taskTemplateId?: string;
+  promptTemplateId?: string;
+  outputFormatId?: string;
+  input?: FlowNodeInput;
+  output?: FlowNodeOutput;
+  routerConfig?: RouterConfig;
+  iteratorConfig?: FlowIteratorConfig;
+  humanApprovalConfig?: HumanApprovalConfig;
+  retryPolicy?: RetryPolicy;
+  modelId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ControlEdge {
+  id: string;
+  kind: ControlEdgeKind;
+  source: string;
+  target: string;
+  routerLabel?: string;
+  sourceOutputPortId?: string;
+  targetInputPortId?: string;
+  priority?: number;
+}
+
+export interface DataBinding {
+  id: string;
+  targetNode: string;
+  targetPort: string;
+  sourceKind: DataBindingSourceKind;
+  sourceNode?: string;
+  sourcePort?: string;
+  iteration?: DataBindingIterationRef;
+  triggerPath?: string;
+  statePath?: string;
+  constantValue?: unknown;
+  expression?: string;
+}
+
+export interface RouterDecision {
+  nodeId: string;
+  label: string;
+  iteration: number;
+  createdAt?: string;
+}
+
+export interface FlowTriggerConfig {
+  kind?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface FlowSettings {
+  recursionLimit: number;
+  maxParallelism: number;
+}
+
+export interface Flow {
+  id: string;
+  ownerId: string;
+  schemaVersion: number;
+  name: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings: FlowSettings;
+  nodes: FlowNode[];
+  controlEdges: ControlEdge[];
+  dataBindings: DataBinding[];
+  workspaces: string[];
+  designSettings?: Record<string, unknown>;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number | null;
+  advisorAutopilotMaxTurns?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FlowSummary {
+  id: string;
+  name: string;
+  description: string;
+  nodeCount: number;
+  scheduleEnabled: boolean;
+  executionStatus?: ExecutionStatus | null;
+  lastExecutionAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateFlowData {
+  name: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings?: Partial<FlowSettings>;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+}
+
+export interface UpdateFlowData {
+  name?: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings?: Partial<FlowSettings>;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  workspaces?: string[];
+  designSettings?: Record<string, unknown>;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
+}
+
+export interface SavePlaybookOptions {
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
+}
+
+export const PLAYBOOK_DEFINITION_VERSION = 1;
+
+export interface PlaybookDefinitionExport {
+  version: typeof PLAYBOOK_DEFINITION_VERSION;
+  exportedAt: string;
+  name: string;
+  description: string;
+  tasks: PlaybookTask[];
+  edges: PlaybookEdge[];
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  settings?: FlowSettings;
+  designSettings?: PlaybookDesignSettings;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number | null;
+  advisorAutopilotMaxTurns?: number | null;
 }

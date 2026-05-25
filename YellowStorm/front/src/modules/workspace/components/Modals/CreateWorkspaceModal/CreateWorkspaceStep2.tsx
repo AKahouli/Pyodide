@@ -36,7 +36,7 @@ const customSettingsSchema = z.object({
   chunks: z.number().min(1).max(100).default(5),
   hybridSearch: z.boolean().default(false),
   ragType: z.enum(['standard', 'advancedRag', 'smartRag']).default('standard'),
-  maxToken: z.number().min(100).max(128000).default(4096),
+  maxToken: z.number().min(100).max(128000).default(32000),
   topK: z.number().min(1).max(100).default(10),
 });
 
@@ -56,7 +56,7 @@ const DEFAULT_SETTINGS = {
   chunks: 5,
   hybridSearch: false,
   ragType: 'standard' as RagType,
-  maxToken: 4096,
+  maxToken: 32000,
   topK: 10,
 };
 
@@ -329,28 +329,28 @@ export function CreateWorkspaceStep2({ onBack, onSubmit }: CreateWorkspaceStep2P
                 {/* Max Tokens */}
                 <FormField
                   control={form.control}
-                name='maxToken'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('modal.createWorkspace.step2.form.maxTokensLabel')}</FormLabel>
-                    <FormControl>
-                      <Input type='number' min={100} max={128000} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 4096)} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                  name='maxToken'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('modal.createWorkspace.step2.form.maxTokensLabel')}</FormLabel>
+                      <FormControl>
+                        <Input type='number' min={100} max={128000} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 32000)} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
                   )}
                 />
 
                 {/* Top K */}
                 <FormField
                   control={form.control}
-                name='topK'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('modal.createWorkspace.step2.form.topKLabel')}</FormLabel>
-                    <FormControl>
-                      <Input type='number' min={1} max={100} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 10)} />
-                    </FormControl>
+                  name='topK'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('modal.createWorkspace.step2.form.topKLabel')}</FormLabel>
+                      <FormControl>
+                        <Input type='number' min={1} max={100} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 10)} />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

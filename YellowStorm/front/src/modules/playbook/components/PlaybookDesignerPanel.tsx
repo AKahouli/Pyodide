@@ -3,6 +3,7 @@ import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   usePlaybookStore,
@@ -87,6 +88,11 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const interruptedTask = currentExecution?.taskResults.find(
     (taskResult) => taskResult.taskId === (currentExecution.interruptPayload?.taskId || currentExecution.currentInterruptTaskId || selectedStepId),
   ) || null;
+
+  const interruptIterationIndex = interruptedTask?.iteration ?? 0;
+  const interruptIterationCount = interruptedTask
+    ? currentExecution?.taskResults.filter((tr) => tr.taskId === interruptedTask.taskId).length ?? 1
+    : 0;
 
   const interruptEntries: InterruptEntry[] = ((interruptedTask?.components || [])
     .filter((component) => component.type === 'humanFeedback')
@@ -434,7 +440,14 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
           {activeInterruptEntry.interruptType === 'approval_request' ? (
             <>
               <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
-                <div className="font-semibold">{t('interrupt.pendingBannerTitle')}</div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">{t('interrupt.pendingBannerTitle')}</span>
+                  {interruptIterationCount > 1 && (
+                    <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-200">
+                      {t('interrupt.iterationContext', { current: interruptIterationIndex + 1, total: interruptIterationCount })}
+                    </Badge>
+                  )}
+                </div>
                 <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">{t('interrupt.approvalActionHint')}</div>
               </div>
               {showRejectReason && (

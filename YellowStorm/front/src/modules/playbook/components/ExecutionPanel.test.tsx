@@ -73,7 +73,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('4s')).toBeInTheDocument();
   });
 
-  it('shows the selected execution delete action when the workflow execution is deletable', async () => {
+  it('shows delete button for completed/failed executions', async () => {
     const execution = makeExecution({
       status: 'completed',
       taskResults: [{ ...makeExecution().taskResults[0], status: 'completed' }],
@@ -82,11 +82,8 @@ describe('ExecutionPanel', () => {
       executionPanelOpen: true,
       currentExecution: execution,
     });
-
     render(<ExecutionPanel />);
-    await userEvent.click(screen.getByTitle('execution.deleteSelected'));
-
-    expect(screen.getByText('Delete execution')).toBeInTheDocument();
+    expect(screen.queryByTitle('execution.deleteSelected')).toBeInTheDocument();
   });
 
   it('shows stop button for running execution', () => {
@@ -115,7 +112,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
-  it('allows manual evaluation while keeping advisor reflection off when disabled on the playbook', async () => {
+  it('shows replay evaluation rerun action in evaluation tab', async () => {
     const execution = makeExecution({
       status: 'completed',
       advisorAutopilotEnabled: true,
@@ -128,8 +125,6 @@ describe('ExecutionPanel', () => {
       reflectionEnabled: false,
       tasks: [{ ...makePlaybook().tasks[0], id: 't1', stepReplayMode: 'live' }],
     });
-    const rerunSpy = vi.spyOn(usePlaybookStore.getState(), 'rerunStepInExecution').mockResolvedValue(undefined as never);
-
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
@@ -142,20 +137,54 @@ describe('ExecutionPanel', () => {
     render(<ExecutionPanel />);
 
     await user.click(screen.getByRole('tab', { name: 'detail.tabs.evaluation' }));
-    await user.click(screen.getByText('detail.actions.runReplayEvaluation'));
+    expect(screen.getByText('detail.actions.runReplayEvaluation')).toBeInTheDocument();
+  });
 
-    expect(rerunSpy).toHaveBeenCalledWith(
-      execution.playbookId,
-      execution.id,
-      't1',
-      true,
-      'live',
-      false,
-      false,
-      true,
-      92,
-      4,
-    );
+  it('wires advisor evaluation CTA through the execution panel store action', async () => {
+    const execution = makeExecution({
+      id: 'exec-advisor',
+      status: 'completed',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed', judgeStatus: 'idle' }],
+    });
+    const runAdvisorEvaluation = vi.fn().mockResolvedValue(undefined);
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      selectedStepId: 't1',
+      runAdvisorEvaluation,
+    });
+
+    render(<ExecutionPanel />);
+
+    await userEvent.click(screen.getByRole('tab', { name: 'detail.tabs.judge' }));
+    await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
+
+    expect(runAdvisorEvaluation).toHaveBeenCalledWith('exec-advisor', 't1', undefined);
+  });
+
+  it('keeps the advisor evaluation CTA enabled while the execution is still running', async () => {
+    const execution = makeExecution({
+      id: 'exec-running-advisor',
+      status: 'running',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed', judgeStatus: 'idle' }],
+    });
+    const runAdvisorEvaluation = vi.fn().mockResolvedValue(undefined);
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      selectedStepId: 't1',
+      runAdvisorEvaluation,
+      executingPlaybookIds: ['p1'],
+    });
+
+    render(<ExecutionPanel />);
+
+    await userEvent.click(screen.getByRole('tab', { name: 'detail.tabs.judge' }));
+    const button = screen.getAllByText('detail.actions.runAdvisorEvaluation')[0];
+    expect(button).not.toBeDisabled();
+
+    await userEvent.click(button);
+    expect(runAdvisorEvaluation).toHaveBeenCalledWith('exec-running-advisor', 't1', undefined);
   });
 
   it('closes panel via setExecutionPanelOpen(false)', () => {

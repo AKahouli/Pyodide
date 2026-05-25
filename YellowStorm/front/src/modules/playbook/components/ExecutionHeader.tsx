@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Clock, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { ExecutionHistoryDropdown } from './ExecutionHistoryDropdown';
 import { useIsStopping } from '../store';
@@ -14,10 +15,10 @@ interface Props {
 }
 
 function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+  if (mode === 'replay_strict') return 'execution.mode.replayStrict';
+  if (mode === 'replay_flex') return 'execution.mode.replayFlex';
+  if (mode === 'replay_adaptive') return 'execution.mode.replayAdaptive';
+  return 'execution.mode.live';
 }
 
 function formatDuration(ms: number | null): string {
@@ -47,6 +48,8 @@ export function ExecutionHeader({ execution, playbook }: Props) {
   const isStopping = useIsStopping();
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const visibleStatus = execution ? getVisibleExecutionStatus(execution) : null;
+  const replayPlanningSummaries = execution?.replayPlanningByTask ? Object.values(execution.replayPlanningByTask) : [];
+  const primaryReplayPlanning = replayPlanningSummaries[0] ?? null;
 
   const canStop = execution && (visibleStatus === 'running' || visibleStatus === 'interrupted');
   return (
@@ -59,10 +62,32 @@ export function ExecutionHeader({ execution, playbook }: Props) {
         {execution && (
           <>
             <PlaybookStatusBadge status={visibleStatus || execution.status} size="md" />
+            {execution.queuePosition != null && execution.totalQueueSize != null && (
+              <span className="text-sm text-muted-foreground">
+                {t('execution.queuePosition', { position: execution.queuePosition, total: execution.totalQueueSize })}
+              </span>
+            )}
+            {visibleStatus === 'running' && execution.recursionBudgetUsed != null && execution.recursionBudgetMax != null && (
+              <span className="text-sm text-muted-foreground">
+                {t('execution.recursionBudget', { used: execution.recursionBudgetUsed, max: execution.recursionBudgetMax })}
+              </span>
+            )}
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               <span>{formatDuration(execution.durationMs)}</span>
             </div>
+            {execution.executionMode && execution.executionMode !== 'live' && (
+              <Badge variant="outline">{t(getExecutionModeLabel(execution.executionMode))}</Badge>
+            )}
+            {execution.executionMode === 'replay_flex' && primaryReplayPlanning && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{t('replayPlanning.headerLabel')}</span>
+                <Badge variant="outline">v{primaryReplayPlanning.validationVersion}</Badge>
+                {(primaryReplayPlanning.intentLabel || primaryReplayPlanning.intentKey) && (
+                  <span>{primaryReplayPlanning.intentLabel || primaryReplayPlanning.intentKey}</span>
+                )}
+              </div>
+            )}
             {canStop && (
               <Button
                 variant="destructive"

@@ -1,0 +1,196 @@
+from src.flow_engine.nodes.step_tool_scope import (
+    build_prompt_input_context,
+    build_sandbox_prompt_note,
+    build_step_tool_scope,
+)
+
+
+def test_build_step_tool_scope_prefers_display_name_for_mounted_filename() -> None:
+    scope = build_step_tool_scope(
+        {
+            "default": {
+                "workspaceId": "workspace-1",
+                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                "kind": "document",
+                "id": "doc-1",
+                "metadata": {
+                    "documentId": "doc-1",
+                    "workspaceId": "workspace-1",
+                    "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                    "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                },
+                "name": "CV_Kevin_Diallo.pdf",
+            }
+        },
+        {},
+    )
+
+    assert scope.input_files == ["doc-1"]
+    assert scope.documents_by_port == {"default": ["doc-1"]}
+    assert scope.code_interpreter_files == [
+        {
+            "document_id": "doc-1",
+            "filename": "CV_Kevin_Diallo.pdf",
+            "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+            "workspace_id": "workspace-1",
+        }
+    ]
+    assert scope.mounted_filenames == ["CV_Kevin_Diallo.pdf"]
+    assert scope.workspace_context_mode == "resolved_inputs_only"
+
+
+def test_build_step_tool_scope_normalizes_brain_context_fallback() -> None:
+    scope = build_step_tool_scope(
+        {},
+        {
+            "brain_context": [
+                {
+                    "workspace_id": "workspace-1",
+                    "workspace_documents": [
+                        {
+                            "_id": "doc-1",
+                            "filename": "report.pdf",
+                            "filepath": "user/workspace/doc-1/report.pdf",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert scope.workspace_context_mode == "fallback_playbook"
+    assert scope.workspace_context == [
+        {
+            "workspace_id": "workspace-1",
+            "documents": [
+                {
+                    "id": "doc-1",
+                    "_id": "doc-1",
+                    "filename": "report.pdf",
+                    "filepath": "user/workspace/doc-1/report.pdf",
+                    "workspace_id": "workspace-1",
+                }
+            ],
+        }
+    ]
+
+
+def test_build_sandbox_prompt_note_warns_against_storage_names() -> None:
+    scope = build_step_tool_scope(
+        {
+            "default": {
+                "name": "CV_Kevin_Diallo.pdf",
+                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+            }
+        },
+        {},
+    )
+
+    note = build_sandbox_prompt_note(scope, {"code interpreter"})
+
+    assert "CV_Kevin_Diallo.pdf" in note
+    assert "metadata storage filenames" in note
+
+
+def test_build_prompt_input_context_rewrites_storage_filename_for_prompt() -> None:
+    prompt_context = build_prompt_input_context(
+        {
+            "default": {
+                "name": "CV_Kevin_Diallo.pdf",
+                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                "metadata": {
+                    "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                },
+            }
+        }
+    )
+
+    assert prompt_context["default"]["metadata"]["filename"] == "CV_Kevin_Diallo.pdf"
+
+
+def test_build_step_tool_scope_preserves_opaque_document_refs() -> None:
+    scope = build_step_tool_scope(
+        {"report": {"document_id": "doc-1", "filename": "report.xlsx"}},
+        {
+            "brain_context": [
+                {
+                    "workspace_id": "workspace-1",
+                    "workspace_documents": [
+                        {
+                            "_id": "doc-1",
+                            "filename": "report.xlsx",
+                            "filepath": "user/workspace/doc-1/report.xlsx",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert scope.input_files == ["doc-1"]
+    assert scope.documents_by_port == {"report": ["doc-1"]}
+    assert scope.code_interpreter_files == [
+        {
+            "document_id": "doc-1",
+            "filename": "report.xlsx",
+            "filepath": "user/workspace/doc-1/report.xlsx",
+            "workspace_id": "workspace-1",
+        }
+    ]
+    assert scope.workspace_context == []
+    assert scope.workspace_context_mode == "resolved_inputs_only"
+
+
+def test_build_step_tool_scope_keeps_opaque_refs_without_fallback_workspace() -> None:
+    scope = build_step_tool_scope(
+        {"report": {"document_id": "doc-2", "filename": "generated-report.xlsx"}},
+        {
+            "brain_context": [
+                {
+                    "workspace_id": "workspace-1",
+                    "workspace_documents": [
+                        {
+                            "_id": "doc-1",
+                            "filename": "report.xlsx",
+                            "filepath": "user/workspace/doc-1/report.xlsx",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert scope.input_files == ["doc-2"]
+    assert scope.documents_by_port == {"report": ["doc-2"]}
+    assert scope.code_interpreter_files == []
+    assert scope.workspace_context == []
+    assert scope.workspace_context_mode == "resolved_inputs_only"
+
+
+def test_build_step_tool_scope_prefers_workspace_filename_when_hydrating() -> None:
+    scope = build_step_tool_scope(
+        {"report": {"document_id": "doc-1", "filename": "doc-1-report.xlsx"}},
+        {
+            "brain_context": [
+                {
+                    "workspace_id": "workspace-1",
+                    "workspace_documents": [
+                        {
+                            "_id": "doc-1",
+                            "filename": "report.xlsx",
+                            "filepath": "user/workspace/doc-1/report.xlsx",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert scope.code_interpreter_files == [
+        {
+            "document_id": "doc-1",
+            "filename": "report.xlsx",
+            "filepath": "user/workspace/doc-1/report.xlsx",
+            "workspace_id": "workspace-1",
+        }
+    ]

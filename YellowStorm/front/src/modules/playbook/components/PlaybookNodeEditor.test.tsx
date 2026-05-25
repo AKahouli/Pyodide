@@ -7,15 +7,24 @@ import type { PlaybookTask } from '../types';
 const fetchAgents = vi.fn();
 const fetchTaskReplays = vi.fn().mockResolvedValue([]);
 const activateTaskReplay = vi.fn();
-const updateTaskReplayFormatGuide = vi.fn();
 const fetchEvaluationBaseline = vi.fn();
+const updateTaskReplayFormatGuide = vi.fn();
+const renameTaskReplay = vi.fn();
+const deleteTaskReplay = vi.fn();
+const updateDataBindings = vi.fn();
 const storeState = {
   fetchTaskReplays,
   activateTaskReplay,
   updateTaskReplayFormatGuide,
   fetchEvaluationBaseline,
+  renameTaskReplay,
+  deleteTaskReplay,
+  updateDataBindings,
   currentPlaybook: {
     id: 'playbook-1',
+    tasks: [],
+    edges: [],
+    dataBindings: [],
     effectiveDesignSettings: {
       inferenceModelId: null,
       resolvedInferenceModelId: null,
@@ -42,6 +51,7 @@ vi.mock('@/modules/auth', () => ({
 vi.mock('../store', () => ({
   usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector(storeState),
+  useCurrentPlaybook: () => storeState.currentPlaybook,
 }));
 
 vi.mock('@/components/ui/sheet', () => ({
@@ -93,6 +103,16 @@ vi.mock('@/components/ui/dialog', () => ({
 
 vi.mock('@/components/ui/searchable-select', () => ({
   SearchableSelect: () => null,
+}));
+
+vi.mock('./PlaybookDataFlowSection', () => ({
+  PlaybookDataFlowSection: ({ onInputPortsChange, onOutputPortsChange, inputPortsOverride, outputPortsOverride }: any) => (
+    <div data-testid="data-flow-section">
+      <span>dataFlow.sectionTitle</span>
+      {inputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
+      {outputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
+    </div>
+  ),
 }));
 
 vi.mock('lucide-react', async (importOriginal) => {
@@ -161,6 +181,11 @@ const iteratorTask: PlaybookTask = {
 };
 
 describe('PlaybookNodeEditor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchTaskReplays.mockResolvedValue([]);
+  });
+
   it('does not fetch the evaluation baseline when task is null', () => {
     expect(() => {
       render(
@@ -271,13 +296,12 @@ describe('PlaybookNodeEditor', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('nodeEditor.iteratorOutputPortHint')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Results')).toBeDisabled();
     });
 
-    expect(screen.getByDisplayValue('Results')).toBeDisabled();
     const disabledSelects = Array.from(container.querySelectorAll('select')).filter((select) => (select as HTMLSelectElement).disabled);
     expect(disabledSelects.length).toBeGreaterThan(0);
-    expect(screen.queryByText('ports.addOutput')).not.toBeInTheDocument();
+    expect(screen.queryByText('dataFlow.addOutput')).not.toBeInTheDocument();
   });
 
   it('saves canonical iterator ports when switching node type to iterator', async () => {
@@ -316,6 +340,73 @@ describe('PlaybookNodeEditor', () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it('renders data flow section before retry policy for generic steps', () => {
+    const { container } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const content = container.textContent ?? '';
+    expect(content.indexOf('dataFlow.sectionTitle')).toBeGreaterThan(content.indexOf('nodeEditor.sectionExecution'));
+    expect(content.indexOf('nodeEditor.retryPolicy')).toBeGreaterThan(content.indexOf('dataFlow.sectionTitle'));
+  });
+
+  it('opens replay baseline settings dialog from the replay list', async () => {
+    fetchTaskReplays.mockResolvedValueOnce([
+      {
+        id: 'replay-1',
+        playbookId: 'playbook-1',
+        taskId: 'task-1',
+        taskTitle: 'Evaluate result',
+        agentName: 'Agent',
+        createdBy: 'user',
+        referenceExecutionId: 'exec-1',
+        referenceExecutionNumber: 1,
+        validationVersion: 2,
+        status: 'active',
+        mode: 'strict_replay',
+        toolCalls: [],
+        referenceOutput: 'Reference result',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Guide text',
+        formatGuideStatus: 'ready',
+        replayConfig: { replayOutputFormat: true, replayToolTrace: false, replayReasoningChain: true },
+        label: 'Baseline One',
+        createdAt: '2026-05-23T10:00:00.000Z',
+        updatedAt: '2026-05-23T10:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: 'replay-1' }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+        onOpenOutputFormatEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'nodeEditor.replayEditFormatGuide' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.replayEditFormatGuide' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('baselineBadge.dialogTitle')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Baseline One')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'baselineBadge.editOutputFormatTemplate' })).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Guide text')).not.toBeInTheDocument();
+    });
   });
 
 });

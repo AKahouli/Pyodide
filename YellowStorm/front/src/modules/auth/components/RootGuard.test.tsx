@@ -15,9 +15,6 @@ vi.mock('@/modules/models', () => ({
 vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
   useConversationStream: vi.fn(),
 }));
-vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
-  usePlaybookStreamGlobal: vi.fn(),
-}));
 vi.mock('@/modules/sidebar', () => ({ AppSidebar: () => <div data-testid='app-sidebar' /> }));
 vi.mock('@/modules/conversation', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
 vi.mock('@/components/ui/sidebar', () => ({

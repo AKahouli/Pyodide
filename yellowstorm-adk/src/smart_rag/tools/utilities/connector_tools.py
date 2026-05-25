@@ -764,7 +764,7 @@ def create_connector_tools(
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
-                from src.langgraph_engine.mcp_client_factory import call_mcp_tool
+                from src.flow_engine.mcp import call_mcp_tool
 
                 if not _server_url:
                     return (

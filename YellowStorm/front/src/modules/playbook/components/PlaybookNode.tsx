@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -29,18 +29,21 @@ import type { Agent } from '@/modules/agent/types';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
-import { migrateTask } from '../utils/migrate-ports';
+import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference, ValidatedTaskReplay } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
   interrupted: 4,
+  pending_approval: 4,
+  cancelled: 3,
   failed: 3,
   completed: 2,
   skipped: 1,
   pending: 0,
+  queued: 0,
 };
 
 function resolveIteratorChildExecutionStatus(
@@ -87,15 +90,15 @@ export interface NodeContextMenuActions {
   onResumeFromStep: (nodeId: string) => void;
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
-  onGrabOutputFormat: (nodeId: string) => void;
-  onRemoveReplayBaseline: (playbookId: string, taskId: string, replayId: string) => Promise<void>;
-  onRenameReplayBaseline: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<void>;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
   canSaveBaseline: (nodeId: string) => boolean;
-  canGrabOutputFormat: (nodeId: string) => boolean;
+  onCopySelection?: () => void;
+  onCutSelection?: () => void;
+  onPasteClipboard?: () => void;
+  hasSelection?: boolean;
 }
 
 export interface ConnectorDropPayload {
@@ -118,22 +121,30 @@ export const NodeDataActionsContext = createContext<NodeDataActions | null>(null
 
 export const NodeContextMenuContext = createContext<NodeContextMenuActions | null>(null);
 
+export const ConnectionDragContext = createContext<{ hoveredTargetId: string | null }>({ hoveredTargetId: null });
+
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
   running: 'border-running shadow-md shadow-running/10',
   completed: '',
+  cancelled: 'ring-2 ring-destructive/60',
   failed: 'ring-2 ring-destructive/60',
   skipped: '',
   interrupted: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',
+  queued: '',
+  pending_approval: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',
 };
 
 const STATUS_HEADER_BG: Record<StepStatus, string> = {
   pending: '',
   running: 'bg-running/10',
   completed: 'bg-green-500/10',
+  cancelled: 'bg-destructive/10',
   failed: 'bg-destructive/10',
   skipped: '',
   interrupted: 'bg-yellow-500/10',
+  queued: '',
+  pending_approval: 'bg-yellow-500/10',
 };
 
 function getSemanticScoreTone(score: number): {
@@ -311,6 +322,7 @@ function getPortTopPercent(idx: number, total: number): number {
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
+  const connectionDrag = useContext(ConnectionDragContext);
   const nodeDataActions = useContext(NodeDataActionsContext);
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
@@ -331,10 +343,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     return latest?.taskResults ?? null;
   });
   const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
-  const selectedStepId = usePlaybookStore((s) => s.selectedStepId);
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
+  const bindResourceToInputPort = usePlaybookStore((s) => s.bindResourceToInputPort);
+  const openPortInspection = usePlaybookStore((s) => s.openPortInspection);
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
@@ -348,6 +361,18 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
+
+  const dataBindings = usePlaybookStore((s) => s.currentPlaybook?.dataBindings ?? []);
+  const unboundRequiredPortIds = useMemo(() => {
+    const portIds = new Set<string>();
+    for (const port of inputPorts) {
+      if (!port.required) continue;
+      if (!dataBindings.some((b) => b.targetNode === id && b.targetPort === port.id)) {
+        portIds.add(port.id);
+      }
+    }
+    return portIds;
+  }, [inputPorts, dataBindings, id]);
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -392,7 +417,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isStepRunning = status === 'running';
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
-  const isSelected = selected || selectedStepId === id;
+  const isSelected = Boolean(selected);
   const isRecentlyChanged = data.isRecentlyChanged === true;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
@@ -414,15 +439,46 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
+  const activeReplay: ValidatedTaskReplay | null = currentTask?.activeReplayId
+    ? {
+        id: currentTask.activeReplayId,
+        playbookId: playbookId || '',
+        taskId: id,
+        taskTitle: currentTask.title,
+        agentName: '',
+        createdBy: '',
+        referenceExecutionId: '',
+        referenceExecutionNumber: currentTask.activeReplayVersion || 0,
+        validationVersion: currentTask.activeReplayVersion || 0,
+        status: 'active',
+        mode: 'strict_replay',
+        toolCalls: [],
+        referenceOutput: null,
+        preserveOutputFormat: currentTask.activeReplayPreserveOutputFormat,
+        outputFormatGuide: null,
+        formatGuideStatus: currentTask.activeReplayFormatGuideStatus ?? 'disabled',
+        formatGuideError: currentTask.activeReplayFormatGuideError ?? null,
+        isStale: currentTask.activeReplayIsStale,
+        staleReasons: currentTask.activeReplayStaleReasons,
+        label: currentTask.activeReplayLabel ?? null,
+        replayConfig: currentTask.activeReplayReplayConfig ?? {
+          replayOutputFormat: false,
+          replayToolTrace: false,
+          replayReasoningChain: true,
+        },
+        createdAt: '',
+        updatedAt: '',
+      }
+    : null;
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
 
-  const resolveDragPayload = useCallback((e: React.DragEvent): InputFile | null => {
+  const resolveDragPayload = useCallback((e: React.DragEvent): (InputFile & { kind?: string }) | null => {
     try {
       const raw = e.dataTransfer.getData('application/json');
       if (!raw) return null;
       const payload = JSON.parse(raw);
-      if (payload && payload.type && payload.id && payload.name) return payload as InputFile;
+      if (payload && payload.type && payload.id && payload.name) return payload as InputFile & { kind?: string };
     } catch { /* noop */ }
     return null;
   }, []);
@@ -522,22 +578,34 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const payload = resolveDragPayload(e);
     if (!payload) return;
 
-    if (inputPorts.length <= 1) {
-      const portId = inputPorts.length === 1 ? inputPorts[0].id : undefined;
-      addInputFileToTask(id, { ...payload, portId });
-      return;
-    }
+    const resourceKind = (payload.kind || payload.type) as PlaybookResourceReference['kind'];
+    const workspaceId = payload.workspaceId || payload.metadata?.workspaceId || '';
 
-    const nodeEl = e.currentTarget as HTMLDivElement;
-    const rect = nodeEl.getBoundingClientRect();
-    const offsetY = e.clientY - rect.top;
-    const nodeHeight = rect.height;
-    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+    const resolvePortId = (): string | undefined => {
+      if (inputPorts.length <= 1) return inputPorts.length === 1 ? inputPorts[0].id : undefined;
+      const nodeEl = e.currentTarget as HTMLDivElement;
+      const rect = nodeEl.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+      const nodeHeight = rect.height;
+      const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+      return hit?.port.id;
+    };
 
-    if (hit) {
-      addInputFileToTask(id, { ...payload, portId: hit.port.id });
+    const portId = resolvePortId();
+
+    if (workspaceId && portId && (resourceKind === 'document' || resourceKind === 'folder' || resourceKind === 'workspace')) {
+      const resource: PlaybookResourceReference = {
+        kind: resourceKind,
+        id: payload.id,
+        name: payload.name,
+        workspaceId,
+        path: payload.metadata?.filepath,
+        mimeType: payload.metadata?.mimeType,
+        metadata: payload.metadata as Record<string, unknown>,
+      };
+      bindResourceToInputPort(id, portId, resource);
     } else {
-      addInputFileToTask(id, payload);
+      addInputFileToTask(id, { ...payload, portId });
     }
   };
 
@@ -559,6 +627,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
             isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',
+            connectionDrag.hoveredTargetId === id && 'ring-2 ring-blue-400/60 ring-inset shadow-[0_0_12px_3px_rgba(96,165,250,0.15)]',
           )}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -609,6 +678,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   kind={port.artifactKind}
                   position="left"
                   selected={isSelected}
+                  warning={port.required && unboundRequiredPortIds.has(port.id)}
+                  warningTooltip={t('node.unboundRequiredPort')}
+                  onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: true })}
                 />
                 {port.required && hasMultiplePorts && (
                   <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
@@ -633,7 +705,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 className="!w-3 !h-3"
                 style={{ ...getOutputPortStyle(port), top: 0 }}
               />
-              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected} />
+              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
+                onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
+              />
             </div>
           ))}
           </div>
@@ -744,17 +818,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
                 {showReplayBadge && (
                   <BaselineBadgePopover
-                    taskId={id}
+                    task={effectiveTask}
                     playbookId={playbookId || ''}
-                    replayId={currentTask?.activeReplayId}
-                    label={currentTask?.activeReplayLabel}
+                    replay={activeReplay}
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
                       : 'border-amber-500/30 bg-amber-100 text-amber-700'}
                     badgeLabel={replayBadgeLabel}
                     isBusy={Boolean(currentTask?.isSavingReplayBaseline)}
-                    onRemove={actions?.onRemoveReplayBaseline ?? (() => Promise.resolve())}
-                    onRename={actions?.onRenameReplayBaseline ?? (() => Promise.resolve())}
+                    onOpenOutputFormatEditor={nodeDataActions?.openOutputFormatEditor}
                   />
                 )}
                 {showOutputFormatBadge && (
@@ -972,10 +1044,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           <FileText className="h-4 w-4" />
           {t('nodeContextMenu.saveBaseline')}
         </ContextMenuItem>
-        <ContextMenuItem disabled={!actions?.canGrabOutputFormat(id)} onClick={() => actions?.onGrabOutputFormat(id)}>
-          <FileText className="h-4 w-4" />
-          {t('nodeContextMenu.saveOutputFormat')}
-        </ContextMenuItem>
         <ContextMenuItem onClick={() => actions?.onEdit(id)}>
           <Pencil className="h-4 w-4" />
           {t('nodeContextMenu.edit')}
@@ -987,6 +1055,19 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem onClick={() => actions?.onToggleEnabled(id)}>
           <Power className="h-4 w-4" />
           {isEnabled ? t('node.disable') : t('node.enable')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCopySelection?.()}>
+          <Copy className="h-4 w-4" />
+          {t('clipboard.menuCopy')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCutSelection?.()}>
+          <Scissors className="h-4 w-4" />
+          {t('clipboard.menuCut')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onPasteClipboard?.()}>
+          <ClipboardPaste className="h-4 w-4" />
+          {t('clipboard.menuPaste')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete(id)}>

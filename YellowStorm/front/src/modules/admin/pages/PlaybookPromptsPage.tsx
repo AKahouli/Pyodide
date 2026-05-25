@@ -23,7 +23,7 @@ import {
   type PlaybookIteratorConfig,
   type PlaybookNodeType,
 } from '@/modules/playbook';
-import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '@/modules/playbook/utils/iterator-ports';
+import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '@/modules/playbook/hooks/helpers/node-serializer';
 import apiClient from '@/lib/api/client';
 import {
   getPlaybookPrompts,

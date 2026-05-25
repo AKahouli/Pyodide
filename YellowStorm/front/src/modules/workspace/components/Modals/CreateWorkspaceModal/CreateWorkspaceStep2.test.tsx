@@ -18,7 +18,7 @@ vi.mock('../../../store', () => ({
           chunks: 5,
           ragType: 'standard',
           topK: 10,
-          maxToken: 4096,
+          maxToken: 32000,
           hybridSearch: false,
           createdAt: '',
           updatedAt: '',

@@ -143,6 +143,7 @@ export function makeExecution(overrides: Partial<PlaybookExecution> = {}): Playb
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalTokens: 0,
+    replayPlanningByTask: null,
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
     ...overrides,

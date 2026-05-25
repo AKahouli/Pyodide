@@ -11,7 +11,7 @@ import {
   ConversationSchema,
 } from '../conversation/schemas/conversation.schema';
 import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
-import { Playbook, PlaybookSchema } from '../playbook/schemas/playbook.schema';
+import { Flow, FlowSchema } from '../playbook-flow/schemas/playbook-flow.schema';
 import { WorkspaceDoc, WorkspaceDocumentSchema } from './schemas/workspace-document.schema';
 import {
   WorkspaceSetting,
@@ -56,7 +56,7 @@ import workspaceConfig from '../../config/workspace.config';
       { name: UploadSession.name, schema: UploadSessionSchema },
       { name: Conversation.name, schema: ConversationSchema },
       { name: Agent.name, schema: AgentSchema },
-      { name: Playbook.name, schema: PlaybookSchema },
+      { name: Flow.name, schema: FlowSchema },
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => UsageModule),

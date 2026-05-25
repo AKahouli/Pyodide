@@ -104,6 +104,14 @@ export const Permissions = {
   CONNECTED_APPS_DELETE: 'connected_apps.delete',
   CONNECTED_APPS_ALL: 'connected_apps.*',
 
+  // Playbook
+  PLAYBOOK_READ: 'playbook.read',
+  PLAYBOOK_CREATE: 'playbook.create',
+  PLAYBOOK_UPDATE: 'playbook.update',
+  PLAYBOOK_DELETE: 'playbook.delete',
+  PLAYBOOK_EXECUTE: 'playbook.execute',
+  PLAYBOOK_ALL: 'playbook.*',
+
   // Super Admin
   SUPER_ADMIN: '*',
 } as const;
@@ -214,6 +222,14 @@ const ALL_PERMISSIONS = new Set<string>([
   'connected_apps.update',
   'connected_apps.delete',
   'connected_apps.*',
+
+  // Playbook
+  'playbook.read',
+  'playbook.create',
+  'playbook.update',
+  'playbook.delete',
+  'playbook.execute',
+  'playbook.*',
 
   // Super Admin
   '*',
