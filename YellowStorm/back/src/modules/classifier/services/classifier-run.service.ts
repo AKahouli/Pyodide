@@ -6,7 +6,7 @@ import {
   ClassificationRunDocument,
   ClassificationRunStatus,
 } from '../schemas/classification-run.schema';
-import { Playbook, PlaybookDocument } from '../../playbook/schemas/playbook.schema';
+import { Flow, FlowDocument } from '../../playbook-flow/schemas/playbook-flow.schema';
 import { WorkspaceDoc, WorkspaceDocumentDoc } from '../../workspace/schemas/workspace-document.schema';
 import {
   ClassifierFileAssignment,
@@ -30,8 +30,8 @@ export class ClassifierRunService {
   constructor(
     @InjectModel(ClassificationRun.name)
     private readonly runModel: Model<ClassificationRunDocument>,
-    @InjectModel(Playbook.name)
-    private readonly playbookModel: Model<PlaybookDocument>,
+    @InjectModel(Flow.name)
+    private readonly playbookModel: Model<FlowDocument>,
     @InjectModel(WorkspaceDoc.name)
     private readonly documentModel: Model<WorkspaceDocumentDoc>,
     @InjectModel(ClassifierFileAssignment.name)
