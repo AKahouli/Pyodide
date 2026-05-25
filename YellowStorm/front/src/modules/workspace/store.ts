@@ -1785,6 +1785,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         if (validFiles.length === 0) return;
 
         const previousFileIds = new Set(get().pageFiles.map((f) => f.id));
+        const targetFolderId = get().pageCurrentFolderId;
 
         get().addFilesToQueue(validFiles, workspaceId);
         try {
@@ -1796,11 +1797,29 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           );
           await get().refreshPageData();
 
-          if (options?.autoIndex) {
-            const newFileIds = get()
-              .pageFiles.filter((f) => !previousFileIds.has(f.id))
-              .map((f) => f.id);
+          const newFileIds = get()
+            .pageFiles.filter((f) => !previousFileIds.has(f.id))
+            .map((f) => f.id);
 
+          if (targetFolderId && newFileIds.length > 0) {
+            const assignResults = await Promise.allSettled(
+              newFileIds.map((fileId) =>
+                pageApi.assignFileToFolder(workspaceId, fileId, targetFolderId),
+              ),
+            );
+            const assignFailed = assignResults.filter((r) => r.status === 'rejected').length;
+            if (assignFailed > 0) {
+              toast.warning(
+                assignFailed === newFileIds.length
+                  ? 'Les fichiers n’ont pas pu être assignés au dossier courant'
+                  : `${assignFailed} fichier(s) n’ont pas pu être assignés au dossier courant`,
+              );
+            }
+            // Refresh again so pageFiles reflects new folder assignments
+            await get().refreshPageData();
+          }
+
+          if (options?.autoIndex) {
             if (newFileIds.length > 0) {
               const results = await Promise.allSettled(
                 newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId)),

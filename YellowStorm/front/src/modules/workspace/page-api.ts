@@ -181,3 +181,46 @@ export async function updateRule(
 export async function deleteRule(ruleId: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.classifier.ruleById(ruleId));
 }
+
+// ───────── Sync (Export ZIP) ─────────
+
+export interface SyncDownload {
+  blob: Blob;
+  filename: string;
+  fileCount: number;
+  unclassifiedCount: number;
+  failedCount: number;
+}
+
+export async function syncWorkspace(workspaceId: string): Promise<SyncDownload> {
+  const response = await apiClient.get<Blob>(API_ENDPOINTS.classifier.sync(workspaceId), {
+    responseType: 'blob',
+  });
+
+  const disposition = response.headers['content-disposition'] as string | undefined;
+  const filename = parseFilenameFromContentDisposition(disposition) ?? `workspace-${workspaceId}.zip`;
+
+  const headers = response.headers as Record<string, string | undefined>;
+
+  return {
+    blob: response.data,
+    filename,
+    fileCount: Number(headers['x-sync-file-count'] ?? 0),
+    unclassifiedCount: Number(headers['x-sync-unclassified-count'] ?? 0),
+    failedCount: Number(headers['x-sync-failed-count'] ?? 0),
+  };
+}
+
+function parseFilenameFromContentDisposition(header?: string): string | null {
+  if (!header) return null;
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // fall through to ascii
+    }
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] ?? null;
+}
