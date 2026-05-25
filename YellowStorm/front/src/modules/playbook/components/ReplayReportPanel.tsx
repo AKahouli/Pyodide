@@ -513,7 +513,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       {(semanticMatch || statuses.semantic.reason) && (
         <div className="space-y-2 rounded-md border bg-background p-3">
           <div className="font-medium">{t('replayReport.section.semantic' as any)}</div>
-          {semanticEvaluated ? (
+          {semanticMatch ? (
             <>
               <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
                 <div><div className="font-medium">{t('replayReport.semanticOverall' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch.matchScore ?? null)}</div></div>

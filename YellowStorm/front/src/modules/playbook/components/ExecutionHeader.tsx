@@ -77,7 +77,7 @@ export function ExecutionHeader({ execution, playbook }: Props) {
               <span>{formatDuration(execution.durationMs)}</span>
             </div>
             {execution.executionMode && execution.executionMode !== 'live' && (
-              <Badge variant="outline">{t(getExecutionModeLabel(execution.executionMode))}</Badge>
+              <Badge variant="outline">{t(getExecutionModeLabel(execution.executionMode) as Parameters<typeof t>[0])}</Badge>
             )}
             {execution.executionMode === 'replay_flex' && primaryReplayPlanning && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
