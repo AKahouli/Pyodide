@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, List
 
 import litellm
 from structlog import get_logger
@@ -10,6 +10,94 @@ from structlog import get_logger
 logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 10
+MAX_IMAGES_PER_ITERATION = 50
+MAX_IMAGES_TOTAL = 50
+
+
+def _parse_tool_result(result: Any) -> Any:
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except (json.JSONDecodeError, ValueError):
+            return result
+    return result
+
+
+def _extract_images_from_result(result: Any) -> List[str]:
+    images = []
+    if isinstance(result, dict):
+        for k, v in result.items():
+            if k == "image_base64" and isinstance(v, str) and v:
+                images.append(v)
+            else:
+                images.extend(_extract_images_from_result(v))
+    elif isinstance(result, list):
+        for item in result:
+            images.extend(_extract_images_from_result(item))
+    return images
+
+
+def _strip_images_from_tool_result(result: Any) -> Any:
+    if isinstance(result, dict):
+        return {k: _strip_images_from_tool_result(v) for k, v in result.items() if k != "image_base64"}
+    if isinstance(result, list):
+        return [_strip_images_from_tool_result(item) for item in result]
+    return result
+
+
+def _compress_tool_json(data: Any) -> Any:
+    """Remove redundant blocks array when a content summary string is already present."""
+    if isinstance(data, dict):
+        if isinstance(data.get("blocks"), list) and isinstance(data.get("content"), str):
+            data = {k: v for k, v in data.items() if k != "blocks"}
+        return {k: _compress_tool_json(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_compress_tool_json(item) for item in data]
+    return data
+
+
+def _build_tool_text_content(result: Any) -> str:
+    parsed = _parse_tool_result(result)
+    cleaned = _compress_tool_json(_strip_images_from_tool_result(parsed))
+    return cleaned if isinstance(cleaned, str) else json.dumps(cleaned, default=str)
+
+
+def _cap_images_in_messages(messages: list[dict[str, Any]], max_images: int = MAX_IMAGES_TOTAL) -> list[dict[str, Any]]:
+    """Keep the most recent images, replace older ones with a text note when over the limit."""
+    def _count_images(msg: dict) -> int:
+        content = msg.get("content")
+        if isinstance(content, list):
+            return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image_url")
+        return 0
+
+    counts = [_count_images(m) for m in messages]
+    if sum(counts) <= max_images:
+        return messages
+
+    budget = max_images
+    keep_flags = []
+    for count in reversed(counts):
+        if budget >= count:
+            keep_flags.append(True)
+            budget -= count
+        else:
+            keep_flags.append(False)
+    keep_flags.reverse()
+
+    result = list(messages)
+    dropped = 0
+    for i, (msg, should_keep, count) in enumerate(zip(messages, keep_flags, counts)):
+        if should_keep or count == 0:
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+            text_blocks.append({"type": "text", "text": f"[{count} image(s) removed — global {max_images}-image limit reached]"})
+            result[i] = {**msg, "content": text_blocks}
+        dropped += count
+
+    logger.warning("Global image cap applied", total=sum(counts), kept=sum(counts) - dropped, dropped=dropped)
+    return result
 
 
 def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +185,7 @@ async def run_step_with_tools(
         if not tool_calls:
             return str(message.get("content") or "")
 
+        iteration_images: List[str] = []
         for tool_call in tool_calls:
             function_payload = tool_call.get("function") or {}
             tool_name = str(function_payload.get("name") or "")
@@ -110,12 +199,12 @@ async def run_step_with_tools(
             try:
                 tool_result = await tool.ainvoke(tool_arguments)
                 duration_ms = int((time.perf_counter() - started_at) * 1000)
-                tool_content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result, default=str)
+                tool_content = _build_tool_text_content(tool_result)
                 if trace_collector is not None:
                     trace_collector.record_tool_call(
                         tool_name=tool_name,
                         args=tool_arguments if isinstance(tool_arguments, dict) else {},
-                        output_summary=tool_content,
+                        output_summary=tool_content[:500],
                         status="completed",
                         duration_ms=duration_ms,
                     )
@@ -139,6 +228,22 @@ async def run_step_with_tools(
                 "name": tool_name,
                 "content": tool_content,
             })
+            parsed = _parse_tool_result(tool_result)
+            iteration_images.extend(_extract_images_from_result(parsed))
+
+        if iteration_images:
+            capped = iteration_images[:MAX_IMAGES_PER_ITERATION]
+            if len(iteration_images) > MAX_IMAGES_PER_ITERATION:
+                logger.warning("Images capped per iteration", total=len(iteration_images), kept=MAX_IMAGES_PER_ITERATION)
+            vision_blocks: List[dict[str, Any]] = [
+                {"type": "text", "text": f"Images from tool results ({len(capped)} image(s)):"}
+            ]
+            for b64 in capped:
+                vision_blocks.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            messages.append({"role": "user", "content": vision_blocks})
+            logger.info("Vision images injected", image_count=len(capped))
+
+        messages = _cap_images_in_messages(messages)
 
     raise RuntimeError("Max tool iterations reached without a final response")
 

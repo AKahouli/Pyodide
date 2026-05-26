@@ -121,7 +121,7 @@ def _register_nodes(
         kind = node.get("kind", "step")
         fn = NODE_KIND_DISPATCH.get(kind, run_step)
 
-        async def _base(state: ExecutionState, _node_id: str = node_id, _node: dict[str, Any] = node, _fn=fn) -> dict[str, Any]:
+        async def _base(state: ExecutionState, config=None, *, _node_id: str = node_id, _node: dict[str, Any] = node, _fn=fn) -> dict[str, Any]:
             node_inputs = resolve_node_inputs(_node_id, data_bindings, state)
             return await _fn(_node_id, _node, state, node_inputs=node_inputs)
 

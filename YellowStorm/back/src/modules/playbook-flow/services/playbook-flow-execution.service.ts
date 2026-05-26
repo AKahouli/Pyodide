@@ -556,6 +556,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       path.join(__dirname, '..', 'proto', 'playbook-flow.proto'),
       path.join(__dirname, '..', '..', 'playbook-flow', 'proto', 'playbook-flow.proto'),
       path.join(process.cwd(), 'dist', 'modules', 'playbook-flow', 'proto', 'playbook-flow.proto'),
+      path.join(process.cwd(), 'src', 'modules', 'playbook-flow', 'proto', 'playbook-flow.proto'),
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
