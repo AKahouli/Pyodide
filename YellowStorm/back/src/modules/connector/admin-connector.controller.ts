@@ -39,7 +39,6 @@ import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
-import { ConnectedAppDefinitionService } from '../connected-app/services/connected-app-definition.service';
 
 @ApiTags('Admin Connectors')
 @ApiBearerAuth()
@@ -50,7 +49,6 @@ export class AdminConnectorController {
     private readonly connectorService: ConnectorService,
     private readonly auditLogService: AuditLogService,
     private readonly connectorAdminAuthService: ConnectorAdminAuthService,
-    private readonly connectedAppDefinitionService: ConnectedAppDefinitionService,
   ) {}
 
   @Get()
@@ -98,23 +96,9 @@ export class AdminConnectorController {
     @Body() body: InspectMcpDto,
     @CurrentUser() user: UserDocument,
   ): Promise<IMcpInspectResult> {
-    let resolvedToken: string | undefined;
-
-    if (body.connectedAppKey) {
-      try {
-        const appConfig = await this.connectedAppDefinitionService.findByKey(body.connectedAppKey);
-        if (appConfig.authType === 'api_key') {
-          // For API key type, return the API key directly
-          resolvedToken = appConfig.apiKey;
-        } else {
-          // For OAuth type, get the user's token from admin connector auth
-          resolvedToken = await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey);
-        }
-      } catch (error) {
-        // If app definition not found or error, fall back to OAuth flow
-        resolvedToken = await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey);
-      }
-    }
+    const resolvedToken = body.connectedAppKey
+      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
+      : undefined;
 
     return this.connectorService.inspectMcp(
       body.transportType,
@@ -286,23 +270,9 @@ export class AdminConnectorController {
       );
     }
 
-    let resolvedToken: string | undefined;
-
-    if (dto.useOAuth && connector.connectedAppKey) {
-      try {
-        const appConfig = await this.connectedAppDefinitionService.findByKey(connector.connectedAppKey);
-        if (appConfig.authType === 'api_key') {
-          // For API key type, return the API key directly
-          resolvedToken = appConfig.apiKey;
-        } else {
-          // For OAuth type, get the user's token from admin connector auth
-          resolvedToken = await this.connectorAdminAuthService.getValidToken(user._id.toString(), connector.connectedAppKey);
-        }
-      } catch (error) {
-        // If app definition not found or error, fall back to OAuth flow
-        resolvedToken = await this.connectorAdminAuthService.getValidToken(user._id.toString(), connector.connectedAppKey);
-      }
-    }
+    const resolvedToken = dto.useOAuth
+      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), connector.connectedAppKey)
+      : undefined;
 
     return this.connectorService.inspectMcp(
       connector.mcpTransportType,

@@ -16,7 +16,6 @@ import {
 } from './schemas/connector.schema';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
-import { ConnectedAppDefinitionService } from '../connected-app/services/connected-app-definition.service';
 
 @Injectable()
 export class ConnectorService {
@@ -29,7 +28,6 @@ export class ConnectorService {
     private readonly connectorModel: Model<ConnectorDocument>,
     private readonly logger: LoggerService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
-    private readonly connectedAppDefinitionService: ConnectedAppDefinitionService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -47,25 +45,13 @@ export class ConnectorService {
     const sanitizedMcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
     const dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
 
-    // Determine auth type - if using connected app, fetch its auth type
-    let authType = dto.authType ?? 'none';
-    if (dto.authSourceType === 'connected_app' && dto.connectedAppKey) {
-      try {
-        const connectedApp = await this.connectedAppDefinitionService.findByKey(dto.connectedAppKey);
-        authType = connectedApp.authType;
-      } catch {
-        // If connected app not found, default to oauth2 for backward compatibility
-        authType = 'oauth2';
-      }
-    }
-
     const connector = await this.connectorModel.create({
       slug: dto.slug,
       name: dto.name,
       description: dto.description,
       icon: dto.icon ?? '',
       color: dto.color ?? '',
-      authType,
+      authType: dto.authType ?? 'none',
       authConfigSchema: dto.authConfigSchema ?? {},
       authSourceType: dto.authSourceType ?? 'credential',
       connectedAppKey: dto.connectedAppKey ?? '',
@@ -176,22 +162,6 @@ export class ConnectorService {
     if (dto.mcpServerConfig) {
       (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
     }
-
-    // Update auth type if connected app changes
-    if (dto.authSourceType === 'connected_app' && dto.connectedAppKey && dto.connectedAppKey !== existing.connectedAppKey) {
-      try {
-        const connectedApp = await this.connectedAppDefinitionService.findByKey(dto.connectedAppKey);
-        (updateData as Record<string, unknown>).authType = connectedApp.authType;
-      } catch {
-        (updateData as Record<string, unknown>).authType = 'oauth2';
-      }
-    } else if (dto.authSourceType === 'connected_app' && dto.connectedAppKey === existing.connectedAppKey) {
-      // Keep existing auth type if same connected app
-    } else if (dto.authSourceType && dto.authSourceType !== 'connected_app') {
-      // Reset auth type for non-connected app sources
-      (updateData as Record<string, unknown>).authType = dto.authSourceType === 'credential' ? 'token' : 'none';
-    }
-
     if (dto.dynamicHeaders) {
       (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
     }

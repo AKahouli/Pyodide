@@ -52,3 +52,4 @@ tmp_pymongo
 .understand-anything/intermediate/
 .understand-anything/diff-overlay.json
 .history
+.claude/settings.local.json
