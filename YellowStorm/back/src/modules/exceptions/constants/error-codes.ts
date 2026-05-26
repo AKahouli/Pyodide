@@ -237,6 +237,17 @@ export enum ErrorCode {
   CONNECTOR_ALREADY_EXISTS = 'ERR_3101',
   CONNECTOR_CREDENTIAL_NOT_FOUND = 'ERR_3110',
 
+  // Telegram integration errors (3200-3299)
+  TELEGRAM_INTEGRATION_NOT_FOUND = 'ERR_3200',
+  TELEGRAM_TOKEN_INVALID = 'ERR_3201',
+  TELEGRAM_WEBHOOK_UNAUTHORIZED = 'ERR_3202',
+  TELEGRAM_LINK_CODE_INVALID = 'ERR_3203',
+  TELEGRAM_CHAT_NOT_LINKED = 'ERR_3204',
+  TELEGRAM_SEND_FAILED = 'ERR_3205',
+  TELEGRAM_INTEGRATION_DISABLED = 'ERR_3206',
+  TELEGRAM_USER_INACTIVE = 'ERR_3207',
+  TELEGRAM_DUPLICATE_UPDATE = 'ERR_3208',
+
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
   CONNECTED_APP_ALREADY_EXISTS = 'ERR_3001',
@@ -462,4 +473,13 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
   [ErrorCode.CONNECTOR_CREDENTIAL_NOT_FOUND]: 'Connector credential not found.',
+  [ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND]: 'Telegram integration not found for this agent.',
+  [ErrorCode.TELEGRAM_TOKEN_INVALID]: 'Telegram bot token is invalid.',
+  [ErrorCode.TELEGRAM_WEBHOOK_UNAUTHORIZED]: 'Telegram webhook secret validation failed.',
+  [ErrorCode.TELEGRAM_LINK_CODE_INVALID]: 'Telegram link code is invalid or expired.',
+  [ErrorCode.TELEGRAM_CHAT_NOT_LINKED]: 'Telegram chat is not linked to a platform user.',
+  [ErrorCode.TELEGRAM_SEND_FAILED]: 'Failed to send message to Telegram.',
+  [ErrorCode.TELEGRAM_INTEGRATION_DISABLED]: 'Telegram integration is disabled for this agent.',
+  [ErrorCode.TELEGRAM_USER_INACTIVE]: 'The linked platform user is inactive.',
+  [ErrorCode.TELEGRAM_DUPLICATE_UPDATE]: 'Telegram update already processed.',
 };
