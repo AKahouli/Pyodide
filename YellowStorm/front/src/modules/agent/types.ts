@@ -26,6 +26,29 @@ export interface Agent {
   updatedAt: string;
 }
 
+/**
+ * Read-side representation of a Telegram integration for an agent.
+ * The bot token is never returned by the backend; `hasToken` only signals
+ * whether a token is already stored so the UI can preserve it.
+ */
+export interface AgentTelegramIntegration {
+  enabled: boolean;
+  hasToken: boolean;
+  botUsername?: string;
+  status?: 'pending' | 'active' | 'error';
+  webhookRegistered?: boolean;
+  messageKey?: 'webhook_success' | 'webhook_failed' | 'disabled' | 'saved';
+  errorMessage?: string;
+  linkCode?: string;
+  linkCodeExpiresAt?: string;
+  updatedAt?: string;
+}
+
+export interface AgentTelegramIntegrationInput {
+  enabled: boolean;
+  botToken?: string;
+}
+
 export interface AgentType {
   id: string;
   name: string;

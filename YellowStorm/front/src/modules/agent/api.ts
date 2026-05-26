@@ -4,7 +4,15 @@
 
 import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
-import type { Agent, AgentType, CreateAgentData, UpdateAgentData, SkillOption } from './types';
+import type {
+  Agent,
+  AgentType,
+  AgentTelegramIntegration,
+  AgentTelegramIntegrationInput,
+  CreateAgentData,
+  UpdateAgentData,
+  SkillOption,
+} from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
   const response = await apiClient.get<ApiResponse<Agent[]>>(
@@ -74,6 +82,30 @@ export async function getActiveConnectors(): Promise<ConnectorOption[]> {
     API_ENDPOINTS.connectors.list
   );
   return response.data.data;
+}
+
+export async function getAgentTelegramIntegration(
+  agentId: string,
+): Promise<AgentTelegramIntegration | null> {
+  const response = await apiClient.get<ApiResponse<AgentTelegramIntegration | null>>(
+    API_ENDPOINTS.agents.telegramIntegration(agentId),
+  );
+  return response.data.data;
+}
+
+export async function upsertAgentTelegramIntegration(
+  agentId: string,
+  payload: AgentTelegramIntegrationInput,
+): Promise<AgentTelegramIntegration> {
+  const response = await apiClient.put<ApiResponse<AgentTelegramIntegration>>(
+    API_ENDPOINTS.agents.telegramIntegration(agentId),
+    payload,
+  );
+  return response.data.data;
+}
+
+export async function deleteAgentTelegramIntegration(agentId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.telegramIntegration(agentId));
 }
 
 
