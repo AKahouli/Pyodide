@@ -83,6 +83,7 @@ def build_step_prompt(
             json.dumps(response_schema, indent=2, default=str),
             "`display_text` is the final human-readable answer.",
             "Each item in `outputs` must target one declared output port.",
+            "Do not put reasoning steps inside `outputs`; reasoning steps belong only in top-level `reasoning_trace`.",
             "For document outputs, use `filename` and `filepath` (not `content`).",
             "For text/code outputs, use `content` for the string payload.",
             "For data outputs, use `content` for the structured JSON payload.",
@@ -93,7 +94,7 @@ def build_step_prompt(
         lines.extend([
         "",
         "Reasoning Trace:",
-        "After your final answer, **MUST ALWAYS append** a reasoning trace block on a new line using this exact format,  it should respect strictly the following JSON format :",       
+        "After your final answer, **MUST ALWAYS append** a separate reasoning trace JSON block on a new line using this exact format:",
         "Example:",
         "---PUBLIC_REASONING_TRACE_JSON---",
         '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',

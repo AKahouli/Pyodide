@@ -36,6 +36,7 @@ import {
   IFlowTaskResultResponse,
   IFlowRouterDecisionResponse,
   IResumeApprovalPayload,
+  IResumeFromStepPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
@@ -2125,6 +2126,104 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       throw new ConflictException(
         ErrorCode.CONFLICT,
         'Execution could not be resumed because the runtime no longer has the pending approval state.',
+      );
+    }
+
+    const resumeUpdate = await this.executionModel.updateOne(
+      { _id: executionId, status: 'pending_approval' },
+      {
+        status: 'running',
+        pendingApproval: null,
+      },
+    ).exec();
+
+    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
+      const latestExecution = await this.executionModel.findById(executionId);
+      if (!latestExecution) {
+        throw new NotFoundException(
+          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+          'Execution not found',
+        );
+      }
+      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    }
+
+    execution.pendingApproval = null;
+    execution.status = 'running';
+    return execution.toJSON() as unknown as IFlowExecutionResponse;
+  }
+
+  async resumeFromStep(
+    executionId: string,
+    ownerId: string,
+    payload: IResumeFromStepPayload,
+  ): Promise<IFlowExecutionResponse> {
+    const execution = await this.executionModel.findById(executionId);
+    if (!execution) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
+    }
+    if (String(execution.ownerId) !== String(ownerId)) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
+    }
+    if (execution.status !== 'pending_approval' || !execution.pendingApproval) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND,
+        'No pending approval for this execution',
+      );
+    }
+    if (execution.pendingApproval.nodeId !== payload.taskId) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Execution is waiting on a different step interrupt.',
+      );
+    }
+
+    if (!this.isGrpcAvailable) {
+      throw new ServiceUnavailableException(
+        ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
+        'Flow runtime is currently unavailable',
+      );
+    }
+
+    const resumePayload = {
+      ...(payload.payload || {}),
+      ...(payload.action ? { action: payload.action } : {}),
+      ...(payload.message ? { message: payload.message } : {}),
+      ...(payload.approved !== undefined ? { approved: payload.approved } : {}),
+      ...(payload.reason ? { reason: payload.reason } : {}),
+      ...(payload.feedback ? { feedback: payload.feedback } : {}),
+    };
+
+    const resumed = await new Promise<boolean>((resolve, reject) => {
+      this.playbookFlowClient.ResumeFromStep(
+        {
+          execution_id: executionId,
+          node_id: payload.taskId,
+          iteration: payload.iteration ?? execution.pendingApproval?.iteration ?? 0,
+          interrupt_id: payload.interruptId || '',
+          action: payload.action || '',
+          payload: toGrpcStruct(resumePayload),
+        },
+        (err: Error | null, response?: { resumed?: boolean }) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(Boolean(response?.resumed));
+        },
+      );
+    });
+
+    if (!resumed) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Execution could not be resumed because the runtime no longer has the pending step interrupt state.',
       );
     }
 

@@ -135,6 +135,7 @@ class TestStepPrompt:
         assert '"output_port_id": "summary"' in prompt
         assert '"output_port_id": "report"' in prompt
         assert "reasoning_trace" in prompt
+        assert "Do not put reasoning steps inside `outputs`" in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" not in prompt
 
 
@@ -191,6 +192,91 @@ class TestStepResultReasoningTrace:
             response,
         )
         assert "reasoning_trace" not in result
+
+    def test_structured_response_accepts_outputs_dict(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": {
+                "summary": {"artifactKind": "text", "content": "done"},
+                "report": {"artifactKind": "document", "content": {"url": "https://example.com/f.pdf"}},
+            },
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert result["display_text"] == "Summary"
+        assert result["outputs"]["summary"]["content"] == "done"
+        assert result["outputs"]["report"]["ref"] == "https://example.com/f.pdf"
+
+    def test_structured_response_recovers_reasoning_trace_misplaced_in_outputs(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "lead_list", "artifact_kind": "data", "content": {"items": ["done"]}},
+                {
+                    "id": "step_1",
+                    "type": "observation",
+                    "label": "Read",
+                    "description": "Read the brief.",
+                    "confidence": 0.9,
+                },
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "lead_list", "type": "data"}]},
+            response,
+        )
+        assert result["outputs"]["lead_list"]["content"] == {"items": ["done"]}
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Read",
+                "description": "Read the brief.",
+                "confidence": 0.9,
+            }
+        ]
+
+    def test_structured_response_merges_top_level_and_recovered_reasoning_trace(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "lead_list", "artifact_kind": "data", "content": {"items": ["done"]}},
+                {
+                    "id": "step_2",
+                    "type": "observation",
+                    "label": "Recovered",
+                    "description": "Recovered from outputs.",
+                },
+            ],
+            "reasoning_trace": [
+                {
+                    "id": "step_1",
+                    "type": "observation",
+                    "label": "Explicit",
+                    "description": "Already present.",
+                }
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "lead_list", "type": "data"}]},
+            response,
+        )
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Explicit",
+                "description": "Already present.",
+            },
+            {
+                "id": "step_2",
+                "type": "observation",
+                "label": "Recovered",
+                "description": "Recovered from outputs.",
+            },
+        ]
 
 
 class _CalculatorArgs(BaseModel):

@@ -536,6 +536,65 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     expect(execDoc.save).not.toHaveBeenCalled();
   });
 
+  it('resumeFromStep clears pendingApproval only after gRPC ResumeFromStep succeeds', async () => {
+    const execDoc = {
+      id: 'exec-step-1',
+      _id: 'exec-step-1',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: { nodeId: 'task-1', iteration: 2, prompt: 'Approve?' },
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-1', status: 'running' }),
+    };
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+    };
+    const mockResumeFromStep = jest.fn((_req, cb) => cb(null, { resumed: true }));
+
+    const ctx = await createE2EService(undefined, { executionModel });
+    (ctx.service as any).playbookFlowClient.ResumeFromStep = mockResumeFromStep;
+
+    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', { taskId: 'task-1', action: 'approve' });
+
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-step-1', status: 'pending_approval' },
+      { status: 'running', pendingApproval: null },
+    );
+    expect(mockResumeFromStep).toHaveBeenCalled();
+    const grpcArgs = mockResumeFromStep.mock.calls[0];
+    expect(grpcArgs[0]).toMatchObject({
+      execution_id: 'exec-step-1',
+      node_id: 'task-1',
+      iteration: 2,
+      interrupt_id: '',
+      action: 'approve',
+    });
+    expect(result.status).toBe('running');
+  });
+
+  it('resumeFromStep rejects when the pending step does not match', async () => {
+    const execDoc = {
+      id: 'exec-step-2',
+      _id: 'exec-step-2',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: { nodeId: 'task-1', iteration: 0, prompt: 'Approve?' },
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-2', status: 'pending_approval' }),
+    };
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+    };
+
+    const ctx = await createE2EService(undefined, { executionModel });
+
+    await expect(
+      ctx.service.resumeFromStep('exec-step-2', 'owner-1', { taskId: 'task-2', action: 'approve' }),
+    ).rejects.toThrow('different step interrupt');
+  });
+
   it('throws if resuming an execution that is not pending_approval', async () => {
     const execDoc = {
       id: 'exec-nope',

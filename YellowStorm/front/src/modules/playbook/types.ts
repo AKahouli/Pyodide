@@ -1771,6 +1771,14 @@ export interface RerunStepData {
 export interface ResumeFromStepData {
   taskId: string;
   streaming?: boolean;
+  action?: 'reply' | 'approve' | 'reject' | 'skip';
+  interruptId?: string;
+  iteration?: number;
+  message?: string;
+  approved?: boolean;
+  reason?: string;
+  feedback?: string;
+  payload?: Record<string, unknown>;
 }
 
 export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat';
@@ -1923,7 +1931,22 @@ export interface PlaybookActions {
     advisorAutopilotMaxTurns?: number,
     skipStepExecution?: boolean,
   ) => Promise<void>;
-  resumeFromStep: (playbookId: string, executionId: string, taskId: string, streaming?: boolean) => Promise<void>;
+  resumeFromStep: (
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    options?: {
+      streaming?: boolean;
+      action?: 'reply' | 'approve' | 'reject' | 'skip';
+      interruptId?: string;
+      iteration?: number;
+      message?: string;
+      approved?: boolean;
+      reason?: string;
+      feedback?: string;
+      payload?: Record<string, unknown>;
+    },
+  ) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
   stopExecution: (playbookId: string, executionId: string) => Promise<void>;
   deleteExecution: (playbookId: string, executionId: string) => Promise<void>;

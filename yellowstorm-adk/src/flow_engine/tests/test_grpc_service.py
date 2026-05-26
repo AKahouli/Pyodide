@@ -205,7 +205,11 @@ def test_run_uses_request_settings(monkeypatch):
 
         captured: dict[str, object] = {}
 
+        async def fake_ensure_checkpointer():
+            return object()
+
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
 
         async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
@@ -245,7 +249,11 @@ def test_run_does_not_emit_duplicate_completion(monkeypatch):
         servicer = PlaybookFlowRuntimeServicer()
         request = pb.RunRequest(execution_id="exec-dup", flow_id="flow-dup")
 
+        async def fake_ensure_checkpointer():
+            return object()
+
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
 
         async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
@@ -290,7 +298,11 @@ def test_run_seeds_task_outputs_from_request(monkeypatch):
 
         captured: dict[str, object] = {}
 
+        async def fake_ensure_checkpointer():
+            return object()
+
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
 
         async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
@@ -332,7 +344,11 @@ def test_resume_approval_unblocks_run(monkeypatch):
         servicer = PlaybookFlowRuntimeServicer()
         request = pb.RunRequest(execution_id="exec-2", flow_id="flow-2")
 
+        async def fake_ensure_checkpointer():
+            return object()
+
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
 
         phase = {"value": 0}
@@ -399,3 +415,127 @@ def test_resume_approval_rejects_duplicate_resume():
 
     assert first is True
     assert second is False
+
+
+def test_resume_from_step_unblocks_run(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime.events import _build_event
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunRequest(execution_id="exec-step", flow_id="flow-step")
+
+        async def fake_ensure_checkpointer():
+            return object()
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
+
+        phase = {"value": 0}
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            yield {"phase": phase["value"], "graph_input": graph_input}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            if phase["value"] == 0:
+                phase["value"] = 1
+                yield _build_event(
+                    "NodeSuspended",
+                    execution_id,
+                    "step-1",
+                    {"interrupt_id": "step-1:approval_request:1", "message": "Approve step", "resumable_actions": ["approve", "reject", "skip"]},
+                    0,
+                )
+            else:
+                yield _build_event(
+                    "NodeSuspended",
+                    execution_id,
+                    "step-1",
+                    {"interrupt_id": "step-1:approval_request:1", "message": "Approve step", "resumable_actions": ["approve", "reject", "skip"]},
+                    0,
+                )
+                yield _build_event("NodeStarted", execution_id, "step-2", {"label": "Continue"}, 0)
+                yield _build_event("NodeCompleted", execution_id, "step-2", {"output": "done"}, 0)
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+
+        collected = []
+        suspended_seen = asyncio.Event()
+
+        async def consume_run():
+            async for event in servicer.Run(request, None):
+                collected.append(event.event_type)
+                if event.event_type == "NodeSuspended":
+                    suspended_seen.set()
+
+        run_task = asyncio.create_task(consume_run())
+        await suspended_seen.wait()
+
+        response = await servicer.ResumeFromStep(
+            pb.ResumeFromStepRequest(
+                execution_id="exec-step",
+                node_id="step-1",
+                iteration=0,
+                interrupt_id="step-1:approval_request:1",
+                action="approve",
+            ),
+            None,
+        )
+        await run_task
+
+        assert response.resumed is True
+        assert collected == [
+            "NodeSuspended",
+            "NodeSuspended",
+            "NodeStarted",
+            "NodeCompleted",
+            "ExecutionCompleted",
+        ]
+
+    asyncio.run(_run_test())
+
+
+def test_resume_from_step_rejects_wrong_interrupt():
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    from langgraph.types import Command
+    from src.flow_engine.grpc_service import _ActiveExecution
+
+    active = _ActiveExecution(graph=object(), config={})
+    active.waiting_for_step_resume = True
+    active.pending_interrupt = {
+        "node_id": "step-1",
+        "iteration": 0,
+        "interrupt_id": "interrupt-1",
+    }
+
+    accepted = active.set_step_resume_input(
+        Command(resume={"action": "approve"}),
+        node_id="step-1",
+        iteration=0,
+        interrupt_id="interrupt-2",
+    )
+
+    assert accepted is False
+
+
+def test_step_resume_survives_unrelated_events():
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    from src.flow_engine.grpc_service import _ActiveExecution
+
+    active = _ActiveExecution(graph=object(), config={})
+    active.waiting_for_step_resume = True
+    active.pending_interrupt = {
+        "node_id": "step-1",
+        "iteration": 0,
+        "interrupt_id": "interrupt-1",
+    }
+
+    assert active.should_clear_step_resume("step-2", 0) is False
+    assert active.should_clear_step_resume("step-1", 1) is False
+    assert active.should_clear_step_resume("step-1", 0) is True

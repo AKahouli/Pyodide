@@ -430,6 +430,7 @@ function PlaybookCanvasInner() {
   const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
+  const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
@@ -1583,9 +1584,36 @@ function PlaybookCanvasInner() {
   );
 
   const canResumeFromStep = useCallback(
-    (_nodeId: string) => false,
-    [],
+    (nodeId: string) => {
+      if (!currentExecution || currentExecution.playbookId !== id || !currentExecution.waitingForHumanInput) {
+        return false;
+      }
+      if (currentExecution.currentInterruptTaskId !== nodeId) {
+        return false;
+      }
+      const interrupt = currentExecution.interruptPayload;
+      if (!interrupt || interrupt.taskId !== nodeId) {
+        return false;
+      }
+      const resumableActions = interrupt.resumableActions || [];
+      return resumableActions.includes('approve') || (resumableActions.length === 0 && interrupt.type === 'approval_request');
+    },
+    [currentExecution, id],
   );
+
+  const handleResumeFromStep = useCallback((nodeId: string) => {
+    if (!currentExecution || currentExecution.playbookId !== id) {
+      return;
+    }
+    const interruptedTask = currentExecution.taskResults.find(
+      (taskResult) => taskResult.taskId === nodeId && taskResult.status === 'interrupted',
+    );
+    void resumeFromStep(id, currentExecution.id, nodeId, {
+      action: 'approve',
+      interruptId: currentExecution.interruptPayload?.interruptId || undefined,
+      iteration: interruptedTask?.iteration,
+    });
+  }, [currentExecution, id, resumeFromStep]);
 
   const activeExecutionForEditor = (currentExecution?.playbookId === id ? currentExecution : null) || execution || null;
   const lastSnapshotRef = useRef<{ key: string; task: PlaybookTask | null }>({ key: '', task: null });
@@ -1652,7 +1680,7 @@ function PlaybookCanvasInner() {
       onDelete: removeNode,
       onToggleEnabled: handleToggleEnabled,
       onExecuteStep: handleExecuteStep,
-      onResumeFromStep: () => undefined,
+      onResumeFromStep: handleResumeFromStep,
       onSkipStep: () => undefined,
       onSaveBaseline: handleSaveBaseline,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
@@ -1672,6 +1700,7 @@ function PlaybookCanvasInner() {
       removeNode,
       handleToggleEnabled,
       handleExecuteStep,
+      handleResumeFromStep,
       handleSaveBaseline,
       hasActiveExecution,
       isSaving,

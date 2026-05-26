@@ -1,9 +1,10 @@
 """PlaybookFlowRuntime gRPC servicer implementation.
 
-Implements the three RPCs from playbook-flow.proto:
+Implements the runtime RPCs from playbook-flow.proto:
   - Run (server-streaming) — accepts a RunRequest, emits RunEvents
   - Cancel (unary)
   - ResumeApproval (unary)
+  - ResumeFromStep (unary)
 """
 
 from __future__ import annotations
@@ -22,12 +23,13 @@ from src.flow_engine.grpc_contract import (
     snapshot_to_dict,
     struct_to_dict,
 )
-from src.flow_engine.runtime.checkpointer import get_checkpointer
+from src.flow_engine.runtime.checkpointer import ensure_checkpointer, get_checkpointer
 from src.flow_engine.runtime.events import (
     EVENT_APPROVAL_REQUESTED,
     EVENT_APPROVAL_RESOLVED,
     EVENT_EXECUTION_COMPLETED,
     EVENT_EXECUTION_FAILED,
+    EVENT_NODE_SUSPENDED,
     _build_event,
     emit_events,
 )
@@ -84,6 +86,8 @@ class PlaybookFlowRuntimeServicer:
 
         try:
             checkpointer = get_checkpointer()
+            if checkpointer is None:
+                checkpointer = await ensure_checkpointer()
             graph = compose(snapshot, checkpointer)
 
             recursion_limit = _pick_positive_setting(
@@ -133,8 +137,19 @@ class PlaybookFlowRuntimeServicer:
                             saw_terminal_event = True
                         if event.event_type == EVENT_APPROVAL_REQUESTED:
                             active.waiting_for_approval = True
+                            active.pending_interrupt = None
+                        elif event.event_type == EVENT_NODE_SUSPENDED:
+                            active.waiting_for_step_resume = True
+                            active.pending_interrupt = {
+                                "node_id": event.node_id,
+                                "iteration": event.iteration,
+                                "interrupt_id": struct_to_dict(event.payload).get("interrupt_id", ""),
+                            }
                         elif event.event_type == EVENT_APPROVAL_RESOLVED:
                             active.waiting_for_approval = False
+                        elif active.should_clear_step_resume(event.node_id, event.iteration):
+                            active.waiting_for_step_resume = False
+                            active.pending_interrupt = None
                         yield event
                 except asyncio.CancelledError:
                     logger.info("[grpc] Run cancelled", execution_id=execution_id)
@@ -145,7 +160,7 @@ class PlaybookFlowRuntimeServicer:
                 if active.cancelled:
                     return
 
-                if active.waiting_for_approval or active.pending_resume_input is not None:
+                if active.waiting_for_approval or active.waiting_for_step_resume or active.pending_resume_input is not None:
                     graph_input = await active.next_resume_input()
                     continue
 
@@ -188,6 +203,41 @@ class PlaybookFlowRuntimeServicer:
             return {"resumed": resumed}
         return pb.ResumeApprovalResponse(resumed=resumed)
 
+    async def ResumeFromStep(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
+        execution_id = request.execution_id
+        node_id = request.node_id
+        iteration = int(request.iteration or 0)
+        interrupt_id = request.interrupt_id
+        payload = struct_to_dict(request.payload)
+
+        logger.info(
+            "[grpc] ResumeFromStep request received",
+            execution_id=execution_id,
+            node_id=node_id,
+            iteration=iteration,
+            interrupt_id=interrupt_id,
+        )
+        active = self._active_executions.get(execution_id)
+        if active is None:
+            if pb is None:
+                return {"resumed": False}
+            return pb.ResumeFromStepResponse(resumed=False)
+
+        resume_payload = dict(payload)
+        action = str(getattr(request, "action", "") or "").strip()
+        if action and "action" not in resume_payload:
+            resume_payload["action"] = action
+
+        resumed = active.set_step_resume_input(
+            Command(resume=resume_payload),
+            node_id=node_id,
+            iteration=iteration,
+            interrupt_id=interrupt_id,
+        )
+        if pb is None:
+            return {"resumed": resumed}
+        return pb.ResumeFromStepResponse(resumed=resumed)
+
 
 def _pick_positive_setting(primary: Any, secondary: Any, default: int) -> int:
     for value in (primary, secondary):
@@ -205,11 +255,21 @@ class _ActiveExecution:
     graph: Any
     config: dict[str, Any]
     waiting_for_approval: bool = False
+    waiting_for_step_resume: bool = False
     cancelled: bool = False
     terminal: bool = False
     current_task: Optional[asyncio.Task[Any]] = None
     resume_future: Optional[asyncio.Future[Any]] = None
     pending_resume_input: Any = None
+    pending_interrupt: Optional[dict[str, Any]] = None
+
+    def should_clear_step_resume(self, node_id: str, iteration: int) -> bool:
+        if not self.waiting_for_step_resume or not isinstance(self.pending_interrupt, dict):
+            return False
+
+        expected_node_id = str(self.pending_interrupt.get("node_id") or "")
+        expected_iteration = int(self.pending_interrupt.get("iteration") or 0)
+        return expected_node_id == node_id and expected_iteration == iteration
 
     def cancel(self) -> bool:
         if self.cancelled or self.terminal:
@@ -233,6 +293,38 @@ class _ActiveExecution:
         else:
             self.pending_resume_input = graph_input
         self.waiting_for_approval = False
+        return True
+
+    def set_step_resume_input(
+        self,
+        graph_input: Any,
+        *,
+        node_id: str,
+        iteration: int,
+        interrupt_id: str,
+    ) -> bool:
+        if not self.waiting_for_step_resume or self.cancelled:
+            return False
+        if self.pending_resume_input is not None:
+            return False
+        if not isinstance(self.pending_interrupt, dict):
+            return False
+
+        expected_node_id = str(self.pending_interrupt.get("node_id") or "")
+        expected_iteration = int(self.pending_interrupt.get("iteration") or 0)
+        expected_interrupt_id = str(self.pending_interrupt.get("interrupt_id") or "")
+
+        if expected_node_id != node_id or expected_iteration != iteration:
+            return False
+        if interrupt_id and expected_interrupt_id and expected_interrupt_id != interrupt_id:
+            return False
+
+        if self.resume_future is not None and not self.resume_future.done():
+            self.resume_future.set_result(graph_input)
+        else:
+            self.pending_resume_input = graph_input
+        self.waiting_for_step_resume = False
+        self.pending_interrupt = None
         return True
 
     async def next_resume_input(self) -> Any:

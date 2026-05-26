@@ -675,8 +675,39 @@ def test_parse_structured_final_response_requires_display_text() -> None:
 
 
 def test_parse_structured_final_response_requires_outputs_list() -> None:
-    with pytest.raises(ValueError, match="outputs list"):
+    with pytest.raises(ValueError, match="display_text and outputs"):
         _parse_structured_final_response('{"display_text": "Hello"}')
+
+
+def test_parse_structured_final_response_accepts_outputs_dict() -> None:
+    parsed = _parse_structured_final_response(
+        '{"displayText": "Hello", "outputs": {"summary": {"artifactKind": "text", "content": "world"}}}'
+    )
+
+    assert parsed == {
+        "display_text": "Hello",
+        "outputs": [{"output_port_id": "summary", "artifactKind": "text", "content": "world"}],
+    }
+
+
+def test_parse_structured_final_response_recovers_reasoning_trace_from_outputs() -> None:
+    parsed = _parse_structured_final_response(
+        '{"display_text":"Hello","outputs":[{"output_port_id":"summary","artifact_kind":"text","content":"world"},{"id":"step_1","type":"observation","label":"Read","description":"Read the brief.","confidence":0.9}]}'
+    )
+
+    assert parsed == {
+        "display_text": "Hello",
+        "outputs": [{"output_port_id": "summary", "artifact_kind": "text", "content": "world"}],
+        "reasoning_trace": [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Read",
+                "description": "Read the brief.",
+                "confidence": 0.9,
+            }
+        ],
+    }
 
 
 def test_build_plain_text_artifact_maps_single_text_port() -> None:
