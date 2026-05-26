@@ -2060,6 +2060,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
         const message = data.message || data.feedback || data.reason || '';
         const interruptId = data.interruptId || undefined;
+        const currentExecution = get().currentExecution;
+        const interruptedTask = currentExecution?.taskResults.find(
+          (taskResult) => taskResult.taskId === data.taskId && taskResult.status === 'interrupted',
+        ) || null;
         // Optimistically mark the humanFeedback component as answered
         set((state) => {
           if (!state.currentExecution) return state;
@@ -2124,18 +2128,31 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.resumeFlowApproval(
-            data.executionId,
-            action,
-            {
+          if (interruptedTask) {
+            await api.resumePlaybookFromStep(id, data.executionId, {
               taskId: data.taskId,
+              action,
               interruptId,
+              iteration: interruptedTask.iteration,
               message: data.message,
               approved: data.approved,
               reason: data.reason,
               feedback: data.feedback,
-            },
-          );
+            });
+          } else {
+            await api.resumeFlowApproval(
+              data.executionId,
+              action,
+              {
+                taskId: data.taskId,
+                interruptId,
+                message: data.message,
+                approved: data.approved,
+                reason: data.reason,
+                feedback: data.feedback,
+              },
+            );
+          }
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -2161,11 +2178,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
+      resumeFromStep: async (playbookId, executionId, taskId, options = {}) => {
         try {
           await api.resumePlaybookFromStep(playbookId, executionId, {
             taskId,
-            streaming,
+            streaming: options.streaming ?? false,
+            action: options.action,
+            interruptId: options.interruptId,
+            iteration: options.iteration,
+            message: options.message,
+            approved: options.approved,
+            reason: options.reason,
+            feedback: options.feedback,
+            payload: options.payload,
           });
         } catch (err) {
           handleApiError(err);

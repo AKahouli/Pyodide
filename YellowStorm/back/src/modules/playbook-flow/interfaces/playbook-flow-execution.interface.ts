@@ -95,3 +95,16 @@ export interface IResumeApprovalPayload {
   decision: string;
   payload?: Record<string, unknown>;
 }
+
+export interface IResumeFromStepPayload {
+  taskId: string;
+  action?: string;
+  interruptId?: string;
+  iteration?: number;
+  streaming?: boolean;
+  message?: string;
+  approved?: boolean;
+  reason?: string;
+  feedback?: string;
+  payload?: Record<string, unknown>;
+}

@@ -1004,6 +1004,53 @@ describe('playbook store', () => {
     expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
   });
 
+  it('routes interrupted step resumes through resume-from-step', async () => {
+    const execution = makeExecution({
+      id: 'e2',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-2',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'review_request',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Review output',
+        threadId: 'th-2',
+        interruptId: 'interrupt-2',
+      },
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'interrupted',
+        iteration: 3,
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-2' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e2: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e2',
+      taskId: 'task-1',
+      interruptId: 'interrupt-2',
+      action: 'approve',
+      approved: true,
+    });
+
+    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e2', {
+      taskId: 'task-1',
+      action: 'approve',
+      interruptId: 'interrupt-2',
+      iteration: 3,
+      message: undefined,
+      approved: true,
+      reason: undefined,
+      feedback: undefined,
+    });
+    expect(apiMock.resumeFlowApproval).not.toHaveBeenCalled();
+  });
+
   it('stopExecution uses flow cancellation route', async () => {
     apiMock.cancelFlowExecution.mockResolvedValueOnce(undefined);
 

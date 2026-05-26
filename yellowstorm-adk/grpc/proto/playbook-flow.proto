@@ -9,6 +9,7 @@ service PlaybookFlowRuntime {
   rpc Run(RunRequest) returns (stream RunEvent);
   rpc Cancel(CancelRequest) returns (CancelResponse);
   rpc ResumeApproval(ResumeApprovalRequest) returns (ResumeApprovalResponse);
+  rpc ResumeFromStep(ResumeFromStepRequest) returns (ResumeFromStepResponse);
 }
 
 message RunRequest {
@@ -158,5 +159,18 @@ message ResumeApprovalRequest {
 }
 
 message ResumeApprovalResponse {
+  bool resumed = 1;
+}
+
+message ResumeFromStepRequest {
+  string execution_id = 1;
+  string node_id = 2;
+  int32 iteration = 3;
+  string interrupt_id = 4;
+  string action = 5;
+  google.protobuf.Struct payload = 6;
+}
+
+message ResumeFromStepResponse {
   bool resumed = 1;
 }

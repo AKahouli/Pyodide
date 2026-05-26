@@ -201,15 +201,42 @@ export class PlaybookFlowExecutionController {
   }
 
   @Post('playbooks/:flowId/executions/:executionId/resume-from-step')
-  @ApiOperation({ summary: 'Resume execution from a step (not yet implemented)' })
+  @ApiOperation({ summary: 'Resume execution from a step' })
   @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async compatResumeFromStep(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
     @Param('executionId') executionId: string,
-    @Body() body: { taskId: string; streaming?: boolean },
+    @Body() body: {
+      taskId: string;
+      streaming?: boolean;
+      action?: string;
+      interruptId?: string;
+      iteration?: number;
+      message?: string;
+      approved?: boolean;
+      reason?: string;
+      feedback?: string;
+      payload?: Record<string, unknown>;
+    },
   ) {
-    throw new HttpException('Resume-from-step is not available in this version', HttpStatus.NOT_IMPLEMENTED);
+    const execution = await this.ensureExecutionBelongsToFlow(executionId, flowId, userId);
+    const resumed = await this.executionService.resumeFromStep(executionId, userId, {
+      taskId: body.taskId,
+      streaming: body.streaming,
+      action: body.action,
+      interruptId: body.interruptId,
+      iteration: body.iteration,
+      message: body.message,
+      approved: body.approved,
+      reason: body.reason,
+      feedback: body.feedback,
+      payload: body.payload,
+    });
+    return {
+      status: resumed.status,
+      executionId: (resumed as any).id ?? execution.id,
+    };
   }
 
   @Get('playbooks/:flowId/executions/:executionId')

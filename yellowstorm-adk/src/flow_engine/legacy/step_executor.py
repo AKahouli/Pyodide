@@ -350,16 +350,79 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 def _parse_structured_final_response(response_text: str) -> Dict[str, Any]:
     candidates = _extract_json_objects(response_text)
     for payload in reversed(candidates):
-        display_text = str(payload.get("display_text") or "").strip()
-        outputs = payload.get("outputs")
-        if display_text and isinstance(outputs, list):
-            return {
+        display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
+        outputs, recovered_trace = _normalize_structured_outputs(payload.get("outputs"))
+        if display_text and outputs is not None:
+            result = {
                 "display_text": display_text,
-                "outputs": [item for item in outputs if isinstance(item, dict)],
+                "outputs": outputs,
             }
+            raw_trace = payload.get("reasoning_trace") or payload.get("reasoningTrace")
+            reasoning_trace = [item for item in raw_trace if isinstance(item, dict)] if isinstance(raw_trace, list) else []
+            reasoning_trace.extend(recovered_trace)
+            if reasoning_trace:
+                result["reasoning_trace"] = reasoning_trace
+            return result
     if candidates:
-        raise ValueError("Structured final response must include display_text and an outputs list")
+        raise ValueError("Structured final response must include display_text and outputs")
     raise ValueError("Step did not return a JSON object")
+
+
+def _normalize_structured_outputs(outputs: Any) -> tuple[Optional[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    if isinstance(outputs, list):
+        normalized: List[Dict[str, Any]] = []
+        recovered_trace: List[Dict[str, Any]] = []
+        for item in outputs:
+            if not isinstance(item, dict):
+                continue
+            if _is_reasoning_trace_entry(item):
+                recovered_trace.append(dict(item))
+                continue
+            normalized.append(item)
+        return normalized, recovered_trace
+    if isinstance(outputs, dict):
+        normalized: List[Dict[str, Any]] = []
+        recovered_trace: List[Dict[str, Any]] = []
+        for port_id, value in outputs.items():
+            if not isinstance(value, dict):
+                continue
+            if _is_reasoning_trace_entry(value):
+                recovered_trace.append(dict(value))
+                continue
+            entry = dict(value)
+            if not (
+                entry.get("output_port_id")
+                or entry.get("outputPortId")
+                or entry.get("port_id")
+                or entry.get("portId")
+                or entry.get("id")
+            ):
+                entry["output_port_id"] = str(port_id).strip()
+            normalized.append(entry)
+        return normalized, recovered_trace
+    return None, []
+
+
+def _is_reasoning_trace_entry(item: Dict[str, Any]) -> bool:
+    if any(
+        key in item
+        for key in (
+            "output_port_id",
+            "outputPortId",
+            "port_id",
+            "portId",
+            "artifact_kind",
+            "artifactKind",
+            "content",
+            "filename",
+            "filepath",
+            "file_path",
+            "ref",
+            "url",
+        )
+    ):
+        return False
+    return all(str(item.get(key) or "").strip() for key in ("id", "type", "label", "description"))
 
 
 def _build_plain_text_artifact(
