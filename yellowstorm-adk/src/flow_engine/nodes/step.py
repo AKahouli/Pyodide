@@ -181,7 +181,10 @@ async def run_step(
         node_model_id=node_config.get("model_id"),
     )
 
-    writer = get_stream_writer()
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda _: None
     writer({
         "type": "NodeStarted",
         "node_id": node_id,

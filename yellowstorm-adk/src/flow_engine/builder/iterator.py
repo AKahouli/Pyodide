@@ -152,6 +152,8 @@ def _build_body_subgraph(
 
         async def _base(
             state: ExecutionState,
+            config=None,
+            *,
             _node_id: str = child_id,
             _node: dict[str, Any] = child_node,
             _fn: Callable[..., Coroutine[Any, Any, dict[str, Any]]] = fn,
