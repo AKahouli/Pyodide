@@ -55,7 +55,7 @@ def build_step_prompt(
     if output_contract:
         lines.extend([
             "",
-            "Output Contract:",
+            "Below are the Output Contract:",
             json.dumps(output_contract, indent=2, default=str),
         ])
     lines.extend([
@@ -88,7 +88,7 @@ def build_step_prompt(
             "For text/code outputs, use `content` for the string payload.",
             "For data outputs, use `content` for the structured JSON payload.",
             "`reasoning_trace` is an array of objects describing your reasoning steps.",
-            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional), it should respect strictly this JSON format : [{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]'
+            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'
         ])
     else:
         lines.extend([

@@ -1820,6 +1820,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           String(payload.prompt || ''),
           iteration,
           executionId,
+          {
+            interruptType: 'human_approval',
+            resumableActions: ['approve', 'reject'],
+          },
         );
       }
     } else if (eventType === 'ExecutionCompleted') {

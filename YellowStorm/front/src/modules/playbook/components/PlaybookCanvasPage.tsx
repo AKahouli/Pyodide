@@ -1596,7 +1596,8 @@ function PlaybookCanvasInner() {
         return false;
       }
       const resumableActions = interrupt.resumableActions || [];
-      return resumableActions.includes('approve') || (resumableActions.length === 0 && interrupt.type === 'approval_request');
+      const isApprovalLike = interrupt.type === 'approval_request' || interrupt.type === 'human_approval';
+      return resumableActions.includes('approve') || (resumableActions.length === 0 && isApprovalLike);
     },
     [currentExecution, id],
   );

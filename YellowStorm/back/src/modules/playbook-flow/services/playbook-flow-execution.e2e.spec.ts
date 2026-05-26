@@ -438,6 +438,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     );
     expect(ctx.streamEvents.emitInterrupt).toHaveBeenCalledWith(
       'exec-e2e', 'approval-1', 'Approve this?', 0, 'exec-e2e',
+      { interruptType: 'human_approval', resumableActions: ['approve', 'reject'] },
     );
   });
 
