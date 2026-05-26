@@ -312,25 +312,20 @@ async def call_mcp_tool(
             from mcp.client.streamable_http import streamable_http_client
             import httpx
 
-            if merged_headers:
-                http_client = httpx.AsyncClient(headers=merged_headers)
-                async with streamable_http_client(
-                    url=server_url, http_client=http_client
-                ) as streams:
-                    read_stream, write_stream, _ = streams
-                    from mcp import ClientSession
+            _timeout = httpx.Timeout(timeout=120.0)
+            http_client = httpx.AsyncClient(
+                headers=merged_headers or {},
+                timeout=_timeout,
+            )
+            async with streamable_http_client(
+                url=server_url, http_client=http_client
+            ) as streams:
+                read_stream, write_stream, _ = streams
+                from mcp import ClientSession
 
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        result = await session.call_tool(action_key, arguments=params)
-            else:
-                async with streamable_http_client(url=server_url) as streams:
-                    read_stream, write_stream, _ = streams
-                    from mcp import ClientSession
-
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        result = await session.call_tool(action_key, arguments=params)
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    result = await session.call_tool(action_key, arguments=params)
 
         else:
             raise ValueError(

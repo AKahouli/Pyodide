@@ -433,6 +433,9 @@ def create_langchain_tools(
         Tuple of (list of StructuredTools, ToolResultCollector).
     """
     collector = ToolResultCollector(initial_components=initial_components)
+    agent_params = agent_config.get("agent_params") or {}
+    session_id = str(agent_params.get("session_id") or "")
+    user_id = str(agent_params.get("user_id") or "")
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -444,6 +447,8 @@ def create_langchain_tools(
             output_workspace_id=output_workspace_id,
             brain_ids=agent_brain_ids,
             external_ids=input_files,
+            session_id=session_id,
+            user_id=user_id,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -1363,6 +1368,8 @@ def _create_connector_mcp_tools(
     output_workspace_id: str = "",
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
+    session_id: str = "",
+    user_id: str = "",
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1386,6 +1393,12 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        logger.info(
+            "connector_binding_headers connector_id=%s auth_headers=%s server_config_headers=%s",
+            connector_id,
+            binding_auth_headers,
+            (server_config or {}).get("headers", {}),
+        )
         if (
             connector_id
             and output_workspace_id
@@ -1462,6 +1475,8 @@ def _create_connector_mcp_tools(
                 tn: str = tool_name,
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
+                sid: str = session_id,
+                uid: str = user_id,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1491,13 +1506,18 @@ def _create_connector_mcp_tools(
                             tn,
                             _log_payload(merged_params),
                         )
+                        extra_headers: Dict[str, str] = {}
+                        if sid:
+                            extra_headers["x-conversation-id"] = sid
+                        if uid:
+                            extra_headers["x-user-id"] = uid
                         response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
                             ak,
                             merged_params,
-                            auth_headers=ah,
+                            auth_headers={**ah, **extra_headers},
                             auth_env=ae,
                         )
                         logger.info(
@@ -1523,6 +1543,30 @@ def _create_connector_mcp_tools(
                                 else 0,
                                 _log_payload(response),
                             )
+                            if response.get("download_url"):
+                                filename = (response.get("path") or "").rstrip("/").split("/")[-1]
+                                artifact_kind = infer_artifact_kind(filename) or "document"
+                                logger.info(
+                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s download_url=%s",
+                                    cid,
+                                    ak,
+                                    filename,
+                                    artifact_kind,
+                                    response.get("ceph_path", ""),
+                                    response.get("download_url", ""),
+                                )
+                                collector.add_component("artifact", {
+                                    "file_path": response.get("ceph_path", ""),
+                                    "filename": filename,
+                                    "artifact_kind": artifact_kind,
+                                    "output_port_id": "",
+                                })
+                                logger.info(
+                                    "mcp_file_artifact_emitted connector_id=%s filename=%s total_components=%d",
+                                    cid,
+                                    filename,
+                                    len(collector.components),
+                                )
                             response = _collect_connector_response_components(
                                 collector,
                                 response,
