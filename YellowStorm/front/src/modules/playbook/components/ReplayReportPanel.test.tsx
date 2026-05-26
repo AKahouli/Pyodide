@@ -249,6 +249,7 @@ describe('ReplayReportPanel', () => {
                 semanticMatchScore: 80,
                 outputFormatScore: 76,
                 toolSequenceScore: 100,
+                toolDefinitionScore: 92,
                 reasoningScore: 50,
                 summary: 'Summary',
                 missingPoints: [],
@@ -344,6 +345,7 @@ describe('ReplayReportPanel', () => {
               semanticMatchScore: 82,
               outputFormatScore: 82,
               toolSequenceScore: 82,
+              toolDefinitionScore: 82,
               reasoningScore: 82,
               summary: 'Summary',
               missingPoints: [],
@@ -438,6 +440,7 @@ describe('ReplayReportPanel', () => {
               semanticMatchScore: 80,
               outputFormatScore: 80,
               toolSequenceScore: 80,
+              toolDefinitionScore: 80,
               reasoningScore: 80,
               summary: 'Summary',
               missingPoints: [],
@@ -711,6 +714,7 @@ describe('ReplayReportPanel', () => {
             semanticMatchScore: null,
             outputFormatScore: null,
             toolSequenceScore: null,
+            toolDefinitionScore: null,
             reasoningScore: null,
             summary: '',
             missingPoints: [],
@@ -866,7 +870,7 @@ describe('ReplayReportPanel', () => {
     );
 
     await flushAsyncWork();
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 40; index += 1) {
       await runPendingPoll();
     }
 
@@ -906,6 +910,7 @@ describe('ReplayReportPanel', () => {
               semanticMatchScore: 92,
               outputFormatScore: 78,
               toolSequenceScore: 95,
+              toolDefinitionScore: 90,
               reasoningScore: 94,
               summary: 'The replay preserved the core meaning.',
               missingPoints: [],

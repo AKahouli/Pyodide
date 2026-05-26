@@ -9,6 +9,7 @@ export interface IFlowActiveReplay {
   outputFormatGuide: string | null;
   formatGuideStatus: string | null;
   label: string | null;
+  latestOverallScore: number | null;
 }
 
 export interface IFlowResponse {

@@ -154,6 +154,9 @@ export class FlowReplayPostRunEvaluation {
   toolSequenceScore!: number | null;
 
   @Prop({ required: false, type: Number, default: null })
+  toolDefinitionScore!: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
   reasoningScore!: number | null;
 
   @Prop({ required: true, type: String })

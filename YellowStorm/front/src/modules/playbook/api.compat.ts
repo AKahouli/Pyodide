@@ -38,6 +38,7 @@ export function mapFlowNodeToPlaybookTask(
     outputFormatGuide: string | null;
     formatGuideStatus: string | null;
     label: string | null;
+    latestOverallScore: number | null;
   }>,
 ): PlaybookTask {
   const meta = (node.metadata ?? {}) as Record<string, unknown>;
@@ -89,6 +90,7 @@ export function mapFlowNodeToPlaybookTask(
     activeReplayPreserveOutputFormat: activeReplays?.[node.id]?.preserveOutputFormat ?? (meta.activeReplayPreserveOutputFormat as boolean | undefined) ?? undefined,
     activeReplayFormatGuideStatus: activeReplays?.[node.id]?.formatGuideStatus as PlaybookTask['activeReplayFormatGuideStatus'] ?? (meta.activeReplayFormatGuideStatus as any) ?? undefined,
     activeReplayLabel: activeReplays?.[node.id]?.label ?? (meta.activeReplayLabel as string | null | undefined) ?? undefined,
+    activeReplayOverallScore: activeReplays?.[node.id]?.latestOverallScore ?? (meta.activeReplayOverallScore as number | null | undefined) ?? undefined,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
     nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
     iteratorConfig: buildPlaybookIteratorConfig(node.iteratorConfig, meta),

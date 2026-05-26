@@ -134,13 +134,26 @@ export class PlaybookFlowReplayPromptService {
       lines.push(`Required stage: ${stage}`);
     }
     for (const step of planning.executionPlan.plannedToolSteps) {
+      const expectedArgs = this.formatExpectedArgs(step.expectedArgs);
       const argumentKeys = step.argumentShapeKeys.length > 0 ? ` (${step.argumentShapeKeys.join(', ')})` : '';
+      if (expectedArgs) {
+        lines.push(`Tool step ${step.stepIndex}: ${step.toolName} with arguments ${expectedArgs}`);
+        continue;
+      }
       lines.push(`Tool step ${step.stepIndex}: ${step.toolName} for ${step.purpose || 'validated purpose'}${argumentKeys}`);
     }
     for (const check of planning.executionPlan.requiredOutputChecks) {
       lines.push(check);
     }
     return this.buildBulletSection('### Replay Plan', lines);
+  }
+
+  private formatExpectedArgs(args: Record<string, unknown>): string | null {
+    if (Object.keys(args).length === 0) {
+      return null;
+    }
+
+    return JSON.stringify(args);
   }
 
   private formatContextValue(value: ReplayPlanningSummary['contextMapping'][number]['currentValue']): string | null {

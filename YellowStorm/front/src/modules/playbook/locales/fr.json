@@ -1429,6 +1429,7 @@
   "replayReport.postRun.semanticMatch": "Correspondance sémantique",
   "replayReport.postRun.outputFormat": "Format de sortie",
   "replayReport.postRun.toolSequence": "Séquence d'outils",
+  "replayReport.postRun.toolDefinition": "Définition d'outil",
   "replayReport.postRun.reasoning": "Raisonnement",
   "replayReport.postRun.summary": "Résumé",
   "replayReport.postRun.preserved": "Points préservés",

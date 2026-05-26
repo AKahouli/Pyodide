@@ -71,6 +71,24 @@ export class PlaybookFlowReplayReportService {
     return docs.map((doc) => doc.toJSON());
   }
 
+  async findLatestScoresForReplays(replayIds: string[]): Promise<Map<string, number>> {
+    if (replayIds.length === 0) return new Map();
+    const results = await this.replayRunReportModel
+      .aggregate([
+        { $match: { replayId: { $in: replayIds } } },
+        { $sort: { createdAt: -1 } },
+        { $group: { _id: '$replayId', overallScore: { $first: '$overallScore' } } },
+      ])
+      .exec();
+    const map = new Map<string, number>();
+    for (const row of results) {
+      if (typeof row.overallScore === 'number') {
+        map.set(row._id, row.overallScore);
+      }
+    }
+    return map;
+  }
+
   async findLatestReportForExecutionTask(
     executionId: string,
     taskId: string,

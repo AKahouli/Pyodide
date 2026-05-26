@@ -37,6 +37,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.create('owner-1', {
@@ -107,6 +108,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.create('owner-1', {
@@ -153,6 +155,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await service.create('owner-1', {
@@ -174,6 +177,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.create('owner-1', {
@@ -195,6 +199,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.create('owner-1', {
@@ -254,6 +259,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -330,6 +336,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -379,6 +386,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -411,6 +419,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -457,6 +466,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -495,6 +505,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -533,6 +544,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -582,6 +594,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -613,6 +626,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await service.updateNodesAndEdges('flow-1', {
@@ -652,6 +666,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.updateNodesAndEdges('flow-1', {
@@ -690,6 +705,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.createWithNodesAndEdges(
@@ -716,6 +732,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     await expect(service.createWithNodesAndEdges(
@@ -771,6 +788,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.clone('507f1f77bcf86cd799439011', 'owner-1');
@@ -816,6 +834,7 @@ describe('PlaybookFlowService', () => {
       {} as any,
       validatorService as any,
       {} as any,
+      { findLatestScoresForReplays: jest.fn().mockResolvedValue(new Map()) } as any,
     );
 
     const result = await service.clone('507f1f77bcf86cd799439011', 'owner-1');

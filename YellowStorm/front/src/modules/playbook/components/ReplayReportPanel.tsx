@@ -35,7 +35,7 @@ interface SignalRow {
 const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
 const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const REPORT_POLL_INTERVAL_MS = 1500;
-const REPORT_POLL_MAX_ATTEMPTS = 20;
+const REPORT_POLL_MAX_ATTEMPTS = 40;
 const SCORE_WARNING_THRESHOLD = 80;
 const SCORE_FAIL_THRESHOLD = 60;
 
@@ -396,10 +396,10 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
     let attempts = 0;
 
     const shouldPollForReport = () => replayExecutionActive;
+    const shouldPollForReportAfterCompletion = (nextReport: ReplayRunReport | null) =>
+      !nextReport && !replayExecutionActive && replayEnabled;
     const shouldPollForPostRunEvaluation = (nextReport: ReplayRunReport | null) => Boolean(
-      nextReport
-      && !nextReport.postRunEvaluation
-      && (replayExecutionActive || (nextReport.verdictReasons ?? []).includes('evaluation_pending')),
+      nextReport && !nextReport.postRunEvaluation,
     );
 
     const loadReport = (silent = false) => {
@@ -415,7 +415,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
           const nextReport = reports[0] ?? null;
           setReport(nextReport);
           receivedVisibleReport = Boolean(nextReport);
-          const waitingForReport = !nextReport && shouldPollForReport();
+          const waitingForReport = shouldPollForReport() || shouldPollForReportAfterCompletion(nextReport);
           const waitingForPostRun = shouldPollForPostRunEvaluation(nextReport);
 
           if ((waitingForReport || waitingForPostRun) && attempts < REPORT_POLL_MAX_ATTEMPTS) {
@@ -562,14 +562,15 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {[
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
               ['semanticMatchScore', 'replayReport.postRun.semanticMatch'],
               ['outputFormatScore', 'replayReport.postRun.outputFormat'],
               ['toolSequenceScore', 'replayReport.postRun.toolSequence'],
+              ['toolDefinitionScore', 'replayReport.postRun.toolDefinition'],
               ['reasoningScore', 'replayReport.postRun.reasoning'],
-            ].map(([scoreKey, labelKey]) => {
-              const score = postRunEvaluation[scoreKey as keyof ReplayPostRunEvaluation] as number | null;
+            ] as const).map(([scoreKey, labelKey]) => {
+              const score = postRunEvaluation[scoreKey] as number | null;
               if (score === null) {
                 return null;
               }

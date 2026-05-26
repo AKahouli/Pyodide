@@ -7,6 +7,7 @@ import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
+import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   NotFoundException,
@@ -70,6 +71,7 @@ export class PlaybookFlowService {
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly validatorService: PlaybookFlowValidatorService,
     private readonly replayService: PlaybookFlowReplayService,
+    private readonly replayReportService: PlaybookFlowReplayReportService,
   ) {}
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
@@ -178,7 +180,17 @@ export class PlaybookFlowService {
         outputFormatGuide: replay.outputFormatGuide ?? null,
         formatGuideStatus: replay.formatGuideStatus ?? null,
         label: replay.label ?? null,
+        latestOverallScore: null,
       };
+    }
+
+    const replayIds = activeReplays.map((r) => String(r._id));
+    const scoreMap = await this.replayReportService.findLatestScoresForReplays(replayIds);
+    for (const replay of activeReplays) {
+      const entry = raw.activeReplays[replay.taskId];
+      if (entry) {
+        entry.latestOverallScore = scoreMap.get(String(replay._id)) ?? null;
+      }
     }
 
     return raw;

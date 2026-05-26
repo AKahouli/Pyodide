@@ -159,6 +159,10 @@ function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<st
   return sanitizedMetadata;
 }
 
+function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
+  return node.metadata?.enabled !== false;
+}
+
 const SINGLE_STEP_UNSUPPORTED_MESSAGE = 'Single-step execution only supports step nodes outside iterators. Dependent nodes require completed upstream results.';
 
 interface SeededTaskOutput {
@@ -683,11 +687,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const fullSnapshot = this.builderService.buildSnapshot(flow as any);
+    const executableSnapshot = this.buildExecutableSnapshot(fullSnapshot, flowId);
 
     let snapshot: any;
     let seededTaskOutputs: SeededTaskOutput[] = [];
     if (singleStepTaskId) {
-      const allNodes = (fullSnapshot as any).nodes || [];
+      const allNodes = (executableSnapshot as any).nodes || [];
       const targetNode = allNodes.find((n: any) => n.id === singleStepTaskId);
       if (!targetNode) {
         throw new BadRequestException(
@@ -695,10 +700,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           `Single-step target node ${singleStepTaskId} not found`,
         );
       }
-      const targetBindings = ((fullSnapshot as any).dataBindings || [])
+      const targetBindings = ((executableSnapshot as any).dataBindings || [])
         .filter((binding: DataBinding) => binding.targetNode === singleStepTaskId);
       snapshot = {
-        ...fullSnapshot,
+        ...executableSnapshot,
         nodes: [targetNode],
         controlEdges: [],
         dataBindings: targetBindings,
@@ -707,11 +712,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         flowId,
         ownerId,
         singleStepTaskId,
-        fullSnapshot,
+        executableSnapshot,
         targetBindings,
       );
     } else {
-      snapshot = fullSnapshot;
+      snapshot = executableSnapshot;
     }
 
     const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
@@ -783,6 +788,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
+    if (!isNodeEnabled(targetNode)) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        `Single-step target node ${singleStepTaskId} is disabled`,
+      );
+    }
+
     const kind = targetNode.kind;
     const containerConfig = (targetNode.metadata as { containerConfig?: { parentIteratorId?: string | null } } | undefined)?.containerConfig;
 
@@ -792,6 +804,48 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         SINGLE_STEP_UNSUPPORTED_MESSAGE,
       );
     }
+  }
+
+  private buildExecutableSnapshot(snapshot: FlowSnapshot, flowId: string): FlowSnapshot {
+    const nodes = snapshot.nodes ?? [];
+    const controlEdges = snapshot.controlEdges ?? [];
+    const dataBindings = snapshot.dataBindings ?? [];
+
+    const enabledNodes = nodes.filter((node) => {
+      const enabled = isNodeEnabled(node);
+      if (!enabled) {
+        this.logger.warn(`Dropping disabled node ${node.id} from execution snapshot for flow ${flowId}`);
+      }
+      return enabled;
+    });
+
+    if (enabledNodes.length === nodes.length) {
+      return snapshot;
+    }
+
+    const enabledNodeIds = new Set(enabledNodes.map((node) => node.id));
+    const executableControlEdges = controlEdges.filter((edge) => {
+      const keep = enabledNodeIds.has(edge.source) && enabledNodeIds.has(edge.target);
+      if (!keep) {
+        this.logger.warn(`Dropping control edge ${edge.id} from execution snapshot because it references a disabled node`);
+      }
+      return keep;
+    });
+    const executableDataBindings = dataBindings.filter((binding) => {
+      const keep = enabledNodeIds.has(binding.targetNode)
+        && (binding.sourceNode ? enabledNodeIds.has(binding.sourceNode) : true);
+      if (!keep) {
+        this.logger.warn(`Dropping data binding ${binding.id} from execution snapshot because it references a disabled node`);
+      }
+      return keep;
+    });
+
+    return {
+      ...snapshot,
+      nodes: enabledNodes,
+      controlEdges: executableControlEdges,
+      dataBindings: executableDataBindings,
+    };
   }
 
   private assertSingleStepControlDependenciesSupported(
@@ -1139,8 +1193,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           continue;
         }
         this.cacheSelectedReplayArtifacts(executionId, taskId, artifacts);
+        const activeTemplate = activeOutputFormatTemplates.get(taskId);
+        const mergedArtifacts = (!artifacts.outputFormatGuide && activeTemplate?.formatGuide && artifacts.replayConfig.replayOutputFormat)
+          ? { ...artifacts, outputFormatGuide: activeTemplate.formatGuide }
+          : artifacts;
         const replayPrompt = this.replayPromptService.buildReplayPromptSection({
-          artifacts,
+          artifacts: mergedArtifacts,
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
           eligibility,
           planning: replayPlanning,

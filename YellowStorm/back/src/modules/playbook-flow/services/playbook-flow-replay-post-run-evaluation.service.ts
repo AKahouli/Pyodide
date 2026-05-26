@@ -19,6 +19,7 @@ interface JudgeOutput {
   semanticMatchScore: number | null;
   outputFormatScore: number | null;
   toolSequenceScore: number | null;
+  toolDefinitionScore: number | null;
   reasoningScore: number | null;
   summary: string;
   missingPoints: string[];
@@ -36,6 +37,7 @@ interface PostRunEvaluationResult {
   semanticMatchScore: number | null;
   outputFormatScore: number | null;
   toolSequenceScore: number | null;
+  toolDefinitionScore: number | null;
   reasoningScore: number | null;
   summary: string;
   missingPoints: string[];
@@ -118,6 +120,7 @@ export class PlaybookFlowReplayPostRunEvaluationService {
       semanticMatchScore: null,
       outputFormatScore: null,
       toolSequenceScore: null,
+      toolDefinitionScore: null,
       reasoningScore: null,
       summary: `Post-run evaluation could not be completed: ${failureReason}`,
       missingPoints: [],
@@ -197,10 +200,11 @@ export class PlaybookFlowReplayPostRunEvaluationService {
 
 ## Instructions
 Compare the new output against the baseline. Evaluate:
-1. Semantic match: Does the new output preserve the meaning and key facts of the baseline?
+1. Semantic match: Does the new output preserve the meaning, the narrative thread, the purpose of the baseline? ; sometime due to recontextualization the output could be different due to a change related to any contextual variable (counrty, year, customer, ...) but should be clearly serving the same purpose ; that should not decrease the semantic match score.
 2. Output format: Does the new output follow the same format/structure?
 3. Tool sequence: Were the same tools used in a similar order?
-4. Reasoning: Is the reasoning approach similar?
+4. Tool definition: Did corresponding tool calls use matching arguments — same query text, code snippets, parameter names ; sometime due to recontextualization the exact arguments may not be identical but should be clearly serving the same purpose ; that should not decrease the tool definition score.
+5. Reasoning: Is the reasoning approach similar?
 
 Return strict JSON:
 {
@@ -209,6 +213,7 @@ Return strict JSON:
   "semanticMatchScore": 0-100 or null,
   "outputFormatScore": 0-100 or null,
   "toolSequenceScore": 0-100 or null,
+  "toolDefinitionScore": 0-100 or null,
   "reasoningScore": 0-100 or null,
   "summary": "One concise paragraph.",
   "missingPoints": ["baseline expectation absent from new result"],
@@ -252,6 +257,7 @@ Return strict JSON:
       semanticMatchScore: clamp(parsed.semanticMatchScore),
       outputFormatScore: clamp(parsed.outputFormatScore),
       toolSequenceScore: clamp(parsed.toolSequenceScore),
+      toolDefinitionScore: clamp(parsed.toolDefinitionScore),
       reasoningScore: clamp(parsed.reasoningScore),
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
       missingPoints: asStrings(parsed.missingPoints),
@@ -274,6 +280,7 @@ Return strict JSON:
       semanticMatchScore: raw.semanticMatchScore,
       outputFormatScore: raw.outputFormatScore,
       toolSequenceScore: raw.toolSequenceScore,
+      toolDefinitionScore: raw.toolDefinitionScore,
       reasoningScore: raw.reasoningScore,
       summary: raw.summary || 'Post-run evaluation completed.',
       missingPoints: raw.missingPoints,

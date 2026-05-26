@@ -1514,9 +1514,17 @@ function PlaybookCanvasInner() {
       if (!id || !executionForNodeActions) return;
       const taskResult = getTaskResultForNode(nodeId);
       if (!taskResult || taskResult.status !== 'completed') return;
-      await validateTaskReplay(id, nodeId, executionForNodeActions.id, { preserveOutputFormat: false });
+      await validateTaskReplay(id, nodeId, executionForNodeActions.id, {
+        preserveOutputFormat: false,
+        replayConfig: { replayOutputFormat: true, replayToolTrace: true, replayReasoningChain: true },
+      });
+      try {
+        await grabOutputFormatTemplate(id, nodeId, { executionId: executionForNodeActions.id });
+      } catch {
+        // output format generation is best-effort
+      }
     },
-    [executionForNodeActions, getTaskResultForNode, id, validateTaskReplay],
+    [executionForNodeActions, getTaskResultForNode, id, validateTaskReplay, grabOutputFormatTemplate],
   );
 
   const canSaveBaseline = useCallback(

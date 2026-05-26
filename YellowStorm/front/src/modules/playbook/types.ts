@@ -227,6 +227,7 @@ export interface PlaybookTask {
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
   activeReplayLabel?: string | null;
+  activeReplayOverallScore?: number | null;
   activeReplayReplayConfig?: {
     replayOutputFormat: boolean;
     replayToolTrace: boolean;
@@ -1156,6 +1157,7 @@ export interface ReplayPostRunEvaluation {
   semanticMatchScore: number | null;
   outputFormatScore: number | null;
   toolSequenceScore: number | null;
+  toolDefinitionScore: number | null;
   reasoningScore: number | null;
   summary: string;
   missingPoints: string[];
