@@ -1,10 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  BlobServiceClient,
-  ContainerClient,
-  StorageSharedKeyCredential,
-} from '@azure/storage-blob';
+import { S3Client, HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { LoggerService } from '../logger';
 
 interface ReconnectConfig {
@@ -31,9 +27,7 @@ export interface StorageConnectionStatus {
 
 @Injectable()
 export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy {
-  private blobServiceClient: BlobServiceClient | null = null;
-  private containerClient: ContainerClient | null = null;
-  private sharedKeyCredential: StorageSharedKeyCredential | null = null;
+  private s3Client: S3Client | null = null;
 
   private isConnected = false;
   private isConnecting = false;
@@ -43,9 +37,13 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
-  private readonly connectionString: string;
-  private readonly containerName: string;
-  private readonly accountName: string;
+  private readonly endpoint: string;
+  private readonly region: string;
+  private readonly bucket: string;
+  private readonly accessKeyId: string;
+  private readonly secretAccessKey: string;
+  private readonly forcePathStyle: boolean;
+  private readonly publicUrl: string;
   private readonly reconnectConfig: ReconnectConfig;
   private readonly healthCheckConfig: HealthCheckConfig;
 
@@ -55,9 +53,13 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   ) {
     this.logger.setContext(DocumentConnectionService.name);
 
-    this.connectionString = this.configService.get<string>('storage.azure.connectionString', '');
-    this.containerName = this.configService.get<string>('storage.azure.containerName', 'documents');
-    this.accountName = this.configService.get<string>('storage.azure.accountName', '');
+    this.endpoint = this.configService.get<string>('storage.s3.endpoint', '');
+    this.region = this.configService.get<string>('storage.s3.region', 'us-east-1');
+    this.bucket = this.configService.get<string>('storage.s3.bucket', 'documents');
+    this.accessKeyId = this.configService.get<string>('storage.s3.accessKeyId', '');
+    this.secretAccessKey = this.configService.get<string>('storage.s3.secretAccessKey', '');
+    this.forcePathStyle = this.configService.get<boolean>('storage.s3.forcePathStyle', true);
+    this.publicUrl = this.configService.get<string>('storage.s3.publicUrl', '');
 
     this.reconnectConfig = {
       enabled: this.configService.get<boolean>('storage.reconnect.enabled', true),
@@ -81,6 +83,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   onModuleDestroy(): void {
     this.stopHealthCheck();
     this.clearReconnectTimeout();
+    this.s3Client?.destroy();
   }
 
   async connect(): Promise<void> {
@@ -89,43 +92,47 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
-    if (!this.connectionString) {
-      this.logger.warn('Azure Storage connection string not configured. Document service disabled.');
-      this.lastError = 'Connection string not configured';
+    if (!this.endpoint || !this.accessKeyId || !this.secretAccessKey) {
+      this.logger.warn(
+        'Ceph S3 credentials not configured (endpoint/accessKey/secretKey). Document service disabled.',
+      );
+      this.lastError = 'Ceph S3 credentials not configured';
       return;
     }
 
     this.isConnecting = true;
 
     try {
-      this.logger.log('Attempting to connect to Azure Blob Storage...', {
-        attempt: this.reconnectAttempt + 1,
-        container: this.containerName,
-      },{display:true,save:false});
+      this.logger.log(
+        'Attempting to connect to Ceph S3...',
+        {
+          attempt: this.reconnectAttempt + 1,
+          bucket: this.bucket,
+          endpoint: this.endpoint,
+        },
+        { display: true, save: false },
+      );
 
-      this.blobServiceClient = BlobServiceClient.fromConnectionString(this.connectionString);
-      this.containerClient = this.blobServiceClient.getContainerClient(this.containerName);
+      this.s3Client = new S3Client({
+        endpoint: this.endpoint,
+        region: this.region,
+        credentials: {
+          accessKeyId: this.accessKeyId,
+          secretAccessKey: this.secretAccessKey,
+        },
+        forcePathStyle: this.forcePathStyle,
+      });
 
-      // Extract account key for SAS generation
-      const accountKeyMatch = this.connectionString.match(/AccountKey=([^;]+)/);
-      if (accountKeyMatch && this.accountName) {
-        this.sharedKeyCredential = new StorageSharedKeyCredential(
-          this.accountName,
-          accountKeyMatch[1],
-        );
-      }
-
-      // Verify connection by checking container exists
-      await this.containerClient.createIfNotExists({ access: undefined });
+      await this.ensureBucket();
 
       this.isConnected = true;
       this.lastError = null;
       this.lastCheckedAt = new Date();
       this.reconnectAttempt = 0;
 
-      this.logger.log('Azure Blob Storage connection established', {
-        container: this.containerName,
-        account: this.accountName,
+      this.logger.log('Ceph S3 connection established', {
+        bucket: this.bucket,
+        endpoint: this.endpoint,
       });
     } catch (error) {
       const err = error as Error;
@@ -133,7 +140,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.lastError = err.message;
       this.lastCheckedAt = new Date();
 
-      this.logger.error('Azure Blob Storage connection failed', {
+      this.logger.error('Ceph S3 connection failed', {
         message: err.message,
         attempt: this.reconnectAttempt + 1,
       });
@@ -144,17 +151,35 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
     }
   }
 
+  private async ensureBucket(): Promise<void> {
+    if (!this.s3Client) {
+      throw new Error('S3 client not initialized');
+    }
+
+    try {
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+    } catch (error) {
+      const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      const status = err.$metadata?.httpStatusCode;
+      if (status === 404 || err.name === 'NotFound' || err.name === 'NoSuchBucket') {
+        this.logger.log(`Bucket ${this.bucket} not found, creating it`);
+        await this.s3Client.send(new CreateBucketCommand({ Bucket: this.bucket }));
+      } else {
+        throw error;
+      }
+    }
+  }
+
   async verifyConnection(): Promise<boolean> {
-    if (!this.containerClient) {
+    if (!this.s3Client) {
       this.isConnected = false;
-      this.lastError = 'Container client not initialized';
+      this.lastError = 'S3 client not initialized';
       this.lastCheckedAt = new Date();
       return false;
     }
 
     try {
-      // Perform a lightweight operation to verify connection
-      await this.containerClient.getProperties();
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucket }));
 
       const wasDisconnected = !this.isConnected;
       this.isConnected = true;
@@ -163,7 +188,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.reconnectAttempt = 0;
 
       if (wasDisconnected) {
-        this.logger.log('Azure Blob Storage connection restored');
+        this.logger.log('Ceph S3 connection restored');
       }
 
       return true;
@@ -176,7 +201,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.lastCheckedAt = new Date();
 
       if (wasConnected) {
-        this.logger.warn('Azure Blob Storage connection lost', {
+        this.logger.warn('Ceph S3 connection lost', {
           error: err.message,
         });
         this.scheduleReconnect();
@@ -187,11 +212,11 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   }
 
   private startHealthCheck(): void {
-    if (!this.healthCheckConfig.enabled || !this.connectionString) {
+    if (!this.healthCheckConfig.enabled || !this.endpoint) {
       return;
     }
 
-    this.logger.log('Starting Azure Storage health check', {
+    this.logger.log('Starting Ceph S3 health check', {
       intervalMs: this.healthCheckConfig.intervalMs,
     });
 
@@ -211,7 +236,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
 
   private scheduleReconnect(): void {
     if (!this.reconnectConfig.enabled) {
-      this.logger.warn('Reconnection disabled, Azure Storage will remain disconnected');
+      this.logger.warn('Reconnection disabled, Ceph S3 will remain disconnected');
       return;
     }
 
@@ -220,7 +245,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.reconnectAttempt >= this.reconnectConfig.maxAttempts
     ) {
       this.logger.error(
-        `Max reconnection attempts (${this.reconnectConfig.maxAttempts}) reached for Azure Storage. Giving up.`,
+        `Max reconnection attempts (${this.reconnectConfig.maxAttempts}) reached for Ceph S3. Giving up.`,
       );
       return;
     }
@@ -230,7 +255,10 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
     const delay = this.calculateBackoffDelay();
     this.reconnectAttempt++;
 
-    this.logger.log(`Scheduling Azure Storage reconnection attempt ${this.reconnectAttempt} in ${delay}ms`,{display:true,save:false});
+    this.logger.log(
+      `Scheduling Ceph S3 reconnection attempt ${this.reconnectAttempt} in ${delay}ms`,
+      { display: true, save: false },
+    );
 
     this.reconnectTimeout = setTimeout(() => {
       void this.connect();
@@ -242,7 +270,6 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   private calculateBackoffDelay(): number {
     const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
 
-    // Add jitter (±10%) to prevent thundering herd
     const jitter = 0.9 + Math.random() * 0.2;
     const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
     const delayWithJitter = exponentialDelay * jitter;
@@ -260,27 +287,23 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   // Public accessors
 
   isAvailable(): boolean {
-    return !!this.connectionString;
+    return !!this.endpoint && !!this.accessKeyId && !!this.secretAccessKey;
   }
 
   isConnectedNow(): boolean {
     return this.isConnected;
   }
 
-  getContainerClient(): ContainerClient | null {
-    return this.containerClient;
+  getS3Client(): S3Client | null {
+    return this.s3Client;
   }
 
-  getBlobServiceClient(): BlobServiceClient | null {
-    return this.blobServiceClient;
+  getBucket(): string {
+    return this.bucket;
   }
 
-  getSharedKeyCredential(): StorageSharedKeyCredential | null {
-    return this.sharedKeyCredential;
-  }
-
-  getContainerName(): string {
-    return this.containerName;
+  getPublicUrl(): string {
+    return this.publicUrl || this.endpoint;
   }
 
   getHealthStatus(): StorageConnectionStatus {

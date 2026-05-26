@@ -20,7 +20,7 @@ export interface UploadedDocument {
   /** MD5 hash of the file content */
   contentHash: string;
 
-  /** Blob URL (requires SAS token for access) */
+  /** Canonical object URL (requires presigning for access in private buckets) */
   url: string;
 
   /** Upload timestamp */

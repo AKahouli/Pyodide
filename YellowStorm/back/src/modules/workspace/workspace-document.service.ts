@@ -94,16 +94,58 @@ export class WorkspaceDocumentService {
   }
 
   /**
-   * Generate blob storage path
+   * Generate object-key for a workspace upload. Layout:
+   * `{ownerUserId}/{storagePrefix}/{filename}`.
+   *
+   * Collaborator uploads land under the workspace owner's userId, NOT the
+   * uploader's — this keeps all of a workspace's files grouped together in
+   * Ceph regardless of which collaborator pushed them. Filename uniqueness
+   * within the workspace is enforced via resolveUniqueOriginalName() before
+   * this is called.
    */
   private generateBlobPath(
-    userId: string,
-    workspaceId: string,
-    documentId: string,
+    ownerUserId: string,
+    storagePrefix: string,
     filename: string,
   ): string {
     const sanitizedName = this.sanitizeFilename(filename);
-    return `${userId}/${workspaceId}/${documentId}/${sanitizedName}`;
+    return `${ownerUserId}/${storagePrefix}/${sanitizedName}`;
+  }
+
+  /**
+   * Resolve a non-colliding originalName within a workspace, Windows-Explorer style.
+   * If "report.pdf" exists, returns "report (1).pdf"; if that exists, "report (2).pdf", etc.
+   * Probes the DB until a free slot is found. Returns the original name when no collision.
+   * Folders are ignored (isFolder: false) — folders can share names with files freely.
+   */
+  private async resolveUniqueOriginalName(
+    workspaceId: string,
+    originalName: string,
+  ): Promise<string> {
+    const workspaceObjectId = new Types.ObjectId(workspaceId);
+    const exists = await this.documentModel
+      .exists({ workspaceId: workspaceObjectId, originalName, isFolder: false })
+      .lean();
+    if (!exists) return originalName;
+
+    const dotIndex = originalName.lastIndexOf('.');
+    const hasExt = dotIndex > 0 && dotIndex < originalName.length - 1;
+    const base = hasExt ? originalName.slice(0, dotIndex) : originalName;
+    const ext = hasExt ? originalName.slice(dotIndex) : '';
+
+    // Probe ' (n)' suffix until a free slot is found. Cap to avoid runaway loops on
+    // pathological cases — 9999 collisions in one workspace is already broken.
+    for (let n = 1; n <= 9999; n++) {
+      const candidate = `${base} (${n})${ext}`;
+      const taken = await this.documentModel
+        .exists({ workspaceId: workspaceObjectId, originalName: candidate, isFolder: false })
+        .lean();
+      if (!taken) return candidate;
+    }
+
+    throw new BadRequestException(
+      `Too many duplicates of '${originalName}' in this workspace`,
+    );
   }
 
   /**
@@ -147,13 +189,14 @@ export class WorkspaceDocumentService {
     }
 
     const documentId = new Types.ObjectId();
-    const sanitizedName = this.sanitizeFilename(data.filename);
-    const blobPath = `${pathPrefix}/${documentId}/${sanitizedName}`;
+    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, data.filename);
+    const sanitizedName = this.sanitizeFilename(effectiveName);
+    const blobPath = `${pathPrefix}/${sanitizedName}`;
 
     const document = await this.documentModel.create({
       _id: documentId,
-      filename: `${documentId}-${sanitizedName}`,
-      originalName: data.filename,
+      filename: sanitizedName,
+      originalName: effectiveName,
       mimeType: data.mimeType,
       size: data.size,
       path: blobPath,
@@ -216,11 +259,11 @@ export class WorkspaceDocumentService {
     }
 
     const documentId = new Types.ObjectId();
-    const sanitizedName = this.sanitizeFilename(originalName);
-    const folder = `${pathPrefix}/${documentId}`;
+    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, originalName);
+    const sanitizedName = this.sanitizeFilename(effectiveName);
 
-    const uploaded = await this.documentService.upload(file, originalName, mimeType, {
-      folder,
+    const uploaded = await this.documentService.upload(file, effectiveName, mimeType, {
+      folder: pathPrefix,
       generateUniqueName: false,
       customFileName: sanitizedName,
     });
@@ -228,7 +271,7 @@ export class WorkspaceDocumentService {
     const document = await this.documentModel.create({
       _id: documentId,
       filename: uploaded.storedName,
-      originalName,
+      originalName: effectiveName,
       mimeType,
       size,
       path: uploaded.blobPath,
@@ -296,19 +339,20 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Create pending document record
-    const documentId = new Types.ObjectId();
-    const blobPath = this.generateBlobPath(
-      userId,
+    // Create pending document record.
+    // Path roots under the workspace OWNER (not the uploader) so a workspace's
+    // files stay grouped under one Ceph prefix even when collaborators upload.
+    const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
       workspaceId,
-      documentId.toString(),
-      data.filename,
     );
+    const documentId = new Types.ObjectId();
+    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, data.filename);
+    const blobPath = this.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
 
     const document = await this.documentModel.create({
       _id: documentId,
-      filename: `${documentId}-${this.sanitizeFilename(data.filename)}`,
-      originalName: data.filename,
+      filename: this.sanitizeFilename(effectiveName),
+      originalName: effectiveName,
       mimeType: data.mimeType,
       size: data.size,
       path: blobPath,
@@ -365,7 +409,7 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Verify blob exists in Azure (skip for folders)
+    // Verify object exists in Ceph S3 (skip for folders)
     if (!document.isFolder && document.path) {
       const exists = await this.documentService.exists(document.path);
       if (!exists) {
@@ -378,7 +422,7 @@ export class WorkspaceDocumentService {
     // Update document status
     document.status = DocumentStatus.COMPLETED;
     document.uploadedAt = new Date();
-    document.url = document.path; // Base path without SAS token
+    document.url = document.path; // Canonical object key (no presigned signature)
     await document.save();
 
     // Update workspace storage usage
@@ -446,27 +490,27 @@ export class WorkspaceDocumentService {
       }
     }
 
-    // Create document record
-    const documentId = new Types.ObjectId();
-    const blobPath = this.generateBlobPath(
-      userId,
+    // Create document record. Path roots under the workspace OWNER so
+    // collaborator uploads share the same Ceph prefix as the owner's files.
+    const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
       workspaceId,
-      documentId.toString(),
-      originalName,
     );
+    const documentId = new Types.ObjectId();
+    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, originalName);
+    const sanitizedName = this.sanitizeFilename(effectiveName);
 
-    // Upload to Azure
-    const uploaded = await this.documentService.upload(file, originalName, mimeType, {
-      folder: `${userId}/${workspaceId}/${documentId}`,
+    // Upload to Ceph S3
+    const uploaded = await this.documentService.upload(file, effectiveName, mimeType, {
+      folder: `${ownerUserId}/${storagePrefix}`,
       generateUniqueName: false,
-      customFileName: this.sanitizeFilename(originalName),
+      customFileName: sanitizedName,
     });
 
     // Create document record
     const document = await this.documentModel.create({
       _id: documentId,
       filename: uploaded.storedName,
-      originalName,
+      originalName: effectiveName,
       mimeType,
       size,
       path: uploaded.blobPath,
@@ -565,6 +609,57 @@ export class WorkspaceDocumentService {
   }
 
   /**
+   * Register an AI-generated file as a WorkspaceDocument in the session's
+   * system workspace. The file already exists at `fileInfo.path` in S3
+   * (the AI service wrote it there); this just adds a metadata row so the
+   * workspace UI can list it. Size defaults to 0 because the backend doesn't
+   * HEAD the object — accurate sizes aren't needed for the listing UI.
+   */
+  async createFromAiArtifact(
+    systemWorkspaceId: string,
+    fileInfo: { id: string; name: string; content_type: string; path: string },
+  ): Promise<void> {
+    let workspace;
+    try {
+      workspace = await this.workspaceService.findById(systemWorkspaceId);
+    } catch {
+      this.logger.warn('createFromAiArtifact: workspace not found, skipping', {
+        systemWorkspaceId,
+        path: fileInfo.path,
+      });
+      return;
+    }
+
+    const createdByStr = workspace?.createdBy ? String(workspace.createdBy) : null;
+    if (!createdByStr) {
+      this.logger.warn('createFromAiArtifact: workspace has no createdBy, skipping', {
+        systemWorkspaceId,
+        path: fileInfo.path,
+      });
+      return;
+    }
+
+    await this.documentModel.create({
+      workspaceId: new Types.ObjectId(systemWorkspaceId),
+      createdBy: new Types.ObjectId(createdByStr),
+      filename: fileInfo.name,
+      originalName: fileInfo.name,
+      mimeType: fileInfo.content_type || 'application/octet-stream',
+      path: fileInfo.path,
+      size: 0,
+      status: DocumentStatus.COMPLETED,
+      uploadedAt: new Date(),
+    });
+
+    await this.workspaceService.updateStorageUsage(systemWorkspaceId, 0, 1);
+
+    this.logger.log('AI artifact registered as WorkspaceDocument', {
+      systemWorkspaceId,
+      path: fileInfo.path,
+    });
+  }
+
+  /**
    * Initiate bulk upload session
    */
   async initiateBulkUpload(
@@ -612,22 +707,26 @@ export class WorkspaceDocumentService {
 
     const responseFiles: BulkUploadInitResponse['files'] = [];
 
-    // Create document records and generate URLs for each file
+    // Resolve the workspace's storage context once for the whole batch.
+    const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
+      workspaceId,
+    );
+
+    // Create document records and generate URLs for each file.
+    // Names resolve sequentially so duplicates within the same batch also get
+    // auto-incremented suffixes (e.g., uploading two "report.pdf" yields
+    // "report.pdf" + "report (1).pdf").
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const documentId = new Types.ObjectId();
-      const blobPath = this.generateBlobPath(
-        userId,
-        workspaceId,
-        documentId.toString(),
-        file.filename,
-      );
+      const effectiveName = await this.resolveUniqueOriginalName(workspaceId, file.filename);
+      const blobPath = this.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
 
       // Create pending document (url is set after upload completes)
       await this.documentModel.create({
         _id: documentId,
-        filename: `${documentId}-${this.sanitizeFilename(file.filename)}`,
-        originalName: file.filename,
+        filename: this.sanitizeFilename(effectiveName),
+        originalName: effectiveName,
         mimeType: file.mimeType,
         size: file.size,
         path: blobPath,
@@ -644,7 +743,7 @@ export class WorkspaceDocumentService {
 
       sessionFiles.push({
         index: i,
-        filename: file.filename,
+        filename: effectiveName,
         mimeType: file.mimeType,
         size: file.size,
         documentId,
@@ -655,7 +754,7 @@ export class WorkspaceDocumentService {
 
       responseFiles.push({
         index: i,
-        filename: file.filename,
+        filename: effectiveName,
         uploadUrl,
         documentId: documentId.toString(),
       });

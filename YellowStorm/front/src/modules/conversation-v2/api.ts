@@ -1,43 +1,77 @@
 import { apiClient, ApiResponse } from '@/lib/api';
-import type { SessionPayload, AgentEvent, ListSessionsResponse } from './types';
+import type { AgentEvent, ListSessionsResponse } from './types';
 
 export interface ListSessionsParams { limit?: number; cursor?: string | null; q?: string }
 
-/**
- * The backend returns persisted events as `{ type, payload: {...} }` envelopes;
- * the SSE stream and the rest of the frontend use a flat `{ type, ...payload }`
- * shape. Normalise on read so consumers see one shape.
- */
-function flattenEvent(raw: unknown): AgentEvent {
-  if (raw && typeof raw === 'object' && 'type' in raw && 'payload' in raw) {
-    const r = raw as { type: string; payload: Record<string, unknown> };
-    return { type: r.type, ...r.payload } as AgentEvent;
-  }
-  return raw as AgentEvent;
-}
-
-interface RawSession {
+export interface SessionPointer {
   sessionId: string;
   title: string;
   status: string;
   isShared: boolean;
-  events: unknown[];
+  workspaceIds: string[];
+  lastEventAt: string;
+  eventCount: number;
+  systemWorkspaceId: string | null;
 }
 
-function normaliseSession(raw: RawSession): SessionPayload {
-  return { ...raw, events: (raw.events ?? []).map(flattenEvent) };
+export interface PersistedEventEnvelope {
+  sessionId: string;
+  sequence: number;
+  eventId: string;
+  type: AgentEvent['type'];
+  emittedAt: number;
+  payload: Record<string, unknown>;
+  modelId?: string | null;
+}
+
+function envelopeToAgentEvent(env: PersistedEventEnvelope): AgentEvent {
+  // Re-flatten the persisted envelope into the on-the-wire AgentEvent shape
+  // the rest of the frontend consumes (type at the top, event_id/timestamp
+  // and the payload's own fields all merged onto the object).
+  return {
+    type: env.type,
+    event_id: env.eventId,
+    timestamp: env.emittedAt,
+    sequence: env.sequence,
+    ...(env.payload as Record<string, unknown>),
+    ...(env.modelId !== undefined ? { modelId: env.modelId } : {}),
+  } as AgentEvent;
+}
+
+export interface CreateSessionResponse {
+  sessionId: string;
+  workspaceIds: string[];
 }
 
 export const conversationV2Api = {
-  async createSession(): Promise<{ sessionId: string }> {
-    const res = await apiClient.post<ApiResponse<{ sessionId: string }>>('/conversation-v2/sessions', {});
+  async createSession(workspaceIds: string[] = []): Promise<CreateSessionResponse> {
+    const res = await apiClient.post<ApiResponse<CreateSessionResponse>>(
+      '/conversation-v2/sessions',
+      { workspaceIds },
+    );
     return res.data.data;
   },
-  async getSession(sessionId: string): Promise<SessionPayload> {
-    const res = await apiClient.get<ApiResponse<RawSession>>(
+  async getSession(sessionId: string): Promise<SessionPointer> {
+    const res = await apiClient.get<ApiResponse<SessionPointer>>(
       `/conversation-v2/sessions/${sessionId}`,
     );
-    return normaliseSession(res.data.data);
+    return res.data.data;
+  },
+  async listEvents(
+    sessionId: string,
+    since: number,
+    limit = 200,
+  ): Promise<{ items: AgentEvent[]; nextSince: number }> {
+    const res = await apiClient.get<ApiResponse<{
+      items: PersistedEventEnvelope[];
+      nextSince: number;
+    }>>(`/conversation-v2/sessions/${sessionId}/events`, {
+      params: { since, limit },
+    });
+    return {
+      items: res.data.data.items.map(envelopeToAgentEvent),
+      nextSince: res.data.data.nextSince,
+    };
   },
   async stopSession(sessionId: string): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/stop`, {});
@@ -68,9 +102,30 @@ export const conversationV2Api = {
   async deleteSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/sessions/${sessionId}`);
   },
-  async getShared(token: string): Promise<SessionPayload> {
-    const res = await apiClient.get<ApiResponse<RawSession>>(`/conversation-v2/share/v2/${token}`);
-    return normaliseSession(res.data.data);
+  async listWorkspaceDocuments(
+    sessionId: string,
+    params: { page?: number; limit?: number } = {},
+  ): Promise<{
+    documents: Array<Record<string, unknown>>;
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const res = await apiClient.get<ApiResponse<{
+      documents: Array<Record<string, unknown>>;
+      pagination: { page: number; limit: number; total: number; totalPages: number };
+    }>>(`/conversation-v2/sessions/${sessionId}/workspace-documents`, {
+      params: { page: params.page ?? 1, limit: params.limit ?? 10 },
+    });
+    return res.data.data;
+  },
+  async getShared(token: string): Promise<{ session: SessionPointer; events: AgentEvent[] }> {
+    const res = await apiClient.get<ApiResponse<{
+      session: SessionPointer;
+      events: PersistedEventEnvelope[];
+    }>>(`/conversation-v2/share/v2/${token}`);
+    return {
+      session: res.data.data.session,
+      events: res.data.data.events.map(envelopeToAgentEvent),
+    };
   },
   async getVncSignedUrl(sessionId: string): Promise<{ url: string; expiresAt: number }> {
     const res = await apiClient.get<ApiResponse<{ url: string; expiresAt: number }>>(
@@ -78,6 +133,15 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  /**
+   * Exchange a message-attachment Ceph object key for a short-lived presigned
+   * read URL. Backend access-checks the path's owning workspace before signing.
+   */
+  async getFileSignedUrl(path: string): Promise<{ url: string }> {
+    const res = await apiClient.post<ApiResponse<{ url: string }>>(
+      '/conversation-v2/files/signed-url',
+      { path },
+    );
+    return res.data.data;
+  },
 };
-
-export { flattenEvent };

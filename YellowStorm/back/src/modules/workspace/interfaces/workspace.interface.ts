@@ -22,6 +22,11 @@ export interface WorkspaceResponse {
   id: string;
   name: string;
   alias: string;
+  /**
+   * Immutable Ceph object-key segment. Read-only — renames never touch it.
+   * Surfaced so the frontend can display the storage path token.
+   */
+  storagePrefix: string;
   description?: string;
   createdBy: string;
   settings?: string;

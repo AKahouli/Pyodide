@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
@@ -29,7 +29,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
 
 @Injectable()
-export class WorkspaceService {
+export class WorkspaceService implements OnModuleInit {
   constructor(
     @InjectModel(Workspace.name)
     private readonly workspaceModel: Model<WorkspaceDocument>,
@@ -44,6 +44,30 @@ export class WorkspaceService {
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceService');
+  }
+
+  /**
+   * Idempotent backfill: copy alias → storagePrefix for legacy workspace
+   * records that predate the immutable storagePrefix field. Safe to leave in
+   * place forever; the first run is the only one that does work, every
+   * subsequent boot matches zero documents.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const result = await this.workspaceModel.updateMany(
+        { storagePrefix: { $exists: false } },
+        [{ $set: { storagePrefix: '$alias' } }],
+      );
+      if (result.modifiedCount > 0) {
+        this.logger.log('Backfilled storagePrefix from alias', {
+          modified: result.modifiedCount,
+        });
+      }
+    } catch (error) {
+      this.logger.error('storagePrefix backfill failed', {
+        message: (error as Error).message,
+      });
+    }
   }
 
   /**
@@ -134,10 +158,13 @@ export class WorkspaceService {
     const baseAlias = this.generateAlias(data.name);
     const alias = await this.ensureUniqueAlias(userId, baseAlias);
 
-    // Create workspace
+    // Create workspace. storagePrefix is locked here from the initial alias —
+    // future renames update name/alias but never this field, so the Ceph path
+    // remains stable across the workspace's lifetime.
     const workspace = await this.workspaceModel.create({
       name: data.name,
       alias,
+      storagePrefix: alias,
       description: data.description,
       createdBy: new Types.ObjectId(userId),
       settings: data.settings ? new Types.ObjectId(data.settings) : undefined,
@@ -210,6 +237,7 @@ export class WorkspaceService {
     const workspace = await this.workspaceModel.create({
       name: 'Mon workspace personnel',
       alias: 'mon-workspace-personnel',
+      storagePrefix: 'mon-workspace-personnel',
       description: 'Votre espace personnel pour organiser vos fichiers',
       createdBy: new Types.ObjectId(userId),
       documentCount: 0,
@@ -225,6 +253,22 @@ export class WorkspaceService {
     });
 
     return this.mapToResponse(workspace);
+  }
+
+  /**
+   * Return every non-system workspace ID owned by `userId`. Bypasses
+   * pagination — intended for short flat lists (e.g. expanding an empty
+   * workspace selection at session-creation time). Does not include
+   * workspaces only *shared* with the user; callers that need the full
+   * accessible set should compose this with WorkspaceShareService.
+   */
+  async findIdsByOwner(userId: string): Promise<string[]> {
+    const docs = await this.workspaceModel
+      .find({ createdBy: new Types.ObjectId(userId), isSystem: { $ne: true } })
+      .select('_id')
+      .lean()
+      .exec();
+    return docs.map((d) => (d._id as Types.ObjectId).toString());
   }
 
   /**
@@ -467,13 +511,16 @@ export class WorkspaceService {
     const workspace = await this.workspaceModel.create({
       name: `system-${conversationId}`,
       alias: `system-${conversationId}`,
+      storagePrefix: `system-${conversationId}`,
       description: 'System workspace for conversation file uploads',
       createdBy: new Types.ObjectId(userId),
       documentCount: 0,
       usedStorage: 0,
       allocatedStorage,
       isSystem: true,
-      conversationId: new Types.ObjectId(conversationId),
+      conversationId: Types.ObjectId.isValid(conversationId)
+        ? new Types.ObjectId(conversationId)
+        : null,
     });
 
     this.logger.log('System workspace created', {
@@ -483,6 +530,69 @@ export class WorkspaceService {
     });
 
     return this.mapToResponse(workspace);
+  }
+
+  /**
+   * Resolve a list of workspaceIds to their Ceph object-key prefixes in the
+   * form `{ownerUserId}/{storagePrefix}`. Used by the conversation-v2 gRPC
+   * client to translate user-supplied workspace selections into the path
+   * format the AI service expects.
+   *
+   * - Preserves input order so the frontend selection order is meaningful.
+   * - Silently drops IDs that fail to resolve (caller is expected to have
+   *   already verified access via WorkspaceShareService.assertUserHasAccess,
+   *   so a missing ID here is a benign race or a stale frontend selection).
+   * - Single query regardless of input length.
+   */
+  async getStoragePathsByIds(workspaceIds: string[]): Promise<string[]> {
+    if (workspaceIds.length === 0) return [];
+
+    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return [];
+
+    const docs = await this.workspaceModel
+      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
+      .select('createdBy storagePrefix')
+      .lean()
+      .exec();
+
+    const byId = new Map<string, { createdBy: string; storagePrefix: string }>();
+    for (const doc of docs) {
+      byId.set(doc._id.toString(), {
+        createdBy: doc.createdBy.toString(),
+        storagePrefix: doc.storagePrefix,
+      });
+    }
+
+    const paths: string[] = [];
+    for (const id of workspaceIds) {
+      const entry = byId.get(id);
+      if (entry) paths.push(`${entry.createdBy}/${entry.storagePrefix}`);
+    }
+    return paths;
+  }
+
+  /**
+   * Resolve a single workspaceId to its `{ownerUserId, storagePrefix}` pair.
+   * Used by the upload services to build object keys rooted under the
+   * workspace owner — collaborator uploads land under the owner's prefix so
+   * a workspace's files stay grouped in Ceph regardless of uploader.
+   */
+  async getStorageContext(
+    workspaceId: string,
+  ): Promise<{ ownerUserId: string; storagePrefix: string }> {
+    const doc = await this.workspaceModel
+      .findById(workspaceId)
+      .select('createdBy storagePrefix')
+      .lean()
+      .exec();
+    if (!doc) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    }
+    return {
+      ownerUserId: doc.createdBy.toString(),
+      storagePrefix: doc.storagePrefix,
+    };
   }
 
   /**
@@ -537,6 +647,7 @@ export class WorkspaceService {
       id: workspace._id.toString(),
       name: workspace.name,
       alias: workspace.alias,
+      storagePrefix: workspace.storagePrefix,
       description: workspace.description,
       createdBy: workspace.createdBy.toString(),
       settings: workspace.settings?.toString(),

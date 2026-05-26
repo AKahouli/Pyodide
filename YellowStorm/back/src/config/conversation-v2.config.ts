@@ -22,4 +22,8 @@ export default registerAs('conversationV2', () => ({
     process.env.CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES || `${16 * 1024 * 1024}`,
     10,
   ),
+  liveTailPollMs: parseInt(
+    process.env.CONVERSATION_V2_LIVE_TAIL_POLL_MS || '1000',
+    10,
+  ),
 }));

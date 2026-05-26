@@ -1,17 +1,26 @@
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { conversationV2Api } from './api';
-import { useConversationV2Store } from './store';
+import { useConversationV2PointersStore, useConversationV2Store } from './store';
 import { useConversationV2Translation } from './translation';
 
 export default function ConversationV2Page() {
   const navigate = useNavigate();
   const reset = useConversationV2Store((s) => s.reset);
+  const prependPointer = useConversationV2PointersStore((s) => s.prepend);
   const { t } = useConversationV2Translation();
 
   const startNew = async () => {
     reset();
-    const { sessionId } = await conversationV2Api.createSession();
+    const { sessionId, workspaceIds } = await conversationV2Api.createSession();
+    prependPointer({
+      sessionId,
+      title: '',
+      status: 'active',
+      lastEventAt: new Date().toISOString(),
+      isShared: false,
+      workspaceIds,
+    });
     navigate(`/conversation-v2/${sessionId}`);
   };
 

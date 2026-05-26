@@ -20,6 +20,14 @@ describe('eventToSseFrame', () => {
   });
 
   it('formats a heartbeat as a comment line', () => {
-    expect(eventToSseFrame({ type: 'ping' as any, payload: null as any }, true)).toBe(': heartbeat\n\n');
+    expect(eventToSseFrame({ type: 'ping' as any, payload: null as any }, undefined, true)).toBe(': heartbeat\n\n');
+  });
+
+  it('includes sequence in the JSON payload when provided', () => {
+    const event: ConversationV2Event = { type: 'done', payload: { event_id: 'e1', timestamp: 1 } };
+    const frame = eventToSseFrame(event, 42);
+    expect(frame).toBe(
+      `event: done\ndata: ${JSON.stringify({ event_id: 'e1', timestamp: 1, sequence: 42 })}\n\n`,
+    );
   });
 });

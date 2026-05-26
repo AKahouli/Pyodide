@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  ContainerClient,
-  BlobSASPermissions,
-  generateBlobSASQueryParameters,
-} from '@azure/storage-blob';
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  CopyObjectCommand,
+  ListObjectsV2Command,
+  ListObjectsV2CommandOutput,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { Readable } from 'stream';
@@ -23,7 +29,6 @@ import { DocumentConnectionService, StorageConnectionStatus } from './document-c
 
 @Injectable()
 export class DocumentService {
-  private readonly containerName: string;
   private readonly maxFileSizeBytes: number;
   private readonly maxFilesPerUpload: number;
   private readonly sasExpiryMinutes: number;
@@ -36,7 +41,6 @@ export class DocumentService {
   ) {
     this.logger.setContext(DocumentService.name);
 
-    this.containerName = this.configService.get<string>('storage.azure.containerName', 'documents');
     this.maxFileSizeBytes =
       this.configService.get<number>('storage.maxFileSizeMb', 50) * 1024 * 1024;
     this.maxFilesPerUpload = this.configService.get<number>('storage.maxFilesPerUpload', 10);
@@ -44,33 +48,28 @@ export class DocumentService {
     this.allowedMimeTypes = this.configService.get<string[]>('storage.allowedMimeTypes', []);
   }
 
-  /**
-   * Check if the document service is available and connected
-   */
   isAvailable(): boolean {
     return this.connectionService.isConnectedNow();
   }
 
-  /**
-   * Get health status details for monitoring (live status from connection service)
-   */
   getHealthStatus(): StorageConnectionStatus {
     return this.connectionService.getHealthStatus();
   }
 
-  /**
-   * Get the container client from connection service
-   */
-  private getContainerClient(): ContainerClient {
-    const containerClient = this.connectionService.getContainerClient();
-    if (!containerClient) {
+  private getS3Client(): S3Client {
+    const client = this.connectionService.getS3Client();
+    if (!client) {
       throw new InternalServerException(undefined, 'Document service is not available');
     }
-    return containerClient;
+    return client;
+  }
+
+  private getBucket(): string {
+    return this.connectionService.getBucket();
   }
 
   /**
-   * Upload a document to Azure Blob Storage
+   * Upload a document to Ceph S3
    */
   async upload(
     file: Buffer | Readable,
@@ -83,59 +82,54 @@ export class DocumentService {
 
     const id = uuidv4();
     const sanitizedName = this.sanitizeFileName(originalName);
-    const storedName = options.generateUniqueName !== false
-      ? `${id}-${sanitizedName}`
-      : options.customFileName || sanitizedName;
+    const storedName =
+      options.generateUniqueName !== false
+        ? `${id}-${sanitizedName}`
+        : options.customFileName || sanitizedName;
 
     const folder = options.folder ? this.sanitizePath(options.folder) : '';
-    const blobPath = folder ? `${folder}/${storedName}` : storedName;
+    const objectKey = folder ? `${folder}/${storedName}` : storedName;
 
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-
-    // Calculate content hash
-    let contentHash: string;
-    let size: number;
     let uploadData: Buffer;
-
     if (file instanceof Buffer) {
       uploadData = file;
-      contentHash = this.calculateHash(file);
-      size = file.length;
     } else {
-      // Convert stream to buffer for hash calculation
       uploadData = await this.streamToBuffer(file as Readable);
-      contentHash = this.calculateHash(uploadData);
-      size = uploadData.length;
-
-      // Validate size after reading stream
-      if (size > this.maxFileSizeBytes) {
-        throw new BadRequestException(
-          `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(this.maxFileSizeBytes / 1024 / 1024)}MB`,
-        );
-      }
     }
 
-    // Prepare metadata
+    const size = uploadData.length;
+    if (size > this.maxFileSizeBytes) {
+      throw new BadRequestException(
+        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
+          this.maxFileSizeBytes / 1024 / 1024,
+        )}MB`,
+      );
+    }
+
+    const contentHash = this.calculateHash(uploadData);
+
     const metadata: Record<string, string> = {
-      originalName: encodeURIComponent(originalName),
-      uploadedAt: new Date().toISOString(),
-      contentHash,
-      ...options.metadata,
+      originalname: encodeURIComponent(originalName),
+      uploadedat: new Date().toISOString(),
+      contenthash: contentHash,
+      ...this.normalizeMetadata(options.metadata),
     };
 
     try {
-      await blockBlobClient.upload(uploadData, size, {
-        blobHTTPHeaders: {
-          blobContentType: mimeType,
-          blobCacheControl: 'max-age=31536000', // 1 year cache
-        },
-        metadata,
-      });
+      await this.getS3Client().send(
+        new PutObjectCommand({
+          Bucket: this.getBucket(),
+          Key: objectKey,
+          Body: uploadData,
+          ContentType: mimeType,
+          CacheControl: 'max-age=31536000',
+          Metadata: metadata,
+        }),
+      );
 
       this.logger.log('Document uploaded', {
         id,
-        blobPath,
+        objectKey,
         size,
         mimeType,
       });
@@ -144,11 +138,11 @@ export class DocumentService {
         id,
         originalName,
         storedName,
-        blobPath,
+        blobPath: objectKey,
         mimeType,
         size,
         contentHash,
-        url: blockBlobClient.url,
+        url: this.getObjectUrl(objectKey),
         uploadedAt: new Date(),
         metadata: options.metadata,
       };
@@ -156,15 +150,12 @@ export class DocumentService {
       const err = error as Error;
       this.logger.error('Failed to upload document', {
         message: err.message,
-        blobPath,
+        objectKey,
       });
       throw new InternalServerException(err, 'Failed to upload document');
     }
   }
 
-  /**
-   * Upload multiple documents
-   */
   async uploadMany(
     files: Array<{ buffer: Buffer; originalName: string; mimeType: string }>,
     options: UploadOptions = {},
@@ -175,97 +166,108 @@ export class DocumentService {
       );
     }
 
-    const results = await Promise.all(
+    return Promise.all(
       files.map((file) => this.upload(file.buffer, file.originalName, file.mimeType, options)),
     );
-
-    return results;
   }
 
-  /**
-   * Download a document
-   */
-  async download(blobPath: string): Promise<Buffer> {
+  async download(objectKey: string): Promise<Buffer> {
     this.ensureAvailable();
 
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-
     try {
-      const exists = await blockBlobClient.exists();
-      if (!exists) {
+      const response = await this.getS3Client().send(
+        new GetObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
+
+      if (!response.Body) {
         throw new BadRequestException('Document not found');
       }
 
-      const downloadResponse = await blockBlobClient.download(0);
-      return this.streamToBuffer(downloadResponse.readableStreamBody as Readable);
+      return this.streamToBuffer(response.Body as Readable);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      if (this.isNotFoundError(error)) {
+        throw new BadRequestException('Document not found');
+      }
 
       const err = error as Error;
       this.logger.error('Failed to download document', {
         message: err.message,
-        blobPath,
+        objectKey,
       });
       throw new InternalServerException(err, 'Failed to download document');
     }
   }
 
-  /**
-   * Delete a document
-   */
-  async delete(blobPath: string): Promise<void> {
+  async delete(objectKey: string): Promise<void> {
     this.ensureAvailable();
 
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-
     try {
-      await blockBlobClient.deleteIfExists({
-        deleteSnapshots: 'include',
-      });
+      await this.getS3Client().send(
+        new DeleteObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
 
-      this.logger.log('Document deleted', { blobPath });
+      this.logger.log('Document deleted', { objectKey });
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to delete document', {
         message: err.message,
-        blobPath,
+        objectKey,
       });
       throw new InternalServerException(err, 'Failed to delete document');
     }
   }
 
-  /**
-   * Delete multiple documents
-   */
-  async deleteMany(blobPaths: string[]): Promise<void> {
-    await Promise.all(blobPaths.map((path) => this.delete(path)));
+  async deleteMany(objectKeys: string[]): Promise<void> {
+    await Promise.all(objectKeys.map((key) => this.delete(key)));
+  }
+
+  async exists(objectKey: string): Promise<boolean> {
+    this.ensureAvailable();
+
+    try {
+      await this.getS3Client().send(
+        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
+      return true;
+    } catch (error) {
+      if (this.isNotFoundError(error)) {
+        return false;
+      }
+      // Log unexpected S3 errors before re-throwing — without this they
+      // bubble up as opaque 500 UnknownError responses with no context.
+      const err = error as {
+        name?: string;
+        message?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      this.logger.error('S3 HeadObject failed (not a 404)', {
+        objectKey,
+        bucket: this.getBucket(),
+        errorName: err?.name,
+        message: err?.message,
+        httpStatusCode: err?.$metadata?.httpStatusCode,
+      });
+      throw error;
+    }
   }
 
   /**
-   * Check if a document exists
+   * Generate a presigned URL for temporary access (read by default).
+   * Method name retained for backward compatibility with existing callers
+   * — the underlying mechanism is S3 presigned URLs (not Azure SAS).
    */
-  async exists(blobPath: string): Promise<boolean> {
+  async generateSasUrl(objectKey: string, options: SasUrlOptions = {}): Promise<string> {
     this.ensureAvailable();
 
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-    return blockBlobClient.exists();
-  }
+    // Folders have no extension and no underlying S3 object — reject early.
+    if (!objectKey.includes('.')) {
+      throw new BadRequestException('Cannot generate download URL for folders');
+    }
 
-  /**
-   * Generate a SAS URL for temporary access.
-   * When `checkExists` is true, verifies the blob exists before generating the URL.
-   */
-  async generateSasUrl(blobPath: string, options: SasUrlOptions = {}): Promise<string> {
-    this.ensureAvailable();
-
-    // If checkExists is true and blob doesn't exist, throw 404 error
-    // This allows folder operations to fail early without trying to generate SAS URLs
     if (options.checkExists) {
-      const blobExists = await this.exists(blobPath);
-      if (!blobExists) {
+      const objectExists = await this.exists(objectKey);
+      if (!objectExists) {
         throw new NotFoundException(
           ErrorCode.WORKSPACE_DOCUMENT_NOT_IN_BLOB,
           'Document file not found in storage',
@@ -273,81 +275,57 @@ export class DocumentService {
       }
     }
 
-    // Check if this is a folder path (no filename extension)
-    // Folders should not have SAS URLs generated
-    const isFolder = !blobPath.includes('.');
+    const expirySeconds = (options.expiryMinutes || this.sasExpiryMinutes) * 60;
+    const permissions = options.permissions || 'r';
+    const isWrite = permissions.includes('w') || permissions.includes('c');
 
-    if (isFolder) {
-      throw new BadRequestException(
-        'Cannot generate download URL for folders',
+    if (isWrite) {
+      return getSignedUrl(
+        this.getS3Client(),
+        new PutObjectCommand({
+          Bucket: this.getBucket(),
+          Key: objectKey,
+        }),
+        { expiresIn: expirySeconds },
       );
     }
 
-    const sharedKeyCredential = this.connectionService.getSharedKeyCredential();
-    if (!sharedKeyCredential) {
-      throw new InternalServerException(undefined, 'SAS URL generation not configured');
-    }
-
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-    const expiryMinutes = options.expiryMinutes || this.sasExpiryMinutes;
-
-    const startsOn = new Date();
-    const expiresOn = new Date(startsOn.getTime() + expiryMinutes * 30 * 1000); // 30 minutes expiry
-
-    const permissions = BlobSASPermissions.parse(options.permissions || 'r');
-
-    const containerName = this.connectionService.getContainerName();
-    const sasToken = generateBlobSASQueryParameters(
-      {
-        containerName,
-        blobName: blobPath,
-        permissions,
-        startsOn,
-        expiresOn,
-        contentDisposition: options.contentDisposition,
-      },
-      sharedKeyCredential,
-    ).toString();
-
-    return `${blockBlobClient.url}?${sasToken}`;
+    return getSignedUrl(
+      this.getS3Client(),
+      new GetObjectCommand({
+        Bucket: this.getBucket(),
+        Key: objectKey,
+        ResponseContentDisposition: options.contentDisposition,
+      }),
+      { expiresIn: expirySeconds },
+    );
   }
 
-  /**
-   * List documents in a folder
-   */
   async list(options: DocumentListOptions = {}): Promise<DocumentListResult> {
     this.ensureAvailable();
 
-    const documents: DocumentInfo[] = [];
-    let continuationToken: string | undefined;
-
     try {
-      const containerClient = this.getContainerClient();
-      const iterator = containerClient.listBlobsFlat({
-        prefix: options.folder,
-      }).byPage({
-        maxPageSize: options.maxResults || 100,
-        continuationToken: options.continuationToken,
-      });
+      const response: ListObjectsV2CommandOutput = await this.getS3Client().send(
+        new ListObjectsV2Command({
+          Bucket: this.getBucket(),
+          Prefix: options.folder,
+          MaxKeys: options.maxResults || 100,
+          ContinuationToken: options.continuationToken,
+        }),
+      );
 
-      const page = await iterator.next();
+      const documents: DocumentInfo[] = (response.Contents || []).map((item) => ({
+        name: (item.Key || '').split('/').pop() || item.Key || '',
+        blobPath: item.Key || '',
+        size: item.Size || 0,
+        contentType: 'application/octet-stream',
+        lastModified: item.LastModified || new Date(),
+      }));
 
-      if (!page.done && page.value.segment.blobItems) {
-        for (const blob of page.value.segment.blobItems) {
-          documents.push({
-            name: blob.name.split('/').pop() || blob.name,
-            blobPath: blob.name,
-            size: blob.properties.contentLength || 0,
-            contentType: blob.properties.contentType || 'application/octet-stream',
-            lastModified: blob.properties.lastModified || new Date(),
-            metadata: blob.metadata,
-          });
-        }
-        continuationToken = page.value.continuationToken;
-      }
-
-      return { documents, continuationToken };
+      return {
+        documents,
+        continuationToken: response.NextContinuationToken,
+      };
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to list documents', {
@@ -358,87 +336,87 @@ export class DocumentService {
     }
   }
 
-  /**
-   * Get document metadata
-   */
-  async getMetadata(blobPath: string): Promise<DocumentInfo | null> {
+  async getMetadata(objectKey: string): Promise<DocumentInfo | null> {
     this.ensureAvailable();
 
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-
     try {
-      const exists = await blockBlobClient.exists();
-      if (!exists) return null;
-
-      const properties = await blockBlobClient.getProperties();
+      const response = await this.getS3Client().send(
+        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
 
       return {
-        name: blobPath.split('/').pop() || blobPath,
-        blobPath,
-        size: properties.contentLength || 0,
-        contentType: properties.contentType || 'application/octet-stream',
-        lastModified: properties.lastModified || new Date(),
-        metadata: properties.metadata,
+        name: objectKey.split('/').pop() || objectKey,
+        blobPath: objectKey,
+        size: response.ContentLength || 0,
+        contentType: response.ContentType || 'application/octet-stream',
+        lastModified: response.LastModified || new Date(),
+        metadata: response.Metadata,
       };
     } catch (error) {
+      if (this.isNotFoundError(error)) {
+        return null;
+      }
       const err = error as Error;
       this.logger.error('Failed to get document metadata', {
         message: err.message,
-        blobPath,
+        objectKey,
       });
       return null;
     }
   }
 
-  /**
-   * Copy a document to a new location
-   */
-  async copy(sourcePath: string, destinationPath: string): Promise<string> {
+  async copy(sourceKey: string, destinationKey: string): Promise<string> {
     this.ensureAvailable();
 
-    const containerClient = this.getContainerClient();
-    const sourceClient = containerClient.getBlockBlobClient(sourcePath);
-    const destClient = containerClient.getBlockBlobClient(destinationPath);
-
     try {
-      const sourceExists = await sourceClient.exists();
+      const sourceExists = await this.exists(sourceKey);
       if (!sourceExists) {
         throw new BadRequestException('Source document not found');
       }
 
-      await destClient.beginCopyFromURL(sourceClient.url);
+      await this.getS3Client().send(
+        new CopyObjectCommand({
+          Bucket: this.getBucket(),
+          CopySource: `/${this.getBucket()}/${encodeURIComponent(sourceKey)}`,
+          Key: destinationKey,
+        }),
+      );
 
       this.logger.log('Document copied', {
-        source: sourcePath,
-        destination: destinationPath,
+        source: sourceKey,
+        destination: destinationKey,
       });
 
-      return destinationPath;
+      return destinationKey;
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
 
       const err = error as Error;
       this.logger.error('Failed to copy document', {
         message: err.message,
-        sourcePath,
-        destinationPath,
+        sourceKey,
+        destinationKey,
       });
       throw new InternalServerException(err, 'Failed to copy document');
     }
   }
 
   /**
-   * Get the full blob URL for a given path (without SAS token)
+   * Get the canonical object URL (without presigning). Used by indexing service
+   * and other consumers that need a stable identifier rather than a temporary URL.
    */
-  getBlobUrl(blobPath: string): string {
+  getBlobUrl(objectKey: string): string {
     this.ensureAvailable();
-    const containerClient = this.getContainerClient();
-    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
-    return blockBlobClient.url;
+    return this.getObjectUrl(objectKey);
   }
 
   // ============ Private Methods ============
+
+  private getObjectUrl(objectKey: string): string {
+    const base = this.connectionService.getPublicUrl().replace(/\/+$/, '');
+    const bucket = this.getBucket();
+    return `${base}/${bucket}/${objectKey}`;
+  }
 
   private ensureAvailable(): void {
     if (!this.connectionService.isConnectedNow()) {
@@ -447,21 +425,20 @@ export class DocumentService {
   }
 
   private validateFile(fileName: string, mimeType: string, size?: number): void {
-    // Validate MIME type
     if (this.allowedMimeTypes.length > 0 && !this.allowedMimeTypes.includes(mimeType)) {
       throw new BadRequestException(
         `File type '${mimeType}' is not allowed. Allowed types: ${this.allowedMimeTypes.join(', ')}`,
       );
     }
 
-    // Validate file size
     if (size !== undefined && size > this.maxFileSizeBytes) {
       throw new BadRequestException(
-        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(this.maxFileSizeBytes / 1024 / 1024)}MB`,
+        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
+          this.maxFileSizeBytes / 1024 / 1024,
+        )}MB`,
       );
     }
 
-    // Validate filename
     if (!fileName || fileName.length === 0) {
       throw new BadRequestException('File name is required');
     }
@@ -472,16 +449,10 @@ export class DocumentService {
   }
 
   private sanitizeFileName(fileName: string): string {
-    // Remove path separators and null bytes
     let sanitized = fileName.replace(/[/\\:\0]/g, '_');
-
-    // Remove leading/trailing dots and spaces
     sanitized = sanitized.replace(/^[\s.]+|[\s.]+$/g, '');
-
-    // Replace multiple consecutive underscores/spaces
     sanitized = sanitized.replace(/[_\s]+/g, '_');
 
-    // Ensure filename is not empty after sanitization
     if (!sanitized || sanitized === '_') {
       sanitized = `file_${Date.now()}`;
     }
@@ -490,18 +461,10 @@ export class DocumentService {
   }
 
   private sanitizePath(path: string): string {
-    // Remove leading/trailing slashes
     let sanitized = path.replace(/^\/+|\/+$/g, '');
-
-    // Remove null bytes and backslashes
     sanitized = sanitized.replace(/[\0\\]/g, '');
-
-    // Replace multiple consecutive slashes
     sanitized = sanitized.replace(/\/+/g, '/');
-
-    // Remove path traversal attempts
     sanitized = sanitized.replace(/\.\./g, '');
-
     return sanitized;
   }
 
@@ -513,9 +476,29 @@ export class DocumentService {
     const chunks: Buffer[] = [];
 
     return new Promise((resolve, reject) => {
-      stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
       stream.on('error', reject);
       stream.on('end', () => resolve(Buffer.concat(chunks)));
     });
+  }
+
+  private isNotFoundError(error: unknown): boolean {
+    const err = error as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+    return (
+      err?.name === 'NotFound' ||
+      err?.name === 'NoSuchKey' ||
+      err?.Code === 'NoSuchKey' ||
+      err?.Code === 'NotFound' ||
+      err?.$metadata?.httpStatusCode === 404
+    );
+  }
+
+  private normalizeMetadata(metadata?: Record<string, string>): Record<string, string> {
+    if (!metadata) return {};
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+      normalized[key.toLowerCase()] = value;
+    }
+    return normalized;
   }
 }

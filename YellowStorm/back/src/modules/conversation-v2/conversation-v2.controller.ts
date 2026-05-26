@@ -13,7 +13,9 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import * as grpc from '@grpc/grpc-js';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
@@ -22,10 +24,16 @@ import { ConversationV2SessionService } from './services/conversation-v2-session
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import { CreateSessionDto } from './dto/create-session.dto';
+import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { ListSessionsDto } from './dto/list-sessions.dto';
+import { ListEventsDto } from './dto/list-events.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
-import { SessionWithEvents } from './types/conversation-v2.types';
+import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
+import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
 
 interface AuthUser { id: string; }
 
@@ -37,17 +45,77 @@ export class ConversationV2Controller {
     private readonly grpcClient: ConversationV2GrpcClientService,
     private readonly sessions: ConversationV2SessionService,
     private readonly share: ConversationV2ShareService,
+    private readonly workspaceShare: WorkspaceShareService,
+    private readonly workspaceDocuments: WorkspaceDocumentService,
+    private readonly eventStore: ConversationV2EventStoreService,
+    private readonly workspaceService: WorkspaceService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post('sessions')
   @HttpCode(HttpStatus.CREATED)
   async createSession(
     @CurrentUser() user: AuthUser,
-    @Body() _body: CreateSessionDto = new CreateSessionDto(),
-  ): Promise<{ sessionId: string }> {
-    const sessionId = await this.grpcClient.createSession(user.id);
-    await this.sessions.createForUser(user.id, sessionId);
-    return { sessionId };
+    @Body() body: CreateSessionDto = new CreateSessionDto(),
+  ): Promise<{
+    sessionId: string;
+    workspaceIds: string[];
+    systemWorkspaceId: string;
+  }> {
+    // Empty selection means "use all of my workspaces" — expand here so the
+    // draft pointer, the gRPC session's workspace_paths, and the response
+    // body all carry the same set. Owner-only by design: the new-conversation
+    // picker shows owned workspaces, so the default mirrors that.
+    let workspaceIds = body.workspaceIds ?? [];
+    if (workspaceIds.length === 0) {
+      workspaceIds = await this.workspaceService.findIdsByOwner(user.id);
+    } else {
+      await this.workspaceShare.assertUserHasAccess(user.id, workspaceIds);
+    }
+
+    const draft = await this.sessions.createDraft(user.id, workspaceIds);
+    const draftId = draft._id as Types.ObjectId;
+
+    let systemWorkspaceId: string;
+    try {
+      const allocatedStorage = this.config.get<number>(
+        'conversation.systemWorkspaceStorageBytes',
+        52428800,
+      );
+      const ws = await this.workspaceService.createSystemWorkspace(
+        user.id,
+        draftId.toString(),
+        allocatedStorage,
+      );
+      systemWorkspaceId = ws.id;
+    } catch (err) {
+      await this.sessions.deleteDraft(draftId).catch(() => undefined);
+      throw err;
+    }
+
+    let aiSessionId: string;
+    try {
+      aiSessionId = await this.grpcClient.createSession(user.id, workspaceIds);
+    } catch (err) {
+      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
+      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      throw err;
+    }
+
+    try {
+      await this.sessions.attachAiSession(draftId, aiSessionId, systemWorkspaceId);
+    } catch (err) {
+      this.grpcClient.stopSession(user.id, aiSessionId).catch(() => undefined);
+      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
+      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      throw err;
+    }
+
+    return {
+      sessionId: draftId.toString(),
+      workspaceIds,
+      systemWorkspaceId,
+    };
   }
 
   @Get('sessions')
@@ -67,12 +135,77 @@ export class ConversationV2Controller {
   async getSession(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-  ): Promise<SessionWithEvents> {
-    try {
-      return await this.grpcClient.getSession(user.id, id);
-    } catch (err) {
-      this.translateGrpcError(err);
+  ): Promise<{
+    sessionId: string;
+    title: string;
+    status: string;
+    isShared: boolean;
+    workspaceIds: string[];
+    lastEventAt: Date;
+    eventCount: number;
+    systemWorkspaceId: string | null;
+  }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer) throw new NotFoundException('Session not found');
+    return {
+      sessionId: (pointer._id as Types.ObjectId).toString(),
+      title: pointer.title,
+      status: pointer.status,
+      isShared: pointer.isShared,
+      workspaceIds: pointer.workspaceIds ?? [],
+      lastEventAt: pointer.lastEventAt,
+      eventCount: (pointer as unknown as { eventCount?: number }).eventCount ?? 0,
+      systemWorkspaceId:
+        (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
+          .systemWorkspaceId?.toString() ?? null,
+    };
+  }
+
+  @Get('sessions/:id/events')
+  @UseGuards(ConversationV2OwnerGuard)
+  async listEvents(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query() query: ListEventsDto,
+  ): Promise<{
+    items: Array<{
+      sessionId: string;
+      sequence: number;
+      eventId: string;
+      type: string;
+      emittedAt: number;
+      payload: Record<string, unknown>;
+      modelId?: string | null;
+    }>;
+    nextSince: number;
+  }> {
+    void user;
+    const since = query.since ?? 0;
+    const limit = query.limit ?? 200;
+    const items = await this.eventStore.listSince(id, since, limit);
+    const nextSince = items.length > 0 ? items[items.length - 1].sequence : since;
+    return { items, nextSince };
+  }
+
+  @Get('sessions/:id/workspace-documents')
+  @UseGuards(ConversationV2OwnerGuard)
+  async listWorkspaceDocuments(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query() query: DocumentQueryDto,
+  ) {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer) throw new NotFoundException('Session not found');
+    const systemWsId = (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
+      .systemWorkspaceId?.toString() ?? null;
+    const attachedIds = (pointer.workspaceIds ?? []).filter((wid) => wid !== systemWsId);
+    if (attachedIds.length === 0) {
+      return {
+        documents: [],
+        pagination: { page: 1, limit: query.limit ?? 20, total: 0, totalPages: 0 },
+      };
     }
+    return this.workspaceDocuments.findByMultipleWorkspaces(attachedIds, query);
   }
 
   @Patch('sessions/:id')
@@ -111,6 +244,18 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ deleted: true }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    // Known: there's a small race window between deleteAllByWorkspace and
+    // deleteSystemWorkspace where a concurrent stream's fire-and-forget
+    // createFromAiArtifact can insert a new document row pointing at the
+    // workspace we're about to remove. The document row then outlives the
+    // workspace (no FK constraints in Mongo). Documents are tiny and a future
+    // orphan-sweep cron would handle them; acceptable for the rework.
+    if (pointer?.systemWorkspaceId) {
+      const wsId = pointer.systemWorkspaceId.toString();
+      await this.workspaceDocuments.deleteAllByWorkspace(wsId);
+      await this.workspaceService.deleteSystemWorkspace(wsId);
+    }
     await this.sessions.softDelete(user.id, id);
     return { deleted: true };
   }
@@ -122,8 +267,12 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ success: true }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer || !pointer.aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
     try {
-      await this.grpcClient.stopSession(user.id, id);
+      await this.grpcClient.stopSession(user.id, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -137,8 +286,12 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ success: true }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer || !pointer.aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
     try {
-      await this.grpcClient.pauseSession(user.id, id);
+      await this.grpcClient.pauseSession(user.id, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -152,8 +305,12 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ success: true }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer || !pointer.aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
     try {
-      await this.grpcClient.resumeSession(user.id, id);
+      await this.grpcClient.resumeSession(user.id, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -162,11 +319,57 @@ export class ConversationV2Controller {
 
   @Get('share/v2/:token')
   @Public()
-  async getShared(@Param('token') token: string): Promise<SessionWithEvents> {
+  async getShared(@Param('token') token: string): Promise<{
+    session: {
+      sessionId: string;
+      title: string;
+      status: string;
+      isShared: boolean;
+      workspaceIds: string[];
+      systemWorkspaceId: string | null;
+    };
+    events: PersistedEventRow[];
+  }> {
     const hash = this.share.hashToken(token);
     const pointer = await this.sessions.getByShareToken(hash);
     if (!pointer) throw new NotFoundException('Shared session not found');
-    return this.grpcClient.getSession(pointer.ownerId, pointer.sessionId);
+    const events = await this.eventStore.listSince(
+      (pointer._id as Types.ObjectId).toString(),
+      0,
+      5000,
+    );
+    return {
+      session: {
+        sessionId: (pointer._id as Types.ObjectId).toString(),
+        title: pointer.title,
+        status: pointer.status,
+        isShared: pointer.isShared,
+        workspaceIds: pointer.workspaceIds ?? [],
+        systemWorkspaceId:
+          (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
+            .systemWorkspaceId?.toString() ?? null,
+      },
+      events,
+    };
+  }
+
+  /**
+   * Exchange a message-attachment `path` for a short-lived presigned read URL.
+   * The path is the bare Ceph object key the AI service emits in
+   * `FileInfo.path` (e.g., `{userId}/files_generated/output.txt`); bucket is
+   * resolved from `STORAGE_S3_BUCKET` env config.
+   *
+   * Authorization is intentionally loose — only the global JWT guard. Mirrors
+   * v1 `/conversations/artifact-url` (`conversation.controller.ts:40-66`).
+   */
+  @Post('files/signed-url')
+  @HttpCode(HttpStatus.OK)
+  async getFileSignedUrl(
+    @CurrentUser() _user: AuthUser,
+    @Body() body: GetFileSignedUrlDto,
+  ): Promise<{ url: string }> {
+    const url = await this.workspaceDocuments.generateReadUrl(body.path);
+    return { url };
   }
 
   @Get('sessions/:id/vnc/signed-url')
@@ -175,7 +378,11 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ url: string; expiresAt: number }> {
-    const r = await this.grpcClient.getVncSignedUrl(user.id, id);
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer || !pointer.aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
+    const r = await this.grpcClient.getVncSignedUrl(user.id, pointer.aiSessionId);
     if (!r) throw new VmUnavailableException();
     return r;
   }
