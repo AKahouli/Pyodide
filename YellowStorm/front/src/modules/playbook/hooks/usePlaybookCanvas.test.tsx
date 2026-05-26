@@ -1,11 +1,14 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { usePlaybookCanvas, tasksToNodes } from './usePlaybookCanvas';
+import { usePlaybookCanvas } from './usePlaybookCanvas';
+import { tasksToNodes } from './helpers/node-serializer';
 import { makePlaybook, makeTask } from '../test-utils';
 
 const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
   updateEdges: vi.fn(),
+  updateControlEdges: vi.fn(),
+  updateDataBindings: vi.fn(),
   captureSnapshot: vi.fn(),
   selectStep: vi.fn(),
   canvasSyncVersion: 0,
@@ -41,6 +44,9 @@ vi.mock('@xyflow/react', () => ({
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
     return edges.filter((e) => !removeIds.has(e.id));
   },
+  useReactFlow: () => ({
+    screenToFlowPosition: (pos: { x: number; y: number }) => pos,
+  }),
 }));
 
 describe('usePlaybookCanvas', () => {
@@ -139,8 +145,17 @@ describe('usePlaybookCanvas', () => {
     });
   });
 
-  it('persists edges from the synthetic trigger source', () => {
-    currentPlaybookState.value = makePlaybook({ edges: [] });
+  it('stores trigger connections as data bindings without persisting control edges', () => {
+    currentPlaybookState.value = makePlaybook({
+      edges: [],
+      dataBindings: [],
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'data', required: false }],
+        }),
+      ],
+    });
     const { result } = renderHook(() => usePlaybookCanvas());
 
     act(() => {
@@ -154,18 +169,20 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
       {
-        id: 'e-__trigger__-mail_data-task-1-default',
-        sourceId: '__trigger__',
-        targetId: 'task-1',
-        sourceOutputPortId: 'mail_data',
-        targetInputPortId: 'default',
+        id: 'db-trigger-mail_data-task-1-default',
+        targetNode: 'task-1',
+        targetPort: 'default',
+        sourceKind: 'trigger',
+        triggerPath: 'mail_data',
       },
     ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
-  it('adds edge on connect and updates store asynchronously', () => {
+  it('ignores generic edge remove events so double-click stays the only edge delete path', () => {
     const { result } = renderHook(() => usePlaybookCanvas());
 
     act(() => {
@@ -173,7 +190,8 @@ describe('usePlaybookCanvas', () => {
     });
 
     act(() => vi.runAllTimers());
-    expect(storeFns.updateEdges).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
   it('syncs node positions to store on node drag stop', () => {
@@ -251,7 +269,7 @@ describe('usePlaybookCanvas', () => {
     expect(storeFns.selectStep).toHaveBeenCalledWith('task-1');
   });
 
-  it('allows multiple port-to-port edges between the same two nodes', () => {
+  it('stores multiple port-to-port bindings and matching control edges', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [
         makeTask({
@@ -272,6 +290,7 @@ describe('usePlaybookCanvas', () => {
         }),
       ],
       edges: [],
+      dataBindings: [],
     });
 
     const { result } = renderHook(() => usePlaybookCanvas());
@@ -309,9 +328,30 @@ describe('usePlaybookCanvas', () => {
         targetInputPortId: 'in-2',
       },
     ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-1-out-1-task-2-in-1',
+        targetNode: 'task-2',
+        targetPort: 'in-1',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'out-1',
+        iteration: 'current',
+      },
+      {
+        id: 'db-task-1-out-2-task-2-in-2',
+        targetNode: 'task-2',
+        targetPort: 'in-2',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'out-2',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
-  it('persists iterator results port connections for downstream data inputs', () => {
+  it('stores iterator result bindings and matching control edges', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [
         makeTask({
@@ -330,6 +370,7 @@ describe('usePlaybookCanvas', () => {
         }),
       ],
       edges: [],
+      dataBindings: [],
     });
 
     const { result } = renderHook(() => usePlaybookCanvas());
@@ -354,6 +395,264 @@ describe('usePlaybookCanvas', () => {
         targetInputPortId: 'metrics',
       },
     ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-iterator-1-results-task-2-metrics',
+        targetNode: 'task-2',
+        targetPort: 'metrics',
+        sourceKind: 'node-output',
+        sourceNode: 'iterator-1',
+        sourcePort: 'results',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
+  });
+
+  it('creates a compatible input port and binding when dropping on a node body', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          inputPorts: [],
+        }),
+      ],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    const originalElementsFromPoint = (document as Document & { elementsFromPoint?: typeof document.elementsFromPoint }).elementsFromPoint;
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => [
+        {
+          classList: { contains: (value: string) => value === 'react-flow__node' },
+          getAttribute: (name: string) => (name === 'data-id' ? 'task-2' : null),
+          closest: () => null,
+        } as any,
+      ]),
+    });
+
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'task-1',
+          type: 'playbookStep',
+          position: { x: 20, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'task-1',
+            executionOrder: 0,
+            outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+          }),
+        } as any,
+        {
+          id: 'task-2',
+          type: 'playbookStep',
+          position: { x: 240, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'task-2',
+            executionOrder: 1,
+            inputPorts: [],
+          }),
+        } as any,
+      ]);
+      result.current.onConnectStart(
+        {} as any,
+        { nodeId: 'task-1', handleId: 'draft', handleType: 'source' } as any,
+      );
+      result.current.onConnectEnd({ clientX: 260, clientY: 40 } as any, null as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    const targetNode = result.current.nodes.find((node) => node.id === 'task-2');
+    const createdPort = (targetNode?.data as any)?.inputPorts?.[0];
+
+    expect(createdPort).toMatchObject({
+      name: 'Draft',
+      artifactKind: 'text',
+      required: false,
+    });
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: `db-task-1-draft-task-2-${createdPort.id}`,
+        targetNode: 'task-2',
+        targetPort: createdPort.id,
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: `e-task-1-draft-task-2-${createdPort.id}`,
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: createdPort.id,
+      },
+    ]);
+
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: originalElementsFromPoint,
+    });
+  });
+
+  it('replaces the existing binding when reconnecting the same target port', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          outputPorts: [{ id: 'final', name: 'Final', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-3',
+          executionOrder: 2,
+          inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: false }],
+        }),
+      ],
+      edges: [{
+        id: 'e-task-1-draft-task-3-prompt',
+        sourceId: 'task-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: 'prompt',
+      }],
+      dataBindings: [{
+        id: 'db-task-1-draft-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
+      }],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'task-2',
+        target: 'task-3',
+        sourceHandle: 'final',
+        targetHandle: 'prompt',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-task-2-final-task-3-prompt',
+        sourceId: 'task-2',
+        targetId: 'task-3',
+        sourceOutputPortId: 'final',
+        targetInputPortId: 'prompt',
+      },
+    ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-2-final-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-2',
+        sourcePort: 'final',
+        iteration: 'current',
+      },
+    ]);
+  });
+
+  it('preserves conditional control edges while adding a sequential edge for a new data binding source', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'router-1',
+          nodeType: 'router',
+          outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-3',
+          executionOrder: 2,
+          inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: false }],
+        }),
+      ],
+      edges: [{
+        id: 'e-router-1-approved-task-3-prompt',
+        sourceId: 'router-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'prompt',
+      }],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'task-1',
+        target: 'task-3',
+        sourceHandle: 'draft',
+        targetHandle: 'prompt',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-router-1-approved-task-3-prompt',
+        sourceId: 'router-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'prompt',
+      },
+      {
+        id: 'e-task-1-draft-task-3-prompt',
+        sourceId: 'task-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: 'prompt',
+      },
+    ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-1-draft-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
+      },
+    ]);
   });
 
   it('removes node and linked edges and syncs both stores', () => {
@@ -366,6 +665,7 @@ describe('usePlaybookCanvas', () => {
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
     expect(storeFns.updateEdges).toHaveBeenCalled();
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
   it('delegates trigger node deletion to triggerActions.onDelete', () => {
@@ -468,13 +768,13 @@ describe('usePlaybookCanvas', () => {
     expect(updatedChildNode).toMatchObject({
       parentId: 'iterator-1',
       extent: 'parent',
-      position: { x: 608, y: 72 },
+      position: { x: 637, y: 72 },
     });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'child-2',
-          positionX: 708,
+          positionX: 737,
           positionY: 192,
           containerConfig: { parentIteratorId: 'iterator-1' },
         }),
@@ -524,14 +824,14 @@ describe('usePlaybookCanvas', () => {
     expect(updatedChildNode).toMatchObject({
       parentId: 'iterator-1',
       extent: 'parent',
-      position: { x: 32, y: 504 },
+      position: { x: 32, y: 533 },
     });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'child-3',
           positionX: 132,
-          positionY: 624,
+          positionY: 653,
           containerConfig: { parentIteratorId: 'iterator-1' },
         }),
       ]),
@@ -582,13 +882,13 @@ describe('usePlaybookCanvas', () => {
     const childNode3 = result.current.nodes.find((node) => node.id === 'child-3');
 
     expect(childNode1).toMatchObject({ position: { x: 32, y: 72 } });
-    expect(childNode2).toMatchObject({ position: { x: 608, y: 72 } });
-    expect(childNode3).toMatchObject({ position: { x: 32, y: 504 } });
+    expect(childNode2).toMatchObject({ position: { x: 637, y: 72 } });
+    expect(childNode3).toMatchObject({ position: { x: 32, y: 533 } });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ id: 'child-1', positionX: 132, positionY: 192 }),
-        expect.objectContaining({ id: 'child-2', positionX: 708, positionY: 192 }),
-        expect.objectContaining({ id: 'child-3', positionX: 132, positionY: 624 }),
+        expect.objectContaining({ id: 'child-2', positionX: 737, positionY: 192 }),
+        expect.objectContaining({ id: 'child-3', positionX: 132, positionY: 653 }),
       ]),
     );
   });
@@ -633,5 +933,36 @@ describe('usePlaybookCanvas', () => {
         }),
       ]),
     );
+  });
+
+  it('renders two connected top-level iterators as separate container nodes', () => {
+    const nodes = tasksToNodes([
+      makeTask({
+        id: 'iterator-1',
+        taskType: 'iterator',
+        nodeType: 'iterator',
+        title: 'Loop companies',
+        positionX: 50,
+        positionY: 60,
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        iteratorConfig: { source: '{{items}}', mode: 'item', batchSize: 10, itemVariable: 'item', outputVariable: 'items', errorStrategy: 'stop' },
+      }),
+      makeTask({
+        id: 'iterator-2',
+        taskType: 'iterator',
+        nodeType: 'iterator',
+        title: 'Loop leads',
+        positionX: 570,
+        positionY: 60,
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        iteratorConfig: { source: '{{items}}', mode: 'item', batchSize: 10, itemVariable: 'item', outputVariable: 'processed_items', errorStrategy: 'stop' },
+      }),
+    ], false);
+
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
+    expect(nodes[1]).toMatchObject({ id: 'iterator-2', type: 'playbookIteratorContainer' });
   });
 });

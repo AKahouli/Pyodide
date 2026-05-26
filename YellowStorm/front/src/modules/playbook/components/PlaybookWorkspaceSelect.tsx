@@ -50,16 +50,24 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
     fetchWorkspaces();
   }, [fetchWorkspaces]);
 
-  const toggle = useCallback(
-    (wsId: string) => {
-      onChange(value.includes(wsId) ? value.filter((v) => v !== wsId) : [...value, wsId]);
+  const selectedWorkspaceId = value[0] ?? null;
+
+  const selectWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (selectedWorkspaceId === workspaceId) {
+        setOpen(false);
+        return;
+      }
+
+      onChange([workspaceId]);
+      setOpen(false);
     },
-    [value, onChange],
+    [selectedWorkspaceId, onChange],
   );
 
-  const selectedNames = value
-    .map((id) => workspaces.find((ws) => ws.id === id)?.name)
-    .filter(Boolean) as string[];
+  const selectedWorkspaceName = selectedWorkspaceId
+    ? workspaces.find((ws) => ws.id === selectedWorkspaceId)?.name ?? null
+    : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -74,11 +82,9 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
         >
           <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
             <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            {selectedNames.length > 0 ? (
+            {selectedWorkspaceName ? (
               <span className="truncate text-xs">
-                {selectedNames.length === 1
-                  ? selectedNames[0]
-                  : `${selectedNames.length} ${t('workspace.label').toLowerCase()}`}
+                {selectedWorkspaceName}
               </span>
             ) : (
               <span className="text-muted-foreground text-xs truncate">
@@ -100,7 +106,7 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
             <CommandEmpty>
               {fetchError ? (
                 <button type="button" className="text-destructive cursor-pointer" onClick={fetchWorkspaces}>
-                  Failed to load. Click to retry.
+                  {t('workspace.retryLoad')}
                 </button>
               ) : (
                 t('workspace.empty')
@@ -108,17 +114,22 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
             </CommandEmpty>
             <CommandGroup>
               {workspaces.map((ws) => (
-                <CommandItem key={ws.id} value={ws.name} onSelect={() => toggle(ws.id)}>
+                <CommandItem
+                  key={ws.id}
+                  value={ws.name}
+                  onSelect={() => selectWorkspace(ws.id)}
+                  className="cursor-pointer"
+                >
                   <div
                     className={cn(
                       'mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary',
-                      value.includes(ws.id)
-                        ? 'bg-primary text-primary-foreground'
-                        : 'opacity-50',
-                    )}
-                  >
-                    {value.includes(ws.id) && <Check className="h-3 w-3" />}
-                  </div>
+                       selectedWorkspaceId === ws.id
+                         ? 'bg-primary text-primary-foreground'
+                         : 'opacity-50',
+                     )}
+                   >
+                     {selectedWorkspaceId === ws.id && <Check className="h-3 w-3" />}
+                   </div>
                   <div className="flex flex-col min-w-0">
                     <span className="text-sm truncate">{ws.name}</span>
                     {ws.description && (
@@ -127,10 +138,10 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
                       </span>
                     )}
                   </div>
-                  {value.includes(ws.id) && (
-                    <Badge variant="secondary" className="ml-auto text-[10px] shrink-0">
-                      {ws.documentCount}
-                    </Badge>
+                   {selectedWorkspaceId === ws.id && (
+                     <Badge variant="secondary" className="ml-auto text-[10px] shrink-0">
+                       {ws.documentCount}
+                     </Badge>
                   )}
                 </CommandItem>
               ))}

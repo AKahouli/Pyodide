@@ -9,6 +9,7 @@ export enum ErrorCode {
   BAD_REQUEST = 'ERR_1006',
   TOO_MANY_REQUESTS = 'ERR_1007',
   SERVICE_UNAVAILABLE = 'ERR_1008',
+  IDEMPOTENCY_MISMATCH = 'ERR_1009',
 
   // Authentication errors (1100-1199)
   AUTH_INVALID_CREDENTIALS = 'ERR_1100',
@@ -191,6 +192,22 @@ export enum ErrorCode {
   PLAYBOOK_NO_TASKS = 'ERR_2508',
   PLAYBOOK_GENERATE_FAILED = 'ERR_2509',
 
+  // Playbook Flow errors (2520-2539)
+  PLAYBOOK_FLOW_NOT_FOUND = 'ERR_2520',
+  PLAYBOOK_FLOW_EXECUTION_NOT_FOUND = 'ERR_2521',
+  PLAYBOOK_FLOW_VALIDATION_FAILED = 'ERR_2522',
+  PLAYBOOK_FLOW_CYCLE_INVALID = 'ERR_2523',
+  PLAYBOOK_FLOW_NODE_NOT_FOUND = 'ERR_2524',
+  PLAYBOOK_FLOW_EDGE_INVALID = 'ERR_2525',
+  PLAYBOOK_FLOW_BINDING_INVALID = 'ERR_2526',
+  PLAYBOOK_FLOW_QUEUE_FULL = 'ERR_2527',
+  PLAYBOOK_FLOW_EXECUTION_IN_PROGRESS = 'ERR_2528',
+  PLAYBOOK_FLOW_EXECUTION_FAILED = 'ERR_2529',
+  PLAYBOOK_FLOW_GRPC_UNAVAILABLE = 'ERR_2530',
+  PLAYBOOK_FLOW_EXECUTION_TIMEOUT = 'ERR_2531',
+  PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
+  PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
+
   // Project errors (2700-2799)
   PROJECT_NOT_FOUND = 'ERR_2700',
   PROJECT_ALREADY_EXISTS = 'ERR_2701',
@@ -207,6 +224,9 @@ export enum ErrorCode {
   CLASSIFIER_RUN_NOT_FOUND = 'ERR_2820',
   CLASSIFIER_RUN_FORBIDDEN = 'ERR_2821',
   CLASSIFIER_RUN_PLAYBOOK_INVALID = 'ERR_2822',
+  CLASSIFIER_RULE_NOT_FOUND = 'ERR_2830',
+  CLASSIFIER_RULE_FORBIDDEN = 'ERR_2831',
+  CLASSIFIER_RULE_INVALID_SCOPE = 'ERR_2832',
 
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
@@ -237,6 +257,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.BAD_REQUEST]: 'The request could not be understood.',
   [ErrorCode.TOO_MANY_REQUESTS]: 'Too many requests. Please slow down.',
   [ErrorCode.SERVICE_UNAVAILABLE]: 'The service is temporarily unavailable.',
+  [ErrorCode.IDEMPOTENCY_MISMATCH]: 'The request body does not match the idempotent request.',
 
   [ErrorCode.AUTH_INVALID_CREDENTIALS]: 'Invalid email or password.',
   [ErrorCode.AUTH_TOKEN_EXPIRED]: 'Your session has expired. Please sign in again.',
@@ -394,6 +415,21 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_NO_TASKS]: 'Playbook has no tasks to execute.',
   [ErrorCode.PLAYBOOK_GENERATE_FAILED]: 'Failed to generate playbook.',
 
+  [ErrorCode.PLAYBOOK_FLOW_NOT_FOUND]: 'Playbook flow not found.',
+  [ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND]: 'Playbook flow execution not found.',
+  [ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED]: 'Playbook flow validation failed.',
+  [ErrorCode.PLAYBOOK_FLOW_CYCLE_INVALID]: 'Playbook flow has an invalid cycle.',
+  [ErrorCode.PLAYBOOK_FLOW_NODE_NOT_FOUND]: 'Referenced node not found in the flow.',
+  [ErrorCode.PLAYBOOK_FLOW_EDGE_INVALID]: 'Control edge is invalid.',
+  [ErrorCode.PLAYBOOK_FLOW_BINDING_INVALID]: 'Data binding is invalid.',
+  [ErrorCode.PLAYBOOK_FLOW_QUEUE_FULL]: 'Execution queue is full for this user.',
+  [ErrorCode.PLAYBOOK_FLOW_EXECUTION_IN_PROGRESS]: 'An execution is already in progress for this flow.',
+  [ErrorCode.PLAYBOOK_FLOW_EXECUTION_FAILED]: 'Playbook flow execution failed.',
+  [ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE]: 'AI service is currently unavailable for flow execution.',
+  [ErrorCode.PLAYBOOK_FLOW_EXECUTION_TIMEOUT]: 'Playbook flow execution timed out.',
+  [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
+  [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
+
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
   [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
@@ -408,6 +444,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CLASSIFIER_RUN_NOT_FOUND]: 'Classification run not found.',
   [ErrorCode.CLASSIFIER_RUN_FORBIDDEN]: 'You do not have access to this classification run.',
   [ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID]: 'The selected playbook is invalid or not accessible.',
+  [ErrorCode.CLASSIFIER_RULE_NOT_FOUND]: 'Classifier rule not found.',
+  [ErrorCode.CLASSIFIER_RULE_FORBIDDEN]: 'You do not have access to this classifier rule.',
+  [ErrorCode.CLASSIFIER_RULE_INVALID_SCOPE]: 'Invalid rule scope: local rules require a workspaceId, global rules must not have one.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',

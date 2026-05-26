@@ -14,6 +14,7 @@ import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
+import playbookFlowConfig from './config/playbook-flow.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -42,7 +43,7 @@ import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
-import { PlaybookModule } from './modules/playbook/playbook.module';
+import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
 import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
@@ -57,7 +58,7 @@ import { ClassifierModule } from './modules/classifier';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -93,7 +94,7 @@ import { ClassifierModule } from './modules/classifier';
     SkillModule,
     AgentTypeModule,
     AgentModule,
-    PlaybookModule,
+    PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,
     ConnectedAppModule,

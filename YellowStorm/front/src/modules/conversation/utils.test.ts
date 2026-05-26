@@ -30,6 +30,29 @@ describe('conversation utils', () => {
     expect(markdown).toContain('```ts');
   });
 
+  it('maps snake_case sandbox and artifact component fields', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        type: 'sandbox',
+        data: { code: 'print(1)', output: 'done', error: '', output_available: true },
+      } as never,
+      {
+        type: 'artifact',
+        data: { file_path: 'user/execution/ai_summary.docx', filename: 'ai_summary.docx' },
+      } as never,
+    ]);
+
+    expect(parts[0]).toMatchObject({
+      type: 'sandbox',
+      outputAvailable: true,
+    });
+    expect(parts[1]).toMatchObject({
+      type: 'artifact',
+      filePath: 'user/execution/ai_summary.docx',
+      filename: 'ai_summary.docx',
+    });
+  });
+
   it('returns stream error metadata for known and unknown codes', () => {
     const critical = getStreamErrorMessage('ERR_1417');
     const fallback = getStreamErrorMessage('UNKNOWN');

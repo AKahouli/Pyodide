@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -16,14 +17,17 @@ import { cn } from '@/lib/utils';
 import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
 import { useWorkspaceStore } from '../store';
-import type { WorkspaceFile, WorkspaceFolder } from '../types';
+import * as pageApi from '../page-api';
+import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
+import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { EditFolderDialog } from './EditFolderDialog';
 import { MoveFolderDialog } from './MoveFolderDialog';
 import { MoveFileDialog } from './MoveFileDialog';
 import { ClassifyDialog } from './ClassifyDialog';
+import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
 
 const ITEM_MIME = 'application/x-workspace-page-item';
@@ -60,7 +64,10 @@ function getFileIcon(mime: string) {
 
 export function WorkspacePage() {
   const { id: routeWorkspaceId } = useParams<{ id?: string }>();
+  const navigate = useNavigate();
   const selectedWorkspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
+  const selectedWorkspace = useWorkspaceStore((s) => s.selectedWorkspace);
+  const selectedWorkspaceRole = useWorkspaceStore((s) => s.selectedWorkspaceRole);
   const selectPageWorkspace = useWorkspaceStore((s) => s.selectPageWorkspace);
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
@@ -87,7 +94,42 @@ export function WorkspacePage() {
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
   const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
+
+  const handleSync = useCallback(async () => {
+    if (!activeWorkspaceId || isSyncing) return;
+    setIsSyncing(true);
+    const loadingToastId = toast.loading('Génération de l’archive ZIP…');
+    try {
+      const { blob, filename, fileCount, unclassifiedCount, failedCount } = await pageApi.syncWorkspace(activeWorkspaceId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.dismiss(loadingToastId);
+      if (failedCount > 0) {
+        toast.warning(`Archive prête (${fileCount} fichier(s))`, {
+          description: `${failedCount} fichier(s) n’ont pas pu être inclus.`,
+        });
+      } else {
+        toast.success(`Archive prête (${fileCount} fichier(s))`, {
+          description: unclassifiedCount > 0 ? `${unclassifiedCount} fichier(s) à la racine.` : undefined,
+        });
+      }
+    } catch (err) {
+      toast.dismiss(loadingToastId);
+      const message = err instanceof Error ? err.message : 'Échec de la génération du ZIP';
+      toast.error('Sync impossible', { description: message });
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [activeWorkspaceId, isSyncing]);
 
   const breadcrumbs = useMemo(() => {
     if (!currentFolderId) return [] as WorkspaceFolder[];
@@ -158,9 +200,13 @@ export function WorkspacePage() {
             <FolderKanban className='h-5 w-5' />
           </div>
           <div className='min-w-0 flex-1'>
-            <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>
+            <div className='flex items-center gap-1.5'>
+              {selectedWorkspace ? <EditableWorkspaceName workspace={selectedWorkspace} canEdit={selectedWorkspaceRole === 'owner' && !selectedWorkspace.isPersonal} /> : <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>}
+              {selectedWorkspace && <WorkspaceActionsMenu workspace={selectedWorkspace} role={selectedWorkspaceRole} onDeleted={() => navigate('/workspace')} />}
+            </div>
             <p className='text-xs text-muted-foreground'>Organisez, classez et indexez vos documents au sein d'un workspace.</p>
           </div>
+          {selectedWorkspace && <StorageIndicator workspace={selectedWorkspace} />}
           <WorkspacePicker />
         </div>
       </div>
@@ -187,15 +233,11 @@ export function WorkspacePage() {
                       Auto-indexation
                     </Label>
                     <Switch id='auto-indexation-toggle' checked={autoIndex} onCheckedChange={setAutoIndex} aria-label="Activer l'indexation automatique des fichiers uploadés" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>
-                      {autoIndex ? 'ON' : 'OFF'}
-                    </span>
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side='bottom' className='max-w-xs text-center'>
-                  {autoIndex
-                    ? 'Les nouveaux fichiers uploadés sont envoyés au pipeline d’indexation automatiquement.'
-                    : 'Les fichiers sont uploadés sans indexation. Vous pouvez indexer manuellement plus tard.'}
+                  {autoIndex ? 'Les nouveaux fichiers uploadés sont envoyés au pipeline d’indexation automatiquement.' : 'Les fichiers sont uploadés sans indexation. Vous pouvez indexer manuellement plus tard.'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -203,6 +245,14 @@ export function WorkspacePage() {
             <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
               <FolderPlus className='h-4 w-4' />
               Nouveau dossier
+            </Button>
+            <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
+              <Shield className='h-4 w-4' />
+              Règles
+            </Button>
+            <Button variant='outline' size='sm' onClick={handleSync} disabled={isSyncing} className='gap-1.5'>
+              {isSyncing ? <Loader2 className='h-4 w-4 animate-spin' /> : <DownloadCloud className='h-4 w-4' />}
+              Sync
             </Button>
             <Separator orientation='vertical' className='h-6' />
             <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
@@ -273,7 +323,248 @@ export function WorkspacePage() {
       <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
       <MoveFileDialog open={!!mapFile} onOpenChange={(o) => !o && setMapFile(null)} file={mapFile} />
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
+      <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
     </div>
+  );
+}
+
+function WorkspaceActionsMenu({ workspace, role, onDeleted }: { workspace: Workspace; role: WorkspaceRole; onDeleted: () => void }) {
+  const openSettingsModal = useWorkspaceStore((s) => s.openSettingsModal);
+  const openShareModal = useWorkspaceStore((s) => s.openShareModal);
+  const deleteAllDocuments = useWorkspaceStore((s) => s.deleteAllDocuments);
+  const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
+
+  const [confirmDeleteDocs, setConfirmDeleteDocs] = useState(false);
+  const [confirmDeleteWs, setConfirmDeleteWs] = useState(false);
+  const [isDeletingDocs, setIsDeletingDocs] = useState(false);
+  const [isDeletingWs, setIsDeletingWs] = useState(false);
+
+  const canShare = role === 'owner' && !workspace.isPersonal;
+  const canDeleteDocs = role !== 'read' && workspace.documentCount > 0;
+  const canDeleteWorkspace = role === 'owner' && !workspace.isPersonal;
+
+  const handleDeleteDocs = useCallback(async () => {
+    setIsDeletingDocs(true);
+    try {
+      await deleteAllDocuments(workspace.id);
+      setConfirmDeleteDocs(false);
+    } catch {
+      // toast handled by store
+    } finally {
+      setIsDeletingDocs(false);
+    }
+  }, [deleteAllDocuments, workspace.id]);
+
+  const handleDeleteWorkspace = useCallback(async () => {
+    setIsDeletingWs(true);
+    try {
+      await deleteWorkspace(workspace.id);
+      setConfirmDeleteWs(false);
+      onDeleted();
+    } catch {
+      // toast handled by store
+    } finally {
+      setIsDeletingWs(false);
+    }
+  }, [deleteWorkspace, onDeleted, workspace.id]);
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type='button' className='inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground' aria-label='Actions du workspace'>
+            <MoreVertical className='h-4 w-4' />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align='start' className='w-auto'>
+          <DropdownMenuItem onClick={() => openSettingsModal(workspace)}>
+            <Settings className='mr-2 h-4 w-4' />
+            Paramètres
+          </DropdownMenuItem>
+          {canShare && (
+            <DropdownMenuItem onClick={() => openShareModal(workspace)}>
+              <Users className='mr-2 h-4 w-4' />
+              Partager
+            </DropdownMenuItem>
+          )}
+          {(canDeleteDocs || canDeleteWorkspace) && <DropdownMenuSeparator />}
+          {canDeleteDocs && (
+            <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteDocs(true)}>
+              <FileX className='mr-2 h-4 w-4' />
+              Supprimer tous les documents
+            </DropdownMenuItem>
+          )}
+          {canDeleteWorkspace && (
+            <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteWs(true)}>
+              <Trash2 className='mr-2 h-4 w-4' />
+              Supprimer le workspace
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={confirmDeleteDocs} onOpenChange={(o) => !isDeletingDocs && setConfirmDeleteDocs(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer tous les documents</DialogTitle>
+            <DialogDescription>
+              Voulez-vous vraiment supprimer les {workspace.documentCount} document(s) de <span className='font-medium text-foreground'>{workspace.name}</span> ? Les dossiers et règles seront conservés. Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setConfirmDeleteDocs(false)} disabled={isDeletingDocs}>
+              Annuler
+            </Button>
+            <Button variant='destructive' onClick={handleDeleteDocs} disabled={isDeletingDocs} className='gap-1.5'>
+              {isDeletingDocs ? <Loader2 className='h-4 w-4 animate-spin' /> : <FileX className='h-4 w-4' />}
+              Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmDeleteWs} onOpenChange={(o) => !isDeletingWs && setConfirmDeleteWs(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer le workspace</DialogTitle>
+            <DialogDescription>
+              Voulez-vous vraiment supprimer définitivement <span className='font-medium text-foreground'>{workspace.name}</span> ainsi que ses {workspace.documentCount} document(s) ? Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setConfirmDeleteWs(false)} disabled={isDeletingWs}>
+              Annuler
+            </Button>
+            <Button variant='destructive' onClick={handleDeleteWorkspace} disabled={isDeletingWs} className='gap-1.5'>
+              {isDeletingWs ? <Loader2 className='h-4 w-4 animate-spin' /> : <Trash2 className='h-4 w-4' />}
+              Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function EditableWorkspaceName({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(workspace.name);
+  const [isSaving, setIsSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isEditing) setDraft(workspace.name);
+  }, [workspace.name, isEditing]);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  const commit = useCallback(async () => {
+    if (isSaving) return;
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === workspace.name) {
+      setIsEditing(false);
+      setDraft(workspace.name);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await renameWorkspace(workspace.id, trimmed);
+      setIsEditing(false);
+    } catch {
+      setDraft(workspace.name);
+      setIsEditing(false);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [draft, isSaving, renameWorkspace, workspace.id, workspace.name]);
+
+  if (!canEdit) {
+    return (
+      <h1 className='text-xl font-semibold leading-tight tracking-tight truncate' title={workspace.name}>
+        {workspace.name}
+      </h1>
+    );
+  }
+
+  if (isEditing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setDraft(workspace.name);
+            setIsEditing(false);
+          }
+        }}
+        disabled={isSaving}
+        maxLength={100}
+        aria-label='Renommer le workspace'
+        className='w-full bg-transparent text-xl font-semibold leading-tight tracking-tight outline-none border-b border-primary/40 focus:border-primary disabled:opacity-60'
+      />
+    );
+  }
+
+  return (
+    <button type='button' onClick={() => setIsEditing(true)} title='Cliquez pour renommer' className='group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left'>
+      <span className='truncate text-xl font-semibold leading-tight tracking-tight group-hover:text-primary transition-colors'>{workspace.name}</span>
+      <Pencil className='h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100' />
+    </button>
+  );
+}
+
+function StorageIndicator({ workspace }: { workspace: Workspace }) {
+  const used = Math.max(0, workspace.usedStorage ?? 0);
+  const allocated = Math.max(0, workspace.allocatedStorage ?? 0);
+  const rawPercent = allocated > 0 ? Math.min(100, (used / allocated) * 100) : 0;
+
+  const formatPercent = (p: number): string => {
+    if (used > 0 && p < 0.1) return '<0.1%';
+    if (p < 1) return `${p.toFixed(2)}%`;
+    if (p < 10) return `${p.toFixed(1)}%`;
+    return `${Math.round(p)}%`;
+  };
+  const percentLabel = formatPercent(rawPercent);
+  // Ensure the bar shows a visible sliver as soon as there's any usage
+  const barValue = used > 0 ? Math.max(1.5, rawPercent) : 0;
+
+  const isWarning = rawPercent >= 80 && rawPercent < 95;
+  const isCritical = rawPercent >= 95;
+  const tone = isCritical ? 'text-destructive' : isWarning ? 'text-amber-600 dark:text-amber-500' : 'text-muted-foreground';
+  const barTone = isCritical ? 'bg-destructive' : isWarning ? 'bg-amber-500' : 'bg-primary';
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className='hidden md:flex h-9 min-w-[180px] max-w-[240px] items-center gap-2 rounded-md border bg-card/60 px-3' role='group' aria-label='Stockage du workspace'>
+            <HardDrive className={cn('h-3.5 w-3.5 shrink-0', tone)} />
+            <div className='flex-1 min-w-0 space-y-1'>
+              <div className='flex items-baseline justify-between gap-2 text-[11px] tabular-nums leading-none'>
+                <span className={cn('font-medium', tone)}>{formatFileSize(used)}</span>
+                <span className='text-muted-foreground'>{formatFileSize(allocated)}</span>
+              </div>
+              <Progress value={barValue} className='h-1.5' indicatorClassName={barTone} />
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side='bottom' className='text-center'>
+          {allocated > 0 ? `${percentLabel} utilisé · ${formatFileSize(Math.max(0, allocated - used))} restant` : 'Stockage illimité'}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -345,8 +636,8 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
 
   return (
     <div className={cn('group relative pt-2 transition-transform duration-200', 'hover:-translate-y-0.5', isDragging && 'opacity-50')}>
-      <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-secondary border border-b-0 transition-colors', borderClass)} />
-      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-secondary transition-colors', 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
+      <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-card border border-b-0 transition-colors', borderClass)} />
+      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
         <button onClick={onOpen} className='w-full text-left p-4 pb-3'>
           <div className='flex items-start gap-3'>
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
@@ -359,7 +650,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
           </div>
         </button>
 
-        <div className='flex items-center justify-between border-t border-border/60 bg-background/30 px-4 py-2 text-xs text-muted-foreground'>
+        <div className='flex items-center justify-between border-t border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground'>
           <div className='flex items-center gap-3'>
             <span className='inline-flex items-center gap-1'>
               <Folder className='h-3 w-3' /> {childCount}
@@ -500,13 +791,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
         </DropdownMenu>
       </div>
 
-      <ConfirmDeleteFileDialog
-        open={confirmDeleteOpen}
-        onOpenChange={setConfirmDeleteOpen}
-        fileName={file.name}
-        isDeleting={isDeleting}
-        onConfirm={handleDelete}
-      />
+      <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} isDeleting={isDeleting} onConfirm={handleDelete} />
     </>
   );
 }
@@ -566,6 +851,9 @@ function EmptyFolderState({ hasSearch, onCreateFolder }: { hasSearch: boolean; o
 }
 
 function EmptyWorkspaceState() {
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const openCreateModal = useWorkspaceStore((s) => s.openCreateModal);
+
   return (
     <div className='relative flex h-screen w-full flex-col items-center justify-center overflow-hidden bg-background p-6'>
       <div
@@ -590,7 +878,18 @@ function EmptyWorkspaceState() {
 
         <div className='space-y-2'>
           <WorkspacePicker variant='hero' />
-          <p className='text-xs text-muted-foreground'>Sélectionnez un workspace pour commencer.</p>
+          <p className='text-xs text-muted-foreground'>Sélectionnez un workspace ou créez-en un nouveau.</p>
+        </div>
+
+        <div className='flex flex-wrap items-center justify-center gap-2'>
+          <Button size='sm' onClick={openCreateModal} className='gap-1.5'>
+            <Plus className='h-4 w-4' />
+            Nouveau workspace
+          </Button>
+          <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
+            <Shield className='h-4 w-4' />
+            Règles globales
+          </Button>
         </div>
 
         <div className='flex items-center justify-center gap-x-5 gap-y-2 flex-wrap pt-2 text-xs text-muted-foreground'>
@@ -599,6 +898,8 @@ function EmptyWorkspaceState() {
           <InfoItem icon={<Sparkles className='h-3.5 w-3.5' />} label='Playbook IA' />
         </div>
       </div>
+
+      <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} globalOnly />
     </div>
   );
 }

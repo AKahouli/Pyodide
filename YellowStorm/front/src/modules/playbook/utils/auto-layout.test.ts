@@ -72,4 +72,58 @@ describe('autoLayoutTasks', () => {
     expect(after).toBeTruthy();
     expect(after!.positionX).toBeGreaterThanOrEqual(iterator!.positionX + 900 - 384 / 2);
   });
+
+  it('adds more separation between simple connected nodes', () => {
+    const tasks = [
+      makeTask({ id: 'a', positionX: 0, positionY: 0 }),
+      makeTask({ id: 'b', positionX: 0, positionY: 0, executionOrder: 2 }),
+    ];
+    const edges = [makeEdge({ id: 'e1', sourceId: 'a', targetId: 'b' })];
+
+    const result = autoLayoutTasks(tasks, edges);
+    const first = result.find((task) => task.id === 'a');
+    const second = result.find((task) => task.id === 'b');
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(second!.positionX - first!.positionX).toBeGreaterThanOrEqual(640);
+  });
+
+  it('keeps branch siblings from overlapping vertically after auto-layout', () => {
+    const tasks = [
+      makeTask({ id: 'root', positionX: 0, positionY: 0 }),
+      makeTask({ id: 'branch-a', positionX: 0, positionY: 0, executionOrder: 2 }),
+      makeTask({ id: 'branch-b', positionX: 0, positionY: 0, executionOrder: 3 }),
+    ];
+    const edges = [
+      makeEdge({ id: 'e1', sourceId: 'root', targetId: 'branch-a' }),
+      makeEdge({ id: 'e2', sourceId: 'root', targetId: 'branch-b' }),
+    ];
+
+    const result = autoLayoutTasks(tasks, edges);
+    const branchA = result.find((task) => task.id === 'branch-a');
+    const branchB = result.find((task) => task.id === 'branch-b');
+
+    expect(branchA).toBeTruthy();
+    expect(branchB).toBeTruthy();
+    expect(Math.abs(branchB!.positionY - branchA!.positionY)).toBeGreaterThanOrEqual(560);
+  });
+
+  it('layouts two connected iterators as separate top-level nodes', () => {
+    const tasks = [
+      makeTask({ id: 'iter-1', taskType: 'iterator', nodeType: 'iterator', positionX: 0, positionY: 0 }),
+      makeTask({ id: 'iter-2', taskType: 'iterator', nodeType: 'iterator', positionX: 0, positionY: 0 }),
+    ];
+    const edges = [makeEdge({ id: 'e1', sourceId: 'iter-1', targetId: 'iter-2' })];
+
+    const result = autoLayoutTasks(tasks, edges);
+
+    expect(result).toHaveLength(2);
+    const iter1 = result.find((t) => t.id === 'iter-1');
+    const iter2 = result.find((t) => t.id === 'iter-2');
+    expect(iter1).toBeTruthy();
+    expect(iter2).toBeTruthy();
+    expect(iter1!.positionX).not.toBeNaN();
+    expect(iter2!.positionX).not.toBeNaN();
+  });
 });

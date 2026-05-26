@@ -26,7 +26,7 @@ import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import * as workspaceApi from '@/modules/workspace/api';
 import { validateFiles, ACCEPT_EXTENSIONS, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
 import type { Workspace, WorkspaceDocument, IndexingStatus } from '@/modules/workspace/types';
-import type { InputFile } from '../types';
+import type { InputFile, PlaybookResourceKind } from '../types';
 import type { ArtifactKind } from '../types';
 import { cn } from '@/lib/utils';
 import { inferArtifactKind } from '../utils/infer-artifact-kind';
@@ -52,7 +52,8 @@ function saveExplorerState(state: ExplorerState) {
 }
 
 interface DragPayload {
-  type: 'workspace' | 'document';
+  type: 'workspace' | 'document' | 'folder';
+  kind: PlaybookResourceKind;
   id: string;
   name: string;
   workspaceId?: string;
@@ -374,8 +375,10 @@ export function WorkspaceExplorerSidebar() {
       const artifactKind = !document.isFolder
         ? inferArtifactKind(document.filename, document.mimeType)
         : undefined;
+      const kind: PlaybookResourceKind = document.isFolder ? 'folder' : 'document';
       const payload: DragPayload = {
-        type: document.isFolder ? 'workspace' : 'document',
+        type: kind,
+        kind,
         id: document.id,
         name: document.originalName || document.filename,
         workspaceId: activeWorkspaceId ?? undefined,

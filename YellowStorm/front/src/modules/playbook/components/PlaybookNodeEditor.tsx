@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type KeyboardEvent } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, forwardRef, useImperativeHandle, type KeyboardEvent, type ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -13,13 +13,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
-import { ChevronDown, Loader2, X, Plus, Trash2, GripVertical } from 'lucide-react';
+import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
+import { useModels, useModelsStore } from '@/modules/models';
 import { usePlaybookStore } from '../store';
 import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
+import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
+import { PlaybookHumanApprovalConfigSection } from './PlaybookHumanApprovalConfigSection';
+import { PlaybookDataFlowSection } from './PlaybookDataFlowSection';
+import { ReplayBaselineSettingsDialog, type ReplayBaselineSettingsDialogHandle } from './ReplayBaselineSettingsDialog';
 import type {
   PlaybookTask,
   ValidatedTaskReplay,
@@ -30,20 +43,16 @@ import type {
   PlaybookEvaluationConfig,
   PlaybookNodeType,
   PlaybookIteratorConfig,
+  RouterConfig,
+  HumanApprovalConfig,
+  RetryPolicy,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
-import { PORT_COLORS } from '../utils/port-colors';
-import { getPortColor } from '../utils/port-colors';
 import {
-  DEFAULT_ITERATOR_INPUT_PORT,
   getDefaultIteratorInputPorts,
   getDefaultIteratorOutputPorts,
-} from '../utils/iterator-ports';
+} from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
-
-const MIN_WIDTH = 320;
-const MAX_WIDTH = 720;
-const DEFAULT_WIDTH = 420;
 
 interface EditorDraft {
   title: string;
@@ -62,6 +71,10 @@ interface EditorDraft {
   outputPorts: TaskOutputPort[];
   evaluationConfig: PlaybookEvaluationConfig | null;
   iteratorConfig: PlaybookIteratorConfig | null;
+  routerConfig: RouterConfig | null;
+  humanApprovalConfig: HumanApprovalConfig | null;
+  retryPolicy: RetryPolicy | null;
+  modelId: string | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
 }
@@ -73,6 +86,21 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
   itemVariable: 'item',
   outputVariable: 'processed_items',
   errorStrategy: 'stop',
+};
+
+const DEFAULT_ROUTER_CONFIG: RouterConfig = {
+  outputLabels: ['retry', 'done', '__error__'],
+  maxIterations: 3,
+};
+
+const DEFAULT_HUMAN_APPROVAL_CONFIG: HumanApprovalConfig = {
+  promptTemplate: '',
+  timeoutSeconds: 3600,
+};
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxRetries: 1,
+  delayMs: 1000,
 };
 
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
@@ -92,7 +120,39 @@ const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
   },
 };
 
-function buildDraftFromTask(task: PlaybookTask): EditorDraft {
+interface EditorSectionProps {
+  title: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+  resetKey?: string;
+}
+
+function EditorSection({ title, children, defaultOpen = false, className, resetKey }: EditorSectionProps) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen, resetKey]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className={`rounded-xl border bg-card ${className ?? ''}`}>
+        <CollapsibleTrigger className="flex h-auto w-full items-center justify-between rounded-xl px-4 py-3 text-left hover:bg-muted/40">
+          <span className="text-sm font-semibold text-foreground">{title}</span>
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
+        </CollapsibleTrigger>
+        {open ? (
+          <CollapsibleContent forceMount className="border-t px-4 py-4 data-[state=open]:animate-accordion-down">
+            {children}
+          </CollapsibleContent>
+        ) : null}
+      </div>
+    </Collapsible>
+  );
+}
+
+function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefaultInput' | 'nodeEditor.portDefaultOutput') => string): EditorDraft {
   const nodeType = getEffectiveNodeType(task);
   return {
     title: task.title,
@@ -111,17 +171,29 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
       nodeType === 'iterator'
         ? getDefaultIteratorInputPorts()
         : task.inputPorts?.map((p) => ({ ...p })) ??
-          [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
+          [{ id: 'default', name: t('nodeEditor.portDefaultInput'), artifactKind: 'text' as ArtifactKind, required: false }],
     outputPorts:
       nodeType === 'iterator'
         ? getDefaultIteratorOutputPorts()
-        : task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }],
+        : task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: t('nodeEditor.portDefaultOutput'), artifactKind: 'text' as ArtifactKind }],
     evaluationConfig: task.evaluationConfig
       ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
       : { ...DEFAULT_EVALUATION_CONFIG, weights: { ...DEFAULT_EVALUATION_CONFIG.weights } },
     iteratorConfig: task.iteratorConfig
       ? { ...task.iteratorConfig }
       : { ...DEFAULT_ITERATOR_CONFIG },
+    routerConfig: task.routerConfig
+      ? {
+          ...task.routerConfig,
+          outputLabels: [...task.routerConfig.outputLabels],
+          conditions: task.routerConfig.conditions?.map((condition) => ({ ...condition })),
+        }
+      : null,
+    humanApprovalConfig: task.humanApprovalConfig
+      ? { ...task.humanApprovalConfig }
+      : null,
+    retryPolicy: task.retryPolicy ?? null,
+    modelId: task.modelId ?? null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
   };
@@ -146,9 +218,21 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     outputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorOutputPorts() : [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
+    routerConfig: draft.nodeType === 'router' ? draft.routerConfig : null,
+    humanApprovalConfig: draft.nodeType === 'human_approval' ? draft.humanApprovalConfig : null,
+    retryPolicy: isStepLikeNodeType(draft.nodeType) && draft.retryPolicy ? draft.retryPolicy : null,
+    modelId: isStepLikeNodeType(draft.nodeType) ? draft.modelId : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
   };
+}
+
+function isStepLikeNodeType(nodeType: PlaybookNodeType): boolean {
+  return nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation';
+}
+
+export interface PlaybookNodeEditorHandle {
+  flushSave: () => void;
 }
 
 interface Props {
@@ -158,16 +242,19 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (taskId: string, data: Partial<PlaybookTask>) => void;
+  onOpenOutputFormatEditor?: (taskId: string) => Promise<void> | void;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave }: Props) {
+export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave, onOpenOutputFormatEditor }, ref) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
+  const models = useModels();
+  const fetchModels = useModelsStore((s) => s.fetchModels);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
-  const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
+  const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
@@ -177,13 +264,11 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const { t } = useModuleTranslation('playbook');
 
   useEffect(() => {
-    if (open) fetchAgents();
-  }, [open, fetchAgents]);
-
-  const agentOptions = useMemo<SearchableSelectOption[]>(
-    () => agents.map((agent) => ({ value: agent.id, label: agent.name })),
-    [agents],
-  );
+    if (open) {
+      fetchAgents();
+      fetchModels();
+    }
+  }, [open, fetchAgents, fetchModels]);
 
   const [draft, setDraft] = useState<EditorDraft>({
     title: '',
@@ -202,9 +287,29 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     outputPorts: [],
     evaluationConfig: null,
     iteratorConfig: null,
+    routerConfig: null,
+    humanApprovalConfig: null,
+    retryPolicy: null,
+    modelId: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
   });
+
+  const agentOptions = useMemo<SearchableSelectOption[]>(
+    () => agents.map((agent) => ({ value: agent.id, label: agent.name })),
+    [agents],
+  );
+
+  const modelOptions = useMemo<SearchableSelectOption[]>(
+    () => {
+      const opts = models
+        .filter((model) => model.isActive || model.id === draft.modelId)
+        .map((model) => ({ value: model.id, label: model.name }));
+      opts.unshift({ value: '', label: t('nodeEditor.modelDefault') });
+      return opts;
+    },
+    [models, draft.modelId, t],
+  );
 
   const updateDraft = useCallback((patch: Partial<EditorDraft>) => {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -216,9 +321,6 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const [replaysLoading, setReplaysLoading] = useState(false);
   const [activatingReplayId, setActivatingReplayId] = useState<string | null>(null);
   const [editingReplay, setEditingReplay] = useState<ValidatedTaskReplay | null>(null);
-  const [formatGuideDraft, setFormatGuideDraft] = useState('');
-  const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
-  const [savingFormatGuide, setSavingFormatGuide] = useState(false);
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<Array<{ id: string; executionId: string; createdAt: string; score?: number | null; verdict?: 'pass' | 'warning' | 'fail' | null }>>([]);
@@ -228,41 +330,28 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const [baselineExecutionDialogOpen, setBaselineExecutionDialogOpen] = useState(false);
   const [viewBaselineDialogOpen, setViewBaselineDialogOpen] = useState(false);
   const [advancedEvaluationOpen, setAdvancedEvaluationOpen] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
-  const isDragging = useRef(false);
-  const dragStartX = useRef(0);
-  const dragStartWidth = useRef(0);
   const lastSuggestionSignatureRef = useRef('');
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const taskRef = useRef(task);
+  taskRef.current = task;
+  const hasInitializedDraftRef = useRef(hasInitializedDraft);
+  hasInitializedDraftRef.current = hasInitializedDraft;
+  const replayDialogRef = useRef<ReplayBaselineSettingsDialogHandle | null>(null);
+  const originalDraftRef = useRef<EditorDraft | null>(null);
+  const originalCapturedRef = useRef(false);
+  const [replayStaleDialogOpen, setReplayStaleDialogOpen] = useState(false);
+  const [removingStaleReplay, setRemovingStaleReplay] = useState(false);
 
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    dragStartX.current = e.clientX;
-    dragStartWidth.current = panelWidth;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }, [panelWidth]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = dragStartX.current - e.clientX;
-      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta));
-      setPanelWidth(next);
-    };
-    const handleMouseUp = () => {
-      if (!isDragging.current) return;
-      isDragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
+  useImperativeHandle(ref, () => ({
+    flushSave: () => {
+      const currentTask = taskRef.current;
+      if (currentTask && hasInitializedDraftRef.current) {
+        onSave(currentTask.id, draftToSavePayload(draftRef.current));
+      }
+      void replayDialogRef.current?.flushSave();
+    },
+  }), [onSave]);
 
   const isEvaluationTask = draft.nodeType === 'evaluation';
   const isIteratorTask = draft.nodeType === 'iterator';
@@ -277,13 +366,16 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
 
   useEffect(() => {
     if (task) {
-      setDraft(buildDraftFromTask(task));
+      const built = buildDraftFromTask(task, t);
+      setDraft(built);
+      originalDraftRef.current = built;
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
+      setAdvancedEvaluationOpen(false);
       lastSuggestionSignatureRef.current = '';
     }
-  }, [task]);
+  }, [task, t]);
 
   useEffect(() => {
     if (!open || !task || !hasInitializedDraft) return;
@@ -375,16 +467,17 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     return () => { cancelled = true; };
   }, [open, task, playbookId, fetchEvaluationExecutions, draft.nodeType]);
 
+  const hasPendingFormatGuide = replays.some((replay) => replay.preserveOutputFormat && replay.formatGuideStatus === 'pending');
+
   useEffect(() => {
-    if (!open || !task || !playbookId) return;
-    if (!replays.some((replay) => replay.preserveOutputFormat && replay.formatGuideStatus === 'pending')) return;
+    if (!open || !task || !playbookId || !hasPendingFormatGuide) return;
 
     const intervalId = window.setInterval(() => {
       void fetchTaskReplays(playbookId, task.id).then(setReplays).catch(() => undefined);
     }, 2000);
 
     return () => window.clearInterval(intervalId);
-  }, [open, playbookId, task, replays, fetchTaskReplays]);
+  }, [open, playbookId, task, hasPendingFormatGuide, fetchTaskReplays]);
 
   const handleNotifyToggle = useCallback((checked: boolean) => {
     updateDraft({ notifyOnComplete: checked });
@@ -429,7 +522,15 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     if (emailInput.trim()) addEmail(emailInput);
   }, [emailInput, addEmail]);
 
-  if (!task || !open) return null;
+  const handleReplayUpdated = useCallback((updatedReplay: ValidatedTaskReplay) => {
+    setReplays((prev) => prev.map((item) => (item.id === updatedReplay.id ? updatedReplay : item)));
+    setEditingReplay(updatedReplay);
+  }, []);
+
+  const handleReplayRemoved = useCallback((removedReplayId: string) => {
+    setReplays((prev) => prev.filter((item) => item.id !== removedReplayId));
+    setEditingReplay((prev) => (prev?.id === removedReplayId ? null : prev));
+  }, []);
 
   const handleActivateReplay = async (replayId: string) => {
     if (!playbookId || !task) return;
@@ -449,23 +550,6 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
 
   const openFormatGuideEditor = (replay: ValidatedTaskReplay) => {
     setEditingReplay(replay);
-    setPreserveFormatDraft(Boolean(replay.preserveOutputFormat));
-    setFormatGuideDraft(replay.outputFormatGuide || '');
-  };
-
-  const handleSaveFormatGuide = async () => {
-    if (!playbookId || !task || !editingReplay) return;
-    setSavingFormatGuide(true);
-    try {
-      const updatedReplay = await updateTaskReplayFormatGuide(playbookId, task.id, editingReplay.id, {
-        preserveOutputFormat: preserveFormatDraft,
-        outputFormatGuide: formatGuideDraft,
-      });
-      setReplays((prev) => prev.map((item) => (item.id === updatedReplay.id ? updatedReplay : item)));
-      setEditingReplay(updatedReplay);
-    } finally {
-      setSavingFormatGuide(false);
-    }
   };
 
   const handleCreateBaselineFromSelectedExecution = async () => {
@@ -508,793 +592,786 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     }
   };
 
+  const hasStaleMakingChanges = useCallback((): boolean => {
+    const orig = originalDraftRef.current;
+    if (!orig) return false;
+    const d = draftRef.current;
+    return (
+      d.description !== orig.description ||
+      d.assignedAgentId !== orig.assignedAgentId ||
+      d.nodeType !== orig.nodeType ||
+      d.executionMode !== orig.executionMode
+    );
+  }, []);
+
+  const flushAndClose = useCallback(() => {
+    const currentTask = taskRef.current;
+    if (currentTask && hasInitializedDraftRef.current) {
+      onSave(currentTask.id, draftToSavePayload(draftRef.current));
+    }
+    void replayDialogRef.current?.flushSave();
+    onOpenChange(false);
+  }, [onSave, onOpenChange]);
+
+  const handleRemoveStaleReplay = useCallback(async () => {
+    const currentTask = taskRef.current;
+    if (!playbookId || !currentTask?.activeReplayId) return;
+    setRemovingStaleReplay(true);
+    try {
+      await deleteTaskReplay(playbookId, currentTask.id, currentTask.activeReplayId);
+    } finally {
+      setRemovingStaleReplay(false);
+      setReplayStaleDialogOpen(false);
+      flushAndClose();
+    }
+  }, [playbookId, deleteTaskReplay, flushAndClose]);
+
+  if (!task) return null;
+
   return (
     <>
-      <div
-        className="fixed right-0 top-12 z-50 flex h-[calc(100vh-3rem)] flex-col border-l bg-background shadow-xl"
-        style={{ width: panelWidth }}
-      >
-        <div
-          className="absolute left-0 top-0 z-10 flex h-full w-3 cursor-col-resize items-center justify-center hover:bg-primary/10"
-          onMouseDown={handleResizeStart}
-        >
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-        </div>
-
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h2 className="text-sm font-semibold">{t('nodeEditor.title')}</h2>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="step-enabled" className="text-xs font-normal text-muted-foreground cursor-pointer">
-                {t('nodeEditor.enabledLabel')}
-              </Label>
-              <Switch id="step-enabled" checked={draft.enabled} onCheckedChange={(v) => updateDraft({ enabled: v })} />
-            </div>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>{t('nodeEditor.stepTitle')}</Label>
-            <Input
-              value={draft.title}
-              onChange={(e) => updateDraft({ title: e.target.value })}
-              placeholder={t('nodeEditor.stepTitlePlaceholder')}
-              maxLength={200}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>{t('nodeEditor.nodeType')}</Label>
-            <select
-              value={draft.nodeType}
-              onChange={(e) => {
-                const nextType = e.target.value as PlaybookNodeType;
-                const patch: Partial<EditorDraft> = { nodeType: nextType };
-                if (nextType === 'evaluation') {
-                  patch.executionMode = 'agent';
-                  patch.iteratorConfig = null;
-                } else if (nextType === 'action') {
-                  patch.executionMode = 'action';
-                  patch.assignedAgentId = null;
-                  patch.iteratorConfig = null;
-                } else if (nextType === 'iterator') {
-                  patch.executionMode = 'agent';
-                  patch.assignedAgentId = null;
-                  patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
-                  patch.inputPorts = getDefaultIteratorInputPorts();
-                  patch.outputPorts = getDefaultIteratorOutputPorts();
-                } else {
-                  patch.executionMode = 'agent';
-                  patch.iteratorConfig = null;
-                }
-                updateDraft(patch);
-              }}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            >
-              <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
-              <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
-              <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
-              <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
-            </select>
-          </div>
-
-          {draft.nodeType === 'action' ? (
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.action') || 'Action'}</Label>
-              <select
-                value={draft.selectedAction}
-                onChange={(e) => {
-                  const nextAction = e.target.value as SelectedAction;
-                  updateDraft({ selectedAction: nextAction });
-                  onSave(task.id, {
-                    executionMode: 'action',
-                    assignedAgentId: null,
-                    selectedAction: nextAction,
-                  });
-                }}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="index">Index</option>
-                <option value="delete">Delete</option>
-                <option value="read">Read</option>
-              </select>
-              <p className="text-xs text-muted-foreground">
-                {draft.selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
-                {draft.selectedAction === 'delete' && 'Delete documents from the workspace.'}
-                {draft.selectedAction === 'read' && 'Read document content for downstream processing.'}
-              </p>
-            </div>
-          ) : draft.nodeType === 'agent' || draft.nodeType === 'evaluation' ? (
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.agent')}</Label>
-              <SearchableSelect
-                options={agentOptions}
-                value={draft.assignedAgentId || ''}
-                onValueChange={(v) => updateDraft({ assignedAgentId: v })}
-                placeholder={t('nodeEditor.selectAgent')}
-                searchPlaceholder={t('nodeEditor.searchAgent')}
-                emptyText={t('nodeEditor.noAgentFound')}
-              />
-              {draft.nodeType === 'evaluation' && (
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
-              )}
-              {!draft.assignedAgentId && (
-                <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
-              )}
-            </div>
-          ) : null}
-
-          {isIteratorTask && draft.iteratorConfig && (
-            <div className="space-y-4">
-              <PlaybookIteratorConfigFields
-                value={draft.iteratorConfig}
-                onChange={(iteratorConfig) => updateDraft({ iteratorConfig })}
-              />
-              <div className="space-y-2">
-                <Label>{t('nodeEditor.iteratorChildren')}</Label>
-                <div className="space-y-2 rounded-md border p-3">
-                  {iteratorCandidates.map((candidate) => {
-                    const checked = candidate.containerConfig?.parentIteratorId === task?.id;
-                    return (
-                      <label key={candidate.id} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            onSave(candidate.id, {
-                              containerConfig: {
-                                parentIteratorId: e.target.checked ? task?.id || null : null,
-                              },
-                            });
-                          }}
-                        />
-                        <span>{candidate.title}</span>
-                      </label>
-                    );
-                  })}
-                  {iteratorCandidates.length === 0 && (
-                    <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorChildrenEmpty')}</p>
-                  )}
-                </div>
-                {iteratorChildren.length > 0 && (
-                  <p className="text-xs text-muted-foreground">{t('iterator.childCount', { count: iteratorChildren.length })}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label>{t('nodeEditor.description')}</Label>
-            <Textarea
-              value={draft.description}
-              onChange={(e) => updateDraft({ description: e.target.value })}
-              placeholder={t('nodeEditor.descriptionPlaceholder')}
-              rows={10}
-              maxLength={20000}
-            />
-          </div>
-
-          {!isEvaluationTask && (
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.expectedResult')}</Label>
-              <Textarea
-                value={draft.expectedResult ?? ''}
-                onChange={(e) => updateDraft({ expectedResult: e.target.value || null })}
-                placeholder={t('nodeEditor.expectedResultPlaceholder')}
-                rows={4}
-                maxLength={10000}
-              />
-              <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
-            </div>
-          )}
-
-          {isEvaluationTask && draft.evaluationConfig != null && (() => {
-            const ec = draft.evaluationConfig!;
-            return (
-            <div className="space-y-4 rounded-md border p-3">
-              <div className="space-y-2">
-                <Label>{t('nodeEditor.evaluationExpectation')}</Label>
-                <Textarea
-                  value={ec.expectation}
-                  onChange={(e) => updateDraft({ evaluationConfig: { ...ec, expectation: e.target.value } })}
-                  placeholder={t('nodeEditor.evaluationExpectationPlaceholder')}
-                  rows={5}
-                  maxLength={10000}
-                />
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationExpectationHint')}</p>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.evaluationPassThreshold')}</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={ec.passThreshold}
-                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, passThreshold: Number(e.target.value || 0) } })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.evaluationWarningThreshold')}</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={ec.warningThreshold}
-                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, warningThreshold: Number(e.target.value || 0) } })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.evaluationWeight')}</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.1"
-                    value={ec.weight}
-                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weight: Number(e.target.value || 0) } })}
-                  />
-                </div>
-              </div>
-              <div className="rounded-md border border-dashed p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">{t('nodeEditor.evaluationBaselineTitle')}</div>
-                    <div className="text-xs text-muted-foreground">{t('nodeEditor.evaluationBaselineHint')}</div>
-                  </div>
-                  {evaluationBaselineMeta ? (
-                    <Badge variant="outline" className="text-amber-700 border-amber-600/30">
-                      {t('nodeEditor.evaluationBaselineActive')}
-                    </Badge>
-                  ) : null}
-                </div>
-                <div className="mt-3 text-xs text-muted-foreground">
-                  {evaluationBaselineMeta
-                    ? `${t('nodeEditor.evaluationBaselineExecution')} ${evaluationBaselineMeta.sourceExecutionId} • ${new Date(evaluationBaselineMeta.createdAt).toLocaleString()}`
-                    : t('nodeEditor.evaluationBaselineEmpty')}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setBaselineExecutionDialogOpen(true)}>
-                    {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceFromExecution') : t('nodeEditor.evaluationBaselineSelectExecution')}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" disabled={creatingEvaluationBaseline || evaluationExecutions.length === 0} onClick={() => void handleCreateBaselineFromCurrentInputs()}>
-                    {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                    {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceCurrent') : t('nodeEditor.evaluationBaselineCurrent')}
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta} onClick={() => setViewBaselineDialogOpen(true)}>
-                    {t('nodeEditor.evaluationBaselineView')}
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta || removingEvaluationBaseline} onClick={() => void handleRemoveBaseline()}>
-                    {removingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                    {t('nodeEditor.evaluationBaselineRemove')}
-                  </Button>
-                </div>
-              </div>
-              <Collapsible open={advancedEvaluationOpen} onOpenChange={setAdvancedEvaluationOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button type="button" variant="ghost" className="w-full justify-between px-0 text-sm font-medium">
-                    {t('nodeEditor.evaluationAdvanced')}
-                    <ChevronDown className={`h-4 w-4 transition-transform ${advancedEvaluationOpen ? 'rotate-180' : ''}`} />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 pt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                  <div className="space-y-2">
-                    <Label>{t('nodeEditor.evaluationRubricVersion')}</Label>
-                    <Input value={ec.rubricVersion} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, rubricVersion: e.target.value } })} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {([
-                      ['semanticMatch', 'nodeEditor.evaluationWeightSemantic'],
-                      ['referenceMatch', 'nodeEditor.evaluationWeightReference'],
-                      ['artifactRequirements', 'nodeEditor.evaluationWeightArtifact'],
-                      ['formatCompliance', 'nodeEditor.evaluationWeightFormat'],
-                      ['evidenceConsistency', 'nodeEditor.evaluationWeightEvidence'],
-                      ['executionHealth', 'nodeEditor.evaluationWeightExecution'],
-                    ] as const).map(([key, labelKey]) => (
-                      <div key={key} className="space-y-2">
-                        <Label>{t(labelKey)}</Label>
-                        <Input type="number" min={0} value={ec.weights[key]} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weights: { ...ec.weights, [key]: Number(e.target.value || 0) } } })} />
-                      </div>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          );
-          })()}
-
-          {draft.nodeType !== 'evaluation' && (
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">{t('ports.inputPorts')}</h4>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                  onClick={() => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    const id = `in-${crypto.randomUUID().slice(0, 8)}`;
-                    updateDraft({ inputPorts: [...draft.inputPorts, { id, name: 'Input', artifactKind: 'text', required: false }] });
-                  }}
-              >
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                {t('ports.addInput')}
-              </Button>
-            </div>
-            {draft.inputPorts.length === 0 && (
-              <p className="text-xs text-muted-foreground">No input ports defined.</p>
-            )}
-            {draft.inputPorts.map((port, idx) => (
-              <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
-                <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
-                <input
-                  type="text"
-                  value={port.name}
-                  onChange={(e) => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    const updated = [...draft.inputPorts];
-                    updated[idx] = { ...updated[idx], name: e.target.value };
-                    updateDraft({ inputPorts: updated });
-                  }}
-                  className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
-                  placeholder={t('ports.portName')}
-                />
-                <select
-                  value={port.artifactKind}
-                  onChange={(e) => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    const updated = [...draft.inputPorts];
-                    updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
-                    updateDraft({ inputPorts: updated });
-                  }}
-                  className="h-7 text-xs rounded border bg-background px-1"
-                >
-                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
-                    <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    const updated = [...draft.inputPorts];
-                    updated[idx] = { ...updated[idx], required: !updated[idx].required };
-                    updateDraft({ inputPorts: updated });
-                  }}
-                  className={`text-xs px-1.5 py-0.5 rounded border ${port.required ? 'bg-primary/10 text-primary border-primary/30' : 'text-muted-foreground border-muted'}`}
-                  title={port.required ? t('ports.required') : t('ports.optional')}
-                >
-                  {port.required ? t('ports.required') : t('ports.optional')}
-                </button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    updateDraft({ inputPorts: draft.inputPorts.filter((_, i) => i !== idx) });
-                  }}
-                  title={t('ports.removePort')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-          )}
-
-          {draft.nodeType !== 'evaluation' && (
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">{t('ports.outputPorts')}</h4>
-              {draft.nodeType !== 'iterator' && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => {
-                    const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                    updateDraft({ outputPorts: [...draft.outputPorts, { id, name: 'Output', artifactKind: 'text' }] });
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" />
-                  {t('ports.addOutput')}
-                </Button>
-              )}
-            </div>
-            {draft.nodeType === 'iterator' && (
-              <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</p>
-            )}
-            {draft.outputPorts.length === 0 && (
-              <p className="text-xs text-muted-foreground">No output ports defined.</p>
-            )}
-            {draft.outputPorts.map((port, idx) => (
-              <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
-                <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
-                <input
-                  type="text"
-                  value={port.name}
-                  disabled={draft.nodeType === 'iterator'}
-                  onChange={(e) => {
-                    const updated = [...draft.outputPorts];
-                    updated[idx] = { ...updated[idx], name: e.target.value };
-                    updateDraft({ outputPorts: updated });
-                  }}
-                  className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
-                  placeholder={t('ports.portName')}
-                />
-                <select
-                  value={port.artifactKind}
-                  disabled={draft.nodeType === 'iterator'}
-                  onChange={(e) => {
-                    const updated = [...draft.outputPorts];
-                    updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
-                    updateDraft({ outputPorts: updated });
-                  }}
-                  className="h-7 text-xs rounded border bg-background px-1"
-                >
-                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
-                    <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
-                  ))}
-                </select>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => {
-                    if (draft.nodeType === 'iterator') {
-                      return;
-                    }
-                    updateDraft({ outputPorts: draft.outputPorts.filter((_, i) => i !== idx) });
-                  }}
-                  title={t('ports.removePort')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-          )}
-
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">Replay baselines</h4>
-              <div className="flex items-center gap-2">
-                {task.hasValidatedReplay && (
-                  <Badge variant="outline" className="text-amber-700 border-amber-600/30">
-                    Active v{task.activeReplayVersion || 1}
-                  </Badge>
-                )}
-                {task.activeReplayPreserveOutputFormat && (
-                  <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                    Format preserved
-                  </Badge>
-                )}
-                {task.activeReplayPreserveOutputFormat && task.activeReplayFormatGuideStatus === 'pending' && (
-                  <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                    Guide pending
-                  </Badge>
-                )}
-                {task.activeReplayPreserveOutputFormat && task.activeReplayFormatGuideStatus === 'failed' && (
-                  <Badge variant="outline" className="text-red-700 border-red-600/30">
-                    Guide failed
-                  </Badge>
-                )}
-                {task.activeReplayIsStale && (
-                  <Badge variant="outline" className="text-orange-700 border-orange-600/30">
-                    Stale replay
-                  </Badge>
-                )}
-              </div>
-            </div>
-            {(task.hasOutputFormatTemplate || task.activeOutputFormatStatus) && (
-              <div className="rounded-md border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-800">
-                <div className="flex flex-wrap items-center gap-2">
-                  {task.hasOutputFormatTemplate && (
-                    <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                      Format template v{task.activeOutputFormatTemplateVersion || 1}
-                    </Badge>
-                  )}
-                  {task.activeOutputFormatStatus === 'pending' && (
-                    <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                      Template pending
-                    </Badge>
-                  )}
-                  {task.activeOutputFormatStatus === 'failed' && (
-                    <Badge variant="outline" className="text-red-700 border-red-600/30">
-                      Template failed
-                    </Badge>
-                  )}
-                </div>
-                {task.activeOutputFormatError && (
-                  <div className="mt-2 text-xs text-red-700">{task.activeOutputFormatError}</div>
-                )}
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Output format templates are captured independently from replay baselines.
-                </div>
-              </div>
-            )}
-            {task.activeReplayIsStale && task.activeReplayStaleReasons && task.activeReplayStaleReasons.length > 0 && (
-              <div className="rounded-md border border-orange-500/30 bg-orange-500/5 p-3 text-xs text-orange-800">
-                <div className="font-medium">Replay baseline warning</div>
-                <div className="mt-1">{task.activeReplayStaleReasons.join(' • ')}</div>
-              </div>
-            )}
-            {replaysLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading replay baselines
-              </div>
-            ) : replays.length > 0 ? (
-              <div className="space-y-2">
-                {replays.map((replay) => (
-                  <div key={replay.id} className="rounded-md border p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">Version {replay.validationVersion}</div>
-                        <div className="text-xs text-muted-foreground">
-                          Execution #{replay.referenceExecutionNumber} • {new Date(replay.createdAt).toLocaleString()}
-                        </div>
-                      </div>
-                      {replay.status === 'active' ? (
-                        <Badge>Active</Badge>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={activatingReplayId === replay.id}
-                          onClick={() => handleActivateReplay(replay.id)}
-                        >
-                          {activatingReplayId === replay.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate'}
-                        </Button>
-                      )}
-                    </div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      {replay.toolCalls.length} tool call{replay.toolCalls.length === 1 ? '' : 's'}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      {replay.preserveOutputFormat && (
-                        <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                          Format preserved
-                        </Badge>
-                      )}
-                      {replay.preserveOutputFormat && replay.formatGuideStatus === 'pending' && (
-                        <Badge variant="outline" className="text-sky-700 border-sky-600/30">
-                          Guide pending
-                        </Badge>
-                      )}
-                      {replay.preserveOutputFormat && replay.formatGuideStatus === 'failed' && (
-                        <Badge variant="outline" className="text-red-700 border-red-600/30">
-                          Guide failed
-                        </Badge>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => openFormatGuideEditor(replay)}
-                      >
-                        Edit format guide
-                      </Button>
-                    </div>
-                    {replay.isStale && replay.staleReasons && replay.staleReasons.length > 0 && (
-                      <div className="mt-2 rounded border border-orange-500/30 bg-orange-500/5 p-2 text-xs text-orange-800">
-                        {replay.staleReasons.join(' • ')}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                No replay baseline yet. Save one from a successful execution step.
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <h4 className="text-sm font-medium">{t('nodeEditor.interruptSettings')}</h4>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="interrupt-before" className="text-sm font-normal">
-                {t('nodeEditor.interruptBefore')}
-              </Label>
-              <Switch
-                id="interrupt-before"
-                checked={draft.interruptBefore}
-                onCheckedChange={(v) => updateDraft({ interruptBefore: v })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="interrupt-after" className="text-sm font-normal">
-                {t('nodeEditor.interruptAfter')}
-              </Label>
-              <Switch
-                id="interrupt-after"
-                checked={draft.interruptAfter}
-                onCheckedChange={(v) => updateDraft({ interruptAfter: v })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="allow-clarification" className="text-sm font-normal">
-                {t('nodeEditor.allowClarification')}
-              </Label>
-              <Switch
-                id="allow-clarification"
-                checked={draft.allowClarification}
-                onCheckedChange={(v) => updateDraft({ allowClarification: v })}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <h4 className="text-sm font-medium">{t('nodeEditor.notificationSettings')}</h4>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="notify-on-complete" className="text-sm font-normal">
-                {t('nodeEditor.notifyOnComplete')}
-              </Label>
-              <Switch
-                id="notify-on-complete"
-                checked={draft.notifyOnComplete}
-                onCheckedChange={handleNotifyToggle}
-              />
-            </div>
-
-            {draft.notifyOnComplete && (
-              <div className="space-y-2">
-                <Label className="text-sm font-normal">{t('nodeEditor.notifyEmails')}</Label>
-                <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 min-h-[38px]">
-                  {draft.notifyEmails.map((email) => (
-                    <span
-                      key={email}
-                      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground"
-                    >
-                      {email}
-                      <button
-                        type="button"
-                        onClick={() => removeEmail(email)}
-                        className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    type="email"
-                    value={emailInput}
-                    onChange={(e) => {
-                      setEmailInput(e.target.value);
-                      if (emailError) setEmailError('');
-                    }}
-                    onKeyDown={handleEmailKeyDown}
-                    onBlur={handleEmailBlur}
-                    placeholder={draft.notifyEmails.length === 0 ? t('nodeEditor.notifyEmailPlaceholder') : ''}
-                    className="flex-1 min-w-[120px] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
-                {emailError && (
-                  <p className="text-xs text-destructive">{emailError}</p>
-                )}
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.notifyEmailHint')}</p>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <h4 className="text-sm font-medium">{t('nodeEditor.advisorSettings')}</h4>
-
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <Label htmlFor="disable-advisor" className="text-sm font-normal">
-                  {t('nodeEditor.disableAdvisorEvaluation')}
-                </Label>
-                <div className="text-xs text-muted-foreground">
-                  {t('nodeEditor.disableAdvisorEvaluationHint')}
-                </div>
-              </div>
-              <Switch
-                id="disable-advisor"
-                checked={draft.disableAdvisorEvaluation}
-                onCheckedChange={(v) => updateDraft({ disableAdvisorEvaluation: v })}
-              />
-            </div>
-          </div>
-        </div>
-
-        </div>
-      </div>
-
-      <Dialog open={!!editingReplay} onOpenChange={(open) => {
-        if (!open) {
-          setEditingReplay(null);
-          setFormatGuideDraft('');
-          setPreserveFormatDraft(false);
+      <Dialog open={open} onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          const currentTask = taskRef.current;
+          if (currentTask?.hasValidatedReplay && hasStaleMakingChanges()) {
+            setReplayStaleDialogOpen(true);
+            return;
+          }
+          flushAndClose();
+        } else {
+          onOpenChange(nextOpen);
         }
       }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit format guide</DialogTitle>
-            <DialogDescription>
-              Adjust the replay output-format guide used by Replay (Flex) and Replay (Adaptive).
-            </DialogDescription>
+        <DialogContent
+          className="flex h-[88vh] w-[96vw] max-w-7xl flex-col gap-0 overflow-hidden border-border bg-background p-0 shadow-[0_28px_90px_-44px_rgba(15,23,42,0.35)]"
+        >
+          <DialogHeader className="border-b px-6 py-4 pr-14">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <DialogTitle>{t('nodeEditor.title')}</DialogTitle>
+                <DialogDescription>{draft.title || t('nodeEditor.stepTitlePlaceholder')}</DialogDescription>
+              </div>
+              <div className="flex items-center gap-2 rounded-full border bg-muted/40 px-3 py-1.5">
+                <Label htmlFor="step-enabled" className="cursor-pointer text-xs font-medium text-muted-foreground">
+                  {t('nodeEditor.enabledLabel')}
+                </Label>
+                <Switch id="step-enabled" checked={draft.enabled} onCheckedChange={(v) => updateDraft({ enabled: v })} />
+              </div>
+            </div>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div>
-                <div className="text-sm font-medium">Preserve output format</div>
-                <div className="text-xs text-muted-foreground">
-                  When enabled, replay synthesis will follow this guide.
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-full space-y-4 bg-muted/10 p-4">
+              <div className="space-y-4">
+              <EditorSection title={t('nodeEditor.sectionIdentity')} defaultOpen resetKey={`${task.id}:identity`}>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-[1fr_180px] gap-3">
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.stepTitle')}</Label>
+                      <Input
+                        value={draft.title}
+                        onChange={(e) => updateDraft({ title: e.target.value })}
+                        placeholder={t('nodeEditor.stepTitlePlaceholder')}
+                        maxLength={200}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.nodeType')}</Label>
+                      <select
+                        value={draft.nodeType}
+                        onChange={(e) => {
+                          const nextType = e.target.value as PlaybookNodeType;
+                          const patch: Partial<EditorDraft> = { nodeType: nextType };
+                          if (nextType === 'evaluation') {
+                            patch.executionMode = 'agent';
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                          } else if (nextType === 'action') {
+                            patch.executionMode = 'action';
+                            patch.assignedAgentId = null;
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                          } else if (nextType === 'iterator') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
+                            patch.inputPorts = getDefaultIteratorInputPorts();
+                            patch.outputPorts = getDefaultIteratorOutputPorts();
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else if (nextType === 'router') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.routerConfig = draft.routerConfig ?? { ...DEFAULT_ROUTER_CONFIG, outputLabels: [...DEFAULT_ROUTER_CONFIG.outputLabels] };
+                            patch.outputPorts = draft.routerConfig?.outputLabels.map((label) => ({
+                              id: label,
+                              name: label,
+                              artifactKind: 'text' as ArtifactKind,
+                            })) ?? DEFAULT_ROUTER_CONFIG.outputLabels.map((label) => ({
+                              id: label,
+                              name: label,
+                              artifactKind: 'text' as ArtifactKind,
+                            }));
+                            patch.iteratorConfig = null;
+                            patch.humanApprovalConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else if (nextType === 'human_approval') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.humanApprovalConfig = draft.humanApprovalConfig ?? { ...DEFAULT_HUMAN_APPROVAL_CONFIG };
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else {
+                            patch.executionMode = 'agent';
+                            patch.iteratorConfig = null;
+                          }
+                          updateDraft(patch);
+                        }}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
+                        <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
+                        <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
+                        <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
+                        <option value="router">{t('nodeEditor.nodeTypeRouter')}</option>
+                        <option value="human_approval">{t('nodeEditor.nodeTypeHumanApproval')}</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <Switch checked={preserveFormatDraft} onCheckedChange={setPreserveFormatDraft} />
-            </div>
-            <div className="space-y-2">
-              <Label>Format guide</Label>
-              {editingReplay?.preserveOutputFormat && editingReplay.formatGuideStatus === 'pending' && (
-                <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 text-xs text-sky-800">
-                  Format guide generation is pending. You can wait for the generated guide or replace it manually here.
+              </EditorSection>
+
+              <EditorSection title={t('nodeEditor.sectionExecution')} defaultOpen resetKey={`${task.id}:execution`}>
+                <div className="space-y-4">
+                  {draft.nodeType === 'action' ? (
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.action') || 'Action'}</Label>
+                      <select
+                        value={draft.selectedAction}
+                        onChange={(e) => {
+                          const nextAction = e.target.value as SelectedAction;
+                          updateDraft({ selectedAction: nextAction });
+                          onSave(task.id, {
+                            executionMode: 'action',
+                            assignedAgentId: null,
+                            selectedAction: nextAction,
+                          });
+                        }}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="index">{t('nodeEditor.actionOption.index')}</option>
+                        <option value="delete">{t('nodeEditor.actionOption.delete')}</option>
+                        <option value="read">{t('nodeEditor.actionOption.read')}</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        {draft.selectedAction === 'index' && t('nodeEditor.actionHint.index')}
+                        {draft.selectedAction === 'delete' && t('nodeEditor.actionHint.delete')}
+                        {draft.selectedAction === 'read' && t('nodeEditor.actionHint.read')}
+                      </p>
+                    </div>
+                  ) : (draft.nodeType === 'agent' || draft.nodeType === 'evaluation') && isStepLikeNodeType(draft.nodeType) ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.agent')}</Label>
+                        <SearchableSelect
+                          options={agentOptions}
+                          value={draft.assignedAgentId || ''}
+                          onValueChange={(v) => updateDraft({ assignedAgentId: v })}
+                          placeholder={t('nodeEditor.selectAgent')}
+                          searchPlaceholder={t('nodeEditor.searchAgent')}
+                          emptyText={t('nodeEditor.noAgentFound')}
+                        />
+                        {!draft.assignedAgentId && (
+                          <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
+                        )}
+                        {draft.nodeType === 'evaluation' && (
+                          <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.model')}</Label>
+                        <SearchableSelect
+                          options={modelOptions}
+                          value={draft.modelId || ''}
+                          onValueChange={(v) => updateDraft({ modelId: v || null })}
+                          placeholder={t('nodeEditor.selectModel')}
+                          searchPlaceholder={t('nodeEditor.searchModel')}
+                          emptyText={t('nodeEditor.noModelFound')}
+                        />
+                      </div>
+                    </div>
+                  ) : draft.nodeType === 'agent' || draft.nodeType === 'evaluation' ? (
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.agent')}</Label>
+                      <SearchableSelect
+                        options={agentOptions}
+                        value={draft.assignedAgentId || ''}
+                        onValueChange={(v) => updateDraft({ assignedAgentId: v })}
+                        placeholder={t('nodeEditor.selectAgent')}
+                        searchPlaceholder={t('nodeEditor.searchAgent')}
+                        emptyText={t('nodeEditor.noAgentFound')}
+                      />
+                      {draft.nodeType === 'evaluation' && (
+                        <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
+                      )}
+                      {!draft.assignedAgentId && (
+                        <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <Label>{t('nodeEditor.description')}</Label>
+                    <Textarea
+                      value={draft.description}
+                      onChange={(e) => updateDraft({ description: e.target.value })}
+                      placeholder={t('nodeEditor.descriptionPlaceholder')}
+                      rows={2}
+                      maxLength={20000}
+                      className="resize-y"
+                    />
+                  </div>
                 </div>
+              </EditorSection>
+
+              {!isEvaluationTask && (
+                <EditorSection title={t('nodeEditor.expectedResult')} resetKey={`${task.id}:expected-result`}>
+                  <div className="space-y-2">
+                    <Textarea
+                      value={draft.expectedResult ?? ''}
+                      onChange={(e) => updateDraft({ expectedResult: e.target.value || null })}
+                      placeholder={t('nodeEditor.expectedResultPlaceholder')}
+                      rows={4}
+                      maxLength={10000}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
+                  </div>
+                </EditorSection>
               )}
-              {editingReplay?.formatGuideStatus === 'failed' && (
-                <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-800">
-                  Format guide generation failed{editingReplay.formatGuideError ? `: ${editingReplay.formatGuideError}` : '.'}
-                </div>
+
+              {!isEvaluationTask && (
+                <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
+                  <PlaybookDataFlowSection
+                    targetNodeId={task.id}
+                    inputPortsOverride={draft.inputPorts}
+                    outputPortsOverride={draft.outputPorts}
+                    onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
+                    onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
+                    canEditPorts={draft.nodeType !== 'iterator'}
+                  />
+                </EditorSection>
               )}
-              <Textarea
-                value={formatGuideDraft}
-                onChange={(e) => setFormatGuideDraft(e.target.value)}
-                rows={10}
-                placeholder="Describe the output structure to preserve during replay synthesis."
-              />
-            </div>
-            {editingReplay?.referenceOutput && (
-              <div className="space-y-2">
-                <Label>Validated output reference</Label>
-                <div className="max-h-52 overflow-auto rounded-md border bg-muted/20 p-3 text-xs whitespace-pre-wrap">
-                  {editingReplay.referenceOutput}
-                </div>
+
+              {isStepLikeNodeType(draft.nodeType) && (
+                <EditorSection title={t('nodeEditor.retryPolicy')} resetKey={`${task.id}:retry`}>
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground">{t('nodeEditor.retryPolicyHint')}</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.retryMaxRetries')}</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={10}
+                          value={draft.retryPolicy?.maxRetries ?? 1}
+                          onChange={(e) => updateDraft({
+                            retryPolicy: { ...(draft.retryPolicy ?? { ...DEFAULT_RETRY_POLICY }), maxRetries: Number(e.target.value || 0) },
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.retryDelayMs')}</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={100}
+                          value={draft.retryPolicy?.delayMs ?? 1000}
+                          onChange={(e) => updateDraft({
+                            retryPolicy: { ...(draft.retryPolicy ?? { ...DEFAULT_RETRY_POLICY }), delayMs: Number(e.target.value || 0) },
+                          })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </EditorSection>
+              )}
+
+              {isIteratorTask && draft.iteratorConfig && (
+                <EditorSection title={t('nodeEditor.nodeTypeIterator')} defaultOpen resetKey={`${task.id}:iterator`}>
+                  <PlaybookIteratorConfigFields
+                    value={draft.iteratorConfig}
+                    onChange={(iteratorConfig) => updateDraft({ iteratorConfig })}
+                  />
+                </EditorSection>
+              )}
+
+              {draft.nodeType === 'router' && draft.routerConfig && (
+                <EditorSection title={t('nodeEditor.nodeTypeRouter')} defaultOpen resetKey={`${task.id}:router`}>
+                  <PlaybookRouterConfigSection
+                    value={draft.routerConfig}
+                    onChange={(routerConfig) =>
+                      updateDraft({
+                        routerConfig,
+                        outputPorts: routerConfig.outputLabels.map((label) => ({
+                          id: label,
+                          name: label,
+                          artifactKind: 'text' as ArtifactKind,
+                        })),
+                      })
+                    }
+                    tasks={allTasks}
+                    targetTaskId={task.id}
+                  />
+                </EditorSection>
+              )}
+
+              {draft.nodeType === 'human_approval' && draft.humanApprovalConfig && (
+                <EditorSection title={t('nodeEditor.nodeTypeHumanApproval')} defaultOpen resetKey={`${task.id}:human-approval`}>
+                  <PlaybookHumanApprovalConfigSection
+                    value={draft.humanApprovalConfig}
+                    onChange={(humanApprovalConfig) => updateDraft({ humanApprovalConfig })}
+                  />
+                </EditorSection>
+              )}
+
+              {isEvaluationTask && draft.evaluationConfig != null && (() => {
+                const ec = draft.evaluationConfig;
+                return (
+                  <EditorSection title={t('nodeEditor.nodeTypeEvaluation')} defaultOpen resetKey={`${task.id}:evaluation`}>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.evaluationExpectation')}</Label>
+                        <Textarea
+                          value={ec.expectation}
+                          onChange={(e) => updateDraft({ evaluationConfig: { ...ec, expectation: e.target.value } })}
+                          placeholder={t('nodeEditor.evaluationExpectationPlaceholder')}
+                          rows={5}
+                          maxLength={10000}
+                        />
+                        <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationExpectationHint')}</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>{t('nodeEditor.evaluationPassThreshold')}</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={ec.passThreshold}
+                            onChange={(e) => updateDraft({ evaluationConfig: { ...ec, passThreshold: Number(e.target.value || 0) } })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t('nodeEditor.evaluationWarningThreshold')}</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={ec.warningThreshold}
+                            onChange={(e) => updateDraft({ evaluationConfig: { ...ec, warningThreshold: Number(e.target.value || 0) } })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t('nodeEditor.evaluationWeight')}</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={ec.weight}
+                            onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weight: Number(e.target.value || 0) } })}
+                          />
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-dashed p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium">{t('nodeEditor.evaluationBaselineTitle')}</div>
+                            <div className="text-xs text-muted-foreground">{t('nodeEditor.evaluationBaselineHint')}</div>
+                          </div>
+                          {evaluationBaselineMeta ? (
+                            <Badge variant="outline" className="border-amber-600/30 text-amber-700">
+                              {t('nodeEditor.evaluationBaselineActive')}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 text-xs text-muted-foreground">
+                          {evaluationBaselineMeta
+                            ? `${t('nodeEditor.evaluationBaselineExecution')} ${evaluationBaselineMeta.sourceExecutionId} • ${new Date(evaluationBaselineMeta.createdAt).toLocaleString()}`
+                            : t('nodeEditor.evaluationBaselineEmpty')}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setBaselineExecutionDialogOpen(true)}>
+                            {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceFromExecution') : t('nodeEditor.evaluationBaselineSelectExecution')}
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" disabled={creatingEvaluationBaseline || evaluationExecutions.length === 0} onClick={() => void handleCreateBaselineFromCurrentInputs()}>
+                            {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                            {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceCurrent') : t('nodeEditor.evaluationBaselineCurrent')}
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta} onClick={() => setViewBaselineDialogOpen(true)}>
+                            {t('nodeEditor.evaluationBaselineView')}
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta || removingEvaluationBaseline} onClick={() => void handleRemoveBaseline()}>
+                            {removingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                            {t('nodeEditor.evaluationBaselineRemove')}
+                          </Button>
+                        </div>
+                      </div>
+                      <Collapsible open={advancedEvaluationOpen} onOpenChange={setAdvancedEvaluationOpen}>
+                        <CollapsibleTrigger asChild>
+                          <Button type="button" variant="ghost" className="w-full justify-between px-0 text-sm font-medium">
+                            {t('nodeEditor.evaluationAdvanced')}
+                            <ChevronDown className={`h-4 w-4 transition-transform ${advancedEvaluationOpen ? 'rotate-180' : ''}`} />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-4 pt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                          <div className="space-y-2">
+                            <Label>{t('nodeEditor.evaluationRubricVersion')}</Label>
+                            <Input value={ec.rubricVersion} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, rubricVersion: e.target.value } })} />
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {([
+                              ['semanticMatch', 'nodeEditor.evaluationWeightSemantic'],
+                              ['referenceMatch', 'nodeEditor.evaluationWeightReference'],
+                              ['artifactRequirements', 'nodeEditor.evaluationWeightArtifact'],
+                              ['formatCompliance', 'nodeEditor.evaluationWeightFormat'],
+                              ['evidenceConsistency', 'nodeEditor.evaluationWeightEvidence'],
+                              ['executionHealth', 'nodeEditor.evaluationWeightExecution'],
+                            ] as const).map(([key, labelKey]) => (
+                              <div key={key} className="space-y-2">
+                                <Label>{t(labelKey)}</Label>
+                                <Input type="number" min={0} value={ec.weights[key]} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weights: { ...ec.weights, [key]: Number(e.target.value || 0) } } })} />
+                              </div>
+                            ))}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </div>
+                  </EditorSection>
+                );
+              })()}
               </div>
-            )}
+
+              {isIteratorTask && draft.iteratorConfig && (
+                <EditorSection title={t('nodeEditor.iteratorChildren')} resetKey={`${task.id}:iterator-children`}>
+                  <div className="space-y-2 rounded-lg border bg-background p-3">
+                    <div className="space-y-2">
+                      {iteratorCandidates.map((candidate) => {
+                        const checked = candidate.containerConfig?.parentIteratorId === task.id;
+                        return (
+                          <label key={candidate.id} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                onSave(candidate.id, {
+                                  containerConfig: {
+                                    parentIteratorId: e.target.checked ? task.id : null,
+                                  },
+                                });
+                              }}
+                            />
+                            <span>{candidate.title}</span>
+                          </label>
+                        );
+                      })}
+                      {iteratorCandidates.length === 0 && (
+                        <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorChildrenEmpty')}</p>
+                      )}
+                    </div>
+                    {iteratorChildren.length > 0 && (
+                      <p className="text-xs text-muted-foreground">{t('iterator.childCount', { count: iteratorChildren.length })}</p>
+                    )}
+                  </div>
+                </EditorSection>
+              )}
+              <EditorSection title={t('nodeEditor.sectionReplays')} resetKey={`${task.id}:replays`}>
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {task.hasValidatedReplay && (
+                      <Badge variant="outline" className="border-amber-600/30 text-amber-700">
+                        {t('nodeEditor.replayActiveVersion', { version: task.activeReplayVersion || 1 })}
+                      </Badge>
+                    )}
+                    {task.activeReplayPreserveOutputFormat && (
+                      <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                        {t('nodeEditor.replayFormatPreserved')}
+                      </Badge>
+                    )}
+                    {task.activeReplayPreserveOutputFormat && task.activeReplayFormatGuideStatus === 'pending' && (
+                      <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                        {t('nodeEditor.replayGuidePending')}
+                      </Badge>
+                    )}
+                    {task.activeReplayPreserveOutputFormat && task.activeReplayFormatGuideStatus === 'failed' && (
+                      <Badge variant="outline" className="border-red-600/30 text-red-700">
+                        {t('nodeEditor.replayGuideFailed')}
+                      </Badge>
+                    )}
+                    {task.activeReplayIsStale && (
+                      <Badge variant="outline" className="border-orange-600/30 text-orange-700">
+                        {t('execution.staleResult')}
+                      </Badge>
+                    )}
+                    {task.stepReplayMode === 'replay_flex' && (
+                      <Badge variant="outline" className="border-emerald-600/30 text-emerald-700">
+                        {t('execution.mode.replayFlex')}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {(task.hasOutputFormatTemplate || task.activeOutputFormatStatus) && (
+                    <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-800">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {task.hasOutputFormatTemplate && (
+                          <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                            {t('nodeEditor.replayTemplateVersion', { version: task.activeOutputFormatTemplateVersion || 1 })}
+                          </Badge>
+                        )}
+                        {task.activeOutputFormatStatus === 'pending' && (
+                          <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                            {t('nodeEditor.replayTemplatePending')}
+                          </Badge>
+                        )}
+                        {task.activeOutputFormatStatus === 'failed' && (
+                          <Badge variant="outline" className="border-red-600/30 text-red-700">
+                            {t('nodeEditor.replayTemplateFailed')}
+                          </Badge>
+                        )}
+                      </div>
+                      {task.activeOutputFormatError && (
+                        <div className="mt-2 text-xs text-red-700">{task.activeOutputFormatError}</div>
+                      )}
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {t('nodeEditor.replayTemplateHint')}
+                      </div>
+                    </div>
+                  )}
+
+                  {task.activeReplayIsStale && task.activeReplayStaleReasons && task.activeReplayStaleReasons.length > 0 && (
+                    <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-3 text-xs text-orange-800">
+                      <div className="font-medium">{t('nodeEditor.replayWarningTitle')}</div>
+                      <div className="mt-1">{task.activeReplayStaleReasons.join(' • ')}</div>
+                    </div>
+                  )}
+
+                  {replaysLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t('nodeEditor.replayLoading')}
+                    </div>
+                  ) : replays.length > 0 ? (
+                    <div className="space-y-2">
+                      {replays.map((replay) => (
+                        <div key={replay.id} className="rounded-lg border bg-background p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium">{t('nodeEditor.replayVersionLabel', { version: replay.validationVersion })}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {t('nodeEditor.replayExecutionLabel', { execution: replay.referenceExecutionNumber })} • {new Date(replay.createdAt).toLocaleString()}
+                              </div>
+                            </div>
+                            {replay.status === 'active' ? (
+                              <Badge>{t('nodeEditor.replayActive')}</Badge>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={activatingReplayId === replay.id}
+                                onClick={() => handleActivateReplay(replay.id)}
+                              >
+                                {activatingReplayId === replay.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('nodeEditor.replayActivate')}
+                              </Button>
+                            )}
+                          </div>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {t('nodeEditor.replayToolCallCount', { count: replay.toolCalls.length })}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {replay.preserveOutputFormat && (
+                              <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                                {t('nodeEditor.replayFormatPreserved')}
+                              </Badge>
+                            )}
+                            {replay.preserveOutputFormat && replay.formatGuideStatus === 'pending' && (
+                              <Badge variant="outline" className="border-sky-600/30 text-sky-700">
+                                {t('nodeEditor.replayGuidePending')}
+                              </Badge>
+                            )}
+                            {replay.preserveOutputFormat && replay.formatGuideStatus === 'failed' && (
+                              <Badge variant="outline" className="border-red-600/30 text-red-700">
+                                {t('nodeEditor.replayGuideFailed')}
+                              </Badge>
+                            )}
+                            {replay.replayConfig?.replayReasoningChain && (
+                              <Badge variant="outline" className="border-violet-600/30 text-violet-700">{t('nodeEditor.replayConfigReasoningChain')}</Badge>
+                            )}
+                            {replay.replayConfig?.replayToolTrace && (
+                              <Badge variant="outline" className="border-amber-600/30 text-amber-700">{t('nodeEditor.replayConfigToolTrace')}</Badge>
+                            )}
+                            {replay.replayConfig?.replayOutputFormat && (
+                              <Badge variant="outline" className="border-emerald-600/30 text-emerald-700">{t('nodeEditor.replayConfigOutputFormat')}</Badge>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => openFormatGuideEditor(replay)}
+                            >
+                              {t('nodeEditor.replayEditFormatGuide')}
+                            </Button>
+                          </div>
+                          {replay.isStale && replay.staleReasons && replay.staleReasons.length > 0 && (
+                            <div className="mt-2 rounded border border-orange-500/30 bg-orange-500/5 p-2 text-xs text-orange-800">
+                              {replay.staleReasons.join(' • ')}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      {t('nodeEditor.replayEmpty')}
+                    </div>
+                  )}
+                </div>
+              </EditorSection>
+
+              <EditorSection title={t('nodeEditor.interruptSettings')} resetKey={`${task.id}:interrupts`}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="interrupt-before" className="text-sm font-normal">
+                      {t('nodeEditor.interruptBefore')}
+                    </Label>
+                    <Switch
+                      id="interrupt-before"
+                      checked={draft.interruptBefore}
+                      onCheckedChange={(v) => updateDraft({ interruptBefore: v })}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="interrupt-after" className="text-sm font-normal">
+                      {t('nodeEditor.interruptAfter')}
+                    </Label>
+                    <Switch
+                      id="interrupt-after"
+                      checked={draft.interruptAfter}
+                      onCheckedChange={(v) => updateDraft({ interruptAfter: v })}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="allow-clarification" className="text-sm font-normal">
+                      {t('nodeEditor.allowClarification')}
+                    </Label>
+                    <Switch
+                      id="allow-clarification"
+                      checked={draft.allowClarification}
+                      onCheckedChange={(v) => updateDraft({ allowClarification: v })}
+                    />
+                  </div>
+                </div>
+              </EditorSection>
+
+              <EditorSection title={t('nodeEditor.notificationSettings')} resetKey={`${task.id}:notifications`}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="notify-on-complete" className="text-sm font-normal">
+                      {t('nodeEditor.notifyOnComplete')}
+                    </Label>
+                    <Switch
+                      id="notify-on-complete"
+                      checked={draft.notifyOnComplete}
+                      onCheckedChange={handleNotifyToggle}
+                    />
+                  </div>
+
+                  {draft.notifyOnComplete && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-normal">{t('nodeEditor.notifyEmails')}</Label>
+                      <div className="flex min-h-[38px] flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5">
+                        {draft.notifyEmails.map((email) => (
+                          <span
+                            key={email}
+                            className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground"
+                          >
+                            {email}
+                            <button
+                              type="button"
+                              onClick={() => removeEmail(email)}
+                              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                            >
+                              <span className="text-xs">x</span>
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          type="email"
+                          value={emailInput}
+                          onChange={(e) => {
+                            setEmailInput(e.target.value);
+                            if (emailError) setEmailError('');
+                          }}
+                          onKeyDown={handleEmailKeyDown}
+                          onBlur={handleEmailBlur}
+                          placeholder={draft.notifyEmails.length === 0 ? t('nodeEditor.notifyEmailPlaceholder') : ''}
+                          className="min-w-[120px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                        />
+                      </div>
+                      {emailError && (
+                        <p className="text-xs text-destructive">{emailError}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground">{t('nodeEditor.notifyEmailHint')}</p>
+                    </div>
+                  )}
+                </div>
+              </EditorSection>
+
+              <EditorSection title={t('nodeEditor.advisorSettings')} resetKey={`${task.id}:advisor`}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="disable-advisor" className="text-sm font-normal">
+                      {t('nodeEditor.disableAdvisorEvaluation')}
+                    </Label>
+                    <div className="text-xs text-muted-foreground">
+                      {t('nodeEditor.disableAdvisorEvaluationHint')}
+                    </div>
+                  </div>
+                  <Switch
+                    id="disable-advisor"
+                    checked={draft.disableAdvisorEvaluation}
+                    onCheckedChange={(v) => updateDraft({ disableAdvisorEvaluation: v })}
+                  />
+                </div>
+              </EditorSection>
+            </div>
           </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEditingReplay(null);
-                setFormatGuideDraft('');
-                setPreserveFormatDraft(false);
-              }}
-              disabled={savingFormatGuide}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => void handleSaveFormatGuide()} disabled={savingFormatGuide}>
-              {savingFormatGuide ? 'Saving...' : 'Save format guide'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+      </DialogContent>
       </Dialog>
+
+      {playbookId && task && editingReplay && (
+        <ReplayBaselineSettingsDialog
+          ref={replayDialogRef}
+          open={!!editingReplay}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setEditingReplay(null);
+          }}
+          playbookId={playbookId}
+          task={task}
+          replay={editingReplay}
+          replayId={editingReplay.id}
+          onOpenOutputFormatEditor={onOpenOutputFormatEditor}
+          onReplayUpdated={handleReplayUpdated}
+          onReplayRemoved={handleReplayRemoved}
+        />
+      )}
 
       <Dialog open={baselineExecutionDialogOpen} onOpenChange={setBaselineExecutionDialogOpen}>
         <DialogContent>
@@ -1308,7 +1385,13 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               <option value="">{t('nodeEditor.evaluationBaselineExecutionPlaceholder')}</option>
               {evaluationExecutions.map((entry) => (
                 <option key={entry.id} value={entry.executionId}>
-                  {entry.executionId} • {entry.verdict || 'completed'} • {entry.score ?? 0}
+                  {entry.executionId} • {entry.verdict === 'pass'
+                    ? t('nodeEditor.evaluationVerdictPass')
+                    : entry.verdict === 'warning'
+                      ? t('nodeEditor.evaluationVerdictWarning')
+                      : entry.verdict === 'fail'
+                        ? t('nodeEditor.evaluationVerdictFail')
+                        : t('execution.status.completed')} • {entry.score ?? 0}
                 </option>
               ))}
             </select>
@@ -1338,6 +1421,25 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={replayStaleDialogOpen} onOpenChange={setReplayStaleDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('nodeEditor.replayStaleDialogTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('nodeEditor.replayStaleDialogDescription')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => { setReplayStaleDialogOpen(false); flushAndClose(); }}>
+              {t('nodeEditor.replayStaleKeep')}
+            </Button>
+            <Button variant="destructive" onClick={handleRemoveStaleReplay} disabled={removingStaleReplay}>
+              {removingStaleReplay && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('nodeEditor.replayStaleRemove')}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
-}
+});

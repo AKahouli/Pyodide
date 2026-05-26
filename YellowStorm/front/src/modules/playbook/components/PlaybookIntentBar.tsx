@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Clock, GripVertical, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,6 +18,22 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
 
+function releasePointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
+  if (typeof target.hasPointerCapture === 'function' && !target.hasPointerCapture(pointerId)) {
+    return;
+  }
+
+  target.releasePointerCapture?.(pointerId);
+}
+
+function setPointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
+  try {
+    target.setPointerCapture?.(pointerId);
+  } catch {
+    // Radix/dialog focus handoff can invalidate the pointer before capture completes.
+  }
+}
+
 interface Props {
   selectedTask: PlaybookTask | null;
   loading: boolean;
@@ -33,6 +49,9 @@ interface Props {
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onBarClick?: () => void;
+  onPositionChange?: (offset: { x: number; y: number }) => void;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 function getConfidenceColor(score: number): string {
@@ -41,7 +60,7 @@ function getConfidenceColor(score: number): string {
   return 'text-red-600 dark:text-red-400 border-red-500/40 bg-red-50 dark:bg-red-950/30';
 }
 
-export function PlaybookIntentBar({
+export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(function PlaybookIntentBar({
   selectedTask,
   loading,
   value,
@@ -56,9 +75,12 @@ export function PlaybookIntentBar({
   onRecordHistory,
   onApplyHistorySuggestion,
   onBarClick,
-}: Readonly<Props>) {
+  onPositionChange,
+  collapsed: collapsedProp,
+  onCollapsedChange,
+}: Readonly<Props>, forwardedRef) {
   const { t } = useModuleTranslation('playbook');
-  const [collapsed, setCollapsed] = useState(false);
+  const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [pendingHistoryEntry, setPendingHistoryEntry] = useState<IntentSuggestionHistoryEntry | null>(null);
@@ -73,6 +95,15 @@ export function PlaybookIntentBar({
     originY: number;
     moved: boolean;
   } | null>(null);
+  const collapsed = collapsedProp ?? uncontrolledCollapsed;
+
+  const setCollapsed = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? next(collapsed) : next;
+    if (collapsedProp === undefined) {
+      setUncontrolledCollapsed(resolved);
+    }
+    onCollapsedChange?.(resolved);
+  }, [collapsed, collapsedProp, onCollapsedChange]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedItems((prev) => {
@@ -127,11 +158,11 @@ export function PlaybookIntentBar({
     }
 
     const rect = containerRef.current.getBoundingClientRect();
-    const horizontalLimit = Math.max(0, (window.innerWidth - rect.width - 32) / 2);
+    const horizontalLimit = Math.max(0, window.innerWidth - rect.width - 24);
     const verticalLimit = Math.max(0, window.innerHeight - rect.height - 24);
 
     return {
-      x: Math.max(-horizontalLimit, Math.min(horizontalLimit, nextX)),
+      x: Math.max(0, Math.min(horizontalLimit, nextX)),
       y: Math.max(0, Math.min(verticalLimit, nextY)),
     };
   }, []);
@@ -150,7 +181,7 @@ export function PlaybookIntentBar({
       moved: false,
     };
 
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }, [offset.x, offset.y]);
 
   const handleHeaderPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -175,7 +206,7 @@ export function PlaybookIntentBar({
       return;
     }
 
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     dragStateRef.current = null;
     if (!dragState.moved) {
       handleBarClick();
@@ -188,7 +219,7 @@ export function PlaybookIntentBar({
       return;
     }
 
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     dragStateRef.current = null;
   }, []);
 
@@ -226,14 +257,28 @@ export function PlaybookIntentBar({
 
   const showHistory = historyOpen && history.length > 0;
 
+  const setContainerNode = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (!forwardedRef) return;
+    if (typeof forwardedRef === 'function') {
+      forwardedRef(node);
+      return;
+    }
+    forwardedRef.current = node;
+  }, [forwardedRef]);
+
+  useLayoutEffect(() => {
+    onPositionChange?.(offset);
+  }, [collapsed, offset, onPositionChange]);
+
   return (
     <div
-      ref={containerRef}
-      className="pointer-events-auto absolute left-1/2 top-3 z-20 w-[min(780px,calc(100%-2rem))] -translate-x-1/2"
+      ref={setContainerNode}
+      className="pointer-events-auto absolute left-3 top-3 z-20 w-[min(780px,calc(100%-2rem))]"
       style={{ marginLeft: offset.x, marginTop: offset.y }}
     >
       <div className="max-h-[calc(100vh-1.5rem)] overflow-hidden rounded-2xl border bg-background/95 shadow-xl backdrop-blur">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
           <div
             data-testid="intent-bar-drag-handle"
             className="flex shrink-0 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
@@ -258,26 +303,31 @@ export function PlaybookIntentBar({
                 <span>{t('intentBar.title')}</span>
                 {selectedTask ? <Badge variant="secondary" className="max-w-52 truncate">{selectedTask.title}</Badge> : null}
               </div>
-              <p className="text-xs text-muted-foreground">
-                {selectedTask ? t('intentBar.selectedHint') : t('intentBar.canvasHint')}
-              </p>
             </div>
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            aria-label={collapsed ? t('intentBar.actions.expand') : t('intentBar.actions.collapse')}
-            onClick={(e) => { e.stopPropagation(); setCollapsed((current) => !current); }}
-          >
-            <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed ? '' : 'rotate-180')} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-2 self-center">
+            {!collapsed ? (
+              <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
+                <span>{t('intentBar.actions.autoApply')}</span>
+              </label>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label={collapsed ? t('intentBar.actions.expand') : t('intentBar.actions.collapse')}
+              onClick={(e) => { e.stopPropagation(); setCollapsed((current) => !current); }}
+            >
+              <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed ? '' : 'rotate-180')} />
+            </Button>
+          </div>
         </div>
 
         {!collapsed ? (
           <div className="flex min-h-0 max-h-[calc(100vh-7rem)] flex-col gap-3 p-4">
-            <div className="shrink-0 space-y-2">
+            <div className="flex shrink-0 flex-col gap-2 sm:grid sm:grid-cols-[9fr_2fr] sm:items-start">
               <Textarea
                 value={value}
                 onChange={(event) => onValueChange(event.target.value)}
@@ -289,18 +339,13 @@ export function PlaybookIntentBar({
                     handleSubmit();
                   }
                 }}
-                rows={2}
-                className="min-h-[52px] max-h-44 resize-y"
+                rows={1}
+                className="min-h-[40px] max-h-44 resize-y"
               />
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
-                    <span>{t('intentBar.actions.autoApply')}</span>
-                  </label>
-                  <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant={historyOpen ? 'secondary' : 'outline'}
+              <div className="flex shrink-0 items-center gap-1.5 sm:w-full">
+                <Button
+                  type="button"
+                  variant={historyOpen ? 'secondary' : 'outline'}
                   size="icon"
                   disabled={history.length === 0}
                   title={t('intentBar.history.title')}
@@ -310,12 +355,11 @@ export function PlaybookIntentBar({
                 >
                   <Clock className="h-4 w-4" />
                 </Button>
-                  <Button type="button" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
-                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    {t('intentBar.actions.suggest')}
-                  </Button>
-                  </div>
-                </div>
+                <Button type="button" className="h-9 w-28 justify-center" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {t('intentBar.actions.suggest')}
+                </Button>
+              </div>
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -348,7 +392,7 @@ export function PlaybookIntentBar({
                               <div className="flex flex-wrap gap-1 pt-1">
                                 <Badge variant="secondary">{t('intentBar.planBadge')}</Badge>
                                 <Badge variant="outline">{getPlanCountLabel(entry.suggestion)}</Badge>
-                     </div>
+                              </div>
                             ) : null}
                           </div>
                           <Badge variant="outline">{formatTimeAgo(entry.appliedAt)}</Badge>
@@ -358,63 +402,63 @@ export function PlaybookIntentBar({
                   </div>
                 </div>
               </div>
-            ) : suggestions.length > 0 ? (
+            ) : suggestions.length > 0 && !autoApply ? (
               <div className="min-h-0 max-h-[20rem] flex-1 overflow-y-auto pr-3">
                 <div className="space-y-2">
                   {suggestions.map((suggestion) => {
                     const isExpanded = expandedItems.has(suggestion.id);
                     const hasFullDetails = suggestion.summary && suggestion.summary.length > 80;
                     return (
-                    <div
-                      key={suggestion.id}
-                      className="rounded-xl border bg-muted/30 p-3 text-left transition hover:border-primary/50 hover:bg-muted/60"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{suggestion.label || t('intentBar.fallbackLabel')}</div>
-                          {suggestion.summary ? (
-                            <div>
-                              <p className={cn('text-sm text-muted-foreground', !isExpanded && 'line-clamp-2')}>{suggestion.summary}</p>
-                              {hasFullDetails ? (
-                                <Button
-                                  type="button"
-                                  variant="link"
-                                  size="sm"
-                                  className="h-auto p-0 text-xs font-medium"
-                                  onClick={() => toggleExpanded(suggestion.id)}
-                                >
-                                  {isExpanded ? t('intentBar.showLess') : t('intentBar.showMore')}
-                                </Button>
-                              ) : null}
+                      <div
+                        key={suggestion.id}
+                        className="rounded-xl border bg-muted/30 p-3 text-left transition hover:border-primary/50 hover:bg-muted/60"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{suggestion.label || t('intentBar.fallbackLabel')}</div>
+                            {suggestion.summary ? (
+                              <div>
+                                <p className={cn('text-sm text-muted-foreground', !isExpanded && 'line-clamp-2')}>{suggestion.summary}</p>
+                                {hasFullDetails ? (
+                                  <Button
+                                    type="button"
+                                    variant="link"
+                                    size="sm"
+                                    className="h-auto p-0 text-xs font-medium"
+                                    onClick={() => toggleExpanded(suggestion.id)}
+                                  >
+                                    {isExpanded ? t('intentBar.showLess') : t('intentBar.showMore')}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {isExpanded && suggestion.kind === 'workflow_plan' && suggestion.impact.businessOutcome ? (
+                              <p className="text-xs font-medium text-foreground">{suggestion.impact.businessOutcome}</p>
+                            ) : null}
+                            {isExpanded && suggestion.reason ? <p className="text-xs text-muted-foreground">{suggestion.reason}</p> : null}
+                            {suggestion.kind === 'workflow_plan' ? (
+                              <div className="flex flex-wrap gap-1 pt-1">
+                                <Badge variant="secondary">{t('intentBar.planBadge')}</Badge>
+                                <Badge variant="outline">{getPlanCountLabel(suggestion)}</Badge>
+                              </div>
+                            ) : null}
+                            <div className="pt-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleApplyAndRecord(suggestion)}
+                              >
+                                {t('intentBar.actions.apply')}
+                              </Button>
                             </div>
-                          ) : null}
-                          {isExpanded && suggestion.kind === 'workflow_plan' && suggestion.impact.businessOutcome ? (
-                            <p className="text-xs font-medium text-foreground">{suggestion.impact.businessOutcome}</p>
-                          ) : null}
-                          {isExpanded && suggestion.reason ? <p className="text-xs text-muted-foreground">{suggestion.reason}</p> : null}
-                          {suggestion.kind === 'workflow_plan' ? (
-                            <div className="flex flex-wrap gap-1 pt-1">
-                              <Badge variant="secondary">{t('intentBar.planBadge')}</Badge>
-                              <Badge variant="outline">{getPlanCountLabel(suggestion)}</Badge>
-                            </div>
-                          ) : null}
-                          <div className="pt-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleApplyAndRecord(suggestion)}
-                            >
-                              {t('intentBar.actions.apply')}
-                            </Button>
                           </div>
+                          <Badge variant="outline" className={cn('shrink-0 text-xs font-mono', getConfidenceColor(suggestion.confidence))}>
+                            {Math.round(suggestion.confidence * 100)}%
+                          </Badge>
                         </div>
-                        <Badge variant="outline" className={cn('shrink-0 text-xs font-mono', getConfidenceColor(suggestion.confidence))}>
-                          {Math.round(suggestion.confidence * 100)}%
-                        </Badge>
                       </div>
-                    </div>
-                  );
+                    );
                   })}
                 </div>
               </div>
@@ -440,4 +484,6 @@ export function PlaybookIntentBar({
       </AlertDialog>
     </div>
   );
-}
+});
+
+PlaybookIntentBar.displayName = 'PlaybookIntentBar';

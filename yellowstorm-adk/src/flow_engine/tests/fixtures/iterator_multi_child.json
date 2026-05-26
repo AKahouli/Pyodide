@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    {"id": "input-step", "kind": "step", "label": "Input"},
+    {"id": "iter-node", "kind": "iterator", "label": "Process Items", "iterator_config": {"collection_path": "inputs.items", "max_items": 3}},
+    {"id": "child-a", "kind": "step", "label": "Process Item A", "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}}},
+    {"id": "child-b", "kind": "step", "label": "Process Item B", "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}}},
+    {"id": "output-step", "kind": "step", "label": "Output"}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "input-step", "target": "iter-node"},
+    {"id": "e2", "kind": "sequential", "source": "iter-node", "target": "child-a"},
+    {"id": "e3", "kind": "sequential", "source": "child-a", "target": "child-b"},
+    {"id": "e4", "kind": "sequential", "source": "child-b", "target": "output-step"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

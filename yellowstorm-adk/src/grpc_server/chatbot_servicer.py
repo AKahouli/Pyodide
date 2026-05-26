@@ -25,7 +25,7 @@ from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
 from src.routers.authentification import create_access_token
-from src.langgraph_engine.generate_playbook_prompt import build_generate_playbook_prompt
+from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
 from src.middleware.correlation import UserContext, user_ctx
 # Import generated protobuf code (will be generated after running proto generation)
@@ -39,8 +39,9 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
-from src.langgraph_engine.types import PortPayload
-from src.langgraph_engine.playbook_node_advisor import advise_playbook_node
+from src.flow_engine.legacy_runtime import PortPayload
+from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
+from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -203,6 +204,47 @@ class ChatbotServicer(
             playbook_id=str(result.get("playbook_id") or request.playbook_id),
             task_id=str(result.get("task_id") or request.task_id),
             suggestions=suggestions,
+        )
+
+    async def EvaluateTask(
+        self,
+        request: "chatbot_pb2.TaskAdvisorRequest",
+        context: grpc.aio.ServicerContext,
+    ) -> "chatbot_pb2.TaskAdvisorResult":
+        payload = MessageToDict(
+            request,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
+        result = evaluate_task_execution(payload)
+
+        return chatbot_pb2.TaskAdvisorResult(
+            accuracy_score=int(result.get("accuracy_score", 0) or 0),
+            completeness_score=int(result.get("completeness_score", 0) or 0),
+            result_matching_score=int(result.get("result_matching_score", 0) or 0),
+            overall_score=int(result.get("overall_score", 0) or 0),
+            confidence=float(result.get("confidence", 0) or 0),
+            tool_usage_score=int(result.get("tool_usage_score", 0) or 0),
+            expected_result_source=str(result.get("expected_result_source", "none") or "none"),
+            expected_result_type=str(result.get("expected_result_type", "none") or "none"),
+            expected_result_matched=bool(result.get("expected_result_matched", False)),
+            expected_result_reason=str(result.get("expected_result_reason", "") or ""),
+            missing_facts=[str(item) for item in result.get("missing_facts", [])],
+            incoherences=[str(item) for item in result.get("incoherences", [])],
+            unsupported_claims=[str(item) for item in result.get("unsupported_claims", [])],
+            handoff_risks=[str(item) for item in result.get("handoff_risks", [])],
+            rewrite_hints=[str(item) for item in result.get("rewrite_hints", [])],
+            tool_selection_issues=[str(item) for item in result.get("tool_selection_issues", [])],
+            missing_tool_calls=[str(item) for item in result.get("missing_tool_calls", [])],
+            redundant_tool_calls=[str(item) for item in result.get("redundant_tool_calls", [])],
+            tool_output_use_issues=[str(item) for item in result.get("tool_output_use_issues", [])],
+            tool_sequencing_issues=[str(item) for item in result.get("tool_sequencing_issues", [])],
+            tool_usage_strengths=[str(item) for item in result.get("tool_usage_strengths", [])],
+            tool_usage_recommendation=str(result.get("tool_usage_recommendation", "") or ""),
+            safe_auto_fix_type=str(result.get("safe_auto_fix_type", "none") or "none"),
+            recommendation=str(result.get("recommendation", "none") or "none"),
+            reason=str(result.get("reason", "") or ""),
+            model=str(result.get("model", "deterministic-execution-advisor") or "deterministic-execution-advisor"),
         )
 
     @staticmethod
@@ -1489,7 +1531,7 @@ class ChatbotServicer(
                 ],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
-                max_tokens=4096,
+                max_tokens=32000,
                 response_format={"type": "json_object"},
                 user=username,
             )
@@ -1630,8 +1672,9 @@ class ChatbotServicer(
 
     async def RunPlaybookWorkflow(self, request, context):
         """Execute a playbook workflow with server-streaming step updates."""
-        from src.langgraph_engine.workflow_service import run_playbook
-        from src.langgraph_engine.playbook_queue import register_task, remove_task
+        from src.flow_engine.legacy_runtime import (
+            run_playbook, register_task, remove_task,
+        )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)
@@ -1743,8 +1786,9 @@ class ChatbotServicer(
 
     async def ResumePlaybookWorkflow(self, request, context):
         """Resume an interrupted playbook with server-streaming step updates."""
-        from src.langgraph_engine.workflow_service import resume_playbook
-        from src.langgraph_engine.playbook_queue import register_task, remove_task
+        from src.flow_engine.legacy_runtime import (
+            resume_playbook, register_task, remove_task,
+        )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)
@@ -1813,7 +1857,7 @@ class ChatbotServicer(
 
     async def StopPlaybookWorkflow(self, request, context):
         """Stop a running playbook workflow by thread_id."""
-        from src.langgraph_engine.playbook_queue import cancel_task
+        from src.flow_engine.legacy_runtime import cancel_task
 
         thread_id = request.thread_id
         logger.info("[StopPlaybookWorkflow] Request received", thread_id=thread_id)
@@ -1912,8 +1956,7 @@ class ChatbotServicer(
 
     async def RunStep(self, request, context):
         """Execute a single task with an agent."""
-        from src.langgraph_engine.step_executor import execute_step
-        from src.langgraph_engine.action_executor import execute_action_task
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
         import time
         from datetime import datetime
 
@@ -1971,15 +2014,6 @@ class ChatbotServicer(
                 _struct_to_dict(request.trigger_context)
                 if _has_struct_payload(getattr(request, "trigger_context", None))
                 else None
-            )
-            result = await execute_step(
-                task=task,
-                agent=agent,
-                context_from_dependencies=request.context_from_dependencies,
-                workspace_context=_proto_workspace_context(request.workspace_context),
-                execution_mode=request.execution_mode or "live",
-                validated_replay=validated_replay,
-                evaluation_user_id=username,
             )
             edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
             upstream_results = [
@@ -2048,8 +2082,7 @@ class ChatbotServicer(
 
     async def RunStepStream(self, request, context):
         """Execute a single task and stream step updates in realtime."""
-        from src.langgraph_engine.step_executor import execute_step
-        from src.langgraph_engine.action_executor import execute_action_task
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
         import time
         from datetime import datetime
 
@@ -2246,7 +2279,7 @@ class ChatbotServicer(
 
     async def ResumeStep(self, request, context):
         """Resume an interrupted step with human response."""
-        from src.langgraph_engine.step_executor import resume_step
+        from src.flow_engine.legacy_runtime import resume_step
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)

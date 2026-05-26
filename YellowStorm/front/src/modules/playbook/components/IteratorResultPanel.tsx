@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { TaskResult } from '../types';
+import { getPreferredStepResultText } from '../utils/step-result-display';
 import { StepComponents } from './StepComponents';
 
 function getStatusTone(status: string): string {
@@ -48,6 +49,7 @@ export function IteratorResultPanel({ step }: Props) {
 
       {iterations.map((iteration) => {
         const isOpen = openIterations[iteration.index] ?? false;
+        const iterationText = getPreferredStepResultText(iteration);
         return (
           <Collapsible
             key={`${step.taskId}-iteration-${iteration.index}`}
@@ -81,49 +83,53 @@ export function IteratorResultPanel({ step }: Props) {
                 </div>
               )}
 
-              {iteration.output && (
+              {iterationText && (
                 <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                  {iteration.output}
+                  {iterationText}
                 </div>
               )}
 
               <div className="space-y-3">
-                {iteration.childResults.map((child) => (
-                  <div key={`${iteration.index}-${child.taskId}`} className="rounded-md border bg-muted/10 p-3">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{child.taskTitle || child.taskId}</span>
-                      <Badge variant="outline" className={cn('border', getStatusTone(child.status))}>
-                        {getStatusLabel(t, child.status)}
-                      </Badge>
+                {iteration.childResults.map((child) => {
+                  const childText = getPreferredStepResultText(child);
+
+                  return (
+                    <div key={`${iteration.index}-${child.taskId}`} className="rounded-md border bg-muted/10 p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{child.taskTitle || child.taskId}</span>
+                        <Badge variant="outline" className={cn('border', getStatusTone(child.status))}>
+                          {getStatusLabel(t, child.status)}
+                        </Badge>
+                      </div>
+
+                      {child.error && (
+                        <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">
+                          {child.error}
+                        </div>
+                      )}
+
+                      {child.components && child.components.length > 0 ? (
+                        <div className="prose prose-sm max-w-none dark:prose-invert">
+                          <StepComponents components={child.components} taskId={child.taskId} />
+                        </div>
+                      ) : childText ? (
+                        <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
+                          {childText}
+                        </div>
+                      ) : null}
+
+                      {child.artifacts && child.artifacts.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          {child.artifacts.map((artifact, index) => (
+                            <span key={`${child.taskId}-artifact-${index}`} className="rounded-full border px-2 py-1">
+                              {artifact.filename || artifact.portId}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-
-                    {child.error && (
-                      <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">
-                        {child.error}
-                      </div>
-                    )}
-
-                    {child.components && child.components.length > 0 ? (
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <StepComponents components={child.components} taskId={child.taskId} />
-                      </div>
-                    ) : child.output ? (
-                      <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                        {child.output}
-                      </div>
-                    ) : null}
-
-                    {child.artifacts && child.artifacts.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        {child.artifacts.map((artifact, index) => (
-                          <span key={`${child.taskId}-artifact-${index}`} className="rounded-full border px-2 py-1">
-                            {artifact.filename || artifact.portId}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CollapsibleContent>
           </Collapsible>

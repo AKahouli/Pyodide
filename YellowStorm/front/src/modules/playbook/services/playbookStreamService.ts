@@ -56,6 +56,10 @@ let stepUpdateFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingStepUpdates = new Map<string, PlaybookStepUpdateEvent>();
 const pendingIteratorChildStepUpdates = new Map<string, PlaybookIteratorChildStepUpdateEvent>();
 
+function isActiveExecutionStatus(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'running' || status === 'interrupted' || status === 'pending_approval';
+}
+
 const SSE_EVENT_TYPES = [
   'playbook_connected',
   'playbook_heartbeat',
@@ -184,7 +188,7 @@ function handleSsePayload(raw: string) {
       case 'playbook_connected':
         reconnectAttempts = 0;
         // Backend includes activeExecutions in the connected event — hydrate immediately
-        if (eventData.activeExecutions?.length > 0) {
+        if (Array.isArray(eventData.activeExecutions)) {
           store.hydrateActiveExecutions(eventData.activeExecutions);
         }
         break;
@@ -467,14 +471,14 @@ function onChannelMessage(e: MessageEvent) {
       if (role === 'leader') {
         const state = usePlaybookStore.getState();
         const activeExecs = Object.values(state.executionCache).filter(
-          (exec) => exec.status === 'running' || exec.status === 'interrupted',
+          (exec) => isActiveExecutionStatus(exec.status),
         );
         broadcast({ type: 'state-response', activeExecutions: activeExecs });
       }
       break;
 
     case 'state-response':
-      if (role === 'follower' && Array.isArray(msg.activeExecutions) && msg.activeExecutions.length > 0) {
+      if (role === 'follower' && Array.isArray(msg.activeExecutions)) {
         usePlaybookStore.getState().hydrateActiveExecutions(msg.activeExecutions);
       }
       break;

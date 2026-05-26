@@ -5,7 +5,12 @@ import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationVal
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
-import { AdminPlaybookSettings, DEFAULT_ADMIN_PLAYBOOK_SETTINGS } from './interfaces/playbook-settings.interface';
+import {
+  AdminPlaybookSettings,
+  DEFAULT_ADMIN_PLAYBOOK_SETTINGS,
+  DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
+  PlaybookIntentNormalizationLimits,
+} from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
 import { User, UserDocument } from '../user/schemas/user.schema';
 
@@ -47,6 +52,51 @@ function normalizeAppearanceSettings(value: AppearanceValue): AppearanceSettings
         logo: normalizeLogo(value.themes.blue?.logo),
       },
     },
+  };
+}
+
+function normalizePlaybookIntentNormalizationLimits(
+  value: Partial<PlaybookIntentNormalizationLimits> | Record<string, unknown> | null | undefined,
+): PlaybookIntentNormalizationLimits {
+  const normalizeLimit = (raw: unknown, fallback: number, min: number, max: number): number => {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+      return fallback;
+    }
+
+    return Math.min(max, Math.max(min, Math.round(raw)));
+  };
+
+  return {
+    maxWorkflowPlanChanges: normalizeLimit(
+      value?.maxWorkflowPlanChanges,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
+      1,
+      50,
+    ),
+    maxInputPorts: normalizeLimit(
+      value?.maxInputPorts,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxInputPorts,
+      1,
+      20,
+    ),
+    maxOutputPorts: normalizeLimit(
+      value?.maxOutputPorts,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxOutputPorts,
+      1,
+      20,
+    ),
+    maxIteratorBodySteps: normalizeLimit(
+      value?.maxIteratorBodySteps,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxIteratorBodySteps,
+      1,
+      50,
+    ),
+    maxIteratorBodyEdges: normalizeLimit(
+      value?.maxIteratorBodyEdges,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxIteratorBodyEdges,
+      1,
+      100,
+    ),
   };
 }
 
@@ -276,10 +326,17 @@ export class SystemService implements OnApplicationBootstrap {
   }
 
   async setPlaybookSettings(settings: AdminPlaybookSettings): Promise<AdminPlaybookSettings> {
+    const threshold = typeof settings.replayEligibilityConfidenceThreshold === 'number'
+      ? Math.max(0, Math.min(100, Math.round(settings.replayEligibilityConfidenceThreshold)))
+      : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold;
     const value: AdminPlaybookSettings = {
       inferenceModelId: settings.inferenceModelId?.trim() || null,
+      advisorEvaluationModelId: settings.advisorEvaluationModelId?.trim() || null,
+      replayEvaluationModelId: settings.replayEvaluationModelId?.trim() || null,
       nodeSuggestionsMode: settings.nodeSuggestionsMode,
       approvalSuggestionMode: settings.approvalSuggestionMode,
+      intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(settings.intentNormalizationLimits),
+      replayEligibilityConfidenceThreshold: threshold,
     };
 
     await this.systemSettingModel.findOneAndUpdate(
@@ -478,8 +535,18 @@ export class SystemService implements OnApplicationBootstrap {
         inferenceModelId: typeof value?.inferenceModelId === 'string' && value.inferenceModelId.trim()
           ? value.inferenceModelId.trim()
           : null,
+        advisorEvaluationModelId: typeof value?.advisorEvaluationModelId === 'string' && value.advisorEvaluationModelId.trim()
+          ? value.advisorEvaluationModelId.trim()
+          : null,
+        replayEvaluationModelId: typeof value?.replayEvaluationModelId === 'string' && value.replayEvaluationModelId.trim()
+          ? value.replayEvaluationModelId.trim()
+          : null,
         nodeSuggestionsMode: value?.nodeSuggestionsMode === 'auto' ? 'auto' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.nodeSuggestionsMode,
         approvalSuggestionMode: value?.approvalSuggestionMode === 'manual' ? 'manual' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.approvalSuggestionMode,
+        intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(value?.intentNormalizationLimits),
+        replayEligibilityConfidenceThreshold: typeof value?.replayEligibilityConfidenceThreshold === 'number'
+          ? Math.max(0, Math.min(100, Math.round(value.replayEligibilityConfidenceThreshold)))
+          : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold,
       };
 
       this.lastPlaybookSettingsCacheUpdate = Date.now();

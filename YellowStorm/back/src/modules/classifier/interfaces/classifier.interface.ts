@@ -29,6 +29,17 @@ export type ClassificationRunStatusValue =
   | 'failed'
   | 'cancelled';
 
+export interface IClassifierRuleResponse {
+  id: string;
+  userId: string;
+  scope: 'global' | 'local';
+  workspaceId: string | null;
+  text: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface IClassificationRunResponse {
   id: string;
   workspaceId: string;

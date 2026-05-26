@@ -14,6 +14,13 @@ except ImportError:
 from src.grpc_server.chatbot_servicer import ChatbotServicer
 from src.dependencies import get_agent_team_service
 
+try:
+    from src.grpc_generated import playbook_flow_pb2_grpc as pf_grpc
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+except ImportError:
+    pf_grpc = None
+    PlaybookFlowRuntimeServicer = None
+
 logger = get_logger(__name__)
 
 
@@ -76,6 +83,11 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     chatbot_pb2_grpc.add_ChatbotServiceServicer_to_server(servicer, server)
     logger.info("[gRPC] ChatbotServicer registered")
 
+    if pf_grpc is not None and PlaybookFlowRuntimeServicer is not None:
+        pf_servicer = PlaybookFlowRuntimeServicer()
+        pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
+        logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
+
     # Bind the server to port
     server.add_insecure_port(f'{host}:{port}')
     logger.warning(
@@ -92,6 +104,10 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     logger.info("  - chatbot.ChatbotService/RunPlaybookWorkflow (unary)")
     logger.info("  - chatbot.ChatbotService/ResumePlaybookWorkflow (unary)")
     logger.info("  - chatbot.ChatbotService/RunStep (unary)")
+    if pf_grpc is not None:
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/Run (streaming)")
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/Cancel (unary)")
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeApproval (unary)")
 
     # Keep the server running until terminated
     try:

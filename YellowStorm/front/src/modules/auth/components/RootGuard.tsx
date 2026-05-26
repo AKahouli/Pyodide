@@ -18,16 +18,14 @@ import { LandingPage } from './LandingPage';
 import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
-import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 
 export function RootGuard() {
   const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
 
-  // Keep SSE connections alive at app level so streaming persists across navigation
+  // Keep SSE connection alive at app level so streaming persists across navigation
   useConversationStream();
-  usePlaybookStreamGlobal();
 
   // Initialize models when authenticated
   React.useEffect(() => {

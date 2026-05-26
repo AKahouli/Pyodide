@@ -1,6 +1,9 @@
 import json
 
-from src.langgraph_engine.generate_playbook_prompt import build_generate_playbook_prompt
+from src.flow_engine.generation.prompt import build_generate_playbook_prompt
+from src.flow_engine.generation.prompt import (
+    build_generate_playbook_prompt as build_generate_playbook_prompt_shim,
+)
 
 
 def test_build_generate_playbook_prompt_uses_registry_preprompt() -> None:
@@ -70,4 +73,14 @@ def test_modification_mode_includes_port_preservation_rule() -> None:
     )
 
     assert "Regles de modification des ports" in prompt
-    assert "conserveent leurs inputPorts et outputPorts" in prompt
+    assert "conservent leurs inputPorts et outputPorts" in prompt
+
+
+def test_langgraph_generate_playbook_prompt_shim_delegates() -> None:
+    prompt = build_generate_playbook_prompt_shim(
+        agents_info=[{"id": "agent-1", "name": "Planner"}],
+        workspace_info=[],
+        existing_playbook_json=None,
+    )
+
+    assert '"inputPorts"' in prompt

@@ -19,7 +19,7 @@ vi.mock('../../../store', () => ({
           chunks: 5,
           ragType: 'standard',
           topK: 10,
-          maxToken: 4096,
+          maxToken: 32000,
           hybridSearch: false,
           createdAt: '',
           updatedAt: '',
@@ -47,7 +47,7 @@ describe('CreateTemplateStep2', () => {
         expect.objectContaining({
           chunks: 5,
           ragType: 'standard',
-          maxToken: 4096,
+          maxToken: 32000,
           topK: 10,
         }),
       );

@@ -915,14 +915,28 @@ export interface SyncModelsResponse {
 
 export interface AdminPlaybookSettings {
   inferenceModelId: string | null;
+  advisorEvaluationModelId: string | null;
+  replayEvaluationModelId: string | null;
   nodeSuggestionsMode: 'auto' | 'manual';
   approvalSuggestionMode: 'auto' | 'manual';
+  intentNormalizationLimits: {
+    maxWorkflowPlanChanges: number;
+    maxInputPorts: number;
+    maxOutputPorts: number;
+    maxIteratorBodySteps: number;
+    maxIteratorBodyEdges: number;
+  };
+  replayEligibilityConfidenceThreshold: number;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
   inferenceModelId?: string | null;
-  nodeSuggestionsMode: 'auto' | 'manual';
-  approvalSuggestionMode: 'auto' | 'manual';
+  advisorEvaluationModelId?: string | null;
+  replayEvaluationModelId?: string | null;
+  nodeSuggestionsMode?: 'auto' | 'manual';
+  approvalSuggestionMode?: 'auto' | 'manual';
+  intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
+  replayEligibilityConfidenceThreshold?: number;
 }
 
 // Playbook Prompt Types

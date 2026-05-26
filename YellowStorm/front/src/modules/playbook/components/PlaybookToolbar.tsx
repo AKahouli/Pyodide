@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -17,7 +17,6 @@ interface Props {
   pageMode: PlaybookPageMode;
   onPageModeChange: (mode: PlaybookPageMode) => void;
   hasExecutionContext?: boolean;
-  hasPendingInterrupt?: boolean;
   onRun: () => void;
   onStop?: () => void;
   onSave: () => void;
@@ -28,22 +27,28 @@ interface Props {
   hasActiveExecution?: boolean;
   isStopping?: boolean;
   canRun: boolean;
+  hasValidationIssues?: boolean;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
   onAdvisorAutopilotChange?: (enabled: boolean) => void;
+  advisorScoringMode?: import('../types').AdvisorScoringMode;
+  onAdvisorScoringModeChange?: (mode: import('../types').AdvisorScoringMode) => void;
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
   triggersOpen?: boolean;
   designSettings?: PlaybookDesignSettings;
   onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
+  /** Opens flow settings drawer (canvas header area). */
+  onOpenFlowSettings?: () => void;
+  onExport?: () => void;
+  onImport?: () => void;
 }
 
 export function PlaybookToolbar({
   pageMode,
   onPageModeChange,
   hasExecutionContext = false,
-  hasPendingInterrupt = false,
   onRun,
   onStop,
   onSave,
@@ -54,14 +59,20 @@ export function PlaybookToolbar({
   hasActiveExecution = false,
   isStopping = false,
   canRun,
+  hasValidationIssues,
   nodeReflectionEnabled,
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
   onAdvisorAutopilotChange,
+  advisorScoringMode = 'llm',
+  onAdvisorScoringModeChange,
   onTriggers,
   triggersOpen = false,
   designSettings,
   onDesignSettingsChange,
+  onOpenFlowSettings,
+  onExport,
+  onImport,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
@@ -83,6 +94,11 @@ export function PlaybookToolbar({
           </Button>
         ))}
       </div>
+      {pageMode === 'design' && onOpenFlowSettings && (
+        <Button variant="outline" size="sm" className="px-2" title={t('flowSettings.title')} onClick={onOpenFlowSettings}>
+          <Settings2 className="h-4 w-4" />
+        </Button>
+      )}
       {showExecutionsAction && (
         <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
           <History className="h-4 w-4 sm:mr-1" />
@@ -119,6 +135,23 @@ export function PlaybookToolbar({
             <span>{t('toolbar.advisor')}</span>
             <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
           </div>
+          {nodeReflectionEnabled && onAdvisorScoringModeChange && (
+            <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+              <span>{t('toolbar.scoring')}</span>
+              <Select
+                value={advisorScoringMode}
+                onValueChange={(value: 'llm' | 'heuristic') => onAdvisorScoringModeChange(value)}
+              >
+                <SelectTrigger className="h-8 w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="llm">{t('toolbar.scoringLlm')}</SelectItem>
+                  <SelectItem value="heuristic">{t('toolbar.scoringHeuristic')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {onAdvisorAutopilotChange && (
             <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
               <span>{t('toolbar.stepAutopilot')}</span>
@@ -164,22 +197,34 @@ export function PlaybookToolbar({
           )}
         </PopoverContent>
       </Popover>
+      {onImport && (
+        <Button variant="outline" size="sm" className="px-2" title={t('toolbar.import')} onClick={onImport}>
+          <Upload className="h-4 w-4" />
+        </Button>
+      )}
+      {onExport && (
+        <Button variant="outline" size="sm" className="px-2" title={t('toolbar.export')} onClick={onExport}>
+          <Download className="h-4 w-4" />
+        </Button>
+      )}
       <Button
         variant={isDirty ? 'outline' : 'ghost'}
         size="sm"
         onClick={onSave}
-        disabled={!isDirty || isSaving}
+        disabled={!isDirty || isSaving || hasValidationIssues}
         className="px-2 sm:px-3"
       >
         {isSaving ? (
           <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
+        ) : hasValidationIssues ? (
+          <AlertTriangle className="h-4 w-4 sm:mr-1 text-amber-500" />
         ) : isDirty ? (
           <Save className="h-4 w-4 sm:mr-1" />
         ) : (
           <Check className="h-4 w-4 sm:mr-1" />
         )}
         <span className="hidden sm:inline">
-          {isSaving ? t('toolbar.saving') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
+          {isSaving ? t('toolbar.saving') : hasValidationIssues ? t('toolbar.validationIssues') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
         </span>
       </Button>
       {isExecuting || hasActiveExecution ? (

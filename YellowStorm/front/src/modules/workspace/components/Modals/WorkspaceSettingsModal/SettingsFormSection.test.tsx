@@ -12,7 +12,7 @@ function TestForm({ hasChanges, onCancel, onSubmit }: { hasChanges: boolean; onC
       chunks: 5,
       hybridSearch: false,
       ragType: 'standard',
-      maxToken: 4096,
+      maxToken: 32000,
       topK: 10,
     },
   });

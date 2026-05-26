@@ -4,7 +4,7 @@
  * and event distribution
  */
 
-import { AUTH_STORAGE_KEYS, API_CONFIG } from "@/lib/api";
+import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from "@/lib/api";
 import type { Notification, SSEEvent, SSEEventType } from "./types";
 import { toast } from "sonner";
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -235,7 +235,6 @@ export class NotificationsService {
   }
 
   private scheduleReconnect(): void {
-    // Don't reconnect if evicted
     if (this.isEvicted) {
       return;
     }
@@ -261,8 +260,30 @@ export class NotificationsService {
     });
 
     this.reconnectTimeout = setTimeout(() => {
-      this.connect();
+      this.refreshTokenAndConnect();
     }, delay);
+  }
+
+  private async refreshTokenAndConnect(): Promise<void> {
+    try {
+      const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+      const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.auth.refresh}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const body = await response.json();
+        const newToken = body?.data?.accessToken;
+        if (newToken) {
+          localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, newToken);
+        }
+      }
+    } catch {
+      // Refresh failed — proceed with existing token, connect() will handle the 401
+    }
+    this.connect();
   }
 
   private clearTimers(): void {

@@ -2,9 +2,13 @@ import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   ClassificationRun,
+  ClassifierRule,
+  ClassifierRuleScope,
+  CreateClassifierRuleInput,
   CreateWorkspaceFolderInput,
   ListWorkspaceFilesQuery,
   StartClassificationRunInput,
+  UpdateClassifierRuleInput,
   UpdateWorkspaceFolderInput,
   WorkspaceFile,
   WorkspaceFolder,
@@ -136,4 +140,87 @@ export async function getRun(runId: string): Promise<ClassificationRun> {
     API_ENDPOINTS.classifier.runById(runId),
   );
   return response.data.data;
+}
+
+// ───────── Rules ─────────
+
+export async function listRules(query: {
+  scope: ClassifierRuleScope;
+  workspaceId?: string;
+}): Promise<ClassifierRule[]> {
+  const params: Record<string, string> = { scope: query.scope };
+  if (query.workspaceId) params.workspaceId = query.workspaceId;
+  const response = await apiClient.get<ApiResponse<ClassifierRule[]>>(
+    API_ENDPOINTS.classifier.rules,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function createRule(
+  input: CreateClassifierRuleInput,
+): Promise<ClassifierRule> {
+  const response = await apiClient.post<ApiResponse<ClassifierRule>>(
+    API_ENDPOINTS.classifier.rules,
+    input,
+  );
+  return response.data.data;
+}
+
+export async function updateRule(
+  ruleId: string,
+  input: UpdateClassifierRuleInput,
+): Promise<ClassifierRule> {
+  const response = await apiClient.patch<ApiResponse<ClassifierRule>>(
+    API_ENDPOINTS.classifier.ruleById(ruleId),
+    input,
+  );
+  return response.data.data;
+}
+
+export async function deleteRule(ruleId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.classifier.ruleById(ruleId));
+}
+
+// ───────── Sync (Export ZIP) ─────────
+
+export interface SyncDownload {
+  blob: Blob;
+  filename: string;
+  fileCount: number;
+  unclassifiedCount: number;
+  failedCount: number;
+}
+
+export async function syncWorkspace(workspaceId: string): Promise<SyncDownload> {
+  const response = await apiClient.get<Blob>(API_ENDPOINTS.classifier.sync(workspaceId), {
+    responseType: 'blob',
+  });
+
+  const disposition = response.headers['content-disposition'] as string | undefined;
+  const filename = parseFilenameFromContentDisposition(disposition) ?? `workspace-${workspaceId}.zip`;
+
+  const headers = response.headers as Record<string, string | undefined>;
+
+  return {
+    blob: response.data,
+    filename,
+    fileCount: Number(headers['x-sync-file-count'] ?? 0),
+    unclassifiedCount: Number(headers['x-sync-unclassified-count'] ?? 0),
+    failedCount: Number(headers['x-sync-failed-count'] ?? 0),
+  };
+}
+
+function parseFilenameFromContentDisposition(header?: string): string | null {
+  if (!header) return null;
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // fall through to ascii
+    }
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] ?? null;
 }

@@ -18,6 +18,8 @@ import type {
   PlaybookSummary,
   PlaybookTask,
   PlaybookEdge,
+  ControlEdge,
+  DataBinding,
   PlaybookExecution,
   PlaybookExecutionSummary,
   PlaybookExecutionStartEvent,
@@ -49,6 +51,8 @@ import type {
   RequestPlaybookIntentData,
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
+  PlaybookResourceReference,
+  PlaybookDefinitionExport,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -148,6 +152,7 @@ const initialState: PlaybookState = {
   isGenerating: false,
   generateRetryData: null,
   selectedStepId: null,
+  selectedIterationIndex: 0,
   pendingRerunTaskId: null as string | null,
   error: null,
   designMessages: [],
@@ -176,6 +181,13 @@ const initialState: PlaybookState = {
   repeatability: null,
   repeatabilityLoading: false,
   intentSuggestionHistory: loadIntentHistory(),
+  flowNodeTemplates: [],
+  flowNodeTemplatesLoading: false,
+  flowNodeTemplatesLoadedAt: 0,
+  flowNodeKinds: [],
+  flowNodeKindsLoading: false,
+  idempotencyKeyCounters: {},
+  portInspection: null,
 };
 
 // ===== Stable empty references =====
@@ -204,12 +216,10 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
     void usePlaybookStore.getState().fetchExecution(playbookId, executionId)
       .then(() => {
         const execution = usePlaybookStore.getState().executionCache[executionId];
-        const hasJudgeResult = Boolean(
-          execution?.judgeSummaryStatus === 'evaluated'
-          || execution?.taskResults?.some((task) => task.judgeStatus === 'evaluated' && task.judgeResult),
-        );
+        const hasPendingEvaluations = execution?.taskResults?.some((task) => task.judgeStatus === 'evaluating') ?? false;
+        console.debug('[judge DEBUG] scheduleJudgeRefresh attempt', attempt, '/', JUDGE_REFRESH_MAX_ATTEMPTS, 'hasPending=', hasPendingEvaluations, 'taskStatuses=', execution?.taskResults?.map(t => ({ taskId: t.taskId, judgeStatus: t.judgeStatus, iteration: t.iteration })));
 
-        if (hasJudgeResult || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
+        if (!hasPendingEvaluations || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
           clearJudgeRefreshTimer(executionId);
           return;
         }
@@ -246,8 +256,10 @@ function getPreferredSelectedStepId(
 /** Status priority for smart merge — higher wins. */
 const STATUS_PRIORITY: Record<string, number> = {
   pending: 0,
+  queued: 0,
   running: 1,
   interrupted: 2,
+  pending_approval: 2,
   completed: 3,
   failed: 3,
   skipped: 3,
@@ -255,7 +267,7 @@ const STATUS_PRIORITY: Record<string, number> = {
 };
 
 function isActiveExecutionStatus(status: ExecutionStatus | string | null | undefined): boolean {
-  return status === 'running' || status === 'interrupted';
+  return status === 'queued' || status === 'running' || status === 'interrupted' || status === 'pending_approval';
 }
 
 function isNewerStatus(a: string, b: string): boolean {
@@ -359,6 +371,17 @@ function hasRicherJudgeState(
   return (cachedTaskResult.judgeHistory?.length || 0) > (incomingTaskResult.judgeHistory?.length || 0);
 }
 
+function getTaskResultCacheKey(taskResult: Pick<PlaybookExecution['taskResults'][number], 'taskId' | 'iteration'>): string {
+  const normalizedIteration = taskResult.iteration === undefined || taskResult.iteration === 0
+    ? 'base'
+    : taskResult.iteration;
+  return `${taskResult.taskId}::${normalizedIteration}`;
+}
+
+function iterationsMatch(a: number | undefined, b: number | undefined): boolean {
+  return (a ?? 0) === (b ?? 0);
+}
+
 function buildAncestorTaskIdSet(
   graphSource: Pick<Playbook, 'edges'> | Pick<PlaybookExecution, 'playbookSnapshot'> | null,
   taskId: string,
@@ -435,6 +458,7 @@ function mergeIteratorChildTaskResult(
     error?: string | null;
     components?: PlaybookExecution['taskResults'][number]['components'];
     toolTrace?: PlaybookExecution['taskResults'][number]['toolTrace'];
+    reasoningChain?: PlaybookExecution['taskResults'][number]['reasoningChain'];
     llmPromptTrace?: PlaybookExecution['taskResults'][number]['llmPromptTrace'];
     artifacts?: PlaybookExecution['taskResults'][number]['artifacts'];
   },
@@ -483,6 +507,7 @@ function mergeIteratorChildTaskResult(
       error: data.error ?? existingChild?.error ?? null,
       components: data.components ?? existingChild?.components,
       toolTrace: data.toolTrace ?? existingChild?.toolTrace,
+      reasoningChain: data.reasoningChain ?? existingChild?.reasoningChain,
       llmPromptTrace: data.llmPromptTrace ?? existingChild?.llmPromptTrace,
       artifacts: data.artifacts ?? existingChild?.artifacts,
     };
@@ -746,7 +771,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           id: playbook.id,
           name: playbook.name,
           description: playbook.description,
-          taskCount: playbook.tasks.length,
+          taskCount: (playbook.tasks ?? playbook.nodes ?? []).length,
           isFavorite: playbook.isFavorite,
           scheduleEnabled: playbook.executionSchedule?.enabled === true,
           executionStatus: null,
@@ -797,7 +822,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: playbook.id,
             name: playbook.name,
             description: playbook.description,
-            taskCount: playbook.tasks.length,
+            taskCount: (playbook.tasks ?? playbook.nodes ?? []).length,
             isFavorite: existing?.isFavorite ?? false,
             scheduleEnabled: playbook.executionSchedule?.enabled === true,
             executionStatus: existing?.executionStatus ?? null,
@@ -817,6 +842,22 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 ...playbook,
                 tasks: state.currentPlaybook.tasks,
                 edges: state.currentPlaybook.edges,
+                dataBindings: state.currentPlaybook.dataBindings,
+                reflectionEnabled: hasNewerLocalChanges
+                  ? state.currentPlaybook.reflectionEnabled
+                  : playbook.reflectionEnabled,
+                advisorScoringMode: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorScoringMode
+                  : playbook.advisorScoringMode,
+                advisorAutopilotEnabled: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotEnabled
+                  : playbook.advisorAutopilotEnabled,
+                advisorAutopilotTargetScore: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotTargetScore
+                  : playbook.advisorAutopilotTargetScore,
+                advisorAutopilotMaxTurns: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotMaxTurns
+                  : playbook.advisorAutopilotMaxTurns,
               },
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
@@ -833,6 +874,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
             'statusCode' in err &&
             (err.statusCode === 401 || err.statusCode === 403)
           ) {
+            return;
+          }
+          if (
+            err && typeof err === 'object' && 'code' in err
+            && (err as { code: string }).code === 'ERR_2533'
+          ) {
+            const dedupedName = `${data.name} (Imported)`;
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === id
+                ? { ...state.currentPlaybook, name: dedupedName }
+                : state.currentPlaybook,
+            }));
+            toast.error(tPlaybook('store.errors.duplicateName', 'A playbook with this name already exists. Renamed to "{{name}}".', { name: dedupedName }));
             return;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
@@ -858,7 +912,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           id: cloned.id,
           name: cloned.name,
           description: cloned.description,
-          taskCount: cloned.tasks.length,
+          taskCount: (cloned.tasks ?? cloned.nodes ?? []).length,
           isFavorite: cloned.isFavorite,
           scheduleEnabled: cloned.executionSchedule?.enabled === true,
           executionStatus: null,
@@ -1093,6 +1147,26 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
       },
 
+      updateControlEdges: (controlEdges: ControlEdge[]) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, controlEdges }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      updateDataBindings: (dataBindings: DataBinding[]) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, dataBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       updateWorkspaces: (workspaces: string[]) => {
         set((state) => ({
           currentPlaybook: state.currentPlaybook
@@ -1105,7 +1179,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       setDirty: (dirty: boolean) => set({ isDirty: dirty }),
 
-      saveCurrentPlaybook: async () => {
+      saveCurrentPlaybook: async (options) => {
         const { currentPlaybook, isSaving } = get();
         if (isSaving) return;
         if (!currentPlaybook) return;
@@ -1115,11 +1189,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
           designSettings: currentPlaybook.designSettings,
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
+          controlEdges: currentPlaybook.controlEdges,
+          dataBindings: currentPlaybook.dataBindings,
+          settings: currentPlaybook.settings,
           workspaces: currentPlaybook.workspaces,
           reflectionEnabled: currentPlaybook.reflectionEnabled,
+          advisorScoringMode: currentPlaybook.advisorScoringMode,
           advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
           advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
           advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
+          expectedUpdatedAt: options?.expectedUpdatedAt,
+          clientMutationId: options?.clientMutationId,
         });
       },
 
@@ -1142,10 +1222,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
             const playbook = state.currentPlaybook;
             const sortedTasks = [...playbook.tasks].sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0));
             const runningTaskId = data?.singleStepTaskId || sortedTasks[0]?.id || null;
-            const taskResults = buildExecutionTaskResultsFromTasks(playbook.tasks, {
-              runningTaskId,
-              markAllPending: !data?.singleStepTaskId,
-            });
+            let taskResults: PlaybookExecution['taskResults'];
+            if (data?.singleStepTaskId && state.currentExecution?.playbookId === id && state.currentExecution.taskResults.length > 0) {
+              taskResults = state.currentExecution.taskResults.map((tr) =>
+                tr.taskId === data.singleStepTaskId
+                  ? { ...clearTaskResultStaleState(tr), status: 'running' as const, output: null, error: null, durationMs: null, startedAt: new Date().toISOString(), completedAt: null }
+                  : tr,
+              );
+            } else {
+              taskResults = buildExecutionTaskResultsFromTasks(playbook.tasks, {
+                runningTaskId,
+                markAllPending: !data?.singleStepTaskId,
+              });
+            }
             const now = new Date().toISOString();
             const optimisticExecution: PlaybookExecution = {
               id: result.executionId,
@@ -1154,8 +1243,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionNumber: (state.executionHistory[0]?.executionNumber || 0) + 1,
               status: 'running',
               executionMode: data?.executionMode || 'live',
+              stepExecutionModes: data?.stepExecutionModes ?? {},
               executionTrigger: 'manual',
               reflectionEnabled: data?.runNodeReflection !== false,
+              advisorScoringMode: data?.advisorScoringMode ?? state.currentPlaybook?.advisorScoringMode ?? 'llm',
               advisorAutopilotEnabled: data?.advisorAutopilotEnabled === true,
               advisorAutopilotTargetScore: data?.advisorAutopilotTargetScore ?? 90,
               advisorAutopilotMaxTurns: data?.advisorAutopilotMaxTurns ?? 4,
@@ -1166,6 +1257,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               judgeSummaryStatus: 'idle',
               judgeSummary: null,
               replaySourceByTask: null,
+              replayPlanningByTask: null,
               taskResults,
               threadId: null,
               interruptPayload: null,
@@ -1208,9 +1300,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
       stopExecution: async (playbookId, executionId) => {
         set({ isStopping: true });
         try {
-          await api.stopPlaybook(playbookId, { executionId });
+          await api.cancelFlowExecution(executionId);
+          set({ isStopping: false });
         } catch (err) {
           set({ isStopping: false });
+          const apiError = parseApiError(err);
+          if (apiError.code === 'ERR_1006') {
+            const cached = get().executionCache[executionId];
+            if (cached?.playbookId) {
+              void get().fetchExecution(cached.playbookId, executionId);
+            }
+            return;
+          }
           handleApiError(err);
           throw err;
         }
@@ -1228,56 +1329,32 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteExecution: async (playbookId, executionId) => {
         try {
           await api.deleteExecution(playbookId, executionId);
-          set((state) => {
-            const executionHistory = state.executionHistory.filter((ex) => ex.id !== executionId);
-            const executionCache = { ...state.executionCache };
-            delete executionCache[executionId];
-
-            const currentExecution =
-              state.currentExecution?.id === executionId
-                ? null
-                : state.currentExecution;
-
-            return {
-              executionHistory,
-              executionCache,
-              currentExecution,
-              selectedStepId: state.currentExecution?.id === executionId ? null : state.selectedStepId,
-              executionPanelOpen: executionHistory.length > 0 ? state.executionPanelOpen : false,
-            };
-          });
-          toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
         } catch (err) {
           handleApiError(err);
           throw err;
         }
+        const currentId = get().currentExecution?.id;
+        if (currentId === executionId) {
+          persistPanelOpen(false);
+        }
+        set((state) => {
+          const { [executionId]: _removed, ...restCache } = state.executionCache;
+          return {
+            executionCache: restCache,
+            executionHistory: state.executionHistory.filter((h) => h.id !== executionId),
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: (state.executionHistoryByPlaybook[playbookId] || []).filter((h) => h.id !== executionId),
+            },
+            currentExecution: currentId === executionId ? null : state.currentExecution,
+            executionPanelOpen: currentId === executionId ? false : state.executionPanelOpen,
+          };
+        });
       },
 
       deleteStepExecution: async (playbookId, executionId, taskId, stepExecutionId) => {
         try {
           await api.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId);
-          set((state) => {
-            const currentExecution = state.executionCache[executionId];
-            if (!currentExecution) return state;
-
-            const taskResults = currentExecution.taskResults.map((taskResult) =>
-              taskResult.taskId === taskId
-                ? {
-                  ...taskResult,
-                  stepExecutions: (taskResult.stepExecutions || []).filter((entry) => entry.id !== stepExecutionId),
-                }
-                : taskResult,
-            );
-
-            const updatedExecution = { ...currentExecution, taskResults, updatedAt: new Date().toISOString() };
-            const executionCache = { ...state.executionCache, [executionId]: updatedExecution };
-
-            return {
-              executionCache,
-              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
-            };
-          });
-          toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -1286,47 +1363,33 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       deleteAllExecutions: async (playbookId) => {
         try {
-          const result = await api.deleteAllExecutions(playbookId);
-          set((state) => {
-            const executionHistory = state.executionHistory.filter(
-              (ex) => ex.playbookId !== playbookId || ex.status === 'running' || ex.status === 'interrupted',
-            );
-
-            const executionCache = Object.fromEntries(
-              Object.entries(state.executionCache).filter(([, execution]) =>
-                execution.playbookId !== playbookId || execution.status === 'running' || execution.status === 'interrupted',
-              ),
-            );
-
-            const keepCurrentExecution = !state.currentExecution
-              || state.currentExecution.playbookId !== playbookId
-              || state.currentExecution.status === 'running'
-              || state.currentExecution.status === 'interrupted';
-
-            const currentExecution = keepCurrentExecution ? state.currentExecution : null;
-            const hasRemainingForPlaybook = executionHistory.some((ex) => ex.playbookId === playbookId)
-              || currentExecution?.playbookId === playbookId;
-
-            return {
-              executionHistory,
-              executionCache,
-              currentExecution,
-              selectedStepId: keepCurrentExecution ? state.selectedStepId : null,
-              executionPanelOpen: hasRemainingForPlaybook ? state.executionPanelOpen : false,
-            };
-          });
-
-          if (result.kept > 0) {
-            toast.success(tPlaybook('store.toasts.deletedAllExecutions', 'Executions deleted'), {
-              description: `${result.deleted} deleted, ${result.kept} active execution(s) kept.`,
-            });
-          } else {
-            toast.success(tPlaybook('store.toasts.deletedAllExecutions', 'Executions deleted'));
-          }
+          await api.deleteAllExecutions(playbookId);
         } catch (err) {
           handleApiError(err);
           throw err;
         }
+        const currentExec = get().currentExecution;
+        if (currentExec && currentExec.playbookId === playbookId) {
+          persistPanelOpen(false);
+        }
+        set((state) => {
+          const newCache = { ...state.executionCache };
+          for (const [id, exec] of Object.entries(newCache)) {
+            if ((exec as PlaybookExecution).playbookId === playbookId) {
+              delete newCache[id];
+            }
+          }
+          return {
+            executionCache: newCache,
+            executionHistory: state.executionHistory.filter((h) => h.playbookId !== playbookId),
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: [],
+            },
+            currentExecution: currentExec?.playbookId === playbookId ? null : state.currentExecution,
+            executionPanelOpen: currentExec?.playbookId === playbookId ? false : state.executionPanelOpen,
+          };
+        });
       },
 
       validateTaskReplay: async (playbookId, taskId, executionId, options) => {
@@ -1349,6 +1412,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const replay = await api.validateTaskReplay(playbookId, taskId, {
             executionId,
             preserveOutputFormat: options?.preserveOutputFormat || false,
+            ...(options?.replayConfig ? { replayConfig: options.replayConfig } : {}),
           });
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
@@ -1396,6 +1460,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               : state.currentPlaybook,
           }));
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      traceReplayExecution: async (executionId: string) => {
+        try {
+          return await api.traceReplayExecution(executionId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      reExecuteExecution: async (executionId: string) => {
+        try {
+          return await api.reExecuteExecution(executionId);
+        } catch (err) {
           handleApiError(err);
           throw err;
         }
@@ -1453,37 +1535,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteTaskReplay: async (playbookId, taskId, replayId) => {
         try {
           const result = await api.deleteTaskReplay(playbookId, taskId, replayId);
-          if (result.wasActive) {
-            set((state) => ({
-              currentPlaybook: state.currentPlaybook?.id === playbookId
-                ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                        ...task,
-                        hasValidatedReplay: false,
-                        activeReplayId: null,
-                        activeReplayVersion: null,
-                        activeReplayIsStale: false,
-                        activeReplayStaleReasons: [],
-                        activeReplayPreserveOutputFormat: false,
-                        activeReplayFormatGuideStatus: 'disabled',
-                        activeReplayFormatGuideError: null,
-                        activeReplayLabel: null,
-                        hasOutputFormatTemplate: false,
-                        activeOutputFormatTemplateId: null,
-                        activeOutputFormatTemplateVersion: null,
-                        activeOutputFormatStatus: null,
-                        activeOutputFormatError: null,
-                        isSavingReplayBaseline: false,
-                      }
-                      : task,
-                  ),
-                }
-                : state.currentPlaybook,
-            }));
-          }
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasValidatedReplay: result.wasActive ? false : task.hasValidatedReplay,
+                      activeReplayId: result.wasActive ? null : task.activeReplayId,
+                      activeReplayVersion: result.wasActive ? null : task.activeReplayVersion,
+                      activeReplayIsStale: result.wasActive ? false : task.activeReplayIsStale,
+                      activeReplayStaleReasons: result.wasActive ? [] : task.activeReplayStaleReasons,
+                      activeReplayPreserveOutputFormat: result.wasActive ? false : task.activeReplayPreserveOutputFormat,
+                      activeReplayFormatGuideStatus: result.wasActive ? 'disabled' : task.activeReplayFormatGuideStatus,
+                      activeReplayFormatGuideError: result.wasActive ? null : task.activeReplayFormatGuideError,
+                      activeReplayLabel: result.wasActive ? null : task.activeReplayLabel,
+                      hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                      activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: task.activeOutputFormatStatus,
+                      activeOutputFormatError: task.activeOutputFormatError,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
           toast.success(tPlaybook('store.toasts.replayDeleted', 'Replay baseline removed'));
           return result;
         } catch (err) {
@@ -1672,6 +1752,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                       activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
                       activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
                       activeReplayFormatGuideError: replay.formatGuideError || null,
+                      activeReplayReplayConfig: replay.replayConfig || { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
                       hasOutputFormatTemplate: task.hasOutputFormatTemplate,
                       activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
                       activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
@@ -1765,6 +1846,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      refreshOutputFormatStatus: async (playbookId, taskId) => {
+        try {
+          const template = await api.getOutputFormatTemplate(playbookId, taskId);
+          if (!template) return;
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasOutputFormatTemplate: template.status === 'active',
+                      activeOutputFormatTemplateId: template.status === 'active' ? template.id : task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: template.status === 'active' ? template.templateVersion : task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: template.generationStatus,
+                      activeOutputFormatError: template.generationError || null,
+                      isCapturingOutputFormat: template.generationStatus === 'pending',
+                    }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
+        } catch {
+          // silent — polling will retry
+        }
+      },
+
       updateOutputFormatTemplate: async (playbookId, taskId, data) => {
         try {
           const template = await api.updateOutputFormatTemplate(playbookId, taskId, data);
@@ -1829,70 +1939,84 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      updatePlaybookFromJudge: async (playbookId, executionId) => {
-        try {
-          const updated = await api.updatePlaybookFromJudge(playbookId, executionId);
-          set((state) => ({
-            currentPlaybook: state.currentPlaybook?.id === playbookId ? updated : state.currentPlaybook,
-          }));
-          toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
-          return updated;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
+      runAdvisorEvaluation: async (executionId, taskId, iteration) => {
+        const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
+          taskResult.taskId === taskId
+          && (iteration === undefined || iterationsMatch(taskResult.iteration, iteration))
+        );
 
-      generatePlaybookFromJudge: async (playbookId, executionId) => {
-        try {
-          const created = await api.generatePlaybookFromJudge(playbookId, executionId);
-          const summary: PlaybookSummary = {
-            id: created.id,
-            name: created.name,
-            description: created.description,
-            taskCount: created.tasks.length,
-            isFavorite: created.isFavorite,
-            scheduleEnabled: created.executionSchedule?.enabled === true,
-            executionStatus: null,
-            lastExecutionAt: null,
-            createdAt: created.createdAt,
-            updatedAt: created.updatedAt,
-          };
-          set((state) => ({
-            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== created.id)],
-            currentPlaybook: created,
-          }));
-          toast.success(tPlaybook('store.toasts.optimizedGenerated', 'Optimized playbook generated'));
-          return created;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
+        set((state) => {
+          const cached = state.executionCache[executionId];
+          if (!cached) return state;
 
-      optimizeStepFromJudge: async (playbookId, executionId, taskId) => {
-        try {
-          const updated = await api.optimizeStepFromJudge(playbookId, executionId, taskId);
-          const summary: PlaybookSummary = {
-            id: updated.id,
-            name: updated.name,
-            description: updated.description,
-            taskCount: updated.tasks.length,
-            isFavorite: updated.isFavorite,
-            scheduleEnabled: updated.executionSchedule?.enabled === true,
-            executionStatus: null,
-            lastExecutionAt: null,
-            createdAt: updated.createdAt,
-            updatedAt: updated.updatedAt,
+          const taskResults = cached.taskResults.map((taskResult) => (
+            matchesTargetIteration(taskResult)
+              ? { ...taskResult, judgeStatus: 'evaluating' as const, judgeError: null, judgeResult: null }
+              : taskResult
+          ));
+          const updatedExecution = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+
+          return {
+            executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+            currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
           };
-          set((state) => ({
-            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
-            currentPlaybook: updated,
-            pendingRerunTaskId: taskId,
-          }));
-          toast.success(tPlaybook('store.toasts.stepOptimized', 'Step optimized'));
-          return updated;
+        });
+
+        try {
+          const result = await api.runAdvisorEvaluation(
+            executionId,
+            taskId,
+            iteration,
+            get().executionCache[executionId]?.advisorScoringMode,
+          );
+          set((state) => {
+            const cached = state.executionCache[result.executionId];
+            if (!cached) return state;
+
+            const taskResults = cached.taskResults.map((taskResult) => (
+              taskResult.taskId === result.taskId
+                && iterationsMatch(taskResult.iteration, result.taskResult.iteration)
+                ? {
+                    ...taskResult,
+                    judgeStatus: result.taskResult.judgeStatus,
+                    judgeResult: result.taskResult.judgeResult,
+                    judgeError: result.taskResult.judgeError,
+                    judgeScoringMode: result.taskResult.judgeScoringMode,
+                    judgeHistory: result.taskResult.judgeHistory,
+                  }
+                : taskResult
+            ));
+            const updatedExecution: PlaybookExecution = {
+              ...cached,
+              taskResults,
+              ...(result.judgeSummaryStatus !== undefined ? { judgeSummaryStatus: result.judgeSummaryStatus } : {}),
+              ...(result.judgeSummary !== undefined ? { judgeSummary: result.judgeSummary } : {}),
+              updatedAt: new Date().toISOString(),
+            };
+
+            return {
+              executionCache: { ...state.executionCache, [result.executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === result.executionId ? updatedExecution : state.currentExecution,
+            };
+          });
         } catch (err) {
+          const message = parseApiError(err).message;
+          set((state) => {
+            const cached = state.executionCache[executionId];
+            if (!cached) return state;
+
+            const taskResults = cached.taskResults.map((taskResult) => (
+              matchesTargetIteration(taskResult)
+                ? { ...taskResult, judgeStatus: 'failed' as const, judgeError: message }
+                : taskResult
+            ));
+            const updatedExecution = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+
+            return {
+              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
+            };
+          });
           handleApiError(err);
           throw err;
         }
@@ -1902,38 +2026,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
         return api.fetchAdvisorRemediations(playbookId, executionId, taskId);
       },
 
-      applyAdvisorRemediations: async (playbookId, executionId, data) => {
-        try {
-          const updated = await api.applyAdvisorRemediations(playbookId, executionId, data);
-          if (data.mode === 'generate-new') {
-            toast.success(tPlaybook('store.toasts.optimizedGenerated', 'Optimized playbook generated'));
-          } else {
-            const summary: PlaybookSummary = {
-              id: updated.id,
-              name: updated.name,
-              description: updated.description,
-              taskCount: updated.tasks.length,
-              isFavorite: updated.isFavorite,
-              scheduleEnabled: updated.executionSchedule?.enabled === true,
-              executionStatus: null,
-              lastExecutionAt: null,
-              createdAt: updated.createdAt,
-              updatedAt: updated.updatedAt,
-            };
-            set((state) => ({
-              playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
-              currentPlaybook: updated,
-              pendingRerunTaskId: state.selectedStepId || null,
-            }));
-            toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
-          }
-          return updated;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
-
       reapplyOptimization: async (playbookId, executionId, taskId, historyIndex, direction) => {
         try {
           const updated = await api.reapplyOptimization(playbookId, executionId, taskId, historyIndex, direction);
@@ -1941,7 +2033,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: updated.id,
             name: updated.name,
             description: updated.description,
-            taskCount: updated.tasks.length,
+            taskCount: (updated.tasks ?? updated.nodes ?? []).length,
             isFavorite: updated.isFavorite,
             scheduleEnabled: updated.executionSchedule?.enabled === true,
             executionStatus: null,
@@ -2032,7 +2124,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.resumePlaybook(id, data);
+          await api.resumeFlowApproval(
+            data.executionId,
+            action,
+            {
+              taskId: data.taskId,
+              interruptId,
+              message: data.message,
+              approved: data.approved,
+              reason: data.reason,
+              feedback: data.feedback,
+            },
+          );
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -2040,71 +2143,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, skipStepExecution = false) => {
-        clearJudgeRefreshTimer(executionId);
-        set((state) => {
-          const cachedExecution = state.executionCache[executionId];
-          if (!cachedExecution) return state;
-
-          if (skipStepExecution) {
-            const taskResults = cachedExecution.taskResults.map((tr) =>
-              tr.taskId === taskId
-                ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
-                : tr,
-            );
-            const updatedExecution = {
-              ...cachedExecution,
-              taskResults,
-              updatedAt: new Date().toISOString(),
-            };
-            return {
-              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
-              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
-              selectedStepId: taskId,
-            };
-          }
-
-          const shouldPreserveOtherTaskResults = executionMode === 'replay_strict'
-            || executionMode === 'replay_flex'
-            || executionMode === 'replay_adaptive';
-          const updatedExecution = cachedExecution
-            ? {
-              ...cachedExecution,
-              status: 'running' as const,
-              interruptPayload: null,
-              waitingForHumanInput: false,
-              currentInterruptId: null,
-              currentInterruptTaskId: null,
-              taskResults: shouldPreserveOtherTaskResults
-                ? buildRerunStepTaskResults(cachedExecution.taskResults, taskId)
-                : buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-              updatedAt: new Date().toISOString(),
-            }
-            : null;
-          const executionCache = updatedExecution
-            ? { ...state.executionCache, [executionId]: updatedExecution }
-            : state.executionCache;
-          const executionHistory = state.executionHistory.map((execution) =>
-            execution.id === executionId
-              ? { ...execution, status: 'running' as const, error: null, completedAt: null, updatedAt: new Date().toISOString() }
-              : execution,
-          );
-          const shouldFocusExecution = Boolean(updatedExecution) && (
-            state.currentExecution?.id === executionId
-            || state.currentPlaybook?.id === playbookId
-          );
-
-          return {
-            executingPlaybookIds: state.executingPlaybookIds.includes(playbookId)
-              ? state.executingPlaybookIds
-              : [...state.executingPlaybookIds, playbookId],
-            error: null,
-            executionCache,
-            currentExecution: shouldFocusExecution ? (updatedExecution ?? state.currentExecution) : state.currentExecution,
-            selectedStepId: updatedExecution ? taskId : state.selectedStepId,
-            executionHistory,
-            playbooks: updatePlaybookExecutionStatus(state.playbooks, playbookId, 'running'),
-          };
-        });
         try {
           await api.rerunPlaybookStep(playbookId, executionId, {
             taskId,
@@ -2117,72 +2155,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
             advisorAutopilotMaxTurns,
             skipStepExecution,
           });
-          await get().fetchExecution(playbookId, executionId);
-          const exec = get().executionCache[executionId];
-          if (exec && !isActiveExecutionStatus(exec.status)) {
-            set((state) => ({
-              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-            }));
-          }
         } catch (err) {
-          if (!skipStepExecution) {
-            set((state) => ({
-              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-            }));
-          }
           handleApiError(err);
           throw err;
         }
       },
 
       resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
-        clearJudgeRefreshTimer(executionId);
-        set((state) => {
-          const cachedExecution = state.executionCache[executionId];
-          const updatedExecution = cachedExecution
-            ? {
-              ...cachedExecution,
-              status: 'running' as const,
-              interruptPayload: null,
-              waitingForHumanInput: false,
-              currentInterruptId: null,
-              currentInterruptTaskId: null,
-              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-              updatedAt: new Date().toISOString(),
-            }
-            : null;
-          const executionCache = updatedExecution
-            ? { ...state.executionCache, [executionId]: updatedExecution }
-            : state.executionCache;
-          const executionHistory = state.executionHistory.map((execution) =>
-            execution.id === executionId
-              ? { ...execution, status: 'running' as const, error: null, completedAt: null, updatedAt: new Date().toISOString() }
-              : execution,
-          );
-          const shouldFocusExecution = Boolean(updatedExecution) && (
-            state.currentExecution?.id === executionId
-            || state.currentPlaybook?.id === playbookId
-          );
-
-          return {
-            executingPlaybookIds: state.executingPlaybookIds.includes(playbookId)
-              ? state.executingPlaybookIds
-              : [...state.executingPlaybookIds, playbookId],
-            error: null,
-            executionCache,
-            currentExecution: shouldFocusExecution ? (updatedExecution ?? state.currentExecution) : state.currentExecution,
-            selectedStepId: updatedExecution ? taskId : state.selectedStepId,
-            executionHistory,
-            playbooks: updatePlaybookExecutionStatus(state.playbooks, playbookId, 'running'),
-          };
-        });
         try {
-          await api.resumePlaybookFromStep(playbookId, executionId, { taskId, streaming });
-          await get().fetchExecutions(playbookId);
+          await api.resumePlaybookFromStep(playbookId, executionId, {
+            taskId,
+            streaming,
+          });
         } catch (err) {
-          set((state) => ({
-            executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-          }));
           handleApiError(err);
           throw err;
         }
@@ -2191,68 +2176,81 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== SSE Handlers =====
 
       onExecutionStart: (data: PlaybookExecutionStartEvent) => {
-        const taskResults = data.taskResults ?? [];
-        const newExecution: PlaybookExecution = {
-          id: data.executionId,
-          playbookId: data.playbookId,
-          executedBy: '',
-          executionNumber: data.executionNumber,
-          status: data.status as any,
-          executionMode: data.executionMode || 'live',
-          executionTrigger: 'manual',
-          reflectionEnabled: data.reflectionEnabled !== false,
-          advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
-          advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
-          advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
-          advisorAutopilotStatus: data.advisorAutopilotStatus || 'idle',
-          advisorAutopilotTaskId: data.advisorAutopilotTaskId ?? null,
-          advisorAutopilotAttemptCount: data.advisorAutopilotAttemptCount ?? 0,
-          advisorAutopilotLastError: data.advisorAutopilotLastError ?? null,
-          judgeSummaryStatus: 'idle',
-          judgeSummary: null,
-          replaySourceByTask: data.replaySourceByTask || null,
-          taskResults,
-          threadId: null,
-          interruptPayload: null,
-          waitingForHumanInput: false,
-          currentInterruptId: null,
-          currentInterruptTaskId: null,
-          hitlHistory: [],
-          error: null,
-          durationMs: null,
-          startedAt: new Date().toISOString(),
-          completedAt: null,
-          singleStepTaskId: data.singleStepTaskId ?? null,
-          playbookSnapshot: null,
-          totalInputTokens: 0,
-          totalOutputTokens: 0,
-          totalTokens: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        const newSummary: PlaybookExecutionSummary = {
-          id: data.executionId,
-          playbookId: data.playbookId,
-          executedBy: '',
-          executionNumber: data.executionNumber,
-          status: data.status as any,
-          executionTrigger: 'manual',
-          error: null,
-          durationMs: null,
-          startedAt: new Date().toISOString(),
-          completedAt: null,
-          singleStepTaskId: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        // Auto-select the first pending task (lowest order)
-        const sorted = [...taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
+        const incomingTaskResults = data.taskResults ?? [];
         set((state) => {
+          let taskResults = incomingTaskResults;
+          if (data.singleStepTaskId) {
+            const previous = state.currentExecution?.playbookId === data.playbookId
+              ? state.currentExecution
+              : state.executionCache[state.currentExecution?.id ?? ''] ?? null;
+            if (previous && previous.taskResults.length > 0) {
+              taskResults = previous.taskResults.map((tr) =>
+                tr.taskId === data.singleStepTaskId
+                  ? { ...clearTaskResultStaleState(tr), status: 'running' as const, output: null, error: null, durationMs: null, startedAt: new Date().toISOString(), completedAt: null }
+                  : tr,
+              );
+            }
+          }
+          const newExecution: PlaybookExecution = {
+            id: data.executionId,
+            playbookId: data.playbookId,
+            executedBy: '',
+            executionNumber: data.executionNumber,
+            status: data.status as any,
+            executionMode: data.executionMode || 'live',
+            stepExecutionModes: data.stepExecutionModes ?? {},
+            executionTrigger: 'manual',
+            reflectionEnabled: data.reflectionEnabled !== false,
+            advisorScoringMode: data.advisorScoringMode ?? 'llm',
+            advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
+            advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
+            advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
+            advisorAutopilotStatus: data.advisorAutopilotStatus || 'idle',
+            advisorAutopilotTaskId: data.advisorAutopilotTaskId ?? null,
+            advisorAutopilotAttemptCount: data.advisorAutopilotAttemptCount ?? 0,
+            advisorAutopilotLastError: data.advisorAutopilotLastError ?? null,
+            judgeSummaryStatus: 'idle',
+            judgeSummary: null,
+            replaySourceByTask: data.replaySourceByTask || null,
+            replayPlanningByTask: data.replayPlanningByTask || null,
+            taskResults,
+            threadId: null,
+            interruptPayload: null,
+            waitingForHumanInput: false,
+            currentInterruptId: null,
+            currentInterruptTaskId: null,
+            hitlHistory: [],
+            error: null,
+            durationMs: null,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            singleStepTaskId: data.singleStepTaskId ?? null,
+            playbookSnapshot: null,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalTokens: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          const newSummary: PlaybookExecutionSummary = {
+            id: data.executionId,
+            playbookId: data.playbookId,
+            executedBy: '',
+            executionNumber: data.executionNumber,
+            status: data.status as any,
+            executionTrigger: 'manual',
+            error: null,
+            durationMs: null,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            singleStepTaskId: data.singleStepTaskId ?? null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          const sorted = [...taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
+          const shouldSetCurrent = state.currentPlaybook?.id === data.playbookId;
           const executionCache = evictCache({ ...state.executionCache, [data.executionId]: newExecution });
-          // Only replace currentExecution if the user is viewing this playbook
-          const shouldSetCurrent =
-            state.currentPlaybook?.id === data.playbookId;
           return {
             executingPlaybookIds: state.executingPlaybookIds.includes(data.playbookId)
               ? state.executingPlaybookIds
@@ -2346,16 +2344,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
               const merged = mergeComponents(tr.components, data.components || []);
               return {
                 ...tr,
-                status: 'running' as const,
+                status: tr.status === 'pending' || tr.status === 'running'
+                  ? 'running' as const
+                  : tr.status,
                 output: data.output ?? tr.output ?? null,
                 components: merged,
                 toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
-                artifacts: data.artifacts ?? tr.artifacts,
+                artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 startedAt: tr.startedAt || new Date().toISOString(),
-                completedAt: null,
-                durationMs: null,
-                error: null,
+                completedAt: tr.status === 'pending' || tr.status === 'running' ? null : tr.completedAt,
+                durationMs: tr.status === 'pending' || tr.status === 'running' ? null : tr.durationMs,
+                error: tr.status === 'pending' || tr.status === 'running' ? null : tr.error,
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
@@ -2377,7 +2377,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 components: data.components || [],
                 toolTrace: data.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
-                artifacts: data.artifacts,
+                artifacts: api.normalizeTaskArtifacts(data.artifacts),
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
@@ -2405,10 +2405,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
           if (!cached) return state;
 
           const existing = cached.taskResults;
-          const found = existing.some((tr) => tr.taskId === data.taskId);
+          const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
+            taskResult.taskId === data.taskId
+            && (data.iteration === undefined || iterationsMatch(taskResult.iteration, data.iteration))
+          );
+          const found = existing.some(matchesTargetIteration);
           const taskResults = found
             ? existing.map((tr) => {
-              if (tr.taskId !== data.taskId) return tr;
+              if (!matchesTargetIteration(tr)) return tr;
               const merged = mergeComponents(tr.components, data.components || []);
               const update = {
                 status: data.status as any,
@@ -2416,18 +2420,20 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 error: data.error || null,
                 durationMs: data.durationMs || null,
                 completedAt: new Date().toISOString(),
+                artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 toolTrace: data.toolTrace ?? [],
+                reasoningChain: data.reasoningChain ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
                 inputTokens: data.inputTokens ?? null,
                 outputTokens: data.outputTokens ?? null,
                 totalTokens: data.totalTokens ?? null,
                 modelName: data.modelName ?? null,
                 semanticMatch: data.semanticMatch ?? null,
+                traceMetadata: data.traceMetadata ?? null,
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
                 iteratorIterations: data.iteratorIterations ?? tr.iteratorIterations ?? [],
-                artifacts: data.artifacts ?? undefined,
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
@@ -2448,6 +2454,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 nodeTitle: '',
                 agentName: '',
                 order: existing.length,
+                iteration: data.iteration,
                 status: data.status as any,
                 output: data.output || null,
                 error: data.error || null,
@@ -2456,12 +2463,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 completedAt: new Date().toISOString(),
                 components: data.components || undefined,
                 toolTrace: data.toolTrace ?? [],
+                reasoningChain: data.reasoningChain ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
                 inputTokens: data.inputTokens ?? null,
                 outputTokens: data.outputTokens ?? null,
                 totalTokens: data.totalTokens ?? null,
                 modelName: data.modelName ?? null,
                 semanticMatch: data.semanticMatch ?? null,
+                traceMetadata: data.traceMetadata ?? null,
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
@@ -2469,14 +2478,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeHistory: [],
                 evaluationHistory: [],
                 stepExecutions: [],
-                artifacts: data.artifacts ?? undefined,
+                artifacts: api.normalizeTaskArtifacts(data.artifacts),
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
               } as PlaybookExecution['taskResults'][number],
             ];
 
-          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const updatedExec = {
+            ...cached,
+            status: isActiveExecutionStatus(cached.status) ? cached.status : cached.status,
+            taskResults,
+            updatedAt: new Date().toISOString(),
+          };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
           const currentExecution =
             state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
@@ -2484,6 +2498,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           return {
             executionCache,
             currentExecution,
+            playbooks: isActiveExecutionStatus(cached.status)
+              ? updatePlaybookExecutionStatus(state.playbooks, cached.playbookId, cached.status)
+              : state.playbooks,
           };
         });
 
@@ -2553,6 +2570,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             error: data.error ?? null,
             components: data.components,
             toolTrace: data.toolTrace,
+            reasoningChain: data.reasoningChain,
             llmPromptTrace: data.llmPromptTrace,
             artifacts: data.artifacts,
           });
@@ -2589,15 +2607,27 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => {
+        console.debug('[judge DEBUG] onStepJudgeStarted', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) return state;
+          if (!cached) { console.debug('[judge DEBUG] onStepJudgeStarted: no cached execution'); return state; }
 
-          const taskResults = cached.taskResults.map((tr) =>
-            tr.taskId === data.taskId
-              ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
-              : tr,
-          );
+          let matched = false;
+          const taskResults = cached.taskResults.map((tr) => {
+            const isMatch = tr.taskId === data.taskId
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
+            if (isMatch) matched = true;
+            return isMatch
+              ? {
+                  ...tr,
+                  judgeStatus: 'evaluating' as const,
+                  judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
+                  judgeError: null,
+                  judgeResult: null,
+                }
+              : tr;
+          });
+          console.debug('[judge DEBUG] onStepJudgeStarted: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2608,21 +2638,28 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => {
+        console.debug('[judge DEBUG] onStepJudgeUpdated', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration, judgeStatus: data.judgeStatus });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) return state;
+          if (!cached) { console.debug('[judge DEBUG] onStepJudgeUpdated: no cached execution'); return state; }
 
-          const taskResults = cached.taskResults.map((tr) =>
-            tr.taskId === data.taskId
+          let matched = false;
+          const taskResults = cached.taskResults.map((tr) => {
+            const isMatch = tr.taskId === data.taskId
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
+            if (isMatch) matched = true;
+            return isMatch
               ? {
-                ...tr,
-                judgeStatus: data.judgeStatus,
-                judgeResult: data.judgeResult ?? null,
-                judgeError: data.judgeError ?? null,
-                judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
-              }
-              : tr,
-          );
+                  ...tr,
+                  judgeStatus: data.judgeStatus,
+                  judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
+                  judgeResult: data.judgeResult ?? null,
+                  judgeError: data.judgeError ?? null,
+                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
+                }
+              : tr;
+          });
+          console.debug('[judge DEBUG] onStepJudgeUpdated: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2789,7 +2826,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           let executionCache = state.executionCache;
           if (cachedExec) {
             let taskResults = cachedExec.taskResults;
-            if (status === 'completed' || status === 'failed') {
+            if (status === 'completed' || status === 'failed' || status === 'cancelled') {
               const terminalTaskStatus = status;
               taskResults = taskResults.map((tr) => (
                 tr.status === 'running'
@@ -2979,7 +3016,22 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Catch-up =====
 
       hydrateActiveExecutions: (executions: PlaybookExecution[]) => {
-        if (executions.length === 0) return;
+        if (executions.length === 0) {
+          set((state) => {
+            const executionCache = Object.fromEntries(
+              Object.entries(state.executionCache).filter(([, execution]) => !isActiveExecutionStatus(execution.status)),
+            );
+
+            return {
+              executionCache,
+              executingPlaybookIds: [],
+              currentExecution: state.currentExecution && !isActiveExecutionStatus(state.currentExecution.status)
+                ? state.currentExecution
+                : null,
+            };
+          });
+          return;
+        }
         set((state) => {
           let executionCache = { ...state.executionCache };
           const executingIds = new Set(state.executingPlaybookIds);
@@ -2992,9 +3044,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             if (cached) {
               // Smart merge: per task result, keep whichever status is more advanced.
               // This prevents stale DB data from overwriting fresh SSE-based data.
-              const cachedMap = new Map(cached.taskResults.map((tr) => [tr.taskId, tr]));
+              const cachedMap = new Map(cached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
               const mergedTaskResults = incoming.taskResults.map((inTr) => {
-                const cachedTr = cachedMap.get(inTr.taskId);
+                const cachedTr = cachedMap.get(getTaskResultCacheKey(inTr));
                 if (cachedTr && shouldKeepCachedTaskResult(cachedTr, inTr)) {
                   return cachedTr;
                 }
@@ -3004,8 +3056,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 return inTr;
               });
               // Include any task results only present in the cache
-              for (const [taskId, cachedTr] of cachedMap) {
-                if (!mergedTaskResults.some((tr) => tr.taskId === taskId)) {
+              for (const [taskResultKey, cachedTr] of cachedMap) {
+                if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
                   mergedTaskResults.push(cachedTr);
                 }
               }
@@ -3060,7 +3112,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const result = await api.getExecutions(playbookId);
           const executions = result.executions.slice(0, MAX_EXECUTION_HISTORY);
           set((state) => ({
-            executionHistory: state.currentPlaybook?.id === playbookId ? executions : state.executionHistory,
+            executionHistory: executions,
             executionHistoryByPlaybook: {
               ...state.executionHistoryByPlaybook,
               [playbookId]: executions,
@@ -3096,13 +3148,27 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
         try {
           const apiExecution = await api.getExecution(playbookId, execId);
+          const summary = get().executionHistoryByPlaybook[playbookId]?.find((execution) => execution.id === execId)
+            ?? get().executionHistory.find((execution) => execution.id === execId);
+          const normalizedExecution = summary
+            ? {
+                ...apiExecution,
+                executionNumber: summary.executionNumber,
+                executionTrigger: summary.executionTrigger,
+                durationMs: summary.durationMs ?? apiExecution.durationMs,
+                startedAt: summary.startedAt ?? apiExecution.startedAt,
+                completedAt: summary.completedAt ?? apiExecution.completedAt,
+              }
+            : apiExecution;
           // Smart merge: for each task result, keep the version with the more advanced status
           const latestCached = get().executionCache[execId];
-          let merged = apiExecution;
+          let merged = normalizedExecution;
           if (latestCached) {
-            const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [tr.taskId, tr]));
-            const mergedTaskResults = apiExecution.taskResults.map((apiTr) => {
-              const cachedTr = cachedResultMap.get(apiTr.taskId);
+            const cachedBefore = latestCached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
+            const apiBefore = normalizedExecution.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
+            const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
+            const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
+              const cachedTr = cachedResultMap.get(getTaskResultCacheKey(apiTr));
               if (cachedTr && shouldKeepCachedTaskResult(cachedTr, apiTr)) {
                 return cachedTr;
               }
@@ -3111,22 +3177,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               return apiTr;
             });
+            const mergedAfter = mergedTaskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
+            console.debug('[judge DEBUG] fetchExecution merge', { execId, cachedBefore, apiBefore, mergedAfter });
             // Also include any task results from cache that are not in the API response
-            for (const [taskId, cachedTr] of cachedResultMap) {
-              if (!mergedTaskResults.some((tr) => tr.taskId === taskId)) {
+            for (const [taskResultKey, cachedTr] of cachedResultMap) {
+              if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
                 mergedTaskResults.push(cachedTr);
               }
             }
             // Use the more advanced execution-level status
             const mergedStatus = shouldKeepRunningExecution(latestCached, apiExecution)
               ? latestCached.status
-              : isNewerStatus(latestCached.status, apiExecution.status)
-                ? latestCached.status : apiExecution.status;
+              : isNewerStatus(latestCached.status, normalizedExecution.status)
+                ? latestCached.status : normalizedExecution.status;
             merged = {
-              ...apiExecution,
+              ...normalizedExecution,
               taskResults: mergedTaskResults,
               status: mergedStatus,
-              interruptPayload: latestCached.interruptPayload || apiExecution.interruptPayload,
+              interruptPayload: latestCached.interruptPayload || normalizedExecution.interruptPayload,
             };
           }
 
@@ -3153,7 +3221,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      selectStep: (taskId) => set({ selectedStepId: taskId }),
+      selectStep: (taskId, iterationIndex) => set({ selectedStepId: taskId, selectedIterationIndex: iterationIndex ?? 0 }),
 
       setPageMode: (mode: PlaybookPageMode) =>
         set({ pageMode: mode }),
@@ -3334,6 +3402,102 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
       },
 
+      bindResourceToInputPort: (taskId, portId, resource) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+
+        const bindingId = `bind-${taskId}-${portId}`;
+        const existingBindings = currentPlaybook.dataBindings ?? [];
+        const existing = existingBindings.find(
+          (b) => b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant',
+        );
+
+        let updatedBindings: DataBinding[];
+        if (existing) {
+          const prev = existing.constantValue;
+          if (Array.isArray(prev)) {
+            const dedupKey = `${resource.kind}:${resource.workspaceId}:${resource.id}`;
+            const already = prev.some(
+              (r: Record<string, unknown>) => `${r.kind}:${r.workspaceId}:${r.id}` === dedupKey,
+            );
+            updatedBindings = already
+              ? existingBindings
+              : existingBindings.map((b) =>
+                  b.id === existing.id
+                    ? { ...b, constantValue: [...prev, resource] }
+                    : b,
+                );
+          } else {
+            updatedBindings = existingBindings.map((b) =>
+              b.id === existing.id
+                ? { ...b, constantValue: resource }
+                : b,
+            );
+          }
+        } else {
+          updatedBindings = [
+            ...existingBindings,
+            {
+              id: bindingId,
+              targetNode: taskId,
+              targetPort: portId,
+              sourceKind: 'constant' as const,
+              constantValue: resource,
+            },
+          ];
+        }
+
+        const inputFile: import('./types').InputFile = {
+          type: resource.kind,
+          id: resource.id,
+          name: resource.name,
+          workspaceId: resource.workspaceId,
+          portId,
+          metadata: {
+            workspaceId: resource.workspaceId,
+            documentId: resource.kind === 'document' ? resource.id : undefined,
+            mimeType: resource.mimeType,
+          },
+        };
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const existingFiles = task.inputFiles ?? [];
+          const exists = existingFiles.some((f) => f.id === inputFile.id && f.portId === portId);
+          return exists ? task : { ...task, inputFiles: [...existingFiles, inputFile] };
+        });
+
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks, dataBindings: updatedBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      removeResourceBinding: (taskId, portId) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+
+        const updatedBindings = (currentPlaybook.dataBindings ?? []).filter(
+          (b) => !(b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant'),
+        );
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          return { ...task, inputFiles: (task.inputFiles ?? []).filter((f) => f.portId !== portId) };
+        });
+
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks, dataBindings: updatedBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       addToolBindingToTask: (taskId: string, binding: ToolBinding) => {
         const { currentPlaybook } = get();
         if (!currentPlaybook) return;
@@ -3398,6 +3562,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const snapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3414,6 +3579,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const currentSnapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3424,6 +3590,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...currentPlaybook,
             tasks: snapshot.tasks,
             edges: snapshot.edges,
+            dataBindings: snapshot.dataBindings,
             name: snapshot.name,
             workspaces: snapshot.workspaces,
           },
@@ -3440,6 +3607,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const currentSnapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3450,6 +3618,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...currentPlaybook,
             tasks: snapshot.tasks,
             edges: snapshot.edges,
+            dataBindings: snapshot.dataBindings,
             name: snapshot.name,
             workspaces: snapshot.workspaces,
           },
@@ -3525,6 +3694,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
+              retryPolicy: (item as Record<string, unknown>).retryPolicy as TaskTemplate['retryPolicy'] ?? null,
+              modelId: (item as Record<string, unknown>).modelId as string | null ?? null,
             })),
             nodeTemplatesLoading: false,
             nodeTemplatesLoadedAt: now,
@@ -3539,6 +3710,495 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ nodeTemplatesLoadedAt: 0 });
       },
 
+      // ===== Flow Node Templates (Phase 4) =====
+
+      fetchFlowNodeTemplates: async () => {
+        const { flowNodeTemplatesLoadedAt } = get();
+        const now = Date.now();
+        if (now - flowNodeTemplatesLoadedAt < 30_000) return;
+
+        set({ flowNodeTemplatesLoading: true });
+        try {
+          const data = await api.getFlowNodeTemplates();
+          const items = Array.isArray(data.items) ? data.items : [];
+          set({
+            flowNodeTemplates: items.map((item) => ({
+              ...item,
+              type: item.type,
+              nodeType: item.nodeType,
+              description: item.description || '',
+              icon: item.icon || 'FileText',
+              color: item.color || 'blue',
+              category: item.category as TaskTemplate['category'],
+              inputPorts: Array.isArray(item.inputPorts) ? item.inputPorts : [],
+              outputPorts: Array.isArray(item.outputPorts) ? item.outputPorts : [],
+              promptTemplate: item.promptTemplate || '',
+              requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
+              iteratorConfig: item.iteratorConfig ?? null,
+              routerConfig: item.routerConfig ?? null,
+              humanApprovalConfig: item.humanApprovalConfig ?? null,
+              retryPolicy: item.retryPolicy ?? null,
+              modelId: item.modelId ?? null,
+            })),
+            flowNodeTemplatesLoading: false,
+            flowNodeTemplatesLoadedAt: now,
+          });
+        } catch (err) {
+          set({ flowNodeTemplatesLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      fetchFlowNodeKinds: async () => {
+        set({ flowNodeKindsLoading: true });
+        try {
+          const data = await api.getFlowNodeKinds();
+          set({
+            flowNodeKinds: Array.isArray(data.kinds) ? data.kinds : [],
+            flowNodeKindsLoading: false,
+          });
+        } catch (err) {
+          set({ flowNodeKindsLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      invalidateFlowNodeTemplates: () => {
+        set({ flowNodeTemplatesLoadedAt: 0 });
+      },
+
+      generateIdempotencyKey: (flowId: string) => {
+        const state = get();
+        const counter = (state.idempotencyKeyCounters[flowId] || 0) + 1;
+        const key = `${flowId}-${counter}-${Date.now()}`;
+        set({
+          idempotencyKeyCounters: {
+            ...state.idempotencyKeyCounters,
+            [flowId]: counter,
+          },
+        });
+        return key;
+      },
+
+      // ===== Flow Evaluation/Repeatability/Trigger Actions (Phase 5) =====
+
+      fetchFlowEvaluationExecutions: async (flowId: string, taskId?: string) => {
+        try {
+          return await api.getFlowEvaluationExecutions(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowEvaluationBaseline: async (flowId: string, taskId: string) => {
+        try {
+          const baseline = await api.getFlowEvaluationBaseline(flowId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlowEvaluationBaseline: async (flowId: string, taskId: string, executionId: string, iteration?: number) => {
+        try {
+          const baseline = await api.createFlowEvaluationBaselineFromExecution(flowId, taskId, executionId, iteration);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlowEvaluationBaselineFromCurrentExecution: async (flowId: string, taskId: string, executionId: string, evaluationExecutionId: string, iteration?: number) => {
+        try {
+          const baseline = await api.createFlowEvaluationBaselineFromCurrentExecution(flowId, taskId, executionId, evaluationExecutionId, iteration);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowEvaluationBaseline: async (flowId: string, taskId: string) => {
+        try {
+          await api.deleteFlowEvaluationBaseline(flowId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: null,
+            },
+          }));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowRepeatability: async (flowId: string) => {
+        set({ repeatabilityLoading: true });
+        try {
+          const result = await api.getFlowRepeatability(flowId);
+          set({ repeatability: result, repeatabilityLoading: false });
+          return result;
+        } catch (err) {
+          set({ repeatabilityLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTaskRepeatability: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowTaskRepeatability(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTriggers: async (flowId: string) => {
+        try {
+          return await api.getFlowTriggers(flowId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertFlowTriggerSchedule: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.upsertFlowTriggerSchedule(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertFlowTriggerMail: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.upsertFlowTriggerMail(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      syncFlowMailSubscription: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.syncFlowMailSubscription(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+      // ===== Flow CRUD/Execution/Replay/OutputFormat Actions (Phase 6c) =====
+
+      fetchFlow: async (id: string) => {
+        set({ currentPlaybookLoading: true });
+        try {
+          const flow = await api.getFlow(id);
+          set({ currentPlaybook: flow as any, currentPlaybookLoading: false, error: null });
+          return flow;
+        } catch (err) {
+          set({ currentPlaybookLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlows: async (query?: PlaybookQueryParams) => {
+        set({ playbooksLoading: true });
+        try {
+          const result = await api.getFlows(query);
+          set({
+            playbooks: result.flows as any,
+            playbooksPagination: result.pagination,
+            playbooksLoading: false,
+            playbooksQuery: query ?? {},
+          });
+          return result;
+        } catch (err) {
+          set({ playbooksLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlow: async (data: any) => {
+        try {
+          const flow = await api.createFlow(data);
+          set((state) => ({ playbooks: [flow as any, ...state.playbooks] }));
+          return flow;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlow: async (id: string, data: any, idempotencyKey?: string) => {
+        try {
+          const flow = await api.updateFlow(id, data, idempotencyKey);
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook && (state.currentPlaybook as any).id === id ? flow as any : state.currentPlaybook,
+            playbooks: state.playbooks.map((p) => ((p as any).id === id ? flow as any : p)),
+          }));
+          return flow;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlow: async (id: string) => {
+        try {
+          await api.deleteFlow(id);
+          set((state) => ({
+            playbooks: state.playbooks.filter((p) => (p as any).id !== id),
+            currentPlaybook: state.currentPlaybook && (state.currentPlaybook as any).id === id ? null : state.currentPlaybook,
+          }));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      cloneFlow: async (id: string) => {
+        try {
+          const cloned = await api.cloneFlow(id);
+          set((state) => ({ playbooks: [cloned as any, ...state.playbooks] }));
+          return cloned;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => {
+        try {
+          set((state) => ({
+            executingPlaybookIds: [...state.executingPlaybookIds, flowId],
+          }));
+          const result = await api.startFlowExecution(flowId, inputContext, idempotencyKey);
+          return result;
+        } catch (err) {
+          set((state) => ({
+            executingPlaybookIds: state.executingPlaybookIds.filter((id) => id !== flowId),
+          }));
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowExecutions: async (flowId: string) => {
+        set({ executionsLoading: true });
+        try {
+          const result = await api.getFlowExecutions(flowId);
+          set((state) => ({
+            executionHistory: result.executions,
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [flowId]: result.executions,
+            },
+            executionsLoading: false,
+          }));
+          return result;
+        } catch (err) {
+          set({ executionsLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowExecution: async (executionId: string) => {
+        set({ currentExecutionLoading: true });
+        try {
+          const execution = await api.getFlowExecutionDetail(executionId);
+          set((state) => ({
+            currentExecution: execution,
+            currentExecutionLoading: false,
+            executionCache: { ...state.executionCache, [executionId]: execution },
+          }));
+          return execution;
+        } catch (err) {
+          set({ currentExecutionLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      cancelFlowExecutionAction: async (executionId: string) => {
+        try {
+          await api.cancelFlowExecution(executionId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      validateFlowTaskReplay: async (flowId: string, taskId: string, data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean }) => {
+        try {
+          return await api.validateFlowTaskReplay(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTaskReplays: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowTaskReplays(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      activateFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
+        try {
+          return await api.activateFlowTaskReplay(flowId, taskId, replayId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlowTaskReplayFormatGuide: async (flowId: string, taskId: string, replayId: string, data: { preserveOutputFormat?: boolean; outputFormatGuide?: string }) => {
+        try {
+          return await api.updateFlowTaskReplayFormatGuide(flowId, taskId, replayId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      renameFlowTaskReplay: async (flowId: string, taskId: string, replayId: string, label: string) => {
+        try {
+          return await api.renameFlowTaskReplay(flowId, taskId, replayId, label);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
+        try {
+          await api.deleteFlowTaskReplay(flowId, taskId, replayId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      grabFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { executionId: string }) => {
+        try {
+          return await api.grabFlowOutputFormatTemplate(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowOutputFormatTemplate(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { formatGuide?: string; preserveOutputFormat?: boolean }) => {
+        try {
+          return await api.updateFlowOutputFormatTemplate(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
+        try {
+          await api.deleteFlowOutputFormatTemplate(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      generateFlow: async (data: { name: string; prompt: string; workspaceIds?: string[] }) => {
+        try {
+          return await api.generateFlow(data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      designFlow: async (id: string, data: { query: string }) => {
+        try {
+          return await api.designFlow(id, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      // ===== Port Inspection =====
+
+      openPortInspection: (inspection) => set({ portInspection: inspection }),
+      closePortInspection: () => set({ portInspection: null }),
+
+      importPlaybookDefinition: (definition: PlaybookDefinitionExport) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? {
+                ...state.currentPlaybook,
+                name: definition.name,
+                description: definition.description,
+                tasks: definition.tasks,
+                edges: definition.edges,
+                nodes: definition.nodes,
+                controlEdges: definition.controlEdges,
+                dataBindings: definition.dataBindings,
+                settings: definition.settings ?? state.currentPlaybook.settings,
+                designSettings: definition.designSettings ?? state.currentPlaybook.designSettings,
+                reflectionEnabled: definition.reflectionEnabled ?? state.currentPlaybook.reflectionEnabled,
+                advisorScoringMode: definition.advisorScoringMode ?? state.currentPlaybook.advisorScoringMode,
+                advisorAutopilotEnabled: definition.advisorAutopilotEnabled ?? state.currentPlaybook.advisorAutopilotEnabled,
+                advisorAutopilotTargetScore: definition.advisorAutopilotTargetScore ?? state.currentPlaybook.advisorAutopilotTargetScore,
+                advisorAutopilotMaxTurns: definition.advisorAutopilotMaxTurns ?? state.currentPlaybook.advisorAutopilotMaxTurns,
+              }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+          canvasSyncVersion: state.canvasSyncVersion + 1,
+        }));
+        toast.success(tPlaybook('store.toasts.imported', 'Playbook definition imported'));
+      },
+
       // ===== Cleanup =====
 
       reset: () => set(initialState),
@@ -3550,7 +4210,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 // ===== Selector Hooks =====
 
 export const usePlaybooks = () =>
-  usePlaybookStore(useShallow((s) => s.playbooks.length > 0 ? s.playbooks : EMPTY_PLAYBOOKS));
+  usePlaybookStore(useShallow((s) => (s.playbooks?.length ?? 0) > 0 ? s.playbooks : EMPTY_PLAYBOOKS));
 
 export const usePlaybooksLoading = () => usePlaybookStore((s) => s.playbooksLoading);
 

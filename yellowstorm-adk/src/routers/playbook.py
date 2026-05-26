@@ -45,7 +45,7 @@ async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     No authentication — this endpoint is called by the external vectorstores API.
     The payload is resolved into a waiting asyncio.Future inside action_executor.
     """
-    from src.langgraph_engine.action_executor import resolve_indexing_webhook
+    from src.flow_engine.runtime.indexing_webhook import resolve_indexing_webhook
 
     metadata = payload.get("metadata") or {}
     doc_id = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
