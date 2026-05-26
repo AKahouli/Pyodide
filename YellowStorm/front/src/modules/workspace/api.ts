@@ -25,6 +25,12 @@ import type {
   BulkUploadSession,
   CreateFolderData,
   RenameFolderData,
+  ShareWorkspaceDto,
+  ShareResult,
+  PaginatedShares,
+  PaginatedSharedWorkspaces,
+  WorkspaceShareResponse,
+  UserSearchResult,
 } from './types';
 
 // ===== Workspace APIs =====
@@ -544,4 +550,74 @@ export function uploadToAzure(
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.send(file);
   });
+}
+
+// ===== Workspace Share APIs =====
+
+interface ShareQueryParams {
+  page?: number;
+  limit?: number;
+}
+
+interface UpdateSharePermissionDto {
+  permission: 'read' | 'readwrite';
+}
+
+export async function getSharedWorkspaces(
+  params?: WorkspaceQueryParams,
+): Promise<PaginatedSharedWorkspaces> {
+  const response = await apiClient.get<ApiResponse<PaginatedSharedWorkspaces>>(
+    API_ENDPOINTS.workspaces.sharedWithMe,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function shareWorkspace(
+  workspaceId: string,
+  data: ShareWorkspaceDto,
+): Promise<ShareResult> {
+  const response = await apiClient.post<ApiResponse<ShareResult>>(
+    API_ENDPOINTS.workspaceShares.list(workspaceId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getWorkspaceShares(
+  workspaceId: string,
+  params?: ShareQueryParams,
+): Promise<PaginatedShares> {
+  const response = await apiClient.get<ApiResponse<PaginatedShares>>(
+    API_ENDPOINTS.workspaceShares.list(workspaceId),
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function updateSharePermission(
+  workspaceId: string,
+  shareId: string,
+  data: UpdateSharePermissionDto,
+): Promise<WorkspaceShareResponse> {
+  const response = await apiClient.patch<ApiResponse<WorkspaceShareResponse>>(
+    API_ENDPOINTS.workspaceShares.byId(workspaceId, shareId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function revokeShare(workspaceId: string, shareId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.workspaceShares.byId(workspaceId, shareId));
+}
+
+export async function searchUsers(
+  query: string,
+  limit: number = 10,
+): Promise<UserSearchResult[]> {
+  const response = await apiClient.get<ApiResponse<UserSearchResult[]>>(
+    API_ENDPOINTS.users.search,
+    { params: { q: query, limit } },
+  );
+  return response.data.data;
 }

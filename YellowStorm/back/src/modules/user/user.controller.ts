@@ -6,11 +6,14 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
+import { SearchUsersDto } from './dto/search-users.dto';
+import { UserSearchResultDto } from './dto/user-search-result.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from './schemas/user.schema';
 import { UserResponse } from './interfaces/user.interface';
@@ -75,6 +78,20 @@ export class UserController {
     });
 
     return this.mapUserToResponse(updatedUser);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search users by email' })
+  @ApiResponse({ status: 200, description: 'Search results returned', type: [UserSearchResultDto] })
+  async searchUsers(
+    @CurrentUser() currentUser: UserDocument,
+    @Query() dto: SearchUsersDto,
+  ): Promise<UserSearchResultDto[]> {
+    return this.userService.searchUsers({
+      query: dto.q,
+      excludeUserId: currentUser._id.toString(),
+      limit: dto.limit,
+    });
   }
 
   /**

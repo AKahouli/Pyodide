@@ -1,10 +1,11 @@
 import React, { Suspense } from 'react';
-import { createHashRouter } from 'react-router-dom';
+import { createHashRouter, Navigate } from 'react-router-dom';
 
 import NoMatch from './pages/NoMatch';
 import MaintenancePage from './pages/MaintenancePage';
 import { SharedConversationPage } from './pages/SharedConversationPage';
 import { ConversationPage } from './modules/conversation';
+import { ConversationV2Page, ConversationV2SessionPage, SharedConversationV2Page } from './modules/conversation-v2';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { UpgradePage } from './modules/usage';
@@ -24,6 +25,15 @@ const PlaybookCanvasPage = React.lazy(() =>
 );
 const PlaybookExecutionPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionPage").then((m) => ({ default: m.PlaybookExecutionPage }))
+);
+const AgentHubPage = React.lazy(() =>
+  import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
+);
+const ProjectPage = React.lazy(() =>
+  import("./modules/project").then((m) => ({ default: m.ProjectPage }))
+);
+const WorkspacePage = React.lazy(() =>
+  import("./modules/workspace").then((m) => ({ default: m.WorkspacePage }))
 );
 import {
   AdminGuard,
@@ -81,6 +91,14 @@ export const router = createHashRouter([
         element: <ConversationPage />,
       },
       {
+        path: 'conversation-v2',
+        element: <ConversationV2Page />,
+      },
+      {
+        path: 'conversation-v2/:sessionId',
+        element: <ConversationV2SessionPage />,
+      },
+      {
         path: 'apps',
         element: (
           <Suspense fallback={null}>
@@ -127,6 +145,42 @@ export const router = createHashRouter([
             <PlaybookExecutionPage />
           </Suspense>
         ),
+      },
+      {
+        path: 'agents',
+        element: (
+          <Suspense fallback={null}>
+            <AgentHubPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'projet/:id',
+        element: (
+          <Suspense fallback={null}>
+            <ProjectPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'workspace',
+        element: (
+          <Suspense fallback={null}>
+            <WorkspacePage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'workspace/:id',
+        element: (
+          <Suspense fallback={null}>
+            <WorkspacePage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'classifier',
+        element: <Navigate to='/workspace' replace />,
       },
     ],
   },
@@ -320,6 +374,12 @@ export const router = createHashRouter([
   {
     path: '/share/:accessToken',
     element: <SharedConversationPage />,
+  },
+
+  // Public v2 share view - accessible by anyone (no auth required)
+  {
+    path: '/share/v2/:token',
+    element: <SharedConversationV2Page />,
   },
 
   // Catch-all for 404

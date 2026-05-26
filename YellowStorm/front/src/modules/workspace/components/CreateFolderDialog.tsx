@@ -1,114 +1,105 @@
-/**
- * Create Folder Dialog
- * Dialog for creating a new folder in personal workspace
- */
-
-import { useState, useCallback, useEffect } from 'react';
-import { Plus } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useEffect, useState } from 'react';
+import { FolderPlus } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useModuleTranslation } from '@/modules/localization';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+
 import { useWorkspaceStore } from '../store';
 
-interface CreateFolderDialogProps {
+type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspaceId?: string;
-  parentFolderId?: string;
-}
+  parentId: string | null;
+};
 
-export function CreateFolderDialog({ open, onOpenChange, workspaceId, parentFolderId }: CreateFolderDialogProps) {
-  const { t } = useModuleTranslation('workspace');
-  const createFolder = useWorkspaceStore((state) => state.createFolder);
-  const isCreating = useWorkspaceStore((state) => state.isCreating);
+export function CreateFolderDialog({ open, onOpenChange, parentId }: Props) {
+  const createPageFolder = useWorkspaceStore((s) => s.createPageFolder);
+  const folders = useWorkspaceStore((s) => s.pageFolders);
+  const parent = parentId ? folders.find((f) => f.id === parentId) : null;
 
-  const [folderName, setFolderName] = useState('');
-  const [error, setError] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
 
-  const handleClose = useCallback(() => {
-    onOpenChange(false);
-    setFolderName('');
-    setError('');
-  }, [onOpenChange]);
-
-  const handleCreate = useCallback(async () => {
-    if (!folderName.trim()) {
-      setError(t('folder.nameRequired'));
-      return;
-    }
-
-    if (!workspaceId) return;
-
-    try {
-      await createFolder(workspaceId, {
-        name: folderName.trim(),
-        parentId: parentFolderId,
-      });
-      handleClose();
-    } catch (err) {
-      // Error is handled in the store
-    }
-  }, [workspaceId, parentFolderId, folderName, createFolder, handleClose, t]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !isCreating) {
-        e.preventDefault();
-        handleCreate();
-      }
-    },
-    [handleCreate, isCreating],
-  );
-
-  // Reset form when dialog opens
   useEffect(() => {
-    if (open && !folderName) {
-      setFolderName('');
-      setError('');
+    if (open) {
+      setName('');
+      setDescription('');
     }
-  }, [open, folderName]);
+  }, [open]);
+
+  const nameValid = name.trim().length >= 2;
+  const descriptionValid = description.trim().length >= 5;
+  const canSubmit = nameValid && descriptionValid;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    void createPageFolder({ name, description, parentId });
+    onOpenChange(false);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='sm:max-w-md'>
         <DialogHeader>
-          <DialogTitle className='flex items-center gap-2'>
-            <Plus className='h-5 w-5 text-blue-500' />
-            {t('folder.createTitle')}
-          </DialogTitle>
+          <div className='flex items-center gap-3'>
+            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+              <FolderPlus className='h-5 w-5' />
+            </div>
+            <div>
+              <DialogTitle>Nouveau dossier</DialogTitle>
+              <DialogDescription>
+                {parent ? (
+                  <>Dans <span className='font-medium text-foreground'>{parent.name}</span></>
+                ) : (
+                  'À la racine du workspace'
+                )}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <div className='space-y-4 py-2'>
-          <div>
-            <label htmlFor='folder-name' className='block text-sm font-medium mb-2'>
-              {t('folder.nameLabel')}
-            </label>
+          <div className='space-y-2'>
+            <Label htmlFor='folder-name'>
+              Nom du dossier <span className='text-destructive'>*</span>
+            </Label>
             <Input
               id='folder-name'
-              value={folderName}
-              onChange={(e) => {
-                setFolderName(e.target.value);
-                setError('');
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={t('folder.namePlaceholder')}
-              className={error ? 'border-red-500 focus:border-red-500' : ''}
-              maxLength={50}
               autoFocus
+              placeholder='Ex: Contrats fournisseurs'
+              value={name}
+              onChange={(e) => setName(e.target.value)}
             />
-            {error && <p className='text-sm text-red-500 mt-1'>{error}</p>}
           </div>
 
-          <div className='flex justify-end gap-2'>
-            <Button variant='outline' onClick={handleClose} disabled={isCreating}>
-              {t('folder.cancel')}
-            </Button>
-            <Button onClick={handleCreate} disabled={!folderName.trim() || isCreating}>
-              {isCreating ? t('folder.creating') : t('folder.create')}
-            </Button>
+          <div className='space-y-2'>
+            <Label htmlFor='folder-description'>
+              Description <span className='text-destructive'>*</span>
+            </Label>
+            <Textarea
+              id='folder-description'
+              placeholder='Décrivez le type de documents qui doivent aller dans ce dossier. Cette description sera utilisée par le playbook pour classifier automatiquement les fichiers.'
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={4}
+            />
+            <p className='text-xs text-muted-foreground'>
+              Cette description guide la classification automatique. Plus elle est précise, meilleurs sont les
+              résultats.
+            </p>
           </div>
         </div>
+
+        <DialogFooter>
+          <Button variant='ghost' onClick={() => onOpenChange(false)}>
+            Annuler
+          </Button>
+          <Button onClick={handleSubmit} disabled={!canSubmit}>
+            Créer le dossier
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

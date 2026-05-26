@@ -4,6 +4,7 @@ export interface CreateConversationData {
   participantEmails?: string[];
   participants?: { email: string; job?: string }[];
   ownerJob?: string;
+  projectId?: string;
 }
 
 export interface UpdateConversationData {
@@ -14,6 +15,7 @@ export interface UpdateConversationData {
   taggedAgents?: string[];
   participantEmails?: string[];
   participants?: { email: string; job?: string }[];
+  projectId?: string | null;
 }
 
 export interface ConversationQueryParams {
@@ -23,6 +25,8 @@ export interface ConversationQueryParams {
   sortBy?: 'lastMessageAt' | 'createdAt' | 'title';
   sortOrder?: 'asc' | 'desc';
   isArchived?: boolean;
+  projectId?: string | 'none';
+  searchScope?: 'title' | 'fulltext';
 }
 
 export interface GroupMember {
@@ -67,6 +71,7 @@ export interface ConversationResponse {
   createdAt: string;
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
+  projectId?: string | null;
 }
 
 export interface PaginatedConversations {

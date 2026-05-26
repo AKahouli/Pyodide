@@ -88,3 +88,46 @@ export async function deleteConnectedAppDefinition(
   >(API_ENDPOINTS.adminConnectedApps.byId(id));
   return response.data.data;
 }
+
+export async function getOAuthPresets(): Promise<
+  Array<{
+    key: string;
+    displayName: string;
+    appKey: string;
+    authorizationUrl: string;
+    tokenUrl: string;
+    revokeUrl?: string;
+    scopes: string[];
+    pkceEnabled: boolean;
+    iconKey: string;
+  }>
+> {
+  const response = await apiClient.get<ApiResponse<any[]>>('/admin/connected-apps/presets');
+  return response.data.data;
+}
+
+export async function validateAppKey(
+  appKey: string,
+): Promise<{ valid: boolean; exists: boolean; suggestion?: string }> {
+  const response = await apiClient.get<ApiResponse<{ valid: boolean; exists: boolean; suggestion?: string }>>(
+    '/admin/connected-apps/validate-appkey',
+    { params: { appKey } }
+  );
+  return response.data.data;
+}
+
+export async function suggestAppKey(displayName: string): Promise<{ appKey: string }> {
+  const response = await apiClient.get<ApiResponse<{ appKey: string }>>(
+    '/admin/connected-apps/suggest-appkey',
+    { params: { displayName } }
+  );
+  return response.data.data;
+}
+
+export async function generateCallbackUrl(appKey: string, backendUrl?: string): Promise<{ callbackUrl: string }> {
+  const response = await apiClient.get<ApiResponse<{ callbackUrl: string }>>(
+    '/admin/connected-apps/callback-url',
+    { params: { appKey, backendUrl } }
+  );
+  return response.data.data;
+}

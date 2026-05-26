@@ -36,7 +36,7 @@ interface MulterFile {
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
-import { WorkspaceOwnerGuard } from './guards/workspace-owner.guard';
+import { WorkspaceAccessGuard, WritePermissionGuard } from './guards';
 import { RequestUploadUrlDto } from './dto/request-upload-url.dto';
 import { ConfirmUploadDto } from './dto/confirm-upload.dto';
 import { InitiateBulkUploadDto } from './dto/initiate-bulk-upload.dto';
@@ -47,7 +47,7 @@ import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
 @ApiBearerAuth()
-@UseGuards(WorkspaceOwnerGuard)
+@UseGuards(WorkspaceAccessGuard)
 export class WorkspaceDocumentController {
   constructor(
     private readonly workspaceDocumentService: WorkspaceDocumentService,
@@ -57,6 +57,7 @@ export class WorkspaceDocumentController {
    * Upload a small file directly (multipart/form-data)
    */
   @Post()
+  @UseGuards(WritePermissionGuard)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({ summary: 'Upload a small file directly (< 10MB recommended)' })
   @ApiConsumes('multipart/form-data')
@@ -96,6 +97,7 @@ export class WorkspaceDocumentController {
    * Request presigned URL for large file upload
    */
   @Post('upload-url')
+  @UseGuards(WritePermissionGuard)
   @ApiOperation({ summary: 'Get presigned URL for large file upload' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Upload URL generated' })
@@ -115,6 +117,7 @@ export class WorkspaceDocumentController {
    * Confirm upload completed (for presigned URL uploads)
    */
   @Post('confirm')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirm upload completed' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -134,6 +137,7 @@ export class WorkspaceDocumentController {
    * Initiate bulk upload session
    */
   @Post('bulk')
+  @UseGuards(WritePermissionGuard)
   @ApiOperation({ summary: 'Initiate bulk upload session' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Bulk upload session created' })
@@ -153,6 +157,7 @@ export class WorkspaceDocumentController {
    * Report progress for bulk upload
    */
   @Post('bulk/:sessionId/progress')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Report upload progress for a file in bulk session' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -176,6 +181,7 @@ export class WorkspaceDocumentController {
    * Complete bulk upload session
    */
   @Post('bulk/:sessionId/complete')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Complete bulk upload session' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -284,6 +290,7 @@ export class WorkspaceDocumentController {
    * NOTE: This route MUST come before :docId routes to avoid "all" being captured as a document ID
    */
   @Delete('all')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete all documents in workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -298,6 +305,7 @@ export class WorkspaceDocumentController {
    * Bulk delete documents
    */
   @Delete()
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk delete documents' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -317,6 +325,7 @@ export class WorkspaceDocumentController {
    * Delete a single document
    */
   @Delete(':docId')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete a document' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -340,6 +349,7 @@ export class WorkspaceDocumentController {
    * Create a folder
    */
   @Post('folders')
+  @UseGuards(WritePermissionGuard)
   @ApiOperation({ summary: 'Create a new folder in the workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async createFolder(
@@ -359,6 +369,7 @@ export class WorkspaceDocumentController {
    * Rename a folder
    */
   @Patch('folders/:folderId')
+  @UseGuards(WritePermissionGuard)
   @ApiOperation({ summary: 'Rename a folder' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'folderId', description: 'Folder ID' })
@@ -379,6 +390,7 @@ export class WorkspaceDocumentController {
    * Delete a folder and all its contents
    */
   @Delete('folders/:folderId')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete a folder and all its contents' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
@@ -414,6 +426,7 @@ export class WorkspaceDocumentController {
    * Move documents to a folder
    */
   @Post('move')
+  @UseGuards(WritePermissionGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Move documents to a different folder' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })

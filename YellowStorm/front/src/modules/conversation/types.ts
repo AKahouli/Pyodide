@@ -42,6 +42,7 @@ export interface Conversation {
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
   taggedAgents?: string[];
+  projectId?: string | null;
 }
 
 export interface AttachedFile {
@@ -128,6 +129,8 @@ export interface ConversationListParams {
   limit?: number;
   search?: string;
   isArchived?: boolean;
+  projectId?: string | 'none';
+  searchScope?: 'title' | 'fulltext';
 }
 
 export interface MessageListParams {

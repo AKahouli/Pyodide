@@ -30,6 +30,7 @@ export interface WorkspaceResponse {
   allocatedStorage: number;
   isSystem: boolean;
   isPersonal: boolean;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
 }

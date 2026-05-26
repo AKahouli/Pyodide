@@ -23,6 +23,9 @@ export class Conversation extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Workspace' })
   systemWorkspaceId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Project', default: null, index: true })
+  projectId?: Types.ObjectId | null;
+
   @Prop({ type: Date, index: true })
   lastMessageAt?: Date;
 
@@ -97,6 +100,7 @@ export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 ConversationSchema.index({ createdBy: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, isArchived: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, createdAt: -1 });
+ConversationSchema.index({ createdBy: 1, projectId: 1, lastMessageAt: -1 });
 
 // JSON transform
 ConversationSchema.set('toJSON', {

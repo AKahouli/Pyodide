@@ -11,15 +11,25 @@ import {
   Connector,
   ConnectorDocument,
   ConnectorAction,
+  ConnectorDynamicHeader,
+  DynamicHeaderSource,
 } from './schemas/connector.schema';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
+import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
+import { ConnectedAppDefinitionService } from '../connected-app/services/connected-app-definition.service';
 
 @Injectable()
 export class ConnectorService {
+  private static readonly CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
+  private static readonly CONNECTOR_ACTION_LABEL_MAX_LENGTH = 128;
+  private static readonly CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH = 1024;
+
   constructor(
     @InjectModel(Connector.name)
     private readonly connectorModel: Model<ConnectorDocument>,
     private readonly logger: LoggerService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
+    private readonly connectedAppDefinitionService: ConnectedAppDefinitionService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -33,17 +43,21 @@ export class ConnectorService {
       throw new ConflictException(ErrorCode.CONNECTOR_ALREADY_EXISTS);
     }
 
-    const actions = (dto.actions ?? []).map((a) => ({
-      key: a.key,
-      label: a.label,
-      description: a.description ?? '',
-      parameterSchema: a.parameterSchema ?? {},
-      outputSchema: a.outputSchema ?? {},
-      safety: a.safety ?? 'read',
-      supportsBatch: a.supportsBatch ?? false,
-      supportsIteration: a.supportsIteration ?? false,
-      isEnabled: a.isEnabled ?? true,
-    }));
+    const actions = this.normalizeConnectorActions(dto.actions);
+    const sanitizedMcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
+    const dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
+
+    // Determine auth type - if using connected app, fetch its auth type
+    let authType = dto.authType ?? 'none';
+    if (dto.authSourceType === 'connected_app' && dto.connectedAppKey) {
+      try {
+        const connectedApp = await this.connectedAppDefinitionService.findByKey(dto.connectedAppKey);
+        authType = connectedApp.authType;
+      } catch {
+        // If connected app not found, default to oauth2 for backward compatibility
+        authType = 'oauth2';
+      }
+    }
 
     const connector = await this.connectorModel.create({
       slug: dto.slug,
@@ -51,14 +65,15 @@ export class ConnectorService {
       description: dto.description,
       icon: dto.icon ?? '',
       color: dto.color ?? '',
-      authType: dto.authType ?? 'none',
+      authType,
       authConfigSchema: dto.authConfigSchema ?? {},
       authSourceType: dto.authSourceType ?? 'credential',
       connectedAppKey: dto.connectedAppKey ?? '',
       runtimeAuthConfig: dto.runtimeAuthConfig ?? {},
       mcpTransportType: dto.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: dto.mcpServerUrl ?? '',
-      mcpServerConfig: dto.mcpServerConfig ?? {},
+      mcpServerConfig: sanitizedMcpServerConfig,
+      dynamicHeaders,
       actions,
       referencedSkillIds: (dto.referencedSkillIds ?? []).map((id) => new Types.ObjectId(id)),
       isActive: dto.isActive ?? true,
@@ -151,22 +166,34 @@ export class ConnectorService {
 
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.actions) {
-      (updateData as Record<string, unknown>).actions = dto.actions.map((a) => ({
-        key: a.key,
-        label: a.label,
-        description: a.description ?? '',
-        parameterSchema: a.parameterSchema ?? {},
-        outputSchema: a.outputSchema ?? {},
-        safety: a.safety ?? 'read',
-        supportsBatch: a.supportsBatch ?? false,
-        supportsIteration: a.supportsIteration ?? false,
-        isEnabled: a.isEnabled ?? true,
-      }));
+      (updateData as Record<string, unknown>).actions = this.normalizeConnectorActions(dto.actions);
     }
     if (dto.referencedSkillIds) {
       (updateData as Record<string, unknown>).referencedSkillIds = dto.referencedSkillIds.map(
         (id) => new Types.ObjectId(id),
       );
+    }
+    if (dto.mcpServerConfig) {
+      (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
+    }
+
+    // Update auth type if connected app changes
+    if (dto.authSourceType === 'connected_app' && dto.connectedAppKey && dto.connectedAppKey !== existing.connectedAppKey) {
+      try {
+        const connectedApp = await this.connectedAppDefinitionService.findByKey(dto.connectedAppKey);
+        (updateData as Record<string, unknown>).authType = connectedApp.authType;
+      } catch {
+        (updateData as Record<string, unknown>).authType = 'oauth2';
+      }
+    } else if (dto.authSourceType === 'connected_app' && dto.connectedAppKey === existing.connectedAppKey) {
+      // Keep existing auth type if same connected app
+    } else if (dto.authSourceType && dto.authSourceType !== 'connected_app') {
+      // Reset auth type for non-connected app sources
+      (updateData as Record<string, unknown>).authType = dto.authSourceType === 'credential' ? 'token' : 'none';
+    }
+
+    if (dto.dynamicHeaders) {
+      (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
     }
 
     const updated = await this.connectorModel
@@ -220,7 +247,7 @@ export class ConnectorService {
       createdBy: creatorId,
       mcpTransportType: transportType,
       mcpServerUrl: serverUrl,
-      mcpServerConfig: serverConfig ?? {},
+      mcpServerConfig: this.sanitizeMcpServerConfig(serverConfig),
       actions,
     });
 
@@ -256,12 +283,50 @@ export class ConnectorService {
     };
   }
 
-  async inspectMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
+  async inspectMcp(
+    transportType: string,
+    serverUrl: string,
+    serverConfig?: Record<string, unknown>,
+    userId?: string,
+    connectedAppKey?: string,
+    runtimeAuthConfig?: Record<string, unknown>,
+    resolvedToken?: string,
+  ): Promise<IMcpInspectResult> {
     try {
-      this.logger.log('Inspecting MCP server', { transportType, serverUrl });
 
       let client: any;
       let transport: any;
+      let finalServerConfig = this.sanitizeMcpServerConfig(serverConfig);
+
+      if (resolvedToken) {
+        finalServerConfig = this.applyRuntimeAuthToServerConfig(
+          finalServerConfig,
+          runtimeAuthConfig,
+          resolvedToken,
+        );
+      } else if (userId && connectedAppKey) {
+        // If using connected app auth, fetch the token and inject it per runtime strategy.
+        try {
+          const token = await this.connectedAppTokenService.getValidToken(userId, connectedAppKey);
+          finalServerConfig = this.applyRuntimeAuthToServerConfig(
+            finalServerConfig,
+            runtimeAuthConfig,
+            token,
+          );
+        } catch (error) {
+          this.logger.error('Failed to get OAuth token for MCP inspection', {
+            connectedAppKey,
+            error: (error as Error).message,
+          });
+          return {
+            serverName: '',
+            tools: [],
+            error: `Failed to get authentication token: ${(error as Error).message}`,
+          };
+        }
+      }
+
+      const requestInit = this.buildMcpRequestInit(finalServerConfig);
 
       if (transportType === 'sse') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -270,7 +335,7 @@ export class ConnectorService {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const SSEClientTransport = sseMod.SSEClientTransport;
-        transport = new SSEClientTransport(new URL(serverUrl));
+        transport = new SSEClientTransport(new URL(serverUrl), { requestInit });
       } else if (transportType === 'streamable_http') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const httpMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(() => null);
@@ -278,7 +343,7 @@ export class ConnectorService {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const StreamableHTTPClientTransport = httpMod.StreamableHTTPClientTransport;
-        transport = new StreamableHTTPClientTransport(new URL(serverUrl));
+        transport = new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });
       } else {
         // stdio
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -339,6 +404,151 @@ export class ConnectorService {
       .slice(0, 64);
   }
 
+  private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {
+    const headers = this.buildMcpHeaders(serverConfig);
+    return Object.keys(headers).length > 0 ? { headers } : undefined;
+  }
+
+  private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const configHeaders = serverConfig?.headers;
+
+    if (configHeaders && typeof configHeaders === 'object' && !Array.isArray(configHeaders)) {
+      for (const [key, value] of Object.entries(configHeaders as Record<string, unknown>)) {
+        if (typeof value === 'string' && value.trim()) {
+          headers[key] = value;
+        }
+      }
+    }
+
+    const githubPat = typeof serverConfig?.githubPat === 'string' ? serverConfig.githubPat.trim() : '';
+    if (githubPat && !headers.Authorization) {
+      headers.Authorization = `Bearer ${githubPat}`;
+    }
+
+    return headers;
+  }
+
+  private sanitizeMcpServerConfig(serverConfig?: Record<string, unknown>): Record<string, unknown> {
+    if (!serverConfig || typeof serverConfig !== 'object') {
+      return {};
+    }
+
+    const sanitized = { ...serverConfig };
+    delete sanitized.githubPat;
+
+    return sanitized;
+  }
+
+  private applyRuntimeAuthToServerConfig(
+    serverConfig: Record<string, unknown>,
+    runtimeAuthConfig: Record<string, unknown> | undefined,
+    token: string,
+  ): Record<string, unknown> {
+    const config = runtimeAuthConfig ?? {};
+    const strategy = typeof config.strategy === 'string' ? config.strategy : 'http_header_bearer';
+    const nextConfig = { ...serverConfig };
+
+    if (strategy === 'env_vars') {
+      const envMap = this.extractStringMap(config.envMap);
+      const existingEnv = this.extractStringMap(nextConfig.env);
+      nextConfig.env = Object.entries(envMap).reduce<Record<string, string>>(
+        (acc, [key, template]) => {
+          acc[key] = template.replace('{token}', token);
+          return acc;
+        },
+        { ...existingEnv },
+      );
+      return nextConfig;
+    }
+
+    const existingHeaders = this.extractStringMap(nextConfig.headers);
+    const authHeaders =
+      strategy === 'custom_headers'
+        ? Object.entries(this.extractStringMap(config.headerMappings)).reduce<Record<string, string>>(
+            (acc, [key, template]) => {
+              acc[key] = template.replace('{token}', token);
+              return acc;
+            },
+            {},
+          )
+        : {
+            [typeof config.headerName === 'string' && config.headerName.trim()
+              ? config.headerName
+              : 'Authorization']:
+              `${typeof config.headerPrefix === 'string' ? config.headerPrefix : 'Bearer '}${token}`,
+          };
+
+    nextConfig.headers = {
+      ...existingHeaders,
+      ...authHeaders,
+    };
+
+    return nextConfig;
+  }
+
+  private extractStringMap(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>(
+      (acc, [key, entryValue]) => {
+        if (typeof entryValue === 'string') {
+          acc[key] = entryValue;
+        }
+        return acc;
+      },
+      {},
+    );
+  }
+
+  private normalizeDynamicHeaders(
+    dynamicHeaders?: Array<{ headerName: string; source: string; enabled?: boolean }>,
+  ): ConnectorDynamicHeader[] {
+    const allowed = new Set<string>(Object.values(DynamicHeaderSource));
+    return (dynamicHeaders ?? [])
+      .map((row) => ({
+        headerName: (row.headerName || '').trim(),
+        source: row.source,
+        enabled: row.enabled ?? true,
+      }))
+      .filter((row) => row.headerName.length > 0 && allowed.has(row.source))
+      .map((row) => ({
+        headerName: this.truncateValue(row.headerName, 128),
+        source: row.source as DynamicHeaderSource,
+        enabled: row.enabled,
+      })) as ConnectorDynamicHeader[];
+  }
+
+  private normalizeConnectorActions(actions?: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    parameterSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    safety?: string;
+    supportsBatch?: boolean;
+    supportsIteration?: boolean;
+    isEnabled?: boolean;
+  }>): ConnectorAction[] {
+    return (actions ?? []).map((action) => ({
+      key: this.truncateValue(action.key, ConnectorService.CONNECTOR_ACTION_KEY_MAX_LENGTH),
+      label: this.truncateValue(action.label, ConnectorService.CONNECTOR_ACTION_LABEL_MAX_LENGTH),
+      description: this.truncateValue(action.description ?? '', ConnectorService.CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
+      parameterSchema: action.parameterSchema ?? {},
+      outputSchema: action.outputSchema ?? {},
+      safety: action.safety ?? 'read',
+      supportsBatch: action.supportsBatch ?? false,
+      supportsIteration: action.supportsIteration ?? false,
+      isEnabled: action.isEnabled ?? true,
+    })) as ConnectorAction[];
+  }
+
+  private truncateValue(value: string, maxLength: number): string {
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+
   toResponse(doc: any): IConnectorResponse {
     return {
       id: doc._id?.toString() ?? doc.id,
@@ -355,6 +565,11 @@ export class ConnectorService {
       mcpTransportType: doc.mcpTransportType,
       mcpServerUrl: doc.mcpServerUrl,
       mcpServerConfig: doc.mcpServerConfig ?? {},
+      dynamicHeaders: (doc.dynamicHeaders ?? []).map((h: any) => ({
+        headerName: h.headerName,
+        source: h.source,
+        enabled: h.enabled ?? true,
+      })),
       actions: (doc.actions ?? []).map((a: any) => ({
         key: a.key,
         label: a.label,

@@ -50,24 +50,17 @@ export function PlaybookTriggerNode({ data: rawData, selected }: NodeProps) {
   const playbookId = data.playbookId;
   const { t } = useModuleTranslation('playbook');
 
-  const selectedClass = selected
-    ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25'
-    : '';
-  const disabledClass = !isEnabled ? 'opacity-60 border-dashed' : '';
-
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
+      <ContextMenuTrigger>
         <Node
           handles={{ target: false, source: false }}
-          className={`min-w-[220px] border-primary/30 bg-primary/5 transition-all duration-300 ${selectedClass} ${disabledClass}`}
+          className={selected ? 'min-w-[220px] border-primary bg-primary/5 ring-2 ring-primary/30' : 'min-w-[220px] border-primary/30 bg-primary/5'}
         >
           <NodeHeader className="bg-primary/10">
-            <div className="flex items-center justify-between w-full gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <Mail className="h-4 w-4 text-primary shrink-0" />
-                <NodeTitle>{data.title || t('triggerNode.title')}</NodeTitle>
-              </div>
+            <div className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-primary" />
+              <NodeTitle>{data.title || 'Mail Trigger'}</NodeTitle>
             </div>
           </NodeHeader>
           <NodeContent className="relative space-y-3 p-4">

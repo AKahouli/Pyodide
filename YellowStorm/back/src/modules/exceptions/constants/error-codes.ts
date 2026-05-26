@@ -118,10 +118,18 @@ export enum ErrorCode {
   WORKSPACE_UPLOAD_SESSION_EXPIRED = 'ERR_1941',
   WORKSPACE_UPLOAD_TOO_MANY_FILES = 'ERR_1942',
 
-  // Document Indexing errors (1950-1959)
+  // Document Indexing errors (1950-1952)
   INDEXING_FAILED = 'ERR_1950',
   INDEXING_IN_PROGRESS = 'ERR_1951',
   INDEXING_SERVICE_UNAVAILABLE = 'ERR_1952',
+
+  // Workspace Share errors (1953-1959)
+  WORKSPACE_SHARE_NOT_FOUND = 'ERR_1953',
+  WORKSPACE_SHARE_EXISTS = 'ERR_1954',
+  WORKSPACE_SHARE_SELF = 'ERR_1955',
+  WORKSPACE_SHARE_SYSTEM = 'ERR_1956',
+  WORKSPACE_READ_ONLY = 'ERR_1957',
+  WORKSPACE_SHARE_USER_NOT_FOUND = 'ERR_1958',
 
   // Auth token missing (for SSE)
   AUTH_TOKEN_MISSING = 'ERR_1120',
@@ -199,6 +207,26 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_EXECUTION_TIMEOUT = 'ERR_2531',
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
   PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
+
+  // Project errors (2700-2799)
+  PROJECT_NOT_FOUND = 'ERR_2700',
+  PROJECT_ALREADY_EXISTS = 'ERR_2701',
+  PROJECT_FORBIDDEN = 'ERR_2702',
+
+  // Classifier errors (2800-2899)
+  CLASSIFIER_FOLDER_NOT_FOUND = 'ERR_2800',
+  CLASSIFIER_FOLDER_NAME_EXISTS = 'ERR_2801',
+  CLASSIFIER_FOLDER_FORBIDDEN = 'ERR_2802',
+  CLASSIFIER_FOLDER_CYCLE = 'ERR_2803',
+  CLASSIFIER_FOLDER_INVALID_PARENT = 'ERR_2804',
+  CLASSIFIER_FILE_NOT_FOUND = 'ERR_2810',
+  CLASSIFIER_FILE_FORBIDDEN = 'ERR_2811',
+  CLASSIFIER_RUN_NOT_FOUND = 'ERR_2820',
+  CLASSIFIER_RUN_FORBIDDEN = 'ERR_2821',
+  CLASSIFIER_RUN_PLAYBOOK_INVALID = 'ERR_2822',
+  CLASSIFIER_RULE_NOT_FOUND = 'ERR_2830',
+  CLASSIFIER_RULE_FORBIDDEN = 'ERR_2831',
+  CLASSIFIER_RULE_INVALID_SCOPE = 'ERR_2832',
 
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
@@ -329,6 +357,13 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.INDEXING_IN_PROGRESS]: 'Document is already being indexed.',
   [ErrorCode.INDEXING_SERVICE_UNAVAILABLE]: 'Indexing service is not available.',
 
+  [ErrorCode.WORKSPACE_SHARE_NOT_FOUND]: 'Workspace share not found.',
+  [ErrorCode.WORKSPACE_SHARE_EXISTS]: 'This workspace is already shared with this user.',
+  [ErrorCode.WORKSPACE_SHARE_SELF]: 'You cannot share a workspace with yourself.',
+  [ErrorCode.WORKSPACE_SHARE_SYSTEM]: 'System workspaces cannot be shared.',
+  [ErrorCode.WORKSPACE_READ_ONLY]: 'You have read-only access to this workspace.',
+  [ErrorCode.WORKSPACE_SHARE_USER_NOT_FOUND]: 'One or more users were not found.',
+
   [ErrorCode.AUTH_TOKEN_MISSING]: 'Authentication token is required.',
 
   [ErrorCode.AUTH_OAUTH_FAILED]: 'OAuth authentication failed.',
@@ -394,6 +429,24 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_EXECUTION_TIMEOUT]: 'Playbook flow execution timed out.',
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
   [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
+
+  [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
+  [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
+  [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
+
+  [ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND]: 'Classifier folder not found.',
+  [ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS]: 'A folder with this name already exists at this location.',
+  [ErrorCode.CLASSIFIER_FOLDER_FORBIDDEN]: 'You do not have access to this classifier folder.',
+  [ErrorCode.CLASSIFIER_FOLDER_CYCLE]: 'Cannot move a folder into itself or one of its descendants.',
+  [ErrorCode.CLASSIFIER_FOLDER_INVALID_PARENT]: 'Invalid parent folder.',
+  [ErrorCode.CLASSIFIER_FILE_NOT_FOUND]: 'File not found in this workspace.',
+  [ErrorCode.CLASSIFIER_FILE_FORBIDDEN]: 'You do not have access to this file.',
+  [ErrorCode.CLASSIFIER_RUN_NOT_FOUND]: 'Classification run not found.',
+  [ErrorCode.CLASSIFIER_RUN_FORBIDDEN]: 'You do not have access to this classification run.',
+  [ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID]: 'The selected playbook is invalid or not accessible.',
+  [ErrorCode.CLASSIFIER_RULE_NOT_FOUND]: 'Classifier rule not found.',
+  [ErrorCode.CLASSIFIER_RULE_FORBIDDEN]: 'You do not have access to this classifier rule.',
+  [ErrorCode.CLASSIFIER_RULE_INVALID_SCOPE]: 'Invalid rule scope: local rules require a workspaceId, global rules must not have one.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',

@@ -35,6 +35,28 @@ export enum McpTransportType {
   STREAMABLE_HTTP = 'streamable_http',
 }
 
+export enum DynamicHeaderSource {
+  USER_ID = 'user_id',
+  USER_EMAIL = 'user_email',
+  USER_FIRST_NAME = 'user_first_name',
+  USER_LAST_NAME = 'user_last_name',
+  USER_FULL_NAME = 'user_full_name',
+}
+
+@Schema({ _id: false })
+export class ConnectorDynamicHeader {
+  @Prop({ required: true, trim: true, maxlength: 128 })
+  headerName!: string;
+
+  @Prop({ required: true, enum: DynamicHeaderSource })
+  source!: DynamicHeaderSource;
+
+  @Prop({ default: true })
+  enabled!: boolean;
+}
+
+export const ConnectorDynamicHeaderSchema = SchemaFactory.createForClass(ConnectorDynamicHeader);
+
 @Schema({ _id: true })
 export class ConnectorAction {
   @Prop({ required: true, trim: true, maxlength: 128 })
@@ -110,6 +132,9 @@ export class Connector extends Document {
 
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   mcpServerConfig!: Record<string, unknown>;
+
+  @Prop({ type: [ConnectorDynamicHeaderSchema], default: [] })
+  dynamicHeaders!: ConnectorDynamicHeader[];
 
   @Prop({ type: [ConnectorActionSchema], default: [] })
   actions!: ConnectorAction[];

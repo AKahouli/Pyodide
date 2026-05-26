@@ -1348,6 +1348,19 @@ export interface ConnectorActionResponse {
   isEnabled: boolean;
 }
 
+export type ConnectorDynamicHeaderSource =
+  | 'user_id'
+  | 'user_email'
+  | 'user_first_name'
+  | 'user_last_name'
+  | 'user_full_name';
+
+export interface ConnectorDynamicHeader {
+  headerName: string;
+  source: ConnectorDynamicHeaderSource;
+  enabled: boolean;
+}
+
 export interface ConnectorResponse {
   id: string;
   slug: string;
@@ -1363,6 +1376,7 @@ export interface ConnectorResponse {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorActionResponse[];
   referencedSkillIds: string[];
   isActive: boolean;
@@ -1395,6 +1409,7 @@ export interface CreateConnectorRequest {
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;
+  dynamicHeaders?: ConnectorDynamicHeader[];
   actions?: Array<{
     key: string;
     label: string;
@@ -1429,4 +1444,13 @@ export interface McpInspectResult {
   serverName: string;
   tools: McpToolDefinition[];
   error?: string;
+}
+
+export interface ConnectorOAuthStatusResponse {
+  appKey: string;
+  connected: boolean;
+  status?: string;
+  connectedAt?: string;
+  disconnectedAt?: string;
+  providerEmail?: string;
 }

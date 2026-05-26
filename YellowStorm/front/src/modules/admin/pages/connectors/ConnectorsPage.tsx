@@ -74,7 +74,9 @@ export function ConnectorsPage() {
   const handleSave = async (data: ConnectorFormValues) => {
     try {
       let parsedActions: ConnectorActionResponse[] | undefined;
-      if (data.actionsJson.trim()) {
+      if (data.actions && data.actions.length > 0) {
+        parsedActions = data.actions;
+      } else if (data.actionsJson.trim()) {
         parsedActions = JSON.parse(data.actionsJson);
       }
       const payload = {
@@ -83,13 +85,20 @@ export function ConnectorsPage() {
         description: data.description,
         icon: data.icon || undefined,
         color: data.color || undefined,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
+        authType: data.authType,
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
         runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
         mcpTransportType: data.mcpTransportType || undefined,
         mcpServerUrl: data.mcpServerUrl || undefined,
         mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),
+        dynamicHeaders: data.dynamicHeaders
+          .map((row) => ({
+            headerName: row.headerName.trim(),
+            source: row.source,
+            enabled: row.enabled,
+          }))
+          .filter((row) => row.headerName.length > 0),
         actions: parsedActions,
         referencedSkillIds: data.referencedSkillIds.length > 0 ? data.referencedSkillIds : undefined,
         isActive: data.isActive,

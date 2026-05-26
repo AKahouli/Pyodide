@@ -3,6 +3,11 @@ import { Document, HydratedDocument } from 'mongoose';
 
 export type ConnectedAppDefinitionDocument = HydratedDocument<ConnectedAppDefinition>;
 
+export enum ConnectedAppAuthType {
+  OAUTH2 = 'oauth2',
+  API_KEY = 'api_key',
+}
+
 @Schema({
   timestamps: true,
   collection: 'connected_app_definitions',
@@ -18,6 +23,13 @@ export class ConnectedAppDefinition extends Document {
   })
   appKey!: string;
 
+  @Prop({
+    type: String,
+    enum: Object.values(ConnectedAppAuthType),
+    default: ConnectedAppAuthType.OAUTH2,
+  })
+  authType!: ConnectedAppAuthType;
+
   @Prop({ required: true, trim: true, maxlength: 100 })
   displayName!: string;
 
@@ -27,29 +39,32 @@ export class ConnectedAppDefinition extends Document {
   @Prop({ trim: true, maxlength: 50 })
   iconKey?: string;
 
-  @Prop({ required: true })
-  authorizationUrl!: string;
+  @Prop()
+  authorizationUrl?: string;
 
-  @Prop({ required: true })
-  tokenUrl!: string;
+  @Prop()
+  tokenUrl?: string;
 
   @Prop()
   revokeUrl?: string;
 
-  @Prop({ required: true })
-  clientId!: string;
+  @Prop()
+  clientId?: string;
 
-  @Prop({ required: true })
-  clientSecret!: string;
+  @Prop()
+  clientSecret?: string;
 
   @Prop()
   tenantId?: string;
 
-  @Prop({ type: [String], required: true })
+  @Prop({ type: [String], default: [] })
   scopes!: string[];
 
   @Prop({ type: Boolean, default: true })
   pkceEnabled!: boolean;
+
+  @Prop()
+  apiKey?: string;
 
   @Prop({ type: Boolean, default: true })
   enabled!: boolean;
@@ -75,6 +90,7 @@ ConnectedAppDefinitionSchema.set('toJSON', {
     if (ret.clientId) ret.clientId = '****';
     if (ret.clientSecret) ret.clientSecret = '****';
     if (ret.tenantId) ret.tenantId = '****';
+    if (ret.apiKey) ret.apiKey = '****';
     return ret;
   },
 });

@@ -10,6 +10,12 @@ export interface IConnectorActionResponse {
   isEnabled: boolean;
 }
 
+export interface IConnectorDynamicHeader {
+  headerName: string;
+  source: string;
+  enabled: boolean;
+}
+
 export interface IConnectorResponse {
   id: string;
   slug: string;
@@ -25,6 +31,7 @@ export interface IConnectorResponse {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  dynamicHeaders: IConnectorDynamicHeader[];
   actions: IConnectorActionResponse[];
   referencedSkillIds: string[];
   isActive: boolean;
