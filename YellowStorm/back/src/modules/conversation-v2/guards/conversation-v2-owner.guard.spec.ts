@@ -26,4 +26,22 @@ describe('ConversationV2OwnerGuard', () => {
     sessionSvc.getOne.mockResolvedValue({ ownerId: 'someone-else', sessionId: 's1' });
     await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).rejects.toThrow(ForbiddenException);
   });
+
+  it('returns 404 when getOne returns null (covers malformed id)', async () => {
+    sessionSvc.getOne.mockResolvedValueOnce(null);
+    await expect(guard.canActivate(ctx({ id: 'u1' }, 'not-a-hex'))).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns 404 when userId is missing', async () => {
+    await expect(guard.canActivate(ctx(undefined, 'x'))).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns 404 when sessionId is missing', async () => {
+    await expect(guard.canActivate(ctx({ id: 'u1' }, ''))).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns 403 when ownerId does not match the request user', async () => {
+    sessionSvc.getOne.mockResolvedValueOnce({ ownerId: 'someone-else', sessionId: 's1' });
+    await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).rejects.toThrow(ForbiddenException);
+  });
 });

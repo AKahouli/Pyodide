@@ -32,7 +32,7 @@ describe('useConversationV2Stream', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
-  it('opens an EventSource with the message in query string', () => {
+  it('opens an EventSource with the message + clientEventId in the query string', () => {
     renderHook(() => useConversationV2Stream());
     act(() => {
       useConversationV2Store.getState().setSessionId('s1');
@@ -42,19 +42,50 @@ describe('useConversationV2Stream', () => {
     const es = MockEventSource.instances.at(-1)!;
     expect(es.url).toContain('conversation-v2/sessions/s1/stream');
     expect(es.url).toContain('message=hello');
+    expect(es.url).toMatch(/clientEventId=[0-9a-fA-F-]{36}/);
   });
 
-  it('routes message events into the store', () => {
+  it('optimistically echoes the user message and then upserts via SSE without duplicating', () => {
     const { result } = renderHook(() => useConversationV2Stream());
     act(() => useConversationV2Store.getState().setSessionId('s1'));
     act(() => result.current.send('hi'));
-    // send() optimistically adds the user message (1 event already in store)
-    expect(useConversationV2Store.getState().events.length).toBe(1);
-    expect((useConversationV2Store.getState().events[0] as any).role).toBe('user');
+
+    // send() optimistically adds the user message immediately so the bubble
+    // is visible before the backend's user frame arrives.
+    const stateAfterSend = useConversationV2Store.getState();
+    expect(stateAfterSend.events).toHaveLength(1);
+    const optimistic = stateAfterSend.events[0] as { role: string; event_id: string };
+    expect(optimistic.role).toBe('user');
+    const clientEventId = optimistic.event_id;
+
+    // Backend echoes the same user message back over SSE (same event_id,
+    // now with a sequence). It should REPLACE the optimistic one, not append.
     const es = MockEventSource.instances.at(-1)!;
-    act(() => es.emit('message', { event_id: 'e1', timestamp: 1, role: 'assistant', content: 'hi' }));
-    // server response appended → 2 total
-    expect(useConversationV2Store.getState().events.length).toBe(2);
+    act(() =>
+      es.emit('message', {
+        event_id: clientEventId,
+        timestamp: 1,
+        role: 'user',
+        content: 'hi',
+        sequence: 1,
+      }),
+    );
+    expect(useConversationV2Store.getState().events).toHaveLength(1);
+
+    // Assistant reply appends normally.
+    act(() =>
+      es.emit('message', {
+        event_id: 'a1',
+        timestamp: 1,
+        role: 'assistant',
+        content: 'hi',
+        sequence: 2,
+      }),
+    );
+    const finalState = useConversationV2Store.getState();
+    expect(finalState.events).toHaveLength(2);
+    expect((finalState.events[0] as { role: string }).role).toBe('user');
+    expect((finalState.events[1] as { role: string }).role).toBe('assistant');
   });
 
   it('closes the EventSource on done', () => {

@@ -1,7 +1,7 @@
 // back/src/modules/conversation-v2/services/conversation-v2-pointer-writer.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   ConversationV2Session,
   ConversationV2SessionDocument,
@@ -33,7 +33,13 @@ export class ConversationV2PointerWriterService {
       const next = statusForType[event.type];
       if (next) patch.status = next;
 
-      await this.model.updateOne({ sessionId }, { $set: patch });
+      // `sessionId` is the Mongo _id hex of the V2 session pointer; the
+      // schema no longer has a `sessionId` field, so filter by _id.
+      if (!Types.ObjectId.isValid(sessionId)) return;
+      await this.model.updateOne(
+        { _id: new Types.ObjectId(sessionId) },
+        { $set: patch },
+      );
     } catch (err) {
       this.logger.warn(
         `pointer write failed for ${sessionId}: ${(err as Error).message}`,

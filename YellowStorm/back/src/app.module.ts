@@ -37,6 +37,7 @@ import { NotificationsModule } from './modules/notifications';
 import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
 import { ModelsModule } from './modules/models';
+import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
 import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
 import { ToolModule } from './modules/tool';
@@ -90,6 +91,7 @@ import { ClassifierModule } from './modules/classifier';
     ConversationModule,
     ConversationV2Module,
     ModelsModule,
+    ChatCompletionModule,
     ToolModule,
     SkillModule,
     AgentTypeModule,

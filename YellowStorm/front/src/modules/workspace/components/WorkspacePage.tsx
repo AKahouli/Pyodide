@@ -708,8 +708,10 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
 
   const handleView = useCallback(() => {
     if (!viewable) return;
-    openFileViewer(file.workspaceId, file.id, file.name, file.mimeType);
-  }, [file.id, file.mimeType, file.name, file.workspaceId, viewable]);
+    // `file.path` is the Ceph object key persisted on the WorkspaceDocument.
+    // openFileViewer signs it directly via the path-signer endpoint.
+    openFileViewer(file.workspaceId, file.id, file.path ?? '', file.name, file.mimeType);
+  }, [file.id, file.mimeType, file.name, file.path, file.workspaceId, viewable]);
 
   const handleDownload = useCallback(async () => {
     setIsDownloading(true);

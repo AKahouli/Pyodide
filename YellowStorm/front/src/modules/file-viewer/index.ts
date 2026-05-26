@@ -4,7 +4,7 @@
  */
 
 import { useFileViewerStore } from './store';
-import type { DisplayMode } from './types';
+import type { DisplayMode, SpreadsheetNavigationOptions } from './types';
 
 export { FileFloatingWindow, FileViewerSidebar } from './components';
 export { useFileViewerStore, useFileViewerMode, useFileViewerDisplayMode } from './store';
@@ -12,17 +12,41 @@ export { isViewableFile, isViewableFilename, getMimeTypeFromFilename, PptxRender
 export type { FileTab, FileOpenOptions, ViewerMode, DisplayMode } from './types';
 
 /**
- * Open a workspace document in the file viewer.
- * Can be called from anywhere — no hooks needed.
+ * Open a workspace document in the file viewer. `path` is the document's
+ * stored object key (`WorkspaceDocument.path`); the viewer signs it directly
+ * via the path-signer endpoint. workspaceId + docId are still required for
+ * tab identity (so re-opening the same doc reuses its tab).
  */
-export function openFileViewer(workspaceId: string, docId: string, fileName: string, mimeType: string, options?: { page?: number; highlightText?: string; displayMode?: DisplayMode }) {
-  return useFileViewerStore.getState().openFile(workspaceId, docId, fileName, mimeType, options);
+export function openFileViewer(
+  workspaceId: string,
+  docId: string,
+  path: string,
+  fileName: string,
+  mimeType: string,
+  options?: {
+    page?: number;
+    highlightText?: string;
+    displayMode?: DisplayMode;
+    spreadsheet?: SpreadsheetNavigationOptions;
+  },
+) {
+  return useFileViewerStore.getState().openFile(workspaceId, docId, path, fileName, mimeType, options);
 }
 
 /**
  * Open a file from a direct URL in the file viewer.
- * Used for artifacts and other non-workspace files.
+ * Used for artifacts and citation sources signed by path.
  */
-export function openFileViewerFromUrl(url: string, fileName: string, mimeType: string, options?: { displayMode?: DisplayMode }) {
+export function openFileViewerFromUrl(
+  url: string,
+  fileName: string,
+  mimeType: string,
+  options?: {
+    displayMode?: DisplayMode;
+    page?: number;
+    highlightText?: string;
+    spreadsheet?: SpreadsheetNavigationOptions;
+  },
+) {
   return useFileViewerStore.getState().openFileFromUrl(url, fileName, mimeType, options);
 }

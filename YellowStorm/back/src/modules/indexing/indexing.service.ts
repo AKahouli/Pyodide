@@ -164,7 +164,10 @@ export class IndexingService {
         throw new BadRequestException('Folders cannot be indexed');
       }
 
-      // Get blob URL (without SAS token)
+      // Canonical S3 object URL (unsigned) — indexing service signs as needed.
+      // Still valid after the Ceph migration: document.path was written in the
+      // new `{ownerUserId}/{storagePrefix}/{filename}` layout at upload time,
+      // and getBlobUrl just prepends the public URL + bucket.
       const blobUrl = this.documentService.getBlobUrl(document.path!);
 
       // Call indexing API
@@ -176,10 +179,19 @@ export class IndexingService {
         path: document.path,
         size: document.size,
         blobUrl,
+        // storagePrefix is the immutable Ceph path segment — workspace.name
+        // can drift on rename but the file's location can't, so we use the
+        // prefix to keep workspace_name aligned with what's actually in Ceph.
+        // Fallback for legacy workspaces predating the prefix backfill.
+        workspaceName: workspace?.storagePrefix || workspace?.alias || workspaceId,
+        // document.filename is the sanitised name actually stored in Ceph
+        // (last segment of document.path).
+        fileName: document.filename || document.originalName,
         chunkSize: settings?.chunks || 4000,
         enableSmartChunk: settings?.hybridSearch || false,
         oneshotPrompt: settings?.instruction,
         brainTag: settings?.tag,
+        user_id: document.createdBy.toString(),
       });
 
       // Store API response IDs in metadata, keep status as PROCESSING
@@ -333,9 +345,32 @@ export class IndexingService {
     });
 
     try {
+      // Look up the document + workspace to derive the (workspace_name,
+      // file_path, file_name) triple the upstream endpoint needs. All callers
+      // (single delete, bulk delete, reindex) invoke us BEFORE removing the
+      // document row, so the lookup is guaranteed to find it.
+      const document = await this.documentModel.findOne({
+        _id: documentId,
+        workspaceId: new Types.ObjectId(workspaceId),
+      });
+      if (!document) {
+        this.logger.warn('Document not found for index delete, skipping', {
+          documentId,
+          workspaceId,
+        });
+        return;
+      }
+      const workspace = await this.workspaceModel.findById(document.workspaceId);
+
       const result = await this.indexingClient.deleteIndex({
         documentId,
         workspaceId,
+        // storagePrefix is the immutable Ceph segment — workspace.name can
+        // drift on rename but the file's location can't. Same fallback chain
+        // as indexDocument so identifiers stay aligned across index/delete.
+        workspaceName: workspace?.storagePrefix || workspace?.alias || workspaceId,
+        filePath: document.path ?? '',
+        fileName: document.filename ?? document.originalName,
       });
 
       if (result.success) {

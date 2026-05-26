@@ -51,10 +51,14 @@ export const configValidationSchema = Joi.object({
   MONGODB_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).default(0),
   MONGODB_RECONNECT_MULTIPLIER: Joi.number().min(1).max(10).default(2),
 
-  // Azure Blob Storage
-  AZURE_STORAGE_CONNECTION_STRING: Joi.string().optional(),
-  AZURE_STORAGE_CONTAINER_NAME: Joi.string().default('documents'),
-  AZURE_STORAGE_ACCOUNT_NAME: Joi.string().optional(),
+  // Ceph S3 Storage
+  CEPH_S3_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
+  CEPH_S3_REGION: Joi.string().default('us-east-1'),
+  CEPH_S3_BUCKET: Joi.string().default('documents'),
+  CEPH_S3_ACCESS_KEY_ID: Joi.string().optional(),
+  CEPH_S3_SECRET_ACCESS_KEY: Joi.string().optional(),
+  CEPH_S3_FORCE_PATH_STYLE: Joi.boolean().default(true),
+  CEPH_S3_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).optional(),
   STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
   STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),

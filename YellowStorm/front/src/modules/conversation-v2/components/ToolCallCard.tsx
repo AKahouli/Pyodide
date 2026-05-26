@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { useFileViewerStore } from '@/modules/file-viewer';
 import { useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
 import { resolveToolInfo } from '../utils/tool-info';
@@ -9,6 +10,7 @@ type ToolEvent = Extract<AgentEvent, { type: 'tool' }>;
 export function ToolCallCard({ event }: { event: ToolEvent }) {
   const openToolPanel = useConversationV2Store((s) => s.openToolPanel);
   const selectedToolCallId = useConversationV2Store((s) => s.selectedToolCallId);
+  const closeFileViewer = useFileViewerStore((s) => s.closeViewer);
   const { t } = useConversationV2Translation();
   const info = resolveToolInfo(event.name, event.function, event.args);
 
@@ -27,7 +29,12 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
   return (
     <button
       type='button'
-      onClick={() => openToolPanel(event.tool_call_id)}
+      onClick={() => {
+        // Mutually exclusive with the file viewer sidebar — both occupy the
+        // right side and collide otherwise.
+        closeFileViewer();
+        openToolPanel(event.tool_call_id);
+      }}
       aria-label={t('tool.openDetails')}
       className={cn(
         'group/tool not-prose my-1 inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-left transition-colors hover:bg-accent/40',

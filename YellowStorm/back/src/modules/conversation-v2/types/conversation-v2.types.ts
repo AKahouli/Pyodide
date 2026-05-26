@@ -53,7 +53,10 @@ export interface FileInfo {
   id: string;
   name: string;
   content_type: string;
-  url: string;
+  // Ceph object key (`{ownerUserId}/{storagePrefix}/{filename}`). Frontend exchanges
+  // this for a short-lived presigned read URL via POST /conversation-v2/files/signed-url
+  // when the user clicks the attachment.
+  path: string;
 }
 
 export type ToolContent =
@@ -83,4 +86,5 @@ export interface SessionWithEvents {
   status: string;
   isShared: boolean;
   events: ConversationV2Event[];
+  workspaceIds?: string[];
 }

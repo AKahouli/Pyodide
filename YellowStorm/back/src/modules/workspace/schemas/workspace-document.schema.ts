@@ -119,6 +119,13 @@ WorkspaceDocumentSchema.index({ workspaceId: 1, status: 1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, parentId: 1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, isFolder: 1 });
 WorkspaceDocumentSchema.index({ path: 1 });
+// Enforces Windows-Explorer-style filename uniqueness within a workspace, FILES only.
+// Folders can share names freely. The auto-rename loop in WorkspaceDocumentService
+// probes for free names; this index is the DB-level safety net for concurrent uploads.
+WorkspaceDocumentSchema.index(
+  { workspaceId: 1, originalName: 1 },
+  { unique: true, partialFilterExpression: { isFolder: false } },
+);
 
 // JSON transform
 WorkspaceDocumentSchema.set('toJSON', {

@@ -245,6 +245,7 @@ export class ClassifierFileService {
         : (doc.uploadedAt as string | null) ?? null,
       folderId,
       assignmentSource: source,
+      path: (doc.path as string | undefined) ?? undefined,
     };
   }
 }

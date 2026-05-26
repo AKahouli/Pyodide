@@ -11,7 +11,12 @@
   },
   "composer": {
     "placeholder": "Type a message…",
-    "send": "Send"
+    "send": "Send",
+    "modelSelector": {
+      "unset": "Default model",
+      "search": "Search models…",
+      "empty": "No models found."
+    }
   },
   "conversation": {
     "emptyTitle": "Send a message to start",
@@ -53,5 +58,76 @@
     "completed": "Task completed",
     "collapse": "Collapse plan"
   },
-  "controls": { "stop": "Stop", "pause": "Pause", "resume": "Resume" }
+  "controls": { "stop": "Stop", "pause": "Pause", "resume": "Resume" },
+  "files": {
+    "title": "Files in this conversation",
+    "button": "Files",
+    "unavailable": "No workspace attached to this session.",
+    "loading": "Loading files…",
+    "empty": "No files yet.",
+    "view": {
+      "list": "List view",
+      "grid": "Grid view"
+    }
+  },
+  "header": {
+    "back": "Back",
+    "tooltips": {
+      "workspaces": "Manage workspaces",
+      "files": "Files"
+    },
+    "actions": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "more": "More actions"
+    }
+  },
+  "dialogs": {
+    "rename": {
+      "title": "Rename conversation",
+      "placeholder": "Conversation title",
+      "saving": "Saving..."
+    },
+    "delete": {
+      "title": "Delete conversation?",
+      "description": "This will permanently delete this conversation.",
+      "descriptionWithName": {
+        "before": "This will permanently delete ",
+        "after": "."
+      },
+      "warning": "This action cannot be undone.",
+      "deleting": "Deleting..."
+    }
+  },
+  "workspace": {
+    "sheet": {
+      "title": "Workspaces",
+      "description": "Workspaces attached to this conversation.",
+      "loadingWorkspaces": "Loading workspaces...",
+      "noSelection": "No workspaces attached to this conversation.",
+      "noDocuments": "No documents found in the attached workspaces.",
+      "documentsLabel": "Documents",
+      "selectedCount": "{{count}} workspace attached",
+      "selectedCount_plural": "{{count}} workspaces attached",
+      "table": {
+        "name": "Name",
+        "size": "Size",
+        "type": "Type",
+        "workspace": "Workspace"
+      },
+      "paginationLabel": "Page {{page}} of {{total}}"
+    }
+  },
+  "toasts": {
+    "rename": {
+      "error": "Failed to rename conversation"
+    },
+    "delete": {
+      "error": "Failed to delete conversation"
+    },
+    "workspaces": {
+      "loadListError": "Failed to load workspaces",
+      "loadDocumentsError": "Failed to load documents"
+    }
+  }
 }

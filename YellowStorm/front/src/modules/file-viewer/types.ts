@@ -9,6 +9,12 @@ export interface FileTab {
   workspaceId?: string;
   /** Document ID (only for workspace documents) */
   documentId?: string;
+  /**
+   * Stored object key for workspace documents. Held on the tab so that URL
+   * refreshes can re-sign the same object without going through the legacy
+   * workspaceId+docId lookup endpoint.
+   */
+  path?: string;
   fileName: string;
   /** MIME type of the file (e.g. 'application/pdf') */
   mimeType: string;

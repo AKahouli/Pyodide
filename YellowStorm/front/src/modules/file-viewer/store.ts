@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { toast } from 'sonner';
-import { getDocumentDownloadUrl } from '../workspace/api';
+import { getArtifactDownloadUrl } from '../conversation/api';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { FileTab, FileOpenOptions, PendingNavigation, WindowPosition, WindowSize, ViewerMode, DisplayMode } from './types';
@@ -20,6 +20,13 @@ const MIN_WIDTH = 480;
 const MIN_HEIGHT = 360;
 const URL_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const SIDEBAR_MIN_VIEWPORT_WIDTH = 768;
+/**
+ * Path-signer endpoint (POST /conversations/artifact-url) issues URLs that
+ * expire after 60 minutes. Kept as a client-side constant because the
+ * endpoint only returns the URL, not its expiry — we still want to refetch
+ * before the URL goes stale rather than letting the renderer 403.
+ */
+const SIGNED_URL_LIFETIME_MS = 60 * 60 * 1000;
 
 type FileViewerTranslationKey = ModuleTranslationKey<'file-viewer'>;
 
@@ -76,8 +83,23 @@ interface FileViewerState {
 }
 
 interface FileViewerActions {
-  openFile: (workspaceId: string, docId: string, fileName: string, mimeType: string, options?: FileOpenOptions) => Promise<void>;
-  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode'>) => void;
+  /**
+   * Open a workspace document by its stored object key (`document.path`).
+   * The viewer signs the path directly via the path-signer endpoint — it no
+   * longer reaches into `/workspaces/:id/documents/:docId/download-url`, so
+   * stale (workspaceId, docId) → path resolution can't desync from current
+   * storage layout. `workspaceId` and `docId` are still threaded through so
+   * tabs dedupe per (workspace, doc) and the viewer can show legacy metadata.
+   */
+  openFile: (
+    workspaceId: string,
+    docId: string,
+    path: string,
+    fileName: string,
+    mimeType: string,
+    options?: FileOpenOptions,
+  ) => Promise<void>;
+  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'page' | 'highlightText' | 'spreadsheet'>) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   minimize: () => void;
@@ -110,9 +132,27 @@ export const useFileViewerStore = create<FileViewerStore>()(
       pendingNavigation: null,
 
       // Actions
-      openFile: async (workspaceId, docId, fileName, mimeType, options) => {
+      openFile: async (workspaceId, docId, path, fileName, mimeType, options) => {
         const tabId = `${workspaceId}:${docId}`;
         const { tabs, mode } = get();
+
+        // Path is now the authoritative input — without it the path-signer
+        // can't produce a URL. Surface this loudly instead of opening an
+        // empty tab the renderer will choke on.
+        if (!path) {
+          toast.error(translateFileViewer('store.openError.title'), {
+            description: translateFileViewer('store.openError.description'),
+          });
+          return;
+        }
+
+        const signAndCompute = async () => {
+          const { downloadUrl } = await getArtifactDownloadUrl(path, fileName);
+          return {
+            url: downloadUrl,
+            expiresAt: new Date(Date.now() + SIGNED_URL_LIFETIME_MS).toISOString(),
+          };
+        };
 
         // Check if tab already exists
         const existingTab = tabs.find((t) => t.id === tabId);
@@ -130,7 +170,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
             }));
 
             try {
-              const response = await getDocumentDownloadUrl(workspaceId, docId);
+              const response = await signAndCompute();
               set((state) => ({
                 tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url: response.url, urlExpiresAt: response.expiresAt, isLoading: false } : t)),
               }));
@@ -158,6 +198,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           id: tabId,
           workspaceId,
           documentId: docId,
+          path,
           fileName,
           mimeType,
           url: '', // Will be filled when loaded
@@ -187,7 +228,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
 
         // Fetch presigned URL in background
         try {
-          const response = await getDocumentDownloadUrl(workspaceId, docId);
+          const response = await signAndCompute();
           set((state) => ({
             tabs: state.tabs.map((t) =>
               t.id === tabId
@@ -211,6 +252,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
         const tabId = `url:${url}`;
         const { tabs } = get();
         const resolved = resolveDisplayMode(options?.displayMode);
+        const pending = createPendingNavigation(tabId, options as FileOpenOptions | undefined);
 
         // If tab already exists, just activate it
         const existingTab = tabs.find((t) => t.id === tabId);
@@ -218,6 +260,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           set({
             activeTabId: tabId,
             mode: 'open',
+            pendingNavigation: pending,
             ...(resolved ? { displayMode: resolved } : {}),
           });
           return;
@@ -234,7 +277,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           tabs: [...state.tabs, newTab],
           activeTabId: tabId,
           mode: 'open',
-          pendingNavigation: null,
+          pendingNavigation: pending,
           // Set displayMode if provided, default to 'floating' when opening fresh
           ...(resolved
             ? { displayMode: resolved }
@@ -329,12 +372,13 @@ export const useFileViewerStore = create<FileViewerStore>()(
 
       refreshTabUrl: async (tabId) => {
         const tab = get().tabs.find((t) => t.id === tabId);
-        if (!tab || !tab.workspaceId || !tab.documentId) return;
+        if (!tab || !tab.path) return;
 
         try {
-          const response = await getDocumentDownloadUrl(tab.workspaceId, tab.documentId);
+          const { downloadUrl } = await getArtifactDownloadUrl(tab.path, tab.fileName);
+          const expiresAt = new Date(Date.now() + SIGNED_URL_LIFETIME_MS).toISOString();
           set((state) => ({
-            tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url: response.url, urlExpiresAt: response.expiresAt } : t)),
+            tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url: downloadUrl, urlExpiresAt: expiresAt } : t)),
           }));
         } catch (error) {
           const apiError = error as ApiError;

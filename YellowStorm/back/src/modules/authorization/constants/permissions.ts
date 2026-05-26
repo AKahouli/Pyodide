@@ -83,6 +83,11 @@ export const Permissions = {
   AUTH_PROVIDERS_DELETE: 'auth_providers.delete',
   AUTH_PROVIDERS_ALL: 'auth_providers.*',
 
+  // Chat Completion Management
+  CHAT_COMPLETION_READ: 'chat_completion.read',
+  CHAT_COMPLETION_UPDATE: 'chat_completion.update',
+  CHAT_COMPLETION_ALL: 'chat_completion.*',
+
   // Admin UI (separate namespace)
   ADMIN_ROLES_READ: 'admin.roles.read',
   ADMIN_ROLES_MANAGE: 'admin.roles.manage',
@@ -201,6 +206,11 @@ const ALL_PERMISSIONS = new Set<string>([
   'auth_providers.update',
   'auth_providers.delete',
   'auth_providers.*',
+
+  // Chat Completion Management
+  'chat_completion.read',
+  'chat_completion.update',
+  'chat_completion.*',
 
   // Admin UI
   'admin.roles.read',
