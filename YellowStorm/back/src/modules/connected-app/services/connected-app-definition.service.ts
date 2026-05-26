@@ -4,7 +4,6 @@ import { Model } from 'mongoose';
 import {
   ConnectedAppDefinition,
   ConnectedAppDefinitionDocument,
-  ConnectedAppAuthType,
 } from '../schemas/connected-app-definition.schema';
 import { UserAppConnection, UserAppConnectionDocument } from '../schemas/user-app-connection.schema';
 import { CryptoService } from '@common/services/crypto.service';
@@ -46,7 +45,6 @@ export class ConnectedAppDefinitionService {
       iconKey: d.iconKey,
       scopes: d.scopes,
       sortOrder: d.sortOrder,
-      authType: d.authType || 'oauth2',
     }));
   }
 
@@ -89,18 +87,16 @@ export class ConnectedAppDefinitionService {
 
     return {
       appKey: definition.appKey,
-      authType: definition.authType || 'oauth2',
       displayName: definition.displayName,
       description: definition.description,
-      clientId: definition.clientId ? this.cryptoService.decrypt(definition.clientId) : undefined,
-      clientSecret: definition.clientSecret ? this.cryptoService.decrypt(definition.clientSecret) : undefined,
+      clientId: this.cryptoService.decrypt(definition.clientId),
+      clientSecret: this.cryptoService.decrypt(definition.clientSecret),
       tenantId: definition.tenantId ? this.cryptoService.decrypt(definition.tenantId) : undefined,
       authorizationUrl: definition.authorizationUrl,
       tokenUrl: definition.tokenUrl,
       revokeUrl: definition.revokeUrl,
       scopes: definition.scopes,
       pkceEnabled: definition.pkceEnabled,
-      apiKey: definition.apiKey ? this.cryptoService.decrypt(definition.apiKey) : undefined,
       enabled: definition.enabled,
     };
   }
@@ -127,30 +123,26 @@ export class ConnectedAppDefinitionService {
       );
     }
 
-    const authType = dto.authType || 'oauth2';
-
     const definition = new this.definitionModel({
       appKey: dto.appKey.toLowerCase(),
-      authType,
       displayName: dto.displayName,
       description: dto.description,
       iconKey: dto.iconKey,
       authorizationUrl: dto.authorizationUrl,
       tokenUrl: dto.tokenUrl,
       revokeUrl: dto.revokeUrl,
-      clientId: dto.clientId ? this.cryptoService.encrypt(dto.clientId) : undefined,
-      clientSecret: dto.clientSecret ? this.cryptoService.encrypt(dto.clientSecret) : undefined,
+      clientId: this.cryptoService.encrypt(dto.clientId),
+      clientSecret: this.cryptoService.encrypt(dto.clientSecret),
       tenantId: dto.tenantId ? this.cryptoService.encrypt(dto.tenantId) : undefined,
-      scopes: dto.scopes ?? [],
+      scopes: dto.scopes,
       pkceEnabled: dto.pkceEnabled ?? true,
-      apiKey: dto.apiKey ? this.cryptoService.encrypt(dto.apiKey) : undefined,
       enabled: dto.enabled ?? true,
       sortOrder: dto.sortOrder ?? 0,
     });
 
     await definition.save();
 
-    this.logger.log('Connected app definition created', { appKey: definition.appKey, authType });
+    this.logger.log('Connected app definition created', { appKey: definition.appKey });
 
     return this.toAdminResponse(definition.toObject());
   }
@@ -177,7 +169,6 @@ export class ConnectedAppDefinitionService {
       definition.appKey = dto.appKey.toLowerCase();
     }
 
-    if (dto.authType !== undefined) definition.authType = dto.authType;
     if (dto.displayName !== undefined) definition.displayName = dto.displayName;
     if (dto.description !== undefined) definition.description = dto.description;
     if (dto.iconKey !== undefined) definition.iconKey = dto.iconKey;
@@ -201,9 +192,6 @@ export class ConnectedAppDefinitionService {
       } else if (dto.tenantId === '') {
         definition.tenantId = undefined;
       }
-    }
-    if (dto.apiKey && dto.apiKey !== '****') {
-      definition.apiKey = this.cryptoService.encrypt(dto.apiKey);
     }
 
     await definition.save();
@@ -235,19 +223,17 @@ export class ConnectedAppDefinitionService {
     return {
       id: (d._id || d.id).toString(),
       appKey: d.appKey,
-      authType: d.authType || 'oauth2',
       displayName: d.displayName,
       description: d.description,
       iconKey: d.iconKey,
-      clientId: d.clientId ? '****' : undefined,
-      clientSecret: d.clientSecret ? '****' : undefined,
+      clientId: '****',
+      clientSecret: '****',
       tenantId: d.tenantId ? '****' : undefined,
       authorizationUrl: d.authorizationUrl,
       tokenUrl: d.tokenUrl,
       revokeUrl: d.revokeUrl,
       scopes: d.scopes,
       pkceEnabled: d.pkceEnabled,
-      apiKey: d.apiKey ? '****' : '',
       enabled: d.enabled,
       sortOrder: d.sortOrder,
       connectedUserCount,

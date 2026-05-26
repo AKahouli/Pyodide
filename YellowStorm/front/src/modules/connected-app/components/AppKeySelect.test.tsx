@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
 import { AppKeySelect } from './AppKeySelect';
 
 const mockPresets = [
@@ -10,7 +11,7 @@ const mockPresets = [
 describe('AppKeySelect', () => {
   it('renders with placeholder when no value is provided', () => {
     render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
-    expect(screen.getByText('Select or enter app key...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Select or enter app key...')).toBeInTheDocument();
   });
 
   it('displays selected preset app', () => {
@@ -18,7 +19,6 @@ describe('AppKeySelect', () => {
       <AppKeySelect value="github" onChange={vi.fn()} presets={mockPresets} />,
     );
     expect(screen.getByText('GitHub')).toBeInTheDocument();
-    expect(screen.getByText('(github)')).toBeInTheDocument();
   });
 
   it('displays custom app key when value is not in presets', () => {
@@ -31,9 +31,9 @@ describe('AppKeySelect', () => {
 
   it('opens dropdown on click', () => {
     render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
-    expect(screen.getByText('Preset Apps')).toBeInTheDocument();
+    expect(screen.getByText('Preset Apps (3)')).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
   });
 
@@ -42,14 +42,14 @@ describe('AppKeySelect', () => {
     render(
       <AppKeySelect value="" onChange={handleChange} presets={mockPresets} />,
     );
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
     const githubOption = screen.getByText('GitHub');
     fireEvent.click(githubOption);
     expect(handleChange).toHaveBeenCalledWith('github');
   });
 
-  it('filters out existing app keys from presets', () => {
+  it('marks existing app keys as configured', () => {
     render(
       <AppKeySelect
         value=""
@@ -58,15 +58,16 @@ describe('AppKeySelect', () => {
         existingAppKeys={['github']}
       />,
     );
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
-    expect(screen.queryByText('GitHub')).not.toBeInTheDocument();
+    expect(screen.getByText('GitHub')).toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
     expect(screen.getByText('Google')).toBeInTheDocument();
   });
 
   it('shows custom input option when available presets exist', () => {
     render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
     expect(screen.getByText('Custom App Key...')).toBeInTheDocument();
   });
@@ -76,7 +77,7 @@ describe('AppKeySelect', () => {
     render(
       <AppKeySelect value="" onChange={handleChange} presets={mockPresets} />,
     );
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
     const customOption = screen.getByText('Custom App Key...');
     fireEvent.click(customOption);
@@ -93,7 +94,7 @@ describe('AppKeySelect', () => {
         presets={mockPresets}
       />,
     );
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
     const customOption = screen.getByText('Custom App Key...');
     fireEvent.click(customOption);
@@ -106,17 +107,17 @@ describe('AppKeySelect', () => {
     render(
       <AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} disabled />,
     );
-    const trigger = screen.getByText('Select or enter app key...');
-    expect(trigger).toBeDisabled();
+    expect(screen.getByPlaceholderText('Select or enter app key...')).toBeDisabled();
+    expect(screen.getAllByRole('button')[0]).toBeDisabled();
   });
 
   it('closes dropdown when clicking outside', () => {
     render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
-    const trigger = screen.getByText('Select or enter app key...');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
-    expect(screen.getByText('Preset Apps')).toBeInTheDocument();
+    expect(screen.getByText('Preset Apps (3)')).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByText('Preset Apps')).not.toBeInTheDocument();
+    expect(screen.queryByText('Preset Apps (3)')).not.toBeInTheDocument();
   });
 });

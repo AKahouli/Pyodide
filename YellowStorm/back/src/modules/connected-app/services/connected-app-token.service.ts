@@ -30,20 +30,6 @@ export class ConnectedAppTokenService {
   }
 
   async getValidToken(userId: string, appKey: string): Promise<string> {
-    const appConfig = await this.definitionService.findByKey(appKey);
-
-    // For API key type, return the API key from the app definition
-    if (appConfig.authType === 'api_key') {
-      if (!appConfig.apiKey) {
-        throw new BadRequestException(
-          ErrorCode.BAD_REQUEST,
-          `API key not configured for '${appKey}'`,
-        );
-      }
-      return appConfig.apiKey;
-    }
-
-    // For OAuth2 type, use existing connection-based logic
     const connection = await this.connectionModel
       .findOne({ userId: new Types.ObjectId(userId), appKey, status: ConnectionStatus.ACTIVE })
       .exec();
@@ -72,14 +58,6 @@ export class ConnectedAppTokenService {
   }
 
   async isConnected(userId: string, appKey: string): Promise<boolean> {
-    const appConfig = await this.definitionService.findByKey(appKey);
-
-    // For API key type, the app is always considered "connected" if it's enabled
-    if (appConfig.authType === 'api_key') {
-      return true;
-    }
-
-    // For OAuth2 type, check for user connection
     const count = await this.connectionModel.countDocuments({
       userId: new Types.ObjectId(userId),
       appKey,
@@ -172,19 +150,6 @@ export class ConnectedAppTokenService {
     }
 
     const appConfig = await this.definitionService.findByKey(appKey);
-
-    // Validate required OAuth fields
-    if (!appConfig.tokenUrl || !appConfig.clientId || !appConfig.clientSecret) {
-      await this.connectionModel.updateOne(
-        { _id: connection._id },
-        { $set: { status: ConnectionStatus.ERROR, errorMessage: 'OAuth configuration missing' } },
-      );
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-        'OAuth configuration missing. Please reconnect.',
-      );
-    }
-
     const decryptedRefreshToken = this.cryptoService.decrypt(connection.refreshToken);
 
     let tokenUrl = appConfig.tokenUrl;

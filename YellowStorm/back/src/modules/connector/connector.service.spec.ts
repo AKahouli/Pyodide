@@ -353,6 +353,7 @@ describe('ConnectorService importFromMcp', () => {
         find: jest.fn(),
       } as any,
       logger as any,
+      null as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({
