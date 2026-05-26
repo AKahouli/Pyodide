@@ -231,6 +231,7 @@ export const API_ENDPOINTS = {
     list: '/agents',
     all: '/agents/all',
     byId: (id: string) => `/agents/${id}`,
+    telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
   },
   tools: {
     active: '/tools/active',

@@ -181,6 +181,15 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_PYTHON_WORKER_POOL_SIZE: Joi.number().min(1).max(100).default(8),
   PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: Joi.number().min(1).max(20).default(4),
   PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
+  // Telegram
+  TELEGRAM_ENABLED: Joi.boolean().default(true),
+  TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),
+  TELEGRAM_API_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(15000),
+  TELEGRAM_LINK_CODE_TTL_SECONDS: Joi.number().min(60).max(86400).default(900),
+  TELEGRAM_LINK_CODE_LENGTH: Joi.number().min(6).max(32).default(8),
+  TELEGRAM_WEBHOOK_RATE_LIMIT: Joi.number().min(1).max(10000).default(60),
+  TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
+  TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),
