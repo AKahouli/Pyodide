@@ -185,6 +185,7 @@ function SemanticScoreBadge({
 }: {
   score: number;
 }) {
+  const { t } = useModuleTranslation('playbook');
   const radius = 14;
   const circumference = 2 * Math.PI * radius;
   const normalized = Math.max(0, Math.min(100, score));
