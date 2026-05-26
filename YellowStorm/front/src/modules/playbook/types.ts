@@ -227,6 +227,7 @@ export interface PlaybookTask {
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
   activeReplayLabel?: string | null;
+  activeReplayOverallScore?: number | null;
   activeReplayReplayConfig?: {
     replayOutputFormat: boolean;
     replayToolTrace: boolean;
@@ -1144,6 +1145,29 @@ export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
 export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
 export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
 
+export type ReplayPostRunVerdict = 'match' | 'minor_drift' | 'major_drift' | 'not_comparable';
+export type ReplayPostRunRecommendedAction = 'accept' | 'review' | 'reject';
+
+export interface ReplayPostRunEvaluation {
+  judgeUsed: boolean;
+  judgeModel: string | null;
+  evaluatedAt: string;
+  verdict: ReplayPostRunVerdict;
+  overallScore: number | null;
+  semanticMatchScore: number | null;
+  outputFormatScore: number | null;
+  toolSequenceScore: number | null;
+  toolDefinitionScore: number | null;
+  reasoningScore: number | null;
+  summary: string;
+  missingPoints: string[];
+  changedPoints: string[];
+  preservedPoints: string[];
+  recommendedAction: ReplayPostRunRecommendedAction;
+  rawJudgeResponse: Record<string, unknown> | null;
+  failureReason: string | null;
+}
+
 export interface ReplayDriftFinding {
   category: 'context' | 'reasoning' | 'tool_sequence' | 'argument_shape' | 'output_contract' | 'semantic';
   severity: 'info' | 'warning' | 'fail';
@@ -1202,6 +1226,7 @@ export interface ReplayRunReport {
   outputContractStatus?: ReplaySignalStatus;
   semanticStatus?: ReplaySignalStatus;
   contextSubstitutionStatus?: ReplaySignalStatus;
+  postRunEvaluation?: ReplayPostRunEvaluation | null;
   createdAt: string;
   updatedAt: string;
 }

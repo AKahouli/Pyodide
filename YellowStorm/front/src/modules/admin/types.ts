@@ -916,6 +916,7 @@ export interface SyncModelsResponse {
 export interface AdminPlaybookSettings {
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
+  replayEvaluationModelId: string | null;
   nodeSuggestionsMode: 'auto' | 'manual';
   approvalSuggestionMode: 'auto' | 'manual';
   intentNormalizationLimits: {
@@ -925,14 +926,17 @@ export interface AdminPlaybookSettings {
     maxIteratorBodySteps: number;
     maxIteratorBodyEdges: number;
   };
+  replayEligibilityConfidenceThreshold: number;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
   inferenceModelId?: string | null;
   advisorEvaluationModelId?: string | null;
+  replayEvaluationModelId?: string | null;
   nodeSuggestionsMode?: 'auto' | 'manual';
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
+  replayEligibilityConfidenceThreshold?: number;
 }
 
 // Playbook Prompt Types

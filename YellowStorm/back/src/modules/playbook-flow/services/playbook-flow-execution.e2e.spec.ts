@@ -170,6 +170,7 @@ async function createE2EService(
     replayReportService as any,
     outputContractService,
     new PlaybookFlowReplayPlanService(),
+    { setContext: jest.fn(), warn: jest.fn(), log: jest.fn(), error: jest.fn() } as any,
   );
 
   const service = new PlaybookFlowExecutionService(

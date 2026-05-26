@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useModuleTranslation } from '@/modules/localization';
 import { getReplayReports } from '../api';
 import type {
   PlaybookExecution,
+  ReplayPostRunEvaluation,
   ReplayRunReport,
   ReplaySemanticFinding,
   ReplaySignalEvaluationStatus,
@@ -33,7 +35,7 @@ interface SignalRow {
 const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
 const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const REPORT_POLL_INTERVAL_MS = 1500;
-const REPORT_POLL_MAX_ATTEMPTS = 8;
+const REPORT_POLL_MAX_ATTEMPTS = 40;
 const SCORE_WARNING_THRESHOLD = 80;
 const SCORE_FAIL_THRESHOLD = 60;
 
@@ -229,6 +231,18 @@ function formatScore(value: number | null): string {
   return `${Math.round(normalized)}%`;
 }
 
+function normalizeScore(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return value > 0 && value <= 1 ? value * 100 : value;
+}
+
+function formatJsonPreview(value: Record<string, unknown> | null): string {
+  if (!value) {
+    return '-';
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 function confidenceTone(score: number): string {
   if (score >= SCORE_WARNING_THRESHOLD) return 'bg-emerald-100 text-emerald-700';
   if (score >= SCORE_FAIL_THRESHOLD) return 'bg-amber-100 text-amber-700';
@@ -271,6 +285,38 @@ function signalTone(status: ReplaySignalEvaluationStatus): string {
 
 function isEvaluated(status: ReplaySignalStatus | null | undefined): boolean {
   return status?.status === 'passed' || status?.status === 'warning' || status?.status === 'failed';
+}
+
+function postRunVerdictTone(verdict: ReplayPostRunEvaluation['verdict']): string {
+  switch (verdict) {
+    case 'match':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'minor_drift':
+      return 'bg-amber-100 text-amber-700';
+    case 'major_drift':
+      return 'bg-red-100 text-red-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+}
+
+function postRunActionTone(action: ReplayPostRunEvaluation['recommendedAction']): string {
+  switch (action) {
+    case 'accept':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'review':
+      return 'bg-amber-100 text-amber-700';
+    case 'reject':
+      return 'bg-red-100 text-red-700';
+  }
+}
+
+function postRunScoreTone(score: number | null | undefined): string {
+  const normalized = normalizeScore(score);
+  if (normalized === null) return 'bg-muted';
+  if (normalized >= SCORE_WARNING_THRESHOLD) return 'bg-emerald-500';
+  if (normalized >= SCORE_FAIL_THRESHOLD) return 'bg-amber-500';
+  return 'bg-red-500';
 }
 
 function deriveFallbackScoreStatus(score: number | null | undefined, failReason: string): ReplaySignalStatus {
@@ -331,52 +377,83 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pollingExhausted, setPollingExhausted] = useState(false);
+  const [postRunPending, setPostRunPending] = useState(false);
+  const executionStepMode = execution?.stepExecutionModes?.[taskId];
+  const replayEnabled = isReplayEnabledExecution(execution, executionId, taskId);
+  const replayExecutionActive = Boolean(execution && replayEnabled && ACTIVE_EXECUTION_STATUSES.has(execution.status));
+
+  useEffect(() => {
+    setReport(null);
+    setLoading(true);
+    setError(null);
+    setPollingExhausted(false);
+    setPostRunPending(false);
+  }, [playbookId, taskId, executionId, iteration]);
 
   useEffect(() => {
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
 
-    const shouldPollForReport = () => {
-      if (!execution || !ACTIVE_EXECUTION_STATUSES.has(execution.status)) return false;
-      return isReplayEnabledExecution(execution, executionId, taskId);
-    };
+    const shouldPollForReport = () => replayExecutionActive;
+    const shouldPollForReportAfterCompletion = (nextReport: ReplayRunReport | null) =>
+      !nextReport && !replayExecutionActive && replayEnabled;
+    const shouldPollForPostRunEvaluation = (nextReport: ReplayRunReport | null) => Boolean(
+      nextReport && !nextReport.postRunEvaluation,
+    );
 
-    const loadReport = () => {
+    const loadReport = (silent = false) => {
       let pendingRetry = false;
-      setLoading(true);
+      let receivedVisibleReport = false;
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
-      setPollingExhausted(false);
       getReplayReports(playbookId, taskId, { executionId, iteration, limit: 1 })
         .then((reports) => {
           if (cancelled) return;
           const nextReport = reports[0] ?? null;
           setReport(nextReport);
-          if (!nextReport && shouldPollForReport() && attempts < REPORT_POLL_MAX_ATTEMPTS) {
+          receivedVisibleReport = Boolean(nextReport);
+          const waitingForReport = shouldPollForReport() || shouldPollForReportAfterCompletion(nextReport);
+          const waitingForPostRun = shouldPollForPostRunEvaluation(nextReport);
+
+          if ((waitingForReport || waitingForPostRun) && attempts < REPORT_POLL_MAX_ATTEMPTS) {
             attempts += 1;
             pendingRetry = true;
-            timeoutId = setTimeout(loadReport, REPORT_POLL_INTERVAL_MS);
-          } else if (!nextReport && shouldPollForReport()) {
+            setPostRunPending(waitingForPostRun || waitingForReport);
+            timeoutId = setTimeout(() => loadReport(true), REPORT_POLL_INTERVAL_MS);
+          } else if (waitingForReport || waitingForPostRun) {
+            setPostRunPending(waitingForPostRun || waitingForReport);
             setPollingExhausted(true);
+          } else {
+            setPostRunPending(false);
           }
         })
         .catch((err) => {
           if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load report');
         })
         .finally(() => {
-          if (!cancelled && !pendingRetry) setLoading(false);
+          if (!cancelled && (!pendingRetry || receivedVisibleReport)) setLoading(false);
         });
     };
 
-    loadReport();
+    loadReport(report !== null);
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [playbookId, taskId, executionId, iteration, execution]);
+  }, [playbookId, taskId, executionId, iteration, execution?.status, execution?.executionMode, executionStepMode, replayExecutionActive]);
 
   if (loading) {
-    return <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t('replayReport.loading' as any)}</div>;
+    return (
+      <div className="rounded-md border border-muted bg-muted/20 p-6">
+        <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-7 w-7 animate-spin" />
+          <span>{t('replayReport.loading' as any)}</span>
+        </div>
+      </div>
+    );
   }
   if (error) {
     return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.loadFailed' as any)}</div>;
@@ -389,7 +466,14 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       if (pollingExhausted) {
         return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.pending' as any)}</div>;
       }
-      return <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t('replayReport.loading' as any)}</div>;
+      return (
+        <div className="rounded-md border border-muted bg-muted/20 p-6">
+          <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-7 w-7 animate-spin" />
+            <span>{t('replayReport.loading' as any)}</span>
+          </div>
+        </div>
+      );
     }
     return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.empty' as any)}</div>;
   }
@@ -444,11 +528,150 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
   const showStructuralSignals = structuralDriftReasons.length > 0 || isEvaluated(statuses.outputContract) || report.toolPolicyScore !== null;
   const toolCallComparisons = report.toolCallComparisons ?? [];
   const showToolCallEvidence = (report.expectedToolSteps?.length ?? 0) > 0 || toolCallComparisons.length > 0;
+  const postRunEvaluation = report.postRunEvaluation;
 
   return (
     <div className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
       <div className="font-medium">{t('replayReport.title' as any)}</div>
 
+      {postRunEvaluation ? (
+        <div className="space-y-3 rounded-md border bg-background p-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <div className="font-medium">{t('replayReport.postRun.title' as any)}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className={postRunVerdictTone(postRunEvaluation.verdict)}>
+                  {t(`replayReport.postRun.verdict.${postRunEvaluation.verdict}` as any)}
+                </Badge>
+                {postRunEvaluation.overallScore !== null && (
+                  <ReplayConfidenceBadge
+                    label={t('replayReport.postRun.overallScore' as any)}
+                    value={formatScore(postRunEvaluation.overallScore)}
+                  />
+                )}
+                <Badge variant="outline" className={postRunActionTone(postRunEvaluation.recommendedAction)}>
+                  {t(`replayReport.postRun.action.${postRunEvaluation.recommendedAction}` as any)}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {postRunEvaluation.judgeModel && <span>{postRunEvaluation.judgeModel}</span>}
+                {postRunEvaluation.evaluatedAt && (
+                  <span>{new Date(postRunEvaluation.evaluatedAt).toLocaleString()}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              ['semanticMatchScore', 'replayReport.postRun.semanticMatch'],
+              ['outputFormatScore', 'replayReport.postRun.outputFormat'],
+              ['toolSequenceScore', 'replayReport.postRun.toolSequence'],
+              ['toolDefinitionScore', 'replayReport.postRun.toolDefinition'],
+              ['reasoningScore', 'replayReport.postRun.reasoning'],
+            ] as const).map(([scoreKey, labelKey]) => {
+              const score = postRunEvaluation[scoreKey] as number | null;
+              if (score === null) {
+                return null;
+              }
+              const normalizedScore = normalizeScore(score) ?? 0;
+              return (
+                <div key={scoreKey} className="rounded-md border bg-muted/20 p-3">
+                  <div className="text-xs font-medium text-muted-foreground">{t(labelKey as any)}</div>
+                  <div className="mt-1 text-lg font-semibold text-foreground">{formatScore(score)}</div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full rounded-full ${postRunScoreTone(score)}`}
+                      style={{ width: `${Math.max(0, Math.min(100, normalizedScore))}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {postRunEvaluation.summary && (
+            <div className="rounded-md border bg-muted/20 p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t('replayReport.postRun.summary' as any)}
+              </div>
+              <div className="mt-2 text-sm text-foreground">{postRunEvaluation.summary}</div>
+            </div>
+          )}
+
+          <div className="grid gap-3 xl:grid-cols-3">
+            {[
+              ['preservedPoints', 'replayReport.postRun.preserved'],
+              ['missingPoints', 'replayReport.postRun.missing'],
+              ['changedPoints', 'replayReport.postRun.changed'],
+            ].map(([pointsKey, labelKey]) => {
+              const points = postRunEvaluation[pointsKey as keyof ReplayPostRunEvaluation] as string[];
+              return (
+                <div key={pointsKey} className="rounded-md border bg-muted/10 p-3">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t(labelKey as any)}</div>
+                  {points.length > 0 ? (
+                    <ul className="mt-2 space-y-1 text-xs text-foreground">
+                      {points.map((point, index) => (
+                        <li key={`${pointsKey}-${index}`} className="leading-relaxed">{point}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="mt-2 text-xs text-muted-foreground">-</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <Collapsible defaultOpen={false} className="rounded-md border bg-muted/10 p-3">
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-left">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('replayReport.postRun.metadataTitle' as any)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {t('replayReport.postRun.metadataHint' as any)}
+                </div>
+              </div>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+              <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+                <div>
+                  <div className="font-medium text-foreground">{t('replayReport.postRun.evaluatedBy' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.judgeModel ?? '-'}</div>
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">{t('replayReport.postRun.evaluatedAt' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.evaluatedAt ? new Date(postRunEvaluation.evaluatedAt).toLocaleString() : '-'}</div>
+                </div>
+              </div>
+              {postRunEvaluation.failureReason && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                  <div className="font-medium">{t('replayReport.postRun.failureReason' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.failureReason}</div>
+                </div>
+              )}
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('replayReport.postRun.rawJudgeResponse' as any)}
+                </div>
+                <pre className="mt-2 overflow-x-auto rounded-md border bg-background p-3 text-[11px] leading-relaxed text-foreground">{formatJsonPreview(postRunEvaluation.rawJudgeResponse)}</pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+      ) : (
+        <div className="rounded-md border border-muted bg-muted/20 p-6">
+          <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-7 w-7 animate-spin" />
+            <span>{postRunPending && !pollingExhausted ? t('replayReport.postRun.loading' as any) : t('replayReport.postRun.notAvailable' as any)}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2 rounded-md border bg-background p-3">
+        <div className="font-medium">{t('replayReport.postRun.detailsTitle' as any)}</div>
       <div className="space-y-2 rounded-md border bg-background p-3">
         <div className="font-medium">{t('replayReport.section.verdict' as any)}</div>
         <div className="flex flex-wrap items-center gap-2">
@@ -516,17 +739,17 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
           {semanticMatch ? (
             <>
               <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
-                <div><div className="font-medium">{t('replayReport.semanticOverall' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch.matchScore ?? null)}</div></div>
-                <div><div className="font-medium">{t('replayReport.semanticSimilarity' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch.semanticSimilarityScore ?? null)}</div></div>
-                <div><div className="font-medium">{t('replayReport.semanticEvidence' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch.evidenceConsistencyScore ?? null)}</div></div>
-                <div><div className="font-medium">{t('replayReport.semanticJudge' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch.judgeScore ?? null)}</div></div>
+                <div><div className="font-medium">{t('replayReport.semanticOverall' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch?.matchScore ?? null)}</div></div>
+                <div><div className="font-medium">{t('replayReport.semanticSimilarity' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch?.semanticSimilarityScore ?? null)}</div></div>
+                <div><div className="font-medium">{t('replayReport.semanticEvidence' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch?.evidenceConsistencyScore ?? null)}</div></div>
+                <div><div className="font-medium">{t('replayReport.semanticJudge' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(semanticMatch?.judgeScore ?? null)}</div></div>
               </div>
               {hasSemanticObservations && (
                 <div className="space-y-2 text-xs text-muted-foreground">
-                  {semanticMatch.reason && <div><span className="font-medium">{t('replayReport.semanticReason' as any)}:</span> {semanticMatch.reason}</div>}
+                  {semanticMatch?.reason && <div><span className="font-medium">{t('replayReport.semanticReason' as any)}:</span> {semanticMatch.reason}</div>}
                   {preservedPoints.length > 0 && <div><span className="font-medium">{t('replayReport.semanticPreserved' as any)}:</span> {preservedPoints.join(', ')}</div>}
-                  {(semanticMatch.missingPoints?.length ?? 0) > 0 && <div><span className="font-medium">{t('replayReport.semanticMissing' as any)}:</span> {semanticMatch.missingPoints?.join(', ')}</div>}
-                  {(semanticMatch.changedPoints?.length ?? 0) > 0 && <div><span className="font-medium">{t('replayReport.semanticChanged' as any)}:</span> {semanticMatch.changedPoints?.join(', ')}</div>}
+                  {(semanticMatch?.missingPoints?.length ?? 0) > 0 && <div><span className="font-medium">{t('replayReport.semanticMissing' as any)}:</span> {semanticMatch?.missingPoints?.join(', ')}</div>}
+                  {(semanticMatch?.changedPoints?.length ?? 0) > 0 && <div><span className="font-medium">{t('replayReport.semanticChanged' as any)}:</span> {semanticMatch?.changedPoints?.join(', ')}</div>}
                   {missingPointFindings.length > 0 && <div><span className="font-medium">{t('replayReport.semanticMissingStructured' as any)}:</span> {missingPointFindings.map(renderSemanticFindingText).join('; ')}</div>}
                   {changedPointFindings.length > 0 && <div><span className="font-medium">{t('replayReport.semanticChangedStructured' as any)}:</span> {changedPointFindings.map(renderSemanticFindingText).join('; ')}</div>}
                   {extraPointFindings.length > 0 && <div><span className="font-medium">{t('replayReport.semanticExtra' as any)}:</span> {extraPointFindings.map(renderSemanticFindingText).join('; ')}</div>}
@@ -623,6 +846,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       <div className="space-y-2 rounded-md border bg-background p-3">
         <div className="font-medium">{t('replayReport.section.actions' as any)}</div>
         <div className="text-xs text-muted-foreground">{t('replayReport.actionsHint' as any)}</div>
+      </div>
       </div>
     </div>
   );

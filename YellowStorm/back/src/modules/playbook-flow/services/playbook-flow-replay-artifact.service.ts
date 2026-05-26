@@ -103,13 +103,9 @@ export class PlaybookFlowReplayArtifactService {
       return null;
     }
 
-    const nodeSnapshotHash = replay.referenceNodeSnapshot
-      ? this.replayHashService.buildHash(replay.referenceNodeSnapshot)
-      : fingerprints.nodeSnapshotHash ?? null;
-
     return {
       ...fingerprints,
-      nodeSnapshotHash,
+      nodeSnapshotHash: fingerprints.nodeSnapshotHash ?? null,
     };
   }
 }

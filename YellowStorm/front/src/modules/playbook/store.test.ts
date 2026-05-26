@@ -218,12 +218,13 @@ describe('playbook store', () => {
     usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false, selectedStepId: null });
 
     return usePlaybookStore.getState().executePlaybook('p1', { singleStepTaskId: 't2' }).then(() => {
-      // SSE execution_start arrives AFTER optimistic — replaces cache with empty taskResults
+      // SSE execution_start arrives AFTER optimistic — now preserves task results from currentExecution
       usePlaybookStore.getState().onExecutionStart({
         executionId: 'e-single',
         playbookId: 'p1',
         executionNumber: 1,
         status: 'running',
+        singleStepTaskId: 't2',
       });
 
       // SSE step_start recreates the task with iteration: 0
@@ -264,6 +265,57 @@ describe('playbook store', () => {
         judgeResult: { overallScore: 95 },
       });
     });
+  });
+
+  it('preserves completed task results when single-step execution_start SSE arrives with singleStepTaskId', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Step 3', executionOrder: 3 }),
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Step 1', agentName: '', order: 1, status: 'completed', output: 'result-1', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Step 2', agentName: '', order: 2, status: 'completed', output: 'result-2', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Step 3', agentName: '', order: 3, status: 'completed', output: 'result-3', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.executePlaybook.mockResolvedValueOnce({ executionId: 'e2' });
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+      executionPanelOpen: true,
+      selectedStepId: 't2',
+    });
+
+    await usePlaybookStore.getState().executePlaybook('p1', { singleStepTaskId: 't2' });
+
+    usePlaybookStore.getState().onExecutionStart({
+      executionId: 'e2',
+      playbookId: 'p1',
+      executionNumber: 2,
+      status: 'running',
+      singleStepTaskId: 't2',
+    });
+
+    const exec = usePlaybookStore.getState().currentExecution!;
+    expect(exec.id).toBe('e2');
+    expect(exec.singleStepTaskId).toBe('t2');
+    expect(exec.taskResults).toHaveLength(3);
+    expect(exec.taskResults.find((tr) => tr.taskId === 't1')?.status).toBe('completed');
+    expect(exec.taskResults.find((tr) => tr.taskId === 't1')?.output).toBe('result-1');
+    expect(exec.taskResults.find((tr) => tr.taskId === 't2')?.status).toBe('running');
+    expect(exec.taskResults.find((tr) => tr.taskId === 't2')?.output).toBeNull();
+    expect(exec.taskResults.find((tr) => tr.taskId === 't3')?.status).toBe('completed');
+    expect(exec.taskResults.find((tr) => tr.taskId === 't3')?.output).toBe('result-3');
   });
 
   it('refreshes execution details after completion so terminal task states win', async () => {

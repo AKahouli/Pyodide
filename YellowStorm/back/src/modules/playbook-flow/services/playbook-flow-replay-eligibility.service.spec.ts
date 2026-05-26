@@ -7,8 +7,17 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
     replayId: 'replay-1',
     validationVersion: 1,
     mode: 'replay_strict',
+    isStale: false,
+    staleReasons: [],
     referenceOutput: null,
     outputFormatGuide: null,
+    intentKey: null,
+    intentLabel: null,
+    reasoningOutline: [],
+    stableReasoningRules: [],
+    contextVariableSchema: [],
+    toolTraceTemplate: [],
+    semanticChecklist: [],
     toolCalls: [],
     reasoningChain: [],
     fingerprints: {
@@ -23,6 +32,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
     behaviorBaseline: null,
     toolPolicy: null,
     outputContract: null,
+    driftPolicy: null,
     replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
     ...overrides,
   };
@@ -109,5 +119,45 @@ describe('PlaybookFlowReplayEligibilityService', () => {
 
     expect(result.applied).toBe(false);
     expect(result.invalidationReasons).toContain('output_contract_mismatch');
+  });
+
+  it('uses configurable eligibilityThreshold when provided', () => {
+    const result = service.evaluateReplayEligibility({
+      mode: 'replay_flex',
+      artifacts: makeArtifacts({ mode: 'replay_flex', fingerprints: { ...makeArtifacts().fingerprints!, modelConfigHash: 'different' } }),
+      currentFingerprints: {
+        inputContextHash: 'input-a',
+        flowSnapshotHash: 'flow-a',
+        nodeSnapshotHash: 'node-a',
+        agentConfigHash: null,
+        modelConfigHash: 'model-a',
+        toolConfigHash: 'tool-a',
+        outputContractHash: 'contract-a',
+      },
+      eligibilityThreshold: 100,
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.invalidationReasons).toContain('confidence_below_threshold');
+  });
+
+  it('applies when score meets configurable threshold', () => {
+    const result = service.evaluateReplayEligibility({
+      mode: 'replay_strict',
+      artifacts: makeArtifacts(),
+      currentFingerprints: {
+        inputContextHash: 'input-a',
+        flowSnapshotHash: 'flow-a',
+        nodeSnapshotHash: 'node-a',
+        agentConfigHash: null,
+        modelConfigHash: 'model-a',
+        toolConfigHash: 'tool-a',
+        outputContractHash: 'contract-a',
+      },
+      eligibilityThreshold: 50,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.confidenceScore).toBe(100);
   });
 });

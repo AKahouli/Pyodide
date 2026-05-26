@@ -437,8 +437,10 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   }, []);
 
   const autoConnectToNodeBody = useCallback(
-    (targetNodeId: string) => {
-      const start = connectStartRef.current;
+    (
+      start: { nodeId: string | null; handleId: string | null; handleType: string | null },
+      targetNodeId: string,
+    ) => {
       if (!start?.nodeId || start.handleType !== 'source' || start.nodeId === targetNodeId) return false;
 
       const sourceNode = nodesRef.current.find((n) => n.id === start.nodeId);
@@ -485,6 +487,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const onConnectEndHandler: OnConnectEnd = useCallback(
     (event) => {
+      const hoveredTargetId = connectionDragHoveredId;
       setConnectionDragHoveredId(null);
       const start = connectStartRef.current;
       connectStartRef.current = null;
@@ -495,32 +498,54 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         return;
       }
 
-      const flowPos = screenToFlowPosition({
-        x: (event as MouseEvent).clientX,
-        y: (event as MouseEvent).clientY,
-      });
+      let targetNodeId = hoveredTargetId;
 
-      let targetNodeId: string | null = null;
-      for (const node of nodesRef.current) {
-        const { position, measured } = node;
-        const width = measured?.width ?? (node as Node & { width?: number }).width ?? 0;
-        const height = measured?.height ?? (node as Node & { height?: number }).height ?? 0;
-        if (
-          flowPos.x >= position.x &&
-          flowPos.x <= position.x + width &&
-          flowPos.y >= position.y &&
-          flowPos.y <= position.y + height
-        ) {
-          targetNodeId = node.id;
-          break;
+      if (!targetNodeId) {
+        const clientX = (event as MouseEvent).clientX;
+        const clientY = (event as MouseEvent).clientY;
+        const hitElements = typeof document !== 'undefined' && document.elementsFromPoint
+          ? document.elementsFromPoint(clientX, clientY)
+          : [];
+
+        const hitHandle = hitElements.find((element) =>
+          element.classList?.contains('react-flow__handle')
+          || element.closest?.('.react-flow__handle'),
+        );
+        if (hitHandle) return;
+
+        const hitNode = hitElements.find((element) =>
+          element.classList?.contains('react-flow__node') && element.getAttribute('data-id'),
+        );
+        targetNodeId = hitNode?.getAttribute('data-id') ?? null;
+      }
+
+      if (!targetNodeId) {
+        const flowPos = screenToFlowPosition({
+          x: (event as MouseEvent).clientX,
+          y: (event as MouseEvent).clientY,
+        });
+
+        for (const node of nodesRef.current) {
+          const { position, measured } = node;
+          const width = measured?.width ?? (node as Node & { width?: number }).width ?? 0;
+          const height = measured?.height ?? (node as Node & { height?: number }).height ?? 0;
+          if (
+            flowPos.x >= position.x &&
+            flowPos.x <= position.x + width &&
+            flowPos.y >= position.y &&
+            flowPos.y <= position.y + height
+          ) {
+            targetNodeId = node.id;
+            break;
+          }
         }
       }
 
       if (!targetNodeId || targetNodeId === start.nodeId) return;
 
-      autoConnectToNodeBody(targetNodeId);
+      autoConnectToNodeBody(start, targetNodeId);
     },
-    [autoConnectToNodeBody, screenToFlowPosition],
+    [autoConnectToNodeBody, connectionDragHoveredId, screenToFlowPosition],
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(

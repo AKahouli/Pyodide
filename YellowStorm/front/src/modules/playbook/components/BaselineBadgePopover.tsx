@@ -61,7 +61,7 @@ export function BaselineBadgePopover({
         replay={replay}
         replayId={replay.id}
         onOpenOutputFormatEditor={onOpenOutputFormatEditor}
-        defaultTab="capture"
+        defaultTab="settings"
       />
     </>
   );

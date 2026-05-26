@@ -36,8 +36,8 @@ interface ReplayBaselineSettingsDialogProps {
 }
 
 const DEFAULT_REPLAY_CONFIG = {
-  replayOutputFormat: false,
-  replayToolTrace: false,
+  replayOutputFormat: true,
+  replayToolTrace: true,
   replayReasoningChain: true,
 };
 
@@ -91,7 +91,7 @@ ref,
   const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
-  const [labelDraft, setLabelDraft] = useState('');
+  const [labelDraft, setLabelDraft] = useState(() => replay?.label || '');
   const [replayConfigDraft, setReplayConfigDraft] = useState(DEFAULT_REPLAY_CONFIG);
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
@@ -121,6 +121,7 @@ ref,
           if (cancelled) return;
           const matchedReplay = replays.find((item) => item.id === replayId) || null;
           setCurrentReplay(matchedReplay);
+          setLabelDraft(matchedReplay?.label || '');
           setReplayMissing(!matchedReplay);
         } catch {
           if (cancelled) return;
@@ -130,6 +131,7 @@ ref,
         }
       } else {
         setCurrentReplay(replay ?? null);
+        setLabelDraft(replay?.label || '');
       }
 
       if (!cancelled) setIsLoadingReplay(false);

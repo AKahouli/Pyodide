@@ -434,7 +434,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
       : t('detail.badges.baseline');
   const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline);
-  const showOutputFormatBadge = Boolean(currentTask?.hasOutputFormatTemplate || currentTask?.isCapturingOutputFormat);
+  const showOutputFormatBadge = false;
   const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
@@ -808,7 +808,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               <p className="text-xs text-muted-foreground/60 italic">{t('node.noDescription')}</p>
             )}
 
-            {(showReplayBadge || showOutputFormatBadge || showOptimizationBadge) && (
+            {(showReplayBadge || showOptimizationBadge) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {showOptimizationBadge && (
                   <NodeMetaBadge
@@ -829,14 +829,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     onOpenOutputFormatEditor={nodeDataActions?.openOutputFormatEditor}
                   />
                 )}
-                {showOutputFormatBadge && (
+                {showReplayBadge && currentTask?.activeReplayOverallScore != null && (
                   <NodeMetaBadge
-                    label={outputFormatBadgeLabel}
-                    busy={Boolean(currentTask?.isCapturingOutputFormat || currentTask?.activeOutputFormatStatus === 'pending')}
-                    toneClassName={currentTask?.activeOutputFormatStatus === 'failed'
-                      ? 'border-red-500/30 bg-red-50 text-red-700'
-                      : 'border-sky-500/30 bg-sky-100 text-sky-700'}
-                    onClick={nodeDataActions?.openOutputFormatEditor ? () => nodeDataActions.openOutputFormatEditor?.(id) : undefined}
+                    label={`${Math.round(currentTask.activeReplayOverallScore)}%`}
+                    toneClassName={
+                      currentTask.activeReplayOverallScore >= 80
+                        ? 'border-emerald-500/30 bg-emerald-100 text-emerald-700'
+                        : currentTask.activeReplayOverallScore >= 60
+                          ? 'border-amber-500/30 bg-amber-100 text-amber-700'
+                          : 'border-red-500/30 bg-red-50 text-red-700'
+                    }
                   />
                 )}
               </div>

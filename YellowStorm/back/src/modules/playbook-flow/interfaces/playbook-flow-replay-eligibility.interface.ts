@@ -20,6 +20,7 @@ export interface ReplayEligibilityInput {
   currentFingerprints: FlowReplayFingerprints;
   staleReasons?: string[];
   isStale?: boolean;
+  eligibilityThreshold?: number;
 }
 
 export interface ReplayEligibilityResult {

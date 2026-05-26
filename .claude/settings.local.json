@@ -42,7 +42,8 @@
       "Bash(npx vite *)",
       "Bash(echo \"EXIT=$?\")",
       "Bash(git -C /Users/syrinejoulak/Documents/YellowStorm-poc show 5b266143^:YellowStorm/front/src/modules/workspace/components/WorkspaceItem.tsx)",
-      "Bash(git -C /Users/syrinejoulak/Documents/YellowStorm-poc show 5b266143^:YellowStorm/front/src/modules/workspace/components/WorkspaceContent.tsx)"
+      "Bash(git -C /Users/syrinejoulak/Documents/YellowStorm-poc show 5b266143^:YellowStorm/front/src/modules/workspace/components/WorkspaceContent.tsx)",
+      "Bash(grep -E \"src/.*\\\\.\\(ts|js\\)$\")"
     ]
   },
   "disabledMcpjsonServers": [

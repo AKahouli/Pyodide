@@ -27,6 +27,8 @@ const VOLATILE_KEYS = new Set([
   'tokenUsage',
   'semanticMatch',
   'stepReplayMode',
+  'positionX',
+  'positionY',
 ]);
 
 @Injectable()

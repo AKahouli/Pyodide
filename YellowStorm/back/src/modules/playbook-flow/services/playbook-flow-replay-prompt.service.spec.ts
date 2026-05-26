@@ -30,6 +30,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
       replayToolTrace: false,
       replayReasoningChain: true,
     },
+    semanticChecklist: overrides.semanticChecklist ?? [],
   };
 }
 
@@ -301,7 +302,7 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(result).toContain('Preserve validated tool purposes and argument shapes using current substituted context values.');
     expect(result).toContain('Context variable Ticker: AAPL -> MSFT');
     expect(result).toContain('Required stage: Extract data');
-    expect(result).toContain('Tool step 1: search_financials for load current earnings (ticker, dateRange)');
+    expect(result).toContain('Tool step 1: search_financials with arguments {"ticker":"MSFT","dateRange":"Q1 2026"}');
     expect(result).toContain('Keep the validated comparison logic.');
   });
 });

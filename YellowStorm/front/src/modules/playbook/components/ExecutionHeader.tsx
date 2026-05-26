@@ -14,7 +14,9 @@ interface Props {
   playbook: Playbook | null;
 }
 
-function getExecutionModeLabel(mode?: string): string {
+type ExecutionModeI18nKey = 'execution.mode.replayStrict' | 'execution.mode.replayFlex' | 'execution.mode.replayAdaptive' | 'execution.mode.live';
+
+function getExecutionModeLabel(mode?: string): ExecutionModeI18nKey {
   if (mode === 'replay_strict') return 'execution.mode.replayStrict';
   if (mode === 'replay_flex') return 'execution.mode.replayFlex';
   if (mode === 'replay_adaptive') return 'execution.mode.replayAdaptive';
