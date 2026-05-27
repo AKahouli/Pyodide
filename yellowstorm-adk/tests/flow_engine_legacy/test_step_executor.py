@@ -730,6 +730,17 @@ def test_parse_structured_final_response_accepts_outputs_dict() -> None:
     }
 
 
+def test_parse_structured_final_response_accepts_legacy_ports_list() -> None:
+    parsed = _parse_structured_final_response(
+        '{"display_text": "Hello", "ports": [{"id": "summary", "artifact_kind": "text", "value": "world"}]}'
+    )
+
+    assert parsed == {
+        "display_text": "Hello",
+        "outputs": [{"id": "summary", "artifact_kind": "text", "value": "world", "content": "world"}],
+    }
+
+
 def test_parse_structured_final_response_recovers_reasoning_trace_from_outputs() -> None:
     parsed = _parse_structured_final_response(
         '{"display_text":"Hello","outputs":[{"output_port_id":"summary","artifact_kind":"text","content":"world"},{"id":"step_1","type":"observation","label":"Read","description":"Read the brief.","confidence":0.9}]}'

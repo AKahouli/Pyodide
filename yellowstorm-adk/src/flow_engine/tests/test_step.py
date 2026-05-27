@@ -209,6 +209,22 @@ class TestStepResultReasoningTrace:
         assert result["outputs"]["summary"]["content"] == "done"
         assert result["outputs"]["report"]["ref"] == "https://example.com/f.pdf"
 
+    def test_structured_response_accepts_legacy_ports_list(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "ports": [
+                {"id": "summary", "artifact_kind": "text", "value": "done"},
+                {"id": "report", "artifact_kind": "document", "value": {"url": "https://example.com/f.pdf"}},
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert result["display_text"] == "Summary"
+        assert result["outputs"]["summary"]["content"] == "done"
+        assert result["outputs"]["report"]["ref"] == "https://example.com/f.pdf"
+
     def test_structured_response_recovers_reasoning_trace_misplaced_in_outputs(self):
         response = json.dumps({
             "display_text": "Summary",

@@ -244,7 +244,7 @@ export class PlaybookFlowIntentService {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-    }, { timeout: 45000 });
+    }, { timeout: 180000 });
 
     const validationContext = this.buildValidationContext(flow);
 

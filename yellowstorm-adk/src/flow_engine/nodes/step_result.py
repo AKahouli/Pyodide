@@ -147,7 +147,9 @@ def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
     candidates = _extract_json_objects(response_text)
     for payload in reversed(candidates):
         display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
-        outputs, recovered_trace = _normalize_structured_outputs(payload.get("outputs"))
+        outputs, recovered_trace = _normalize_structured_outputs(
+            payload.get("outputs") if payload.get("outputs") is not None else payload.get("ports")
+        )
         if display_text and outputs is not None:
             result: dict[str, Any] = {
                 "display_text": display_text,
@@ -164,6 +166,21 @@ def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
     raise ValueError("Step did not return a JSON object")
 
 
+def _normalize_structured_output_entry(item: dict[str, Any], *, fallback_port_id: str = "") -> dict[str, Any]:
+    entry = dict(item)
+    if not _extract_output_port_id(entry):
+        normalized_port_id = str(fallback_port_id).strip()
+        if normalized_port_id:
+            entry["output_port_id"] = normalized_port_id
+    if not (entry.get("artifact_kind") or entry.get("artifactKind")):
+        legacy_kind = str(entry.get("type") or "").strip()
+        if legacy_kind:
+            entry["artifact_kind"] = legacy_kind
+    if "content" not in entry and "value" in entry:
+        entry["content"] = entry.get("value")
+    return entry
+
+
 def _normalize_structured_outputs(outputs: Any) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]]]:
     if isinstance(outputs, list):
         normalized: list[dict[str, Any]] = []
@@ -174,7 +191,7 @@ def _normalize_structured_outputs(outputs: Any) -> tuple[list[dict[str, Any]] | 
             if _is_reasoning_trace_entry(item):
                 recovered_trace.append(dict(item))
                 continue
-            normalized.append(item)
+            normalized.append(_normalize_structured_output_entry(item))
         return normalized, recovered_trace
     if isinstance(outputs, dict):
         normalized: list[dict[str, Any]] = []
@@ -185,10 +202,7 @@ def _normalize_structured_outputs(outputs: Any) -> tuple[list[dict[str, Any]] | 
             if _is_reasoning_trace_entry(value):
                 recovered_trace.append(dict(value))
                 continue
-            entry = dict(value)
-            if not _extract_output_port_id(entry):
-                entry["output_port_id"] = str(port_id).strip()
-            normalized.append(entry)
+            normalized.append(_normalize_structured_output_entry(value, fallback_port_id=str(port_id)))
         return normalized, recovered_trace
     return None, []
 

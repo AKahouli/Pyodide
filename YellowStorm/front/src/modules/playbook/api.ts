@@ -826,6 +826,7 @@ export async function requestPlaybookIntent(
   const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
     API_ENDPOINTS.playbooks.intent(playbookId),
     data,
+    { timeout: 180000 },
   );
   return response.data.data;
 }
