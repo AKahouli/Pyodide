@@ -3474,7 +3474,7 @@ function PlaybookCanvasInner() {
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
                 >
-                  <Controls />
+                  <Controls position="bottom-left" />
                 </Canvas>
                 <PlaybookIntentBar
                   ref={intentBarRef}
