@@ -86,6 +86,7 @@ def build_step_prompt(
             "Do not put reasoning steps inside `outputs`; reasoning steps belong only in top-level `reasoning_trace`.",
             "For document outputs, use `filename` and `filepath` (not `content`).",
             "For text/code outputs, use `content` for the string payload.",
+            "Must always generate markdown For text outputs ; Whenever the response includes numerical data, categories, comparisons, or structured lists, format the output as a Markdown table to maximize readability.",
             "For data outputs, use `content` for the structured JSON payload.",
             "`reasoning_trace` is an array of objects describing your reasoning steps.",
             'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'

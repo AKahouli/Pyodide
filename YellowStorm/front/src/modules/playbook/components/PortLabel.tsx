@@ -1,4 +1,4 @@
-import { AlertTriangle, Search } from 'lucide-react';
+import { AlertTriangle, Search, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import type { ArtifactKind } from '../types';
@@ -11,9 +11,10 @@ interface PortLabelProps {
   warning?: boolean;
   warningTooltip?: string;
   onInspect?: () => void;
+  onDelete?: () => void;
 }
 
-export function PortLabel({ name, kind, position, selected = false, warning, warningTooltip, onInspect }: PortLabelProps) {
+export function PortLabel({ name, kind, position, selected = false, warning, warningTooltip, onInspect, onDelete }: PortLabelProps) {
   const colors = PORT_COLORS[kind];
   if (!colors) return null;
 
@@ -27,6 +28,8 @@ export function PortLabel({ name, kind, position, selected = false, warning, war
         'border-border/70 bg-background/95 text-muted-foreground',
         selected && 'border-[#ffcd03]/70 bg-[#ffcd03]/12 text-foreground shadow-[0_0_0_1px_rgba(255,205,3,0.18)]',
         onInspect && 'group pr-1.5',
+        !onInspect && onDelete && 'group pr-1.5',
+        onInspect && onDelete && 'group pr-0.5',
         position === 'left' ? 'right-full mr-3' : 'left-full ml-3',
       )}
     >
@@ -52,6 +55,20 @@ export function PortLabel({ name, kind, position, selected = false, warning, war
           title="Inspect port content"
         >
           <Search className="h-3 w-3" />
+        </button>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          className="hidden group-hover:flex shrink-0 h-4 w-4 items-center justify-center rounded-sm hover:bg-destructive/10 hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDelete();
+          }}
+          title="Delete port"
+        >
+          <Trash2 className="h-3 w-3" />
         </button>
       )}
     </div>

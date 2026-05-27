@@ -100,6 +100,14 @@ async def emit_events(
                         {"token": str(data.get("token", "")), "node_id": str(data.get("node_id", ""))},
                         int(data.get("iteration", 0)),
                     )
+                elif event_type == EVENT_NODE_SUSPENDED:
+                    yield _build_event(
+                        EVENT_NODE_SUSPENDED,
+                        execution_id,
+                        str(data.get("node_id", "")),
+                        data.get("payload", {}),
+                        int(data.get("iteration", 0)),
+                    )
                 else:
                     yield _build_event(
                         str(event_type),
