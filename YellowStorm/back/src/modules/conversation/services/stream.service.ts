@@ -32,7 +32,7 @@ import { DocumentStatus } from '../../workspace/schemas/workspace-document.schem
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 interface StreamRequest {
   content: string;
