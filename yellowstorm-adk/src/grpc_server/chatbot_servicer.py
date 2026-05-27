@@ -409,7 +409,10 @@ class ChatbotServicer(
                                 "type": "artifact",
                                 "data": {
                                     "filename": file_data.get("filename", ""),
-                                    "file_path": file_data.get("azure_path", ""),
+                                    "file_path": file_data.get("azure_path")
+                                    or file_data.get("file_path")
+                                    or file_data.get("object_key")
+                                    or "",
                                 },
                             },
                             "metadata": {
@@ -1291,7 +1294,10 @@ class ChatbotServicer(
             )
         elif component_type == "artifact":
             component_kwargs["artifact"] = chatbot_pb2.ArtifactComponent(
-                file_path=component_data.get("file_path", ""),
+                file_path=component_data.get("file_path")
+                or component_data.get("azure_path")
+                or component_data.get("object_key")
+                or "",
                 filename=component_data.get("filename", ""),
                 output_port_id=component_data.get("output_port_id")
                 or component_data.get("outputPortId", ""),
@@ -3045,7 +3051,10 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
     elif comp_type == "artifact":
         component.artifact.CopyFrom(
             chatbot_pb2.ArtifactComponent(
-                file_path=data.get("file_path", ""),
+                file_path=data.get("file_path")
+                or data.get("azure_path")
+                or data.get("object_key")
+                or "",
                 filename=data.get("filename", ""),
                 output_port_id=data.get("output_port_id")
                 or data.get("outputPortId", ""),

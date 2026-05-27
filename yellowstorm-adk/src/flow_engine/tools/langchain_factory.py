@@ -19,6 +19,9 @@ from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
     semantic_match_output_port,
 )
+from src.smart_rag.tools.utilities.code_interpreter_payload import (
+    build_code_interpreter_payload_context,
+)
 from src.smart_rag.tools.utilities.connector_tools import (
     import_connector_items_to_workspace_request,
 )
@@ -770,6 +773,8 @@ def _build_code_interpreter_file_list(
     for doc in code_interpreter_files or []:
         filepath = str(doc.get("filepath", "")).strip()
         filename = str(doc.get("filename", "")).strip()
+        workspace_id = str(doc.get("workspace_id", "")).strip()
+        workspace_name = str(doc.get("workspace_name", "")).strip()
         if not filepath or not filename:
             continue
 
@@ -780,7 +785,12 @@ def _build_code_interpreter_file_list(
         )
 
         if existing is None or (existing_is_local and not current_is_local):
-            deduped_by_filename[filename] = {"filepath": filepath, "filename": filename}
+            deduped_by_filename[filename] = {
+                "filepath": filepath,
+                "filename": filename,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+            }
 
     return [
         entry
@@ -1149,7 +1159,6 @@ def _create_code_interpreter_tool(
     normalized_code_interpreter_files = _build_code_interpreter_file_list(
         code_interpreter_files
     )
-    available_filenames = _format_available_filenames(normalized_code_interpreter_files)
     port_scope_note = _format_documents_by_port(documents_by_port)
 
     if not backend_url:
@@ -1162,29 +1171,56 @@ def _create_code_interpreter_tool(
         )
         return None
 
-    # Pre-compute v2 file_paths payload expected by the sandbox backend
-    file_paths_base64 = None
-    if normalized_code_interpreter_files:
-        file_paths_list = [
-            {"azure_path": doc.get("filepath", ""), "filename": doc.get("filename", "")}
-            for doc in normalized_code_interpreter_files
-            if doc.get("filepath") and doc.get("filename")
-        ]
-        if file_paths_list:
-            file_paths_base64 = base64.b64encode(
-                json.dumps(file_paths_list).encode("utf-8")
-            ).decode("utf-8")
-
     # Extract session params from agent_params if available
     agent_params = agent_config.get("agent_params") or {}
     session_id = agent_params.get("session_id")
     user_id = agent_params.get("user_id")
     brain_id = output_workspace_id or (brain_ids[0] if brain_ids else None)
+    file_workspace_ids = {
+        str(doc.get("workspace_id", "")).strip()
+        for doc in normalized_code_interpreter_files
+        if str(doc.get("workspace_id", "")).strip()
+    }
+    selected_input_workspace_id = None
+    if len(file_workspace_ids) == 1:
+        selected_input_workspace_id = next(iter(file_workspace_ids))
+    elif len(brain_ids) == 1:
+        selected_input_workspace_id = brain_ids[0]
+    workspace_name, file_names, skipped_file_names, mixed_workspace_file_names = (
+        build_code_interpreter_payload_context(
+            normalized_code_interpreter_files,
+            fallback_workspace_name=brain_id,
+            selected_workspace_id=selected_input_workspace_id,
+            owner_user_id=user_id,
+        )
+    )
+    available_filenames = _format_available_filenames(
+        [{"filename": filename} for filename in file_names]
+    )
+    if mixed_workspace_file_names:
+        logger.warning(
+            "Rejecting code interpreter call with mixed-workspace files",
+            mixed_workspace_file_names=mixed_workspace_file_names,
+            selected_input_workspace_id=selected_input_workspace_id,
+        )
+    if skipped_file_names:
+        logger.warning(
+            "Dropping code interpreter files without enough workspace context",
+            skipped_file_names=skipped_file_names,
+            selected_workspace_name=workspace_name,
+        )
 
     async def _run_code(code: str, timeout_seconds: int = 60) -> str:
         timeout_seconds = min(timeout_seconds, 300)
 
-        if not brain_id:
+        if mixed_workspace_file_names and not file_names:
+            joined = ", ".join(mixed_workspace_file_names)
+            return (
+                "Error: Code interpreter cannot run with files from multiple workspaces. "
+                f"Conflicting files: {joined}"
+            )
+
+        if not workspace_name:
             return (
                 "Error: Code interpreter requires at least one workspace/brain context"
             )
@@ -1199,11 +1235,11 @@ def _create_code_interpreter_tool(
                 f"{backend_url}/tool/python_interpreter_v2",
                 json={
                     "user_id": user_id,
-                    "workspace_id": brain_id,
+                    "workspace_name": workspace_name,
                     "session_id": session_id,
                     "code": code,
                     "timeout_seconds": timeout_seconds,
-                    "file_paths": file_paths_base64,
+                    "file_names": file_names,
                 },
                 timeout=timeout_seconds + 15,
             )
@@ -1238,7 +1274,10 @@ def _create_code_interpreter_tool(
                 collector.add_component(
                     "artifact",
                     {
-                        "file_path": gf.get("azure_path", gf.get("file_path", "")),
+                        "file_path": gf.get("azure_path")
+                        or gf.get("file_path")
+                        or gf.get("object_key")
+                        or "",
                         "filename": generated_filename,
                         "artifact_kind": str(
                             (selected_port or {}).get("artifact_kind") or inferred_kind
