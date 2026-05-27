@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
+import { getArtifactDisplayContent } from '../utils/artifact-content';
 import type { TaskArtifact, ArtifactKind } from '../types';
 
 interface PortContentViewerProps {
@@ -12,15 +13,8 @@ interface PortContentViewerProps {
 }
 
 function formatArtifactContent(artifact: TaskArtifact): string {
-  const content = artifact.content ?? (artifact.metadata?.data as string | undefined);
-  if (typeof content === 'string' && content.trim()) {
-    try {
-      const parsed = JSON.parse(content);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return content;
-    }
-  }
+  const content = getArtifactDisplayContent(artifact);
+  if (typeof content === 'string' && content.trim()) return content;
   if (artifact.url) return artifact.url;
   return '';
 }
