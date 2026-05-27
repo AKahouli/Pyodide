@@ -258,6 +258,7 @@ def test_code_interpreter_generated_file_uses_object_key_fallback(
 
     artifact = collector.get_and_clear()[1]
     assert artifact["data"]["file_path"] == "user/session/report.xlsx"
+    assert artifact["data"]["object_key"] == "user/session/report.xlsx"
 
 
 def test_code_interpreter_request_normalizes_prefixed_workspace_name(

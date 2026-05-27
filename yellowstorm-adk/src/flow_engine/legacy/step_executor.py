@@ -76,23 +76,27 @@ def _collect_generated_artifacts(
         if not isinstance(comp, dict) or comp.get("type") != "artifact":
             continue
         data = comp.get("data") or {}
-        generated.append(
-            {
-                "file_path": str(
-                    data.get("file_path") or data.get("filePath") or ""
-                ).strip(),
-                "filename": str(data.get("filename") or "").strip(),
-                "artifact_kind": str(
-                    data.get("artifact_kind") or data.get("artifactKind") or ""
-                ).strip(),
-                "output_port_id": str(
-                    data.get("output_port_id") or data.get("outputPortId") or ""
-                ).strip(),
-                "mime_type": str(
-                    data.get("mime_type") or data.get("mimeType") or ""
-                ).strip(),
-            }
-        )
+        artifact = {
+            "file_path": str(
+                data.get("file_path") or data.get("filePath") or ""
+            ).strip(),
+            "filename": str(data.get("filename") or "").strip(),
+            "artifact_kind": str(
+                data.get("artifact_kind") or data.get("artifactKind") or ""
+            ).strip(),
+            "output_port_id": str(
+                data.get("output_port_id") or data.get("outputPortId") or ""
+            ).strip(),
+            "mime_type": str(
+                data.get("mime_type") or data.get("mimeType") or ""
+            ).strip(),
+        }
+        object_key = str(
+            data.get("object_key") or data.get("objectKey") or ""
+        ).strip()
+        if object_key:
+            artifact["object_key"] = object_key
+        generated.append(artifact)
     return generated
 
 
@@ -276,16 +280,18 @@ def _build_task_artifacts_from_structured_outputs(
             )
             continue
 
-        artifacts.append(
-            {
-                "port_id": str(port.get("id") or output_port_id),
-                "artifact_kind": output_kind
-                or str(matched_artifact.get("artifact_kind") or "document"),
-                "url": str(matched_artifact.get("file_path") or ""),
-                "filename": str(matched_artifact.get("filename") or ""),
-                "mime_type": str(matched_artifact.get("mime_type") or ""),
-            }
-        )
+        artifact = {
+            "port_id": str(port.get("id") or output_port_id),
+            "artifact_kind": output_kind
+            or str(matched_artifact.get("artifact_kind") or "document"),
+            "url": str(matched_artifact.get("file_path") or ""),
+            "filename": str(matched_artifact.get("filename") or ""),
+            "mime_type": str(matched_artifact.get("mime_type") or ""),
+        }
+        object_key = str(matched_artifact.get("object_key") or "").strip()
+        if object_key:
+            artifact["object_key"] = object_key
+        artifacts.append(artifact)
 
     return artifacts
 

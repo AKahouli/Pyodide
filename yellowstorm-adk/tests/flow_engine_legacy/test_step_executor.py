@@ -629,6 +629,46 @@ def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_co
     ]
 
 
+def test_build_task_artifacts_preserves_generated_object_key() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "report", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "report",
+                "artifact_kind": "document",
+                "content": {"filename": "report.xlsx"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.xlsx",
+                "object_key": "user/session/report.xlsx",
+                "filename": "report.xlsx",
+                "mime_type": (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "report",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.xlsx",
+            "object_key": "user/session/report.xlsx",
+            "filename": "report.xlsx",
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        }
+    ]
+
+
 def test_validate_declared_output_ports_accepts_declared_ids() -> None:
     _validate_declared_output_ports(
         {"declared_output_ports": ["summary", "context"]},

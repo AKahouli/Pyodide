@@ -20,6 +20,8 @@ from src.flow_engine.runtime.artifact_routing import (
     semantic_match_output_port,
 )
 from src.smart_rag.tools.utilities.code_interpreter_payload import (
+    _extract_workspace_name_from_filepath,
+    _extract_workspace_name_hint,
     build_code_interpreter_payload_context,
 )
 from src.smart_rag.tools.utilities.connector_tools import (
@@ -799,6 +801,41 @@ def _build_code_interpreter_file_list(
     ]
 
 
+def _resolve_code_interpreter_workspace_name(
+    files: List[Dict[str, str]],
+    user_id: Optional[str],
+) -> str:
+    workspace_names = {
+        _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
+        or _extract_workspace_name_from_filepath(
+            str(doc.get("filepath", "")),
+            workspace_id=str(doc.get("workspace_id", "")).strip(),
+            owner_user_id=user_id,
+        )
+        for doc in files
+        if (
+            str(doc.get("workspace_name", "")).strip()
+            or str(doc.get("filepath", "")).strip()
+        )
+    }
+    workspace_names.discard("")
+    if len(workspace_names) == 1:
+        return next(iter(workspace_names))
+    return ""
+
+
+def _normalize_code_interpreter_file_names(file_names: List[str]) -> List[str]:
+    normalized_file_names: List[str] = []
+    seen_file_names = set()
+    for file_name in file_names:
+        normalized_file_name = str(file_name or "").replace(" ", "_")
+        if not normalized_file_name or normalized_file_name in seen_file_names:
+            continue
+        normalized_file_names.append(normalized_file_name)
+        seen_file_names.add(normalized_file_name)
+    return normalized_file_names
+
+
 def _format_documents_by_port(
     documents_by_port: Optional[Dict[str, List[str]]], max_ports: int = 6
 ) -> str:
@@ -1175,7 +1212,6 @@ def _create_code_interpreter_tool(
     agent_params = agent_config.get("agent_params") or {}
     session_id = agent_params.get("session_id")
     user_id = agent_params.get("user_id")
-    brain_id = output_workspace_id or (brain_ids[0] if brain_ids else None)
     file_workspace_ids = {
         str(doc.get("workspace_id", "")).strip()
         for doc in normalized_code_interpreter_files
@@ -1184,16 +1220,23 @@ def _create_code_interpreter_tool(
     selected_input_workspace_id = None
     if len(file_workspace_ids) == 1:
         selected_input_workspace_id = next(iter(file_workspace_ids))
-    elif len(brain_ids) == 1:
-        selected_input_workspace_id = brain_ids[0]
+    resolved_workspace_name = _resolve_code_interpreter_workspace_name(
+        normalized_code_interpreter_files,
+        user_id,
+    )
     workspace_name, file_names, skipped_file_names, mixed_workspace_file_names = (
         build_code_interpreter_payload_context(
             normalized_code_interpreter_files,
-            fallback_workspace_name=brain_id,
+            fallback_workspace_name=(
+                resolved_workspace_name
+                if normalized_code_interpreter_files
+                else output_workspace_id
+            ),
             selected_workspace_id=selected_input_workspace_id,
             owner_user_id=user_id,
         )
     )
+    file_names = _normalize_code_interpreter_file_names(file_names)
     available_filenames = _format_available_filenames(
         [{"filename": filename} for filename in file_names]
     )
@@ -1230,6 +1273,14 @@ def _create_code_interpreter_tool(
             return "Error: Code interpreter requires a session_id in agent_params"
 
         try:
+
+            logger.info(
+                "playbook_code_interpreter_v2_request",
+                workspace_name=workspace_name,
+                filetype=type(file_names),
+                file_names=file_names,
+                input_file_count=len(normalized_code_interpreter_files),
+            )
             response = await asyncio.to_thread(
                 requests.post,
                 f"{backend_url}/tool/python_interpreter_v2",
@@ -1263,6 +1314,7 @@ def _create_code_interpreter_tool(
             # Collect artifact components for generated files
             for gf in result.get("generated_files", []):
                 generated_filename = gf.get("filename", gf.get("name", ""))
+                generated_object_key = str(gf.get("object_key") or "").strip()
                 inferred_kind = (
                     infer_artifact_kind(generated_filename) or "document"
                 )
@@ -1271,22 +1323,25 @@ def _create_code_interpreter_tool(
                     generated_filename,
                     inferred_kind,
                 )
+                artifact_data = {
+                    "file_path": gf.get("azure_path")
+                    or gf.get("file_path")
+                    or generated_object_key
+                    or "",
+                    "filename": generated_filename,
+                    "artifact_kind": str(
+                        (selected_port or {}).get("artifact_kind") or inferred_kind
+                    ).strip()
+                    or inferred_kind,
+                    "output_port_id": str(
+                        (selected_port or {}).get("id") or ""
+                    ).strip(),
+                }
+                if generated_object_key:
+                    artifact_data["object_key"] = generated_object_key
                 collector.add_component(
                     "artifact",
-                    {
-                        "file_path": gf.get("azure_path")
-                        or gf.get("file_path")
-                        or gf.get("object_key")
-                        or "",
-                        "filename": generated_filename,
-                        "artifact_kind": str(
-                            (selected_port or {}).get("artifact_kind") or inferred_kind
-                        ).strip()
-                        or inferred_kind,
-                        "output_port_id": str(
-                            (selected_port or {}).get("id") or ""
-                        ).strip(),
-                    },
+                    artifact_data,
                 )
 
             # Build text response for the LLM

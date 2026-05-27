@@ -544,6 +544,7 @@ def _extract_artifacts_from_components(
 
         if comp_type == "artifact":
             file_path = str(data.get("file_path") or data.get("filePath") or "").strip()
+            object_key = str(data.get("object_key") or data.get("objectKey") or "").strip()
             filename = str(data.get("filename", "")).strip()
             mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
@@ -584,15 +585,16 @@ def _extract_artifacts_from_components(
                 artifact_kind = port_kind
             else:
                 artifact_kind = explicit_kind or port_kind or fallback_kind
-            artifacts.append(
-                {
-                    "port_id": port_id,
-                    "artifact_kind": artifact_kind,
-                    "url": file_path,
-                    "filename": filename,
-                    "mime_type": mime_type,
-                }
-            )
+            artifact = {
+                "port_id": port_id,
+                "artifact_kind": artifact_kind,
+                "url": file_path,
+                "filename": filename,
+                "mime_type": mime_type,
+            }
+            if object_key:
+                artifact["object_key"] = object_key
+            artifacts.append(artifact)
 
         elif comp_type == "text":
             text_content = str(data.get("content", "")).strip()

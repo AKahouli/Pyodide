@@ -737,6 +737,48 @@ def test_build_tool_scope_includes_upstream_document_artifact_ids() -> None:
     assert tool_scope["files_by_port"]["docs"][0]["document_id"] == "doc-7"
 
 
+def test_build_tool_scope_prefers_artifact_object_key_for_file_mounts() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "docs", "name": "Docs", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "upstream",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "docs",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {
+                "upstream:default": [
+                    {
+                        "artifact_kind": "document",
+                        "url": "https://example.com/report.xlsx",
+                        "object_key": "user/session/report.xlsx",
+                        "filename": "report.xlsx",
+                    }
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    file_ref = build_tool_scope(resolved)["files_by_port"]["docs"][0]
+
+    assert file_ref["filepath"] == "user/session/report.xlsx"
+    assert file_ref["filename"] == "report.xlsx"
+
+
 def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> None:
     resolved = resolve_task_inputs(
         "downstream",
