@@ -1306,10 +1306,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({ isStopping: false });
           const apiError = parseApiError(err);
           if (apiError.code === 'ERR_1006') {
-            const cached = get().executionCache[executionId];
-            if (cached?.playbookId) {
-              void get().fetchExecution(cached.playbookId, executionId);
-            }
+            set((state) => {
+              const executionCache = { ...state.executionCache };
+              const cached = executionCache[executionId];
+              if (cached) {
+                executionCache[executionId] = {
+                  ...cached,
+                  status: 'completed',
+                  waitingForHumanInput: false,
+                  interruptPayload: null,
+                  taskResults: cached.taskResults.map((tr) =>
+                    tr.status === 'running' || tr.status === 'interrupted'
+                      ? { ...tr, status: 'completed' as const }
+                      : tr,
+                  ),
+                };
+              }
+              const executingPlaybookIds = state.executingPlaybookIds.filter((pid) => pid !== playbookId);
+              const currentExecution =
+                state.currentExecution?.id === executionId
+                  ? executionCache[executionId] ?? state.currentExecution
+                  : state.currentExecution;
+              return {
+                executionCache,
+                currentExecution,
+                executingPlaybookIds,
+                copilotMode: 'design' as const,
+                waitingForHumanInput: false,
+              };
+            });
             return;
           }
           handleApiError(err);

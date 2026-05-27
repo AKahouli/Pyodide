@@ -645,6 +645,23 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     [id, inputPorts, dataBindings, inputFiles, nodeDataActions, updateDataBindings, removeInputFileFromTask],
   );
 
+  const handleDeleteOutputPort = useCallback(
+    (portId: string) => {
+      if (!nodeDataActions?.updateNodeData) return;
+      const updatedOutputPorts = outputPorts.filter((p) => p.id !== portId);
+      nodeDataActions.updateNodeData(id, { outputPorts: updatedOutputPorts });
+
+      const currentBindings = dataBindings;
+      const updatedBindings = currentBindings.filter(
+        (b) => !(b.sourceNode === id && b.sourcePort === portId),
+      );
+      if (updatedBindings.length !== currentBindings.length) {
+        updateDataBindings(updatedBindings);
+      }
+    },
+    [id, outputPorts, dataBindings, nodeDataActions, updateDataBindings],
+  );
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -740,6 +757,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               />
               <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
                 onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
+                onDelete={() => handleDeleteOutputPort(port.id)}
               />
             </div>
           ))}

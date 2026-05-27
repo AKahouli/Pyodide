@@ -438,7 +438,49 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     );
     expect(ctx.streamEvents.emitInterrupt).toHaveBeenCalledWith(
       'exec-e2e', 'approval-1', 'Approve this?', 0, 'exec-e2e',
-      { interruptType: 'human_approval', resumableActions: ['approve', 'reject'] },
+      { interruptType: 'approval_request', resumableActions: ['approve', 'reject'] },
+    );
+  });
+
+  it('persists clarification metadata when NodeSuspended is received', async () => {
+    const ctx = await createE2EService([
+      {
+        event_type: 'NodeSuspended',
+        node_id: 'task-1',
+        iteration: 1,
+        payload: {
+          type: 'clarification',
+          message: 'Which country should I analyze?',
+          interrupt_id: 'task-1:clarification:1',
+          task_title: 'GDP Analysis',
+          task_description: 'Analyze GDP for a country and year',
+          result: '',
+          conversation_json: '[]',
+          resumable_actions: ['reply', 'skip'],
+        },
+      },
+    ]);
+
+    await ctx.service.start('flow-1', 'owner-1', {});
+    await ctx.triggerStreamEvents();
+    await flushPromises();
+
+    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'exec-e2e' }),
+      expect.objectContaining({
+        status: 'pending_approval',
+        pendingApproval: expect.objectContaining({
+          nodeId: 'task-1',
+          iteration: 1,
+          prompt: 'Which country should I analyze?',
+          interruptType: 'clarification',
+          interruptId: 'task-1:clarification:1',
+          taskTitle: 'GDP Analysis',
+          taskDescription: 'Analyze GDP for a country and year',
+          payloadJson: '[]',
+          resumableActions: ['reply', 'skip'],
+        }),
+      }),
     );
   });
 

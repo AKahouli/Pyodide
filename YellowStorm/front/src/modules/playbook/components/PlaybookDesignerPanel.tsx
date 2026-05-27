@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -73,6 +73,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const setDesignerOpen = usePlaybookStore((s) => s.setDesignerOpen);
   const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+  const stopExecution = usePlaybookStore((s) => s.stopExecution);
+  const isStopping = usePlaybookStore((s) => s.isStopping);
 
   const { saveNow } = useAutosave();
 
@@ -246,9 +248,23 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
             <p className="text-xs text-muted-foreground truncate">{pendingInterruptTaskTitle}</p>
           )}
         </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)}>
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {copilotMode === 'interrupt' && playbookId && currentExecution && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-destructive hover:text-destructive"
+              disabled={isStopping}
+              onClick={() => void stopExecution(playbookId, currentExecution.id)}
+              title={t('execution.stop')}
+            >
+              <Square className="h-4 w-4" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4 space-y-3">

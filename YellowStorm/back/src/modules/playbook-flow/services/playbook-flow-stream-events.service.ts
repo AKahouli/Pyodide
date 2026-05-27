@@ -326,10 +326,17 @@ export class PlaybookFlowStreamEventsService {
           threadId: execution.threadId ?? null,
           interruptPayload: execution.pendingApproval
             ? {
-                type: 'approval_request',
+                type: execution.pendingApproval.interruptType ?? 'approval_request',
                 message: execution.pendingApproval.prompt,
                 taskId: execution.pendingApproval.nodeId,
+                taskTitle: execution.pendingApproval.taskTitle ?? '',
                 iteration: execution.pendingApproval.iteration,
+                round: execution.pendingApproval.iteration,
+                interruptId: execution.pendingApproval.interruptId ?? '',
+                taskDescription: execution.pendingApproval.taskDescription ?? '',
+                result: execution.pendingApproval.result ?? '',
+                payloadJson: execution.pendingApproval.payloadJson ?? '',
+                resumableActions: execution.pendingApproval.resumableActions ?? [],
               }
             : null,
           waitingForHumanInput: execution.status === 'pending_approval',

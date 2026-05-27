@@ -1185,6 +1185,84 @@ describe('getExecution', () => {
     });
   });
 
+  it('hydrates clarification interrupt payloads from pendingApproval', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-clarification',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'pending_approval',
+          threadId: 'thread-1',
+          pendingApproval: {
+            nodeId: 'task-1',
+            iteration: 2,
+            prompt: 'Which country did you mean?',
+            interruptType: 'clarification',
+            interruptId: 'task-1:clarification:2',
+            taskTitle: 'GDP Analysis',
+            taskDescription: 'Need a target country',
+            result: '',
+            payloadJson: '[]',
+            resumableActions: ['reply', 'skip'],
+          },
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-clarification');
+
+    expect(execution.interruptPayload).toEqual(expect.objectContaining({
+      type: 'clarification',
+      taskId: 'task-1',
+      taskTitle: 'GDP Analysis',
+      message: 'Which country did you mean?',
+      threadId: 'thread-1',
+      interruptId: 'task-1:clarification:2',
+      round: 2,
+      taskDescription: 'Need a target country',
+      payloadJson: '[]',
+      resumableActions: ['reply', 'skip'],
+    }));
+    expect(execution.waitingForHumanInput).toBe(true);
+  });
+
+  it('maps legacy human_approval pendingApproval type to approval_request', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-approval',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'pending_approval',
+          threadId: 'thread-1',
+          pendingApproval: {
+            nodeId: 'task-1',
+            iteration: 0,
+            prompt: 'Approve?',
+            interruptType: 'human_approval',
+          },
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-approval');
+
+    expect(execution.interruptPayload?.type).toBe('approval_request');
+  });
+
   it('uses the execution advisor endpoint and normalizes the returned task result', async () => {
     apiClientMock.post.mockReset();
     apiClientMock.post.mockResolvedValueOnce({

@@ -137,10 +137,53 @@ export class PlaybookFlowService {
       .limit(limit)
       .lean();
 
+    const flowIds = items.map((item) => String((item as unknown as Record<string, unknown>)._id));
+    const latestExecutions = flowIds.length === 0
+      ? []
+      : await this.executionModel.aggregate<{
+        flowId: string;
+        status: 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'cancelled';
+        createdAt?: Date;
+        startedAt?: Date;
+        endedAt?: Date;
+      }>([
+        { $match: { ownerId, flowId: { $in: flowIds } } },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: '$flowId',
+            status: { $first: '$status' },
+            createdAt: { $first: '$createdAt' },
+            startedAt: { $first: '$startedAt' },
+            endedAt: { $first: '$endedAt' },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            flowId: '$_id',
+            status: 1,
+            createdAt: 1,
+            startedAt: 1,
+            endedAt: 1,
+          },
+        },
+      ]);
+
+    const latestExecutionByFlowId = new Map(
+      latestExecutions.map((execution) => [execution.flowId, execution]),
+    );
+
     return {
       items: items.map((item) => ({
         ...item,
         id: (item as unknown as Record<string, unknown>)._id as string,
+        executionStatus: latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.status ?? null,
+        lastExecutionAt:
+          latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.endedAt
+          ?? latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.startedAt
+          ?? latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.createdAt
+          ?? null,
         activeReplays: {},
       })) as unknown as IFlowResponse[],
       pagination: {

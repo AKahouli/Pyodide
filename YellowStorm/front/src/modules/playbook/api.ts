@@ -613,6 +613,9 @@ function normalizeExecution(raw: any): PlaybookExecution {
   const summary = normalizeExecutionSummary(raw);
   const stepExecutionModes = raw.stepExecutionModes ?? raw.step_execution_modes;
   const replayPlanningByTask = raw.replayPlanningByTask;
+  const pendingApprovalType = raw.pendingApproval?.interruptType === 'human_approval'
+    ? 'approval_request'
+    : raw.pendingApproval?.interruptType;
 
   return {
     ...summary,
@@ -623,7 +626,21 @@ function normalizeExecution(raw: any): PlaybookExecution {
         : undefined,
     taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
     threadId: toNullableString(raw.threadId),
-    interruptPayload: raw.interruptPayload ?? null,
+    interruptPayload: raw.interruptPayload ?? (raw.pendingApproval
+      ? {
+          type: pendingApprovalType ?? 'approval_request',
+          taskId: raw.pendingApproval.nodeId,
+          taskTitle: raw.pendingApproval.taskTitle ?? '',
+          message: raw.pendingApproval.prompt ?? '',
+          threadId: raw.threadId ?? '',
+          interruptId: raw.pendingApproval.interruptId ?? '',
+          round: raw.pendingApproval.iteration ?? 0,
+          payloadJson: raw.pendingApproval.payloadJson ?? '',
+          resumableActions: raw.pendingApproval.resumableActions ?? [],
+          taskDescription: raw.pendingApproval.taskDescription ?? '',
+          result: raw.pendingApproval.result ?? '',
+        }
+      : null),
     waitingForHumanInput: Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
     currentInterruptId: toNullableString(raw.currentInterruptId),
     currentInterruptTaskId: toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),

@@ -1740,6 +1740,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               iteration,
               prompt: interruptMessage,
               requestedAt: new Date(),
+              interruptType,
+              interruptId,
+              taskTitle: String(payload.task_title || payload.taskTitle || ''),
+              taskDescription,
+              result,
+              payloadJson,
+              resumableActions,
             },
           },
         )
@@ -1809,6 +1816,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               iteration,
               prompt: String(payload.prompt || ''),
               requestedAt: new Date(),
+              interruptType: 'approval_request',
+              resumableActions: ['approve', 'reject'],
             },
           },
         )
@@ -1821,7 +1830,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           iteration,
           executionId,
           {
-            interruptType: 'human_approval',
+            interruptType: 'approval_request',
             resumableActions: ['approve', 'reject'],
           },
         );
@@ -1833,6 +1842,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           { status: 'completed', endedAt: new Date() },
         )
         .exec();
+      await this.taskResultModel.updateMany(
+        { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
+        { status: 'completed' },
+      );
       if (shouldEmitCompletedAfterUpdate((result as { modifiedCount?: number }).modifiedCount)) {
         this.streamEvents.emitExecutionComplete(executionId, 'completed');
       }
@@ -1844,6 +1857,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           { status: 'failed', error: errorMessage, endedAt: new Date() },
         )
         .exec();
+      await this.taskResultModel.updateMany(
+        { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
+        { status: 'failed' },
+      );
       if ((result as { modifiedCount?: number }).modifiedCount) {
         this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
       }

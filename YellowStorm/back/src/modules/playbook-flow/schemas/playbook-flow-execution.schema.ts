@@ -50,6 +50,27 @@ export class PendingApproval {
 
   @Prop({ required: false, type: Date })
   requestedAt?: Date;
+
+  @Prop({ required: false, type: String })
+  interruptType?: string;
+
+  @Prop({ required: false, type: String })
+  interruptId?: string;
+
+  @Prop({ required: false, type: String })
+  taskTitle?: string;
+
+  @Prop({ required: false, type: String })
+  taskDescription?: string;
+
+  @Prop({ required: false, type: String })
+  result?: string;
+
+  @Prop({ required: false, type: String })
+  payloadJson?: string;
+
+  @Prop({ required: false, type: [String], default: undefined })
+  resumableActions?: string[];
 }
 
 @Schema({ timestamps: true })
