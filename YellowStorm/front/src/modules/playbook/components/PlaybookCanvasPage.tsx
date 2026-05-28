@@ -75,6 +75,7 @@ import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNod
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
+import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
@@ -3476,6 +3477,7 @@ function PlaybookCanvasInner() {
                 >
                   <Controls position="bottom-left" />
                 </Canvas>
+                {intentLoading ? <PlaybookIntentGhostNode /> : null}
                 <PlaybookIntentBar
                   ref={intentBarRef}
                   selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}

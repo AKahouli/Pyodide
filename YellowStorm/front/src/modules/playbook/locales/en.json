@@ -81,6 +81,8 @@
   "canvas.generatingHint": "AI is designing your workflow",
   "canvas.designing": "Updating your playbook",
   "canvas.designingHint": "AI is modifying your workflow",
+  "canvas.intentAnalyzing": "Analyzing intent",
+  "canvas.intentAnalyzingHint": "Mapping your request onto the workflow",
   "canvas.executionRunning": "Execution in progress",
   "canvas.cycleRejected": "Cannot create a cycle unless it passes through a router with max iterations enabled.",
   "clipboard.copied": "{{count}} node(s) copied",

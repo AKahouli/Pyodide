@@ -11,6 +11,7 @@ def _port_schema_entry(port: dict[str, Any]) -> dict[str, Any]:
     kind = str(port.get("type") or "text")
     entry: dict[str, Any] = {
         "output_port_id": port_id,
+        "output_port_label": str(port.get("label") or ""),
         "artifact_kind": kind,
     }
     if kind == "document":

@@ -1341,16 +1341,24 @@ export function ExecutionStepDetail({
               <IteratorResultPanel step={step} />
             ) : (
               <>
-                {selectedStepExecutionText && (
-                  <div
-                    data-testid="step-result-markdown"
-                    className="rounded-lg bg-muted/50 p-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap"
-                  >
-                    <MessageProvider fileViewerDisplayMode="floating">
-                      <AIMessageContent parts={[{ type: 'text', content: selectedStepExecutionText }]} />
-                    </MessageProvider>
-                  </div>
-                )}
+                {selectedStepExecutionText && (() => {
+                  const isHtml = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(selectedStepExecutionText);
+                  return (
+                    <div
+                      data-testid="step-result-markdown"
+                      className={cn(
+                        'rounded-lg bg-muted/50 p-4',
+                        isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                      )}
+                    >
+                      <MessageProvider fileViewerDisplayMode="floating">
+                        <AIMessageContent
+                          parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]}
+                        />
+                      </MessageProvider>
+                    </div>
+                  );
+                })()}
                 {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
                   <div className="prose prose-sm max-w-none dark:prose-invert">
                     <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
