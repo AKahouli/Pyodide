@@ -256,7 +256,7 @@ class TestSandboxCallbackManager:
             params={
                 'brain_docs': 'encoded_docs',
                 'session_id': 'session123',
-                'brain_id': 'brain_123'
+                'workspace_name': 'brain_123'
             },
             timeout=30
         )
@@ -371,12 +371,12 @@ class TestCreateSandboxCallbacks:
 
         session_id = "session123"
         brain_docs = [{"id": "doc1"}]
-        conversation_brain_id = "brain_456"
+        conversation_workspace_name = "brain_456"
 
-        result = create_sandbox_callbacks(session_id, brain_docs, conversation_brain_id)
+        result = create_sandbox_callbacks(session_id, brain_docs, conversation_workspace_name)
 
         # Verify manager was created correctly
-        mock_manager_class.assert_called_once_with(session_id, brain_docs, conversation_brain_id)
+        mock_manager_class.assert_called_once_with(session_id, brain_docs, conversation_workspace_name)
 
         # Verify callbacks were created
         mock_manager.create_before_tool_callback.assert_called_once()

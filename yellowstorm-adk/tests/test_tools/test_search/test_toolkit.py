@@ -15,7 +15,7 @@ class TestSearchToolkit:
         toolkit = SearchToolkit(task_order="test-order")
 
         assert toolkit.task_order == "test-order"
-        assert toolkit.brain_id == []
+        assert toolkit.workspace_name == []
         assert toolkit.top_k == 4
         assert toolkit.vectorstore == "vectorstoredev2"
         assert toolkit.search_web == "off"
@@ -26,13 +26,13 @@ class TestSearchToolkit:
 
     def test_init_with_custom_values(self):
         """Test toolkit initialization with custom values."""
-        brain_ids = ["brain1", "brain2"]
+        workspace_names = ["brain1", "brain2"]
         attribute_mapping = {"doc1": "mapping1"}
         brain_attribute_mapping = {"brain1": "mapping1"}
 
         toolkit = SearchToolkit(
             task_order="custom-order",
-            brain_id=brain_ids,
+            workspace_name=workspace_names,
             top_k=10,
             vectorstore="custom-store",
             attribute_mapping=attribute_mapping,
@@ -41,15 +41,15 @@ class TestSearchToolkit:
         )
 
         assert toolkit.task_order == "custom-order"
-        assert toolkit.brain_id == brain_ids
+        assert toolkit.workspace_name == workspace_names
         assert toolkit.top_k == 10
         assert toolkit.vectorstore == "custom-store"
         assert toolkit.search_web == "standard"
 
-    def test_init_with_none_brain_id(self):
-        """Test toolkit initialization with None brain_id."""
-        toolkit = SearchToolkit(task_order="test-order", brain_id=None)
-        assert toolkit.brain_id == []
+    def test_init_with_none_workspace_name(self):
+        """Test toolkit initialization with None workspace_name."""
+        toolkit = SearchToolkit(task_order="test-order", workspace_name=None)
+        assert toolkit.workspace_name == []
 
     def test_sources_initialization(self):
         """Test that source tracking is properly initialized."""
@@ -93,18 +93,18 @@ class TestSearchToolkit:
         toolkit_deep = SearchToolkit(task_order="test", search_web="deep")
         assert toolkit_deep.search_web == "deep"
 
-    def test_multiple_brain_ids(self):
-        """Test toolkit with multiple brain IDs."""
-        brain_ids = ["brain1", "brain2", "brain3"]
-        toolkit = SearchToolkit(task_order="test", brain_id=brain_ids)
+    def test_multiple_workspace_names(self):
+        """Test toolkit with multiple workspace names."""
+        workspace_names = ["brain1", "brain2", "brain3"]
+        toolkit = SearchToolkit(task_order="test", workspace_name=workspace_names)
 
-        assert toolkit.brain_id == brain_ids
-        assert len(toolkit.brain_id) == 3
+        assert toolkit.workspace_name == workspace_names
+        assert len(toolkit.workspace_name) == 3
 
-    def test_empty_brain_ids_list(self):
-        """Test toolkit with empty brain IDs list."""
-        toolkit = SearchToolkit(task_order="test", brain_id=[])
-        assert toolkit.brain_id == []
+    def test_empty_workspace_names_list(self):
+        """Test toolkit with empty workspace names list."""
+        toolkit = SearchToolkit(task_order="test", workspace_name=[])
+        assert toolkit.workspace_name == []
 
     def test_vectorstore_customization(self):
         """Test custom vectorstore setting."""
@@ -135,9 +135,9 @@ class TestSearchToolkit:
 class TestSearchToolkitAsync:
     """Async test cases for SearchToolkit."""
 
-    async def test_perform_standard_search_empty_brain_id(self):
-        """Test standard search with empty brain IDs."""
-        toolkit = SearchToolkit(task_order="test", brain_id=[])
+    async def test_perform_standard_search_empty_workspace_name(self):
+        """Test standard search with empty workspace names."""
+        toolkit = SearchToolkit(task_order="test", workspace_name=[])
 
         result = await toolkit.perform_standard_search("test query")
 
@@ -148,9 +148,9 @@ class TestSearchToolkitAsync:
             "response_id": 0
         }
 
-    async def test_perform_document_search_empty_brain_id(self):
-        """Test document search with empty brain IDs."""
-        toolkit = SearchToolkit(task_order="test", brain_id=[])
+    async def test_perform_document_search_empty_workspace_name(self):
+        """Test document search with empty workspace names."""
+        toolkit = SearchToolkit(task_order="test", workspace_name=[])
 
         result = await toolkit.perform_document_search("test query", filter1="value1")
 
@@ -161,9 +161,9 @@ class TestSearchToolkitAsync:
             "response_id": 0
         }
 
-    async def test_preform_all_brain_search_empty_brain_id(self):
-        """Test brain search with empty brain IDs."""
-        toolkit = SearchToolkit(task_order="test", brain_id=[])
+    async def test_preform_all_brain_search_empty_workspace_name(self):
+        """Test brain search with empty workspace names."""
+        toolkit = SearchToolkit(task_order="test", workspace_name=[])
 
         result = await toolkit.preform_all_brain_search("test query")
 
@@ -179,7 +179,7 @@ class TestSearchToolkitAsync:
         """Test successful standard search."""
         mock_post_vectorstore.return_value = [{"mock": "search_result"}]
 
-        toolkit = SearchToolkit(task_order="test", brain_id=["brain1"])
+        toolkit = SearchToolkit(task_order="test", workspace_name=["brain1"])
 
         # Mock the search methods to return empty results for basic functionality test
         result = await toolkit.perform_standard_search("test query")

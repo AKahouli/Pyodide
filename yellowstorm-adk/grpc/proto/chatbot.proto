@@ -16,7 +16,7 @@ message DocumentData {
     // === Identity & Location ===
     string filepath = 1;                 // Path in Azure Data Lake (e.g., "workspaceId/docId.pdf")
     string filename = 2;                 // Display name (e.g., "report_q4.pdf")
-    string external_id = 3;              // Unique document ID across systems
+    string workspace_name = 3;           // Stored workspace name used in search metadata
     string workspace_id = 4;                 // Brain/workspace this file belongs to
     string source = 5;                   // Source reference (defaults to filepath if empty)
     string createdAt = 6;                // creation date
@@ -102,6 +102,8 @@ message Document {
                                          // Used for: Multi-workspace isolation, access control
 
     string createdAt = 8;                // creation date
+    string file_name = 9;                // Stored file name used in search metadata
+    string workspace_name = 10;          // Workspace name used in search metadata
 }
 
 message WorkspaceContext {
@@ -111,6 +113,7 @@ message WorkspaceContext {
     bool hybrid_search = 4;
     string instruction = 5;
     string tag = 6;
+    string workspace_name = 7;           // Stored workspace name used in search metadata
 }
 
 // ===== AGENT SUGGESTION MESSAGE =====
@@ -289,7 +292,7 @@ message ArtifactComponent {
 message TextSourceData {
     string type = 1;             // "text"
     string source = 2;           // Filename (e.g., "report.pdf")
-    string external_id = 3;      // Document external ID
+    string file_name = 3;        // Source filename this text chunk originates from
     string page = 4;             // Page info (e.g., "report.pdf - page 5")
     string page_content = 5;     // The actual text content
     string workspace_id = 6;     // Workspace ID
@@ -301,7 +304,7 @@ message ImageSourceData {
     string path = 2;             // Image path
     string page = 3;             // Page number or info
     string file_name = 4;        // Source filename
-    string external_id = 5;      // Document external ID
+    string workspace_name = 5;   // Workspace name this image belongs to
     string workspace_id = 6;     // Workspace ID
     string height = 7;           // Image height
     string width = 8;            // Image width
@@ -385,7 +388,7 @@ message MCPToolConfig {
 
 message PortDocumentBinding {
     string port_id = 1;           // The input port ID this document is bound to
-    repeated string document_ids = 2;  // Document external_ids bound to this port
+    repeated string file_names = 2;   // File names bound to this port
 }
 
 message PlaybookTaskConfig {
@@ -403,7 +406,7 @@ message PlaybookTaskConfig {
     int32 max_clarifications = 10;
     repeated string input_keys = 11;
     string output_key = 12;
-    repeated string input_files = 13;  // List of document external_ids to restrict search to (legacy flat list)
+    repeated string file_names = 13;   // List of file names to restrict search to (legacy flat list)
     repeated TaskInputPort input_ports = 14;
     repeated TaskOutputPort output_ports = 15;
     string task_type = 16;

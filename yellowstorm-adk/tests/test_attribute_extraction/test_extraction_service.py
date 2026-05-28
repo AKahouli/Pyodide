@@ -93,23 +93,23 @@ def service(mock_openai_client, mock_search_toolkit):
         api_key="test_key",
         base_url="https://localhost:4000",
         model="gpt-4.1",
-        brain_ids=["brain_123"],
+        workspace_names=["brain_123"],
         vectorstore="vectorstoredev2",
         top_k=3
     )
 
 
 @pytest.fixture
-def service_with_external_ids(mock_openai_client, mock_search_toolkit):
-    """Create service instance with external_ids."""
+def service_with_file_names(mock_openai_client, mock_search_toolkit):
+    """Create service instance with file_names."""
     return AttributeExtractionService(
         api_key="test_key",
         base_url="https://localhost:4000",
         model="gpt-4.1",
-        brain_ids=["brain_123"],
+        workspace_names=["brain_123"],
         vectorstore="vectorstoredev2",
         top_k=3,
-        external_ids=["doc_123", "doc_456"]
+        file_names=["doc_123", "doc_456"]
     )
 
 
@@ -119,13 +119,13 @@ class TestAttributeExtractionService:
     def test_service_initialization(self, service):
         """Test service is initialized correctly."""
         assert service.model == "gpt-4.1"
-        assert service.external_ids is None
+        assert service.file_names is None
         assert len(service.messages) == 0
         assert len(service.search_queries) == 0
 
-    def test_service_initialization_with_external_ids(self, service_with_external_ids):
-        """Test service initialization with external IDs."""
-        assert service_with_external_ids.external_ids == ["doc_123", "doc_456"]
+    def test_service_initialization_with_file_names(self, service_with_file_names):
+        """Test service initialization with file names."""
+        assert service_with_file_names.file_names == ["doc_123", "doc_456"]
 
     def test_base_url_normalization(self, mock_openai_client, mock_search_toolkit):
         """Test that base_url is normalized to end with /v1."""
@@ -133,7 +133,7 @@ class TestAttributeExtractionService:
             api_key="test_key",
             base_url="https://localhost:4000",  # Without /v1
             model="gpt-4.1",
-            brain_ids=["brain_123"],
+            workspace_names=["brain_123"],
             vectorstore="vectorstoredev2",
             top_k=3
         )
@@ -142,7 +142,7 @@ class TestAttributeExtractionService:
 
     @pytest.mark.asyncio
     async def test_search_documents_standard(self, service, mock_search_toolkit):
-        """Test standard document search without external IDs."""
+        """Test standard document search without file names."""
         result = await service.search_documents("test query")
 
         mock_search_toolkit.perform_standard_search.assert_called_once_with("test query")
@@ -150,9 +150,9 @@ class TestAttributeExtractionService:
         assert "test.pdf" in result
 
     @pytest.mark.asyncio
-    async def test_search_documents_filtered(self, service_with_external_ids, mock_search_toolkit):
-        """Test filtered document search with external IDs."""
-        result = await service_with_external_ids.search_documents("test query")
+    async def test_search_documents_filtered(self, service_with_file_names, mock_search_toolkit):
+        """Test filtered document search with file names."""
+        result = await service_with_file_names.search_documents("test query")
 
         mock_search_toolkit.perform_document_search.assert_called_once_with(
             "test query",

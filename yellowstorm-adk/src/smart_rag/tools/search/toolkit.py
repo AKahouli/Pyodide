@@ -34,16 +34,19 @@ class SearchToolkit:
     in-memory document extraction, and web search capabilities.
     """
 
-    def __init__(self, task_order, brain_id: List[str] = None, top_k: int = 4,
+    def __init__(self, task_order, workspace_name: List[str] = None,
+                 brain_id: List[str] = None, top_k: int = 4,
                  vectorstore: str = "vectorstoredev2", attribute_mapping: Dict = None,
                  brain_attribute_mapping: Dict = None, search_web: Optional[str] = "off",
-                 search_type: str = "vector_search", citation_manager=None):
+                 search_type: str = "vector_search", citation_manager=None,
+                 user_id: Optional[str] = None):
         """
         Initialize SearchToolkit.
 
         Args:
             task_order: Task order for reference numbering
-            brain_id: List of brain IDs to search
+            workspace_name: List of workspace names to search
+            brain_id: Compatibility alias for workspace_name
             top_k: Number of top results to return
             vectorstore: Vectorstore name
             attribute_mapping: Document attribute mapping
@@ -51,13 +54,16 @@ class SearchToolkit:
             search_web: Web search mode ("standard", "deep", or "off")
             search_type: Type of search to perform ("vector_search" or "hybrid_search")
             citation_manager: Optional SessionCitationManager for numeric citations
+            user_id: Optional user ID for search context and logging
         """
-        self.brain_id = brain_id if brain_id is not None else []
+        self.workspace_name = workspace_name if workspace_name is not None else brain_id or []
+        self.brain_id = self.workspace_name
         self.top_k = top_k
         self.vectorstore = vectorstore
         self.task_order = task_order
         self.search_web = search_web
         self.search_type = search_type
+        self.user_id = user_id
 
         # Initialize sources tracking
         self.sources_text: List = []
@@ -109,7 +115,7 @@ class SearchToolkit:
             # Yield control to allow parallel execution
             await asyncio.sleep(0)
 
-            if not self.brain_id:
+            if not self.workspace_name:
                 return self._empty_search_result()
 
             resp_id = self.response_id
@@ -137,28 +143,28 @@ class SearchToolkit:
             logger.exception(f"Error in perform_standard_search: {e}")
             return self._empty_search_result()
 
-    async def perform_filtered_search(self, query: str, external_ids: List[str]) -> Dict:
+    async def perform_filtered_search(self, query: str, file_names: List[str]) -> Dict:
         """
-        Filtered Search: Retrieves information from specific documents by external_id.
+        Filtered Search: Retrieves information from specific documents by file name.
 
         Args:
             query: The search query string.
-            external_ids: List of external document IDs to filter search.
+            file_names: List of file names to filter search.
 
         Returns:
             Dictionary with sources_text, sources_image, and list_of_filenames.
         """
         try:
-            if not external_ids:
-                # If no external_ids provided, fallback to standard search
-                # This path requires brain_id
-                if not self.brain_id:
+            if not file_names:
+                # If no file_names provided, fallback to standard search
+                # This path requires workspace names.
+                if not self.workspace_name:
                     return self._empty_search_result()
                 return await self.perform_standard_search(query)
 
-            # Perform text and image searches with filtered_ids
-            text_results = await self._search_text_documents(query, filtered_ids=external_ids)
-            image_results = await self._search_image_documents(query, filtered_ids=external_ids)
+            # Perform text and image searches with filtered file names
+            text_results = await self._search_text_documents(query, filtered_filenames=file_names)
+            image_results = await self._search_image_documents(query, filtered_filenames=file_names)
             resp_id=self.response_id
             self.response_id+=1
             return {
@@ -192,7 +198,7 @@ class SearchToolkit:
             # Yield control to allow parallel execution
             await asyncio.sleep(0)
 
-            if not self.brain_id:
+            if not self.workspace_name:
                 return self._empty_search_result()
 
             # Extract chunks filter if present
@@ -246,7 +252,7 @@ class SearchToolkit:
             Dictionary with search results
         """
         try:
-            if not self.brain_id:
+            if not self.workspace_name:
                 return self._empty_search_result()
 
             # Filter by brain name if specified
@@ -655,45 +661,47 @@ class SearchToolkit:
         else:
             return self.generate_generic_function(schema, retrieve_fn)
 
-    async def _search_text_documents(self, query: str, filtered_ids:Optional[List]=None) -> Dict:
+    async def _search_text_documents(self, query: str, filtered_filenames: Optional[List[str]] = None) -> Dict:
         """Search text documents and process results."""
         try:
             text_payloads = []
 
-            # Ensure filtered_ids is a list (handle None case explicitly)
-            if filtered_ids is None:
-                filtered_ids = []
+            # Ensure filtered_filenames is a list (handle None case explicitly)
+            if filtered_filenames is None:
+                filtered_filenames = []
 
             # Ensure self.ids is not None
             if self.ids is None:
                 self.ids = set()
 
-            if not filtered_ids:
-                # Unfiltered search requires brain_id
-                if not self.brain_id:
+            if not filtered_filenames:
+                # Unfiltered search requires workspace names.
+                if not self.workspace_name:
                     return {"content": []}
                 text_filter = {
-                    "brain_id": self.brain_id,
+                    "workspace_name": self.workspace_name,
                     "image": False,
                     "ids": list(self.ids) if self.ids else [""]
                 }
                 text_payload = self.common_helpers.create_search_payload(
-                    query, text_filter, self.vectorstore, self.top_k, self.search_type)
+                    query, text_filter, self.vectorstore, self.top_k, self.search_type,
+                    user_id=self.user_id)
                 text_payloads.append(text_payload)
             else:
-                # Filtered search by external_ids - include brain_id only if available
-                for ext_id in filtered_ids:
+                # Filtered search by file names - include workspace_name only if available
+                for file_name in filtered_filenames:
                     text_filter = {
                         "image": False,
                         "ids": list(self.ids) if self.ids else [""],
-                        "external_id": ext_id
+                        "file_name": file_name
                     }
-                    # Only include brain_id if it's not empty
-                    if self.brain_id:
-                        text_filter["brain_id"] = self.brain_id
+                    # Only include workspace_name if it's not empty
+                    if self.workspace_name:
+                        text_filter["workspace_name"] = self.workspace_name
 
                     text_payload = self.common_helpers.create_search_payload(
-                        query, text_filter, self.vectorstore, self.top_k, self.search_type)
+                        query, text_filter, self.vectorstore, self.top_k, self.search_type,
+                        user_id=self.user_id)
                     text_payloads.append(text_payload)
             responses_json_text=[]
             if text_payloads:
@@ -742,46 +750,48 @@ class SearchToolkit:
             logger.error(traceback.format_exc())
             return {"content": []}
 
-    async def _search_image_documents(self, query: str, filtered_ids:Optional[List]=None) -> Dict:
+    async def _search_image_documents(self, query: str, filtered_filenames: Optional[List[str]] = None) -> Dict:
         """Search image documents and process results."""
         try:
             image_payloads=[]
 
-            # Ensure filtered_ids is a list (handle None case explicitly)
-            if filtered_ids is None:
-                filtered_ids = []
+            # Ensure filtered_filenames is a list (handle None case explicitly)
+            if filtered_filenames is None:
+                filtered_filenames = []
 
             # Ensure self.ids is not None
             if self.ids is None:
                 self.ids = set()
 
-            if not filtered_ids:
-                # Unfiltered search requires brain_id
-                if not self.brain_id:
+            if not filtered_filenames:
+                # Unfiltered search requires workspace names.
+                if not self.workspace_name:
                     return {"wrapped_images": [], "image_references": []}
                 image_filter = {
-                    "brain_id": self.brain_id,
+                    "workspace_name": self.workspace_name,
                     "image": True,
                     "ids": list(self.ids) if self.ids else [""]
                 }
                 image_payload = self.common_helpers.create_search_payload(
-                    query, image_filter, self.vectorstore, self.top_k, self.search_type)
+                    query, image_filter, self.vectorstore, self.top_k, self.search_type,
+                    user_id=self.user_id)
                 image_payloads.append(image_payload)
 
             else :
-                # Filtered search by external_ids - include brain_id only if available
-                for ext_id in filtered_ids:
+                # Filtered search by file names - include workspace_name only if available
+                for file_name in filtered_filenames:
                     image_filter = {
                         "image": True,
                         "ids": list(self.ids) if self.ids else [""],
-                        "external_id": ext_id
+                        "file_name": file_name
                     }
-                    # Only include brain_id if it's not empty
-                    if self.brain_id:
-                        image_filter["brain_id"] = self.brain_id
+                    # Only include workspace_name if it's not empty
+                    if self.workspace_name:
+                        image_filter["workspace_name"] = self.workspace_name
 
                     image_payload = self.common_helpers.create_search_payload(
-                        query, image_filter, self.vectorstore, self.top_k, self.search_type)
+                        query, image_filter, self.vectorstore, self.top_k, self.search_type,
+                        user_id=self.user_id)
                     image_payloads.append(image_payload)
 
             responses_json_image=[]
@@ -871,7 +881,7 @@ class SearchToolkit:
             "total_image_sources": len(self.sources_image),
             "current_text_order": len(self.sources_text),
             "tracked_ids_count": len(self.ids),
-            "brain_ids": self.brain_id,
+            "workspace_names": self.workspace_name,
             "vectorstore": self.vectorstore,
             "top_k": self.top_k,
             "web_search_enabled": self.search_web != "off"
@@ -984,7 +994,8 @@ class SearchToolkit:
             score = 0.0
 
         # Get source identifier for mapping
-        source_id = document_data.get("metadata").get("external_id")
+        metadata = document_data.get("metadata") or {}
+        source_id = metadata.get("file_name") or metadata.get("external_id")
 
         # Initialize mapping for this source if needed
         if source_id not in self.page_reference_map:
@@ -1075,13 +1086,15 @@ def create_search_toolkit(task_order, brain_id: List[str] = None, top_k: int = 4
                          vectorstore: str = "vectorstoredev3", attribute_mapping: Dict = None,
                          brain_attribute_mapping: Dict = None,
                          search_web: Optional[str] = "off",
-                         search_type: str = "vector_search", citation_manager=None) -> SearchToolkit:
+                         search_type: str = "vector_search", citation_manager=None,
+                         workspace_name: List[str] = None,
+                         user_id: Optional[str] = None) -> SearchToolkit:
     """
     Factory function to create a SearchToolkit instance.
 
     Args:
         task_order: Task order for reference numbering
-        brain_id: List of brain IDs to search
+        workspace_name: List of workspace names to search
         top_k: Number of top results to return
         vectorstore: Vectorstore name
         attribute_mapping: Document attribute mapping
@@ -1089,18 +1102,20 @@ def create_search_toolkit(task_order, brain_id: List[str] = None, top_k: int = 4
         search_web: Web search mode
         search_type: Type of search to perform ("vector_search" or "hybrid_search")
         citation_manager: Optional SessionCitationManager for numeric citations
+        user_id: Optional user ID for search context and logging
 
     Returns:
         SearchToolkit instance
     """
     return SearchToolkit(
         task_order=task_order,
-        brain_id=brain_id,
+        workspace_name=workspace_name or brain_id,
         top_k=top_k,
         vectorstore=vectorstore,
         attribute_mapping=attribute_mapping,
         brain_attribute_mapping=brain_attribute_mapping,
         search_web=search_web,
         search_type=search_type,
-        citation_manager=citation_manager
+        citation_manager=citation_manager,
+        user_id=user_id
     )

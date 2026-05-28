@@ -23,12 +23,14 @@ export class PlaybookFlowContextService {
     for (const wsId of workspaceIds) {
       try {
         const ws = await this.workspaceModel.findById(wsId).lean().exec();
+        const workspaceName = ws?.storagePrefix || ws?.alias || wsId;
         let settings: WorkspaceSettingDocument | null = null;
         if (ws?.settings) settings = await this.workspaceSettingModel.findById(ws.settings).lean().exec() as any;
 
         const result = await this.workspaceDocumentService.findAllByWorkspace(wsId, { limit: 1000, status: DocumentStatus.COMPLETED });
         contexts.push({
           workspace_id: wsId,
+          workspace_name: workspaceName,
           chunks: settings?.chunks,
           hybrid_search: settings?.hybridSearch,
           instruction: settings?.instruction,
@@ -37,6 +39,7 @@ export class PlaybookFlowContextService {
             _id: doc.id, filename: doc.filename || '', filepath: doc.path,
             in_memory: false, language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200, workspace_id: wsId,
+            workspace_name: workspaceName, file_name: doc.filename || '',
             createdAt: doc.createdAt,
           })),
         });
@@ -55,16 +58,20 @@ export class PlaybookFlowContextService {
     await Promise.allSettled(allWsIds.map(async (wsId) => {
       const result = await this.workspaceDocumentService.findAllByWorkspace(wsId, { limit: 1000, status: DocumentStatus.COMPLETED });
       const ws = await this.workspaceModel.findById(wsId).lean().exec();
+      const workspaceName = ws?.storagePrefix || ws?.alias || wsId;
       let settings: WorkspaceSettingDocument | null = null;
       if (ws?.settings) settings = await this.workspaceSettingModel.findById(ws.settings).lean().exec() as any;
       contextMap.set(wsId, {
         workspace_id: wsId,
+        workspace_name: workspaceName,
         chunks: settings?.chunks, hybrid_search: settings?.hybridSearch,
         instruction: settings?.instruction, tag: settings?.tag,
         workspace_documents: result.documents.map((doc: any) => ({
           _id: doc.id, filename: doc.filename || '', filepath: doc.path,
           in_memory: false, language: doc.detected_language || 'fr',
-          indexing_token: doc.chunk_size || 1200, workspace_id: wsId, createdAt: doc.createdAt,
+          indexing_token: doc.chunk_size || 1200, workspace_id: wsId,
+          workspace_name: workspaceName, file_name: doc.filename || '',
+          createdAt: doc.createdAt,
         })),
       });
     }));

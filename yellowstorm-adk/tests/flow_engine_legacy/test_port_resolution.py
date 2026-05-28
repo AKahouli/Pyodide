@@ -690,7 +690,7 @@ def test_resolve_task_inputs_reads_mail_attachment_document_ids_from_current_tri
     ]
     tool_scope = build_tool_scope(resolved)
     assert tool_scope["all_document_ids"] == ["doc-1", "doc-2"]
-    assert tool_scope["documents_by_port"]["attachments"] == ["doc-1", "doc-2"]
+    assert tool_scope["documents_by_port"]["attachments"] == ["a.pdf", "b.pdf"]
 
 
 def test_build_tool_scope_includes_upstream_document_artifact_ids() -> None:
@@ -733,7 +733,7 @@ def test_build_tool_scope_includes_upstream_document_artifact_ids() -> None:
     tool_scope = build_tool_scope(resolved)
 
     assert tool_scope["all_document_ids"] == ["doc-7"]
-    assert tool_scope["documents_by_port"]["docs"] == ["doc-7"]
+    assert tool_scope["documents_by_port"]["docs"] == ["brief.pdf"]
     assert tool_scope["files_by_port"]["docs"][0]["document_id"] == "doc-7"
 
 
@@ -875,8 +875,8 @@ def test_build_task_prompt_context_includes_default_workspace_metadata() -> None
 
     assert prompt_context["metadata"]["default_workspace_id"] == "ws-default"
     assert prompt_context["metadata"]["retrieval_scope"] == {
-        "brain_ids": ["ws-default"],
-        "external_ids": [],
+        "workspace_names": ["ws-default"],
+        "file_names": [],
     }
 
 
@@ -963,12 +963,12 @@ def test_build_task_prompt_context_includes_normalized_retrieval_scope() -> None
     )
 
     assert prompt_context["resolved_inputs"][0]["retrieval_scope"] == {
-        "brain_ids": ["ws-default", "ws-other"],
-        "external_ids": ["doc-1", "doc-2", "doc-3"],
+        "workspace_names": ["ws-default", "ws-other"],
+        "file_names": ["doc-2", "A.docx", "B.docx"],
     }
     assert prompt_context["metadata"]["retrieval_scope"] == {
-        "brain_ids": ["ws-default", "ws-other"],
-        "external_ids": ["doc-1", "doc-2", "doc-3"],
+        "workspace_names": ["ws-default", "ws-other"],
+        "file_names": ["doc-2", "A.docx", "B.docx"],
     }
 
 
@@ -1023,18 +1023,22 @@ def test_build_task_prompt_context_hydrates_bound_documents_from_workspace_conte
     )
 
     assert prompt_context["resolved_inputs"][0]["documents"] == [
-        {
-            "document_id": "doc-1",
-            "filename": "A.docx",
-            "filepath": "ws-default/doc-1/A.docx",
-            "workspace_id": "ws-default",
-        },
-        {
-            "document_id": "doc-2",
-            "filename": "B.docx",
-            "filepath": "ws-default/doc-2/B.docx",
-            "workspace_id": "ws-default",
-        },
+            {
+                "document_id": "doc-1",
+                "filename": "A.docx",
+                "file_name": "A.docx",
+                "filepath": "ws-default/doc-1/A.docx",
+                "workspace_id": "ws-default",
+                "workspace_name": "ws-default",
+            },
+            {
+                "document_id": "doc-2",
+                "filename": "B.docx",
+                "file_name": "B.docx",
+                "filepath": "ws-default/doc-2/B.docx",
+                "workspace_id": "ws-default",
+                "workspace_name": "ws-default",
+            },
     ]
 
 
@@ -1086,12 +1090,14 @@ def test_build_task_prompt_context_hydrates_bound_documents_from_brain_documents
     )
 
     assert prompt_context["resolved_inputs"][0]["documents"] == [
-        {
-            "document_id": "69f8be8a368a76f2f5d99f0f",
-            "filename": "Bound.docx",
-            "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Bound.docx",
-            "workspace_id": "69d0df66e522cb08903515bd",
-        }
+            {
+                "document_id": "69f8be8a368a76f2f5d99f0f",
+                "filename": "Bound.docx",
+                "file_name": "Bound.docx",
+                "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Bound.docx",
+                "workspace_id": "69d0df66e522cb08903515bd",
+                "workspace_name": "69d0df66e522cb08903515bd",
+            }
     ]
 
 
@@ -1136,12 +1142,14 @@ def test_build_task_prompt_context_emits_placeholder_documents_for_bound_ids() -
     )
 
     assert prompt_context["resolved_inputs"][0]["documents"] == [
-        {
-            "document_id": "69f8be8a368a76f2f5d99f0f",
-            "filename": "",
-            "filepath": "",
-            "workspace_id": "69d0df66e522cb08903515bd",
-        }
+            {
+                "document_id": "69f8be8a368a76f2f5d99f0f",
+                "filename": "",
+                "file_name": "69f8be8a368a76f2f5d99f0f",
+                "filepath": "",
+                "workspace_id": "69d0df66e522cb08903515bd",
+                "workspace_name": "69d0df66e522cb08903515bd",
+            }
     ]
 
 
@@ -1172,7 +1180,7 @@ def test_build_task_prompt_context_hydrates_alias_document_metadata() -> None:
             },
             "brain_documents": [
                 {
-                    "external_id": "69f8be8a368a76f2f5d99f0f",
+                    "workspace_name": "69f8be8a368a76f2f5d99f0f",
                     "name": "Alias.docx",
                     "file_path": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Alias.docx",
                     "workspaceId": "69d0df66e522cb08903515bd",
@@ -1191,12 +1199,14 @@ def test_build_task_prompt_context_hydrates_alias_document_metadata() -> None:
     )
 
     assert prompt_context["resolved_inputs"][0]["documents"] == [
-        {
-            "document_id": "69f8be8a368a76f2f5d99f0f",
-            "filename": "Alias.docx",
-            "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Alias.docx",
-            "workspace_id": "69d0df66e522cb08903515bd",
-        }
+            {
+                "document_id": "69f8be8a368a76f2f5d99f0f",
+                "filename": "Alias.docx",
+                "file_name": "Alias.docx",
+                "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Alias.docx",
+                "workspace_id": "69d0df66e522cb08903515bd",
+                "workspace_name": "69f8be8a368a76f2f5d99f0f",
+            }
     ]
 
 
@@ -1418,13 +1428,13 @@ def test_build_task_prompt_includes_mcp_retrieval_scope_guidance() -> None:
     )
 
     assert "Retrieval scope for MCP document tools JSON:" in prompt
-    assert '"brain_ids": [' in prompt
+    assert '"workspace_names": [' in prompt
     assert '"ws-default"' in prompt
     assert '"ws-other"' in prompt
-    assert '"external_ids": [' in prompt
+    assert '"file_names": [' in prompt
     assert '"doc-1"' in prompt
     assert '"doc-2"' in prompt
-    assert "list_documents` supports `brain_ids` only" in prompt
+    assert "list_documents` supports `workspace_names` only" in prompt
 
 
 def test_task_has_trigger_port_inputs_detects_bound_trigger_sources() -> None:

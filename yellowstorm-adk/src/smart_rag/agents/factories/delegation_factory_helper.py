@@ -148,7 +148,7 @@ def prepare_agent_data(
         base_enhanced_prompt (str): Base enhanced prompt to potentially modify.
 
     Returns:
-        tuple: (doc_tree, brain_tree, enhanced_prompt, final_brain_ids,
+        tuple: (doc_tree, brain_tree, enhanced_prompt, final_workspace_names,
                vectorstore_name, chatbot_name) for agent creation.
     """
     try:
@@ -176,7 +176,7 @@ def prepare_agent_data(
     if tool_prompts:
         enhanced_prompt = enhanced_prompt + "\n\n" + "\n\n".join(tool_prompts)
 
-    final_brain_ids = agent_config.get("brain_ids") or config.brain_ids
+    final_workspace_names = agent_config.get("brain_ids") or config.brain_ids
     vectorstore_name = agent_config.get("vectorstore_name", config.vectorstore_name)
     chatbot_name = agent_config.get("chatbot_name", chatbot_name)
     if isinstance(chatbot_name, dict):
@@ -186,7 +186,7 @@ def prepare_agent_data(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     )
@@ -220,7 +220,7 @@ def create_search_agent_with_tools(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     ) = prepare_agent_data(
@@ -263,7 +263,7 @@ def create_search_agent_with_tools(
     agent, toolkit, _ = agent_factory.create_search_agent(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
-        brain_ids=final_brain_ids,
+        brain_ids=final_workspace_names,
         vectorstore_name=vectorstore_name,
         search_web="standard" if search_web else "off",
         snowflake_tool=True if "snowflake connector" in tools else False,
@@ -277,6 +277,7 @@ def create_search_agent_with_tools(
         max_tokens=max_tokens,
         top_k=top_k,
         citation_manager=citation_manager,
+        user_id=config.user_id,
     )
 
     # Store toolkit for source handling
@@ -292,7 +293,7 @@ def create_search_agent_with_tools(
                 create_connector_tools(
                     connector_bindings,
                     workspace_id=connector_workspace_id,
-                    brain_ids=final_brain_ids,
+                    brain_ids=final_workspace_names,
                 )
             )
         except Exception as e:
@@ -337,6 +338,8 @@ def create_search_agent_with_tools(
 
         except Exception as e:
             logger.exception("Error adding python_interpreter to search agent: %s", e)
+
+    _attach_mcp_search_state(agent, config, agent_config)
 
     return agent, toolkit
 
@@ -410,7 +413,7 @@ def create_standard_agent_with_tools(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     ) = prepare_agent_data(
@@ -445,7 +448,7 @@ def create_standard_agent_with_tools(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
         top_k=top_k,
-        brain_ids=final_brain_ids,
+        brain_ids=final_workspace_names,
         vectorstore_name=vectorstore_name,
         task_order=expected_output,
         temperature=temp,
@@ -465,7 +468,26 @@ def create_standard_agent_with_tools(
         except Exception as e:
             logger.exception("Error adding platform tools to standard agent: %s", e)
 
+    _attach_mcp_search_state(agent, config, agent_config)
+
     return agent, None
+
+
+def _attach_mcp_search_state(agent, config, agent_config: Dict[str, Any]) -> None:
+    raw_docs = agent_config.get("brain_documents", [])
+    file_names = [
+        d.get("filename") or d.get("nom")
+        for d in raw_docs
+        if isinstance(d, dict) and (d.get("filename") or d.get("nom"))
+    ]
+    state = {"_mcp_search_user_id": config.user_id}
+    if config.brain_ids:
+        state["_mcp_search_workspace_name"] = (
+            config.brain_ids[0] if len(config.brain_ids) == 1 else config.brain_ids
+        )
+    if file_names:
+        state["_mcp_search_file_names"] = file_names
+    agent._mcp_search_state = state
 
 
 def _extract_original_expected_output(task_description: str) -> tuple:

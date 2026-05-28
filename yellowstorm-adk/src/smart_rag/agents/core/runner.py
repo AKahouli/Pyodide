@@ -144,6 +144,9 @@ class AgentRunner:
             if hasattr(agent, "_code_interpreter_state"):
                 initial_state.update(agent._code_interpreter_state)
 
+            if hasattr(agent, "_mcp_search_state"):
+                initial_state.update(agent._mcp_search_state)
+
             # Create a simple session to examine its properties
             session_id = f"session-{uuid.uuid4()}"
             session = await session_helper.create_session(
@@ -1434,10 +1437,10 @@ class AgentRunner:
             if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
                 logger.info(
-                    "[CITATION LOOKUP] found_in_toolkit_text reference=%s source=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_toolkit_text reference=%s source=%s file_name=%s",
                     citation_ref,
                     source_obj.get("content", {}).get("source", ""),
-                    source_obj.get("content", {}).get("external_id", ""),
+                    source_obj.get("content", {}).get("file_name", ""),
                 )
 
                 return {"source_object": source_obj, "type": "text"}
@@ -1449,10 +1452,10 @@ class AgentRunner:
             if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
                 logger.info(
-                    "[CITATION LOOKUP] found_in_toolkit_image reference=%s path=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_toolkit_image reference=%s path=%s workspace_name=%s",
                     citation_ref,
                     source_obj.get("content", {}).get("path", ""),
-                    source_obj.get("content", {}).get("external_id", ""),
+                    source_obj.get("content", {}).get("workspace_name", ""),
                 )
 
                 return {"source_object": source_obj, "type": "image"}
@@ -1460,12 +1463,12 @@ class AgentRunner:
         for source in (session_state or {}).get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, []):
             if _matches_reference(source):
                 logger.info(
-                    "[CITATION LOOKUP] found_in_connector_text reference=%s stored_reference=%s aliases=%s source=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_connector_text reference=%s stored_reference=%s aliases=%s source=%s file_name=%s",
                     citation_ref,
                     source.get("reference", ""),
                     source.get("reference_aliases", []),
                     source.get("object", {}).get("content", {}).get("source", ""),
-                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                    source.get("object", {}).get("content", {}).get("file_name", ""),
                 )
                 return {"source_object": source.get("object", {}), "type": "text"}
 
@@ -1474,12 +1477,12 @@ class AgentRunner:
         ):
             if _matches_reference(source):
                 logger.info(
-                    "[CITATION LOOKUP] found_in_connector_image reference=%s stored_reference=%s aliases=%s path=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_connector_image reference=%s stored_reference=%s aliases=%s path=%s workspace_name=%s",
                     citation_ref,
                     source.get("reference", ""),
                     source.get("reference_aliases", []),
                     source.get("object", {}).get("content", {}).get("path", ""),
-                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                    source.get("object", {}).get("content", {}).get("workspace_name", ""),
                 )
                 return {"source_object": source.get("object", {}), "type": "image"}
 
@@ -1492,14 +1495,14 @@ class AgentRunner:
             parts = [
                 source_type,
                 str(source.get("path") or ""),
-                str(source.get("external_id") or ""),
+                str(source.get("workspace_name") or ""),
                 str(source.get("page") or ""),
             ]
         else:
             parts = [
                 source_type,
                 str(source.get("source") or ""),
-                str(source.get("external_id") or ""),
+                str(source.get("file_name") or ""),
                 str(source.get("page") or ""),
                 str(source.get("page_content") or ""),
             ]
@@ -1563,8 +1566,8 @@ class AgentRunner:
                                     "file_name": str(
                                         normalized_source.get("file_name") or ""
                                     ),
-                                    "external_id": str(
-                                        normalized_source.get("external_id") or ""
+                                    "workspace_name": str(
+                                        normalized_source.get("workspace_name") or ""
                                     ),
                                     "brain_id": str(
                                         normalized_source.get("workspace_id") or ""
@@ -1585,8 +1588,8 @@ class AgentRunner:
                             "object": {
                                 "content": {
                                     "source": str(normalized_source.get("source") or ""),
-                                    "external_id": str(
-                                        normalized_source.get("external_id") or ""
+                                    "file_name": str(
+                                        normalized_source.get("file_name") or ""
                                     ),
                                     "page": str(normalized_source.get("page") or ""),
                                     "page_content": str(
@@ -1599,23 +1602,25 @@ class AgentRunner:
                             },
                         }
                     )
+                source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s external_id=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s id_value=%s",
                     tool_name,
                     reference,
                     normalized_source.get("reference_aliases") or [],
                     normalized_source.get("type", "text"),
                     normalized_source.get("source") or normalized_source.get("path") or "",
-                    normalized_source.get("external_id") or "",
+                    source_id_field,
                 )
             else:
+                source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s reused_fallback_connector_citation reference=%s aliases=%s source=%s external_id=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s reused_fallback_connector_citation reference=%s aliases=%s source=%s id_value=%s",
                     tool_name,
                     reference,
                     normalized_source.get("reference_aliases") or [],
                     normalized_source.get("source") or normalized_source.get("path") or "",
-                    normalized_source.get("external_id") or "",
+                    source_id_field,
                 )
 
         logger.info(
@@ -1659,7 +1664,7 @@ class AgentRunner:
             if not content:
                 continue
 
-            external_id = str(
+            file_name = str(
                 block.get("external_id")
                 or block.get("doc_id")
                 or block.get("block_id")
@@ -1690,7 +1695,7 @@ class AgentRunner:
                 if document_id_value:
                     reference_aliases.append(document_id_value)
 
-            signature = (source, external_id, page, content)
+            signature = (source, file_name, page, content)
             if signature in seen:
                 continue
             seen.add(signature)
@@ -1699,7 +1704,7 @@ class AgentRunner:
                 {
                     "type": "text",
                     "source": source,
-                    "external_id": external_id,
+                    "file_name": file_name,
                     "page": page,
                     "page_content": content,
                     "workspace_id": workspace_id,
@@ -1770,23 +1775,21 @@ class AgentRunner:
 
         # Build component data based on type
         if source_type == "text":
-            # Build TextSourceData
             component_data = {
                 "parent_id": parent_text_component_id,
                 "text_source": {
                     "type": "text",
                     "source": content.get("source", ""),
-                    "external_id": content.get("external_id", ""),
+                    "file_name": content.get("file_name", ""),
                     "page": content.get("page", ""),
                     "page_content": content.get("page_content", ""),
                     "workspace_id": content.get(
                         "brain_id", ""
-                    ),  # Map brain_id to workspace_id
+                    ),
                     "reference": citation_ref,
                 },
             }
         else:
-            # Build ImageSourceData
             component_data = {
                 "parent_id": parent_text_component_id,
                 "image_source": {
@@ -1794,10 +1797,10 @@ class AgentRunner:
                     "path": content.get("path", ""),
                     "page": content.get("page", ""),
                     "file_name": content.get("file_name", ""),
-                    "external_id": content.get("external_id", ""),
+                    "workspace_name": content.get("workspace_name", ""),
                     "workspace_id": content.get(
                         "brain_id", ""
-                    ),  # Map brain_id to workspace_id
+                    ),
                     "height": str(content.get("height", "")),
                     "width": str(content.get("width", "")),
                     "reference": citation_ref,

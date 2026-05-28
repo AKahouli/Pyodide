@@ -19,16 +19,16 @@ class TestMCPHelper:
     def test_create_excel_mcp_headers(self):
         """Test creating Excel MCP headers."""
         user_id = "user123"
-        brain_ids = ["brain456"]
+        workspace_names = ["brain456"]
         session_id = "session789"
         # extract_minimal_fields now requires 'filepath' to include a document
         brain_documents = [{"filepath": "/path/test.txt", "filename": "test.txt", "_id": "doc1", "extra": "ignored"}]
 
-        result = MCPHelper.create_excel_mcp_headers(user_id, brain_ids, session_id, brain_documents)
+        result = MCPHelper.create_excel_mcp_headers(user_id, workspace_names, session_id, brain_documents)
 
         assert result is not None
         assert result["X-User-ID"] == user_id
-        assert result["X-Brain-ID"] == brain_ids[0]
+        assert result["X-Brain-ID"] == workspace_names[0]
         assert result["X-Message-ID"] == session_id
         assert "X-Brain-Documents" in result
 
@@ -37,29 +37,29 @@ class TestMCPHelper:
         expected_minimal = [{"filepath": "/path/test.txt", "filename": "test.txt", "_id": "doc1"}]
         assert json.loads(decoded_docs) == expected_minimal
 
-    def test_create_excel_mcp_headers_empty_brain_ids(self):
+    def test_create_excel_mcp_headers_empty_workspace_names(self):
         """Test creating Excel MCP headers with empty brain IDs."""
         user_id = "user123"
-        brain_ids = []
+        workspace_names = []
         session_id = "session789"
         brain_documents = []
 
-        result = MCPHelper.create_excel_mcp_headers(user_id, brain_ids, session_id, brain_documents)
+        result = MCPHelper.create_excel_mcp_headers(user_id, workspace_names, session_id, brain_documents)
 
-        # Should return None due to IndexError when accessing brain_ids[0]
+        # Should return None due to IndexError when accessing workspace_names[0]
         assert result is None
 
     def test_create_excel_mcp_headers_invalid_documents(self):
         """Test creating Excel MCP headers with documents that cause JSON serialization error."""
         user_id = "user123"
-        brain_ids = ["brain456"]
+        workspace_names = ["brain456"]
         session_id = "session789"
         # Create a document with a circular reference in one of the minimal fields (filepath)
         circular_ref = {}
         circular_ref["circular"] = circular_ref
         brain_documents = [{"filepath": circular_ref, "filename": "test.txt", "_id": "doc1"}]
 
-        result = MCPHelper.create_excel_mcp_headers(user_id, brain_ids, session_id, brain_documents)
+        result = MCPHelper.create_excel_mcp_headers(user_id, workspace_names, session_id, brain_documents)
 
         # Should return None due to JSON serialization error when the circular reference is in a minimal field
         assert result is None
@@ -68,7 +68,7 @@ class TestMCPHelper:
     async def test_upload_files_to_datalake_success(self):
         """Test successful file upload to datalake."""
         user_id = "user123"
-        brain_id = "brain456"
+        workspace_name = "brain456"
         message_id = "msg789"
 
         mock_result = MagicMock()
@@ -93,7 +93,7 @@ class TestMCPHelper:
             mock_session.call_tool = AsyncMock(return_value=mock_result)
             mock_client_session.return_value = mock_session
 
-            result = await MCPHelper.upload_files_to_datalake(user_id, brain_id, message_id)
+            result = await MCPHelper.upload_files_to_datalake(user_id, workspace_name, message_id)
 
             assert result["status"] == "success"
             assert result["uploaded_files"] == 5
@@ -101,7 +101,7 @@ class TestMCPHelper:
                 "upload_files",
                 arguments={
                     "user_id": user_id,
-                    "brain_id": brain_id,
+                    "brain_id": workspace_name,
                     "message_id": message_id
                 }
             )
@@ -110,7 +110,7 @@ class TestMCPHelper:
     async def test_upload_files_to_datalake_error(self):
         """Test file upload with tool error."""
         user_id = "user123"
-        brain_id = "brain456"
+        workspace_name = "brain456"
         message_id = "msg789"
 
         mock_result = MagicMock()
@@ -134,7 +134,7 @@ class TestMCPHelper:
             mock_session.call_tool = AsyncMock(return_value=mock_result)
             mock_client_session.return_value = mock_session
 
-            result = await MCPHelper.upload_files_to_datalake(user_id, brain_id, message_id)
+            result = await MCPHelper.upload_files_to_datalake(user_id, workspace_name, message_id)
 
             assert "error" in result
             assert "Tool error: Tool execution failed" in result["error"]
@@ -143,13 +143,13 @@ class TestMCPHelper:
     async def test_upload_files_to_datalake_connection_error(self):
         """Test file upload with connection error."""
         user_id = "user123"
-        brain_id = "brain456"
+        workspace_name = "brain456"
         message_id = "msg789"
 
         with patch('src.smart_rag.infrastructure.external.mcp_helper.sse_client') as mock_sse_client:
             mock_sse_client.side_effect = ConnectionError("Unable to connect to MCP server")
 
-            result = await MCPHelper.upload_files_to_datalake(user_id, brain_id, message_id)
+            result = await MCPHelper.upload_files_to_datalake(user_id, workspace_name, message_id)
 
             assert "error" in result
             assert "Unable to connect to MCP server" in result["error"]

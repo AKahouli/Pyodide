@@ -912,7 +912,7 @@ def test_attach_result_text_for_citations_appends_text_and_parents_citations() -
                 "text_source": {
                     "type": "text",
                     "source": "Doc",
-                    "external_id": "ext-1",
+                    "file_name": "ext-1",
                     "page": "2",
                     "page_content": "Important clause",
                     "workspace_id": "ws-1",
@@ -947,7 +947,7 @@ def test_attach_result_text_for_citations_reuses_existing_matching_text_componen
                 "text_source": {
                     "type": "text",
                     "source": "Doc",
-                    "external_id": "ext-1",
+                    "file_name": "ext-1",
                     "page": "2",
                     "page_content": "Important clause",
                     "workspace_id": "ws-1",

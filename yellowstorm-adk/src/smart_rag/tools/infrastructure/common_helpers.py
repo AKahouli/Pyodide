@@ -7,7 +7,7 @@ Provides shared utility functions used across different tools.
 import asyncio
 import base64
 import os
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 import aiofiles
 from azure.storage.filedatalake.aio import DataLakeFileClient as FileClient
 from src.config.settings import get_settings
@@ -81,7 +81,8 @@ class CommonHelpers:
             raise
 
     def create_search_payload(self, query: str, filter_params: Dict,
-                            vectorstore: str, top_k: int, search_type: str = "vector_search") -> Dict:
+                            vectorstore: str, top_k: int, search_type: str = "vector_search",
+                            user_id: Optional[str] = None) -> Dict:
         """
         Create a standardized search payload.
 
@@ -91,19 +92,23 @@ class CommonHelpers:
             vectorstore: Vectorstore name
             top_k: Number of top results to return
             search_type: Type of search to perform ("vector_search" or "hybrid_search")
+            user_id: Optional user ID for search context and logging
 
         Returns:
             Dictionary containing search payload
         """
         if top_k is None:
             top_k=4
-        return {
+        payload = {
             "query": query,
             "collection_name": vectorstore,
             "top_k": top_k,
             "filter": filter_params,
             "search_type": search_type
         }
+        if user_id:
+            payload["user_id"] = user_id
+        return payload
 
     def create_text_object(self, item_data: Dict) -> Dict:
         """
@@ -127,6 +132,8 @@ class CommonHelpers:
             "type": "text",
             "content": {
                 "source": filename,  # Only filename, not full path
+                "file_name": item_data["metadata"].get("file_name") or filename,
+                "workspace_name": item_data["metadata"].get("workspace_name"),
                 "external_id": item_data["metadata"].get("external_id"),
                 "brain_id": item_data["metadata"].get("brain_id"),
                 "page_content": item_data["page_content"],
@@ -151,7 +158,9 @@ class CommonHelpers:
                 "height": item_data[0]["metadata"].get("aspect_ratio", {}).get("height", ''),
                 "width": item_data[0]["metadata"].get("aspect_ratio", {}).get("width", ''),
                 "page": item_data[0]["metadata"].get("page", ''),
-                "file_name": item_data[0]["metadata"].get("source", ''),
+                "file_name": item_data[0]["metadata"].get("file_name")
+                or item_data[0]["metadata"].get("source", ''),
+                "workspace_name": item_data[0]["metadata"].get("workspace_name", ''),
                 "brain_id": item_data[0]["metadata"].get("brain_id", ''),
                 "external_id": item_data[0]["metadata"].get("external_id", ''),
             }
@@ -296,9 +305,7 @@ class CommonHelpers:
             filter_dict = payload.get("filter", {})
             search_type = payload.get("search_type", "vector_search")
 
-            # Get user_id from context or use default
-            # For local calls, we don't have the same user context, so use a reasonable default
-            user_id = "local_search_user"
+            user_id = payload.get("user_id", "local_search_user")
 
             # Call appropriate search function based on search_type
             logger.info(f"Making {search_type} call: collection={collection_name}, query='{query[:50]}...', top_k={top_k}")

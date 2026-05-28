@@ -236,10 +236,16 @@ class SessionHelper:
             # Create or retrieve session - calls _find_existing_session
             set_session_start = time.time()
             logger.info(f"[FREEZE DEBUG] Calling set_session() - will call _find_existing_session()")
+
+            extra_state = {}
+            if hasattr(agent, "_mcp_search_state"):
+                extra_state.update(agent._mcp_search_state)
+
             self.session = await self.set_session(
                 system_prompt=system_prompt,
                 agent_name=agent_name,
-                tools_info=tools_info
+                tools_info=tools_info,
+                extra_state=extra_state
             )
             set_session_duration = time.time() - set_session_start
             logger.info(f"[FREEZE DEBUG] set_session() completed in {set_session_duration:.2f}s")
@@ -328,7 +334,8 @@ class SessionHelper:
         self,
         system_prompt: Optional[str] = None,
         agent_name: str = DEFAULT_AGENT_NAME,
-        tools_info: Optional[List[Dict[str, str]]] = None
+        tools_info: Optional[List[Dict[str, str]]] = None,
+        extra_state: Optional[Dict[str, Any]] = None
     ) -> Session:
         """Create or retrieve a session with the given parameters.
 
@@ -336,6 +343,7 @@ class SessionHelper:
             system_prompt: Optional system prompt for the agent
             agent_name: Name of the agent (defaults to DEFAULT_AGENT_NAME)
             tools_info: Optional list of tool information dictionaries
+            extra_state: Optional additional state to merge into session state
 
         Returns:
             Session: The created or retrieved session
@@ -351,6 +359,8 @@ class SessionHelper:
 
             # Create new session with state
             state = self._build_session_state(system_prompt, agent_name, tools_info)
+            if extra_state:
+                state.update(extra_state)
             return await self.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=self.user_id,
