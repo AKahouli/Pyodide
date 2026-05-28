@@ -3,11 +3,19 @@ import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { MessageProvider } from '@/components/ai-elements/message-context';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { TaskResult } from '../types';
 import { getPreferredStepResultText } from '../utils/step-result-display';
 import { StepComponents } from './StepComponents';
+
+const HTML_RE = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i;
+
+function isHtmlContent(text: string): boolean {
+  return HTML_RE.test(text);
+}
 
 function getStatusTone(status: string): string {
   switch (status) {
@@ -84,8 +92,10 @@ export function IteratorResultPanel({ step }: Props) {
               )}
 
               {iterationText && (
-                <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                  {iterationText}
+                <div className="rounded-md bg-muted/40 p-3">
+                  <MessageProvider fileViewerDisplayMode="floating">
+                    <AIMessageContent parts={[{ type: 'text', content: iterationText }]} />
+                  </MessageProvider>
                 </div>
               )}
 
@@ -113,8 +123,10 @@ export function IteratorResultPanel({ step }: Props) {
                           <StepComponents components={child.components} taskId={child.taskId} />
                         </div>
                       ) : childText ? (
-                        <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                          {childText}
+                        <div className="rounded-md bg-muted/40 p-3">
+                          <MessageProvider fileViewerDisplayMode="floating">
+                            <AIMessageContent parts={[{ type: isHtmlContent(childText) ? 'webPreview' : 'text', content: childText }]} />
+                          </MessageProvider>
                         </div>
                       ) : null}
 
