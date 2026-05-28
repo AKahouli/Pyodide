@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '@/components/ui/dropdown-menu';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -795,6 +795,21 @@ export const PromptInputActionMenuContent = ({ className, ...props }: PromptInpu
 
 export type PromptInputActionMenuItemProps = ComponentProps<typeof DropdownMenuItem>;
 export const PromptInputActionMenuItem = ({ className, ...props }: PromptInputActionMenuItemProps) => <DropdownMenuItem className={cn(className)} {...props} />;
+
+export type PromptInputActionMenuSubProps = ComponentProps<typeof DropdownMenuSub>;
+export const PromptInputActionMenuSub = (props: PromptInputActionMenuSubProps) => <DropdownMenuSub {...props} />;
+
+export type PromptInputActionMenuSubTriggerProps = ComponentProps<typeof DropdownMenuSubTrigger>;
+export const PromptInputActionMenuSubTrigger = (props: PromptInputActionMenuSubTriggerProps) => <DropdownMenuSubTrigger {...props} />;
+
+export type PromptInputActionMenuSubContentProps = ComponentProps<typeof DropdownMenuSubContent>;
+export const PromptInputActionMenuSubContent = ({ className, ...props }: PromptInputActionMenuSubContentProps) => (
+  <DropdownMenuSubContent
+    className={cn('w-64 max-h-96 overflow-y-auto', className)}
+    sideOffset={4}
+    {...props}
+  />
+);
 
 // Note: Actions that perform side-effects (like opening a file dialog)
 // are provided in opt-in modules (e.g., prompt-input-attachments).

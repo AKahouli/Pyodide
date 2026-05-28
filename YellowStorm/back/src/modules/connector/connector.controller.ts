@@ -32,6 +32,7 @@ import { IConnectorResponse, IConnectorCredentialResponse } from './interfaces/c
 import { ConnectorService } from './connector.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorTransferService } from './connector-transfer.service';
+import { ConnectorUserService, RepositoryQuery } from './connector-user.service';
 import { ConnectedAppOAuthService } from '../connected-app/services/connected-app-oauth.service';
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
@@ -47,12 +48,29 @@ export class ConnectorController {
     private readonly credentialService: ConnectorCredentialService,
     private readonly transferService: ConnectorTransferService,
     private readonly oauthService: ConnectedAppOAuthService,
+    private readonly connectorUserService: ConnectorUserService,
   ) {}
 
   @Get()
   @ApiOperation({ summary: 'List active connectors available for binding' })
   async listActive(): Promise<IConnectorResponse[]> {
     return this.connectorService.findAllActive();
+  }
+
+  @Get('repositories')
+  @ApiOperation({ summary: 'Get repositories for a connected app (e.g., GitHub repos)' })
+  async getRepositories(
+    @CurrentUser() user: UserDocument,
+    @Query('appKey') appKey: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.connectorUserService.getRepositories(user.id.toString(), appKey, {
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 30,
+    });
   }
 
   @Get(':id')

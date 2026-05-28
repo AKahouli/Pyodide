@@ -17,6 +17,7 @@ import { AdminConnectorController } from './admin-connector.controller';
 import { AdminConnectorAuthCallbackController } from './admin-connector-auth-callback.controller';
 import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-callback.controller';
 import { ConnectorController } from './connector.controller';
+import { ConnectorUserService } from './connector-user.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import {
@@ -45,7 +46,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     UserModule,
     LoggerModule,
   ],
-  controllers: [AdminConnectorController, AdminConnectorAuthCallbackController, UnifiedOAuthCallbackController, ConnectorController],
+  controllers: [ConnectorController, AdminConnectorController, AdminConnectorAuthCallbackController, UnifiedOAuthCallbackController],
   providers: [
     CryptoService,
     ConnectorService,
@@ -54,6 +55,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     ConnectorAuthServiceImpl,
     ConnectorTransferService,
     M365TransferAdapter,
+    ConnectorUserService,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,

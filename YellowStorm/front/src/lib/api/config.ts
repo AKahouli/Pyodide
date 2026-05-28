@@ -202,6 +202,7 @@ export const API_ENDPOINTS = {
     credentials: (connectorId: string) => `/connectors/${connectorId}/credentials`,
     credential: (id: string) => `/connectors/credentials/${id}`,
     validateCredential: (id: string) => `/connectors/credentials/${id}/validate`,
+    repositories: '/connectors/repositories',
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
