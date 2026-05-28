@@ -382,6 +382,18 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
     )
     components: list[dict[str, Any]] = []
+    should_stream_tokens = (
+        not structured_output
+        and str(agent_config.get("type") or "").strip().lower() != "visualizer"
+    )
+    on_progress = None
+    if should_stream_tokens:
+        on_progress = lambda token: writer({
+            "type": "NodeToken",
+            "node_id": node_id,
+            "iteration": iteration,
+            "token": token,
+        })
 
     if tools:
         logger.info(
@@ -395,15 +407,10 @@ async def _execute_step(
             system_prompt=system_prompt,
             user_msg=user_msg,
             tools=tools,
-            on_progress=lambda token: writer({
-                "type": "NodeToken",
-                "node_id": node_id,
-                "iteration": iteration,
-                "token": token,
-            }),
+            on_progress=on_progress,
             trace_collector=trace_collector,
         )
-        if full_output and not structured_output:
+        if full_output and should_stream_tokens:
             writer({
                 "type": "NodeToken",
                 "node_id": node_id,
@@ -430,7 +437,7 @@ async def _execute_step(
             token = delta.content or ""
             if token:
                 full_output += token
-                if not structured_output:
+                if should_stream_tokens:
                     writer({
                         "type": "NodeToken",
                         "node_id": node_id,
@@ -439,7 +446,7 @@ async def _execute_step(
                     })
 
             if (
-                not structured_output
+                should_stream_tokens
                 and hasattr(delta, "model_extra")
                 and delta.model_extra
                 and "tool_calls" in (delta.model_extra or {})

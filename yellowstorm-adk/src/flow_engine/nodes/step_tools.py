@@ -111,6 +111,7 @@ def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "name": str(metadata.get("agent_name") or ""),
+        "type": str(metadata.get("agent_type") or metadata.get("type") or ""),
         "tools": [tool for tool in agent_tools if isinstance(tool, dict)],
         "agent_params": agent_params,
         "brain_ids": _extract_brain_ids(metadata.get("brain_context")),

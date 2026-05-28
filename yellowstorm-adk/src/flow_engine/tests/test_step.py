@@ -750,6 +750,125 @@ async def test_run_step_emits_structured_result_payload(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_run_step_suppresses_token_stream_for_data_visualizer(monkeypatch):
+    events = []
+
+    def _writer(event):
+        events.append(event)
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token, model_extra=None))]
+
+    class _Stream:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def __aiter__(self):
+            self._iter = iter(self._chunks)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream([_Chunk("<html><body><h1>Chart</h1></body></html>")])
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Render chart",
+            "metadata": {
+                "agent_type": "visualizer",
+            },
+            "output": {"ports": [{"id": "default", "type": "text"}]},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+    )
+
+    assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
+    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+
+
+@pytest.mark.anyio
+async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
+    events = []
+    calls = []
+
+    def _writer(event):
+        events.append(event)
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("<html><body><h1>Chart</h1></body></html>")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Render chart",
+            "metadata": {
+                "agent_type": "visualizer",
+                "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+            },
+            "output": {"ports": [{"id": "default", "type": "text"}]},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+    )
+
+    assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
+    assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
+    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+
+
+@pytest.mark.anyio
 async def test_run_step_preserves_opaque_structured_refs(monkeypatch):
     events = []
 
