@@ -12,7 +12,7 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSetSelectedConnectorRepo, useSelectedConnectorRepo } from '@/modules/conversation/store';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
 import { fetchTaggedAgents } from '@/modules/conversation/api';
@@ -47,7 +47,7 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[]) => void;
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => void;
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
@@ -76,6 +76,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
+  const selectedConnectorRepo = useSelectedConnectorRepo();
+  const setSelectedConnectorRepo = useSetSelectedConnectorRepo();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [status, setStatus] = useState<'submitted' | 'streaming' | 'ready' | 'error'>('ready');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -378,6 +380,11 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     }
   }, []);
 
+  // Handle repository selection from connector dialog
+  const handleRepositorySelect = useCallback((repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
+    setSelectedConnectorRepo(repo);
+  }, [setSelectedConnectorRepo]);
+
   const derivedStatus = externalStatus ?? status;
 
   const handleSubmit = useCallback(
@@ -429,7 +436,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       const memberIds = [...memberIdSet];
 
       if (externalSubmit) {
-        externalSubmit(message, model, agentIds.length > 0 ? agentIds : undefined, selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined, memberIds.length > 0 ? memberIds : undefined);
+        externalSubmit(message, model, agentIds.length > 0 ? agentIds : undefined, selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined, memberIds.length > 0 ? memberIds : undefined, selectedConnectorRepo || undefined);
         setMentionMap(new Map());
         resetSelectedWorkspaceIds();
         return;
@@ -447,7 +454,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds],
+    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
@@ -579,6 +586,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         open={connectorDialogOpen}
         onOpenChange={setConnectorDialogOpen}
         connector={selectedConnector}
+        onRepositorySelect={handleRepositorySelect}
       />
     </div>
   );

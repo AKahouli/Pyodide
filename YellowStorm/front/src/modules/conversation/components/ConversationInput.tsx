@@ -11,6 +11,7 @@ import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
+import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 
 interface ConversationInputProps {
   conversationId: string;
@@ -76,7 +77,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[]) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
       // Update conversation workspaces if workspaces are selected
@@ -103,6 +104,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         parentMessageId: replyingToMessage?.id,
+        connectorRepo: connectorRepo,
       });
 
       clearAll();
@@ -195,6 +197,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
           />
         }
       />
+      <SelectedConnectorRepo />
     </div>
   );
 }

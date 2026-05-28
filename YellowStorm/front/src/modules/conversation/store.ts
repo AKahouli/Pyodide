@@ -358,6 +358,9 @@ interface ConversationState {
   // Workspace selection
   selectedWorkspaceIds: string[];
 
+  // Selected connector repository for the current conversation
+  selectedConnectorRepo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null;
+
   // Stream state cache for background conversations
   streamingStateCache: Map<string, CachedStreamingState>;
 
@@ -435,6 +438,9 @@ interface ConversationState {
   setSelectedWorkspaceIds: (workspaceIds: string[]) => void;
   resetSelectedWorkspaceIds: () => void;
 
+  // Connector repository selection
+  setSelectedConnectorRepo: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null) => void;
+
   // Cleanup
   clearMessages: () => void;
   clearAll: () => void;
@@ -484,6 +490,7 @@ export const useConversationStore = create<ConversationState>()(
 
       selectedModelId: null,
       selectedWorkspaceIds: [],
+      selectedConnectorRepo: null,
 
       streamingStateCache: new Map(),
 
@@ -1447,6 +1454,10 @@ export const useConversationStore = create<ConversationState>()(
         set({ selectedWorkspaceIds: [] });
       },
 
+      setSelectedConnectorRepo: (repo) => {
+        set({ selectedConnectorRepo: repo });
+      },
+
       // ===== Cleanup =====
 
       clearMessages: () => {
@@ -1690,6 +1701,10 @@ export const useSelectedWorkspaceIds = () => useConversationStore((s) => s.selec
 export const useSetSelectedWorkspaceIds = () => useConversationStore((s) => s.setSelectedWorkspaceIds);
 
 export const useResetSelectedWorkspaceIds = () => useConversationStore((s) => s.resetSelectedWorkspaceIds);
+
+export const useSelectedConnectorRepo = () => useConversationStore((s) => s.selectedConnectorRepo);
+
+export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.setSelectedConnectorRepo);
 
 export const useBranchCache = () => useConversationStore(useShallow((s) => s.branchCache));
 

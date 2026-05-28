@@ -21,9 +21,10 @@ interface ConnectorReposDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connector: { id: string; name: string; description?: string } | null;
+  onRepositorySelect?: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => void;
 }
 
-export function ConnectorReposDialog({ open, onOpenChange, connector }: ConnectorReposDialogProps) {
+export function ConnectorReposDialog({ open, onOpenChange, connector, onRepositorySelect }: ConnectorReposDialogProps) {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,15 +65,24 @@ export function ConnectorReposDialog({ open, onOpenChange, connector }: Connecto
   }, [open, connector]);
 
   const handleToggleRepo = (repoId: string) => {
+    // Single selection: deselect all and select only the clicked one
     setRepos((prev) =>
-      prev.map((repo) => (repo.id === repoId ? { ...repo, isSelected: !repo.isSelected } : repo))
+      prev.map((repo) => ({ ...repo, isSelected: repo.id === repoId ? !repo.isSelected : false }))
     );
   };
 
   const handleConfirm = () => {
     const selectedRepos = repos.filter((r) => r.isSelected);
-    console.log('Selected repos:', selectedRepos);
-    // TODO: Handle selected repos - you can emit an event or call a callback
+    if (selectedRepos.length > 0 && connector && onRepositorySelect) {
+      const repo = selectedRepos[0];
+      onRepositorySelect({
+        connectorId: connector.id,
+        connectorName: connector.name,
+        repoId: repo.id,
+        repoName: repo.name,
+        repoUrl: repo.url,
+      });
+    }
     onOpenChange(false);
   };
 
