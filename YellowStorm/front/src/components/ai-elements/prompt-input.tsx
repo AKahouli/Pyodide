@@ -784,7 +784,7 @@ export type PromptInputActionMenuTriggerProps = PromptInputButtonProps;
 export const PromptInputActionMenuTrigger = forwardRef<HTMLButtonElement, PromptInputActionMenuTriggerProps>(({ className, children, ...props }, ref) => (
   <DropdownMenuTrigger asChild>
     <PromptInputButton ref={ref} className={className} {...props}>
-      {children ?? <PaperclipIcon className='size-4' />}
+      {children ?? <PlusIcon className='size-4' />}
     </PromptInputButton>
   </DropdownMenuTrigger>
 ));
