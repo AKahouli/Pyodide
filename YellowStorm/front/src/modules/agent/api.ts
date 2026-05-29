@@ -75,6 +75,7 @@ export interface ConnectorOption {
   id: string;
   name: string;
   description: string;
+  connectedAppKey: string;
 }
 
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {

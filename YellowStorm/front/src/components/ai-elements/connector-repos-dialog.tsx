@@ -20,7 +20,7 @@ interface Repo {
 interface ConnectorReposDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  connector: { id: string; name: string; description?: string } | null;
+  connector: { id: string; name: string; connectedAppKey: string; description?: string } | null;
   onRepositorySelect?: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => void;
 }
 
@@ -40,8 +40,8 @@ export function ConnectorReposDialog({ open, onOpenChange, connector, onReposito
     setLoading(true);
     setError(null);
 
-    // Map connector name to appKey (e.g., "GitHub" -> "github")
-    const appKey = connector.name.toLowerCase();
+    // Use the connector's connectedAppKey (e.g., "github")
+    const appKey = connector.connectedAppKey;
 
     getConnectorRepositories({ appKey, page: 1, limit: 100 })
       .then((data) => {
