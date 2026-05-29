@@ -108,7 +108,7 @@ export class ConnectorUserService {
       return {
         repositories: data.items.map((repo: GitHubRepository) => ({
           id: repo.id.toString(),
-          name: repo.name,
+          name: repo.full_name,
           description: repo.description || '',
           url: repo.html_url,
           private: repo.private,
@@ -125,7 +125,7 @@ export class ConnectorUserService {
     return {
       repositories: data.map((repo: GitHubRepository) => ({
         id: repo.id.toString(),
-        name: repo.name,
+        name: repo.full_name,
         description: repo.description || '',
         url: repo.html_url,
         private: repo.private,
