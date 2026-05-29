@@ -1841,6 +1841,12 @@ export interface PlaybookState {
   isSaving: boolean;
   saveRequestId: number;
   savingDirtyVersion: number | null;
+  lastSavedPayloadHashByPlaybookId: Record<string, string>;
+  lastSavedRequestBodyByPlaybookId: Record<string, UpdateFlowData>;
+  lastAutosaveDurationMs: number | null;
+  pendingAutosaveAfterCurrent: boolean;
+  autosaveBackoffUntil: number | null;
+  lastSaveReason: 'autosave' | 'manual' | 'route-leave' | null;
   currentExecution: PlaybookExecution | null;
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
@@ -1918,6 +1924,7 @@ export interface PlaybookActions {
   updateDataBindings: (dataBindings: DataBinding[]) => void;
   updateWorkspaces: (workspaces: string[]) => void;
   setDirty: (dirty: boolean) => void;
+  setPendingAutosaveAfterCurrent: (pending: boolean) => void;
   saveCurrentPlaybook: (options?: SavePlaybookOptions) => Promise<void>;
 
   // Execution
@@ -2349,9 +2356,57 @@ export interface UpdateFlowData {
   clientMutationId?: string;
 }
 
+export interface PlaybookDeltaNodePositionUpdate {
+  id: string;
+  positionX: number;
+  positionY: number;
+}
+
+export interface PlaybookDeltaPatchFields {
+  name?: string;
+  description?: string;
+  designSettings?: Record<string, unknown>;
+  settings?: Partial<FlowSettings>;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
+  workspaces?: string[];
+}
+
+export interface PatchPlaybookFlowDeltaData {
+  expectedUpdatedAt: string;
+  payloadHash?: string;
+  basePayloadHash?: string;
+  clientMutationId?: string;
+  patch: {
+    fields?: PlaybookDeltaPatchFields;
+    nodes?: {
+      positionUpdates?: PlaybookDeltaNodePositionUpdate[];
+    };
+  };
+}
+
+export interface PatchPlaybookFlowDeltaResult {
+  id: string;
+  updatedAt: string;
+  payloadHash?: string;
+  applied: true;
+  patchSummary: {
+    scalarFields: number;
+    nodesUpserted: number;
+    nodesDeleted: number;
+    edgeChanges: number;
+    dataBindingChanges: number;
+    positionUpdates: number;
+  };
+}
+
 export interface SavePlaybookOptions {
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  reason?: 'autosave' | 'manual' | 'route-leave';
 }
 
 export const PLAYBOOK_DEFINITION_VERSION = 1;

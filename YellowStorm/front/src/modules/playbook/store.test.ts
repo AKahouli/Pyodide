@@ -29,6 +29,7 @@ const apiMock = vi.hoisted(() => ({
   clearPlaybookTriggerSchedule: vi.fn(),
   getPlaybookRepeatability: vi.fn(),
   runAdvisorEvaluation: vi.fn(),
+  getFlow: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -74,6 +75,117 @@ describe('playbook store', () => {
     expect(apiMock.getPlaybooks).toHaveBeenCalledWith({ page: 1, limit: 20, search: 'ops' });
     expect(state.playbooks).toHaveLength(1);
     expect(state.playbooksLoading).toBe(false);
+  });
+
+  it('skips no-op saves when the serialized payload hash matches the baseline', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Stable' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+  });
+
+  it('coalesces autosaves while a save is already in flight', async () => {
+    let resolveSave: ((value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void) | undefined;
+    apiMock.updatePlaybook.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSave = resolve as (value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void;
+    }));
+    apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
+      id: 'p1',
+      name: 'Queued save',
+      updatedAt: '2026-05-29T20:30:00.000Z',
+    }));
+
+    const playbook = makePlaybook({ id: 'p1', name: 'Queued save' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    const firstSave = usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook
+        ? { ...state.currentPlaybook, description: 'Changed after first save started' }
+        : state.currentPlaybook,
+      dirtyVersion: 2,
+      isDirty: true,
+    }));
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(usePlaybookStore.getState().pendingAutosaveAfterCurrent).toBe(true);
+    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', updatedAt: '2026-05-29T20:29:00.000Z' }));
+    await firstSave;
+    await Promise.resolve();
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {
+    const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
+    const enrichedFlow = {
+      ...makePlaybook({ id: 'flow-1' }),
+      activeReplays: {
+        'task-1': {
+          id: 'replay-1',
+          validationVersion: 1,
+          isStale: false,
+          staleReasons: [],
+          preserveOutputFormat: false,
+          outputFormatGuide: null,
+          formatGuideStatus: null,
+          label: 'Baseline',
+          latestOverallScore: 92,
+        },
+      },
+    } as any;
+    apiMock.getFlow
+      .mockResolvedValueOnce(baseFlow)
+      .mockResolvedValueOnce(enrichedFlow);
+
+    await usePlaybookStore.getState().fetchFlow('flow-1');
+
+    expect(apiMock.getFlow).toHaveBeenNthCalledWith(1, 'flow-1', { view: 'base' });
+    expect(apiMock.getFlow).toHaveBeenNthCalledWith(2, 'flow-1', { view: 'enriched' });
+    await Promise.resolve();
+
+    expect((usePlaybookStore.getState().currentPlaybook as any)?.activeReplays).toEqual(enrichedFlow.activeReplays);
+    expect(usePlaybookStore.getState().currentPlaybookLoading).toBe(false);
+  });
+
+  it('fetchFlow ignores late enriched data when the user already opened another flow', async () => {
+    const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
+    let resolveEnriched: ((value: typeof baseFlow) => void) | undefined;
+    apiMock.getFlow
+      .mockResolvedValueOnce(baseFlow)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveEnriched = resolve as (value: typeof baseFlow) => void;
+      }));
+
+    await usePlaybookStore.getState().fetchFlow('flow-1');
+    usePlaybookStore.setState({ currentPlaybook: makePlaybook({ id: 'flow-2', name: 'Next flow' }) });
+    resolveEnriched?.({
+      ...makePlaybook({ id: 'flow-1' }),
+      activeReplays: {
+        'task-1': { id: 'replay-1' },
+      },
+    } as any);
+    await Promise.resolve();
+
+    expect(usePlaybookStore.getState().currentPlaybook?.id).toBe('flow-2');
+    expect((usePlaybookStore.getState().currentPlaybook as any)?.activeReplays).not.toEqual({
+      'task-1': { id: 'replay-1' },
+    });
   });
 
   it('generates playbook and stores layouted current playbook', async () => {

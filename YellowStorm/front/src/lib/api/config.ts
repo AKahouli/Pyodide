@@ -347,6 +347,7 @@ export const API_ENDPOINTS = {
   playbookFlows: {
     list: '/playbooks',
     byId: (id: string) => `/playbooks/${id}`,
+    delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',
     design: (id: string) => `/playbooks/${id}/design`,

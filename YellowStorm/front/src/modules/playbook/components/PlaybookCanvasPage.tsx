@@ -97,7 +97,7 @@ import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../
 import type { AdvisorIntentApplyRequest, PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport, TaskInputPort, TaskOutputPort } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import { PlaybookFlowSettingsDrawer } from './PlaybookFlowSettingsDrawer';

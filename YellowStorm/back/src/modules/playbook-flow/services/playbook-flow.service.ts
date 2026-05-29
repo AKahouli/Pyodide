@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
+import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
@@ -21,6 +22,36 @@ import { IFlowResponse, IFlowListResponse } from '../interfaces/playbook-flow.in
 @Injectable()
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
+
+  private async findOwnedFlowDocument(flowId: string, ownerId: string): Promise<FlowDocument> {
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+    const flow = await this.flowModel.findById(flowId);
+    if (!flow) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+    if (String(flow.ownerId) !== String(ownerId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
+    }
+    return flow;
+  }
+
+  private toBaseFlowResponse(flow: FlowDocument): IFlowResponse {
+    const raw = flow.toJSON() as unknown as IFlowResponse;
+    raw.activeReplays = {};
+    return raw;
+  }
+
+  private ensureExpectedUpdatedAt(existingUpdatedAt: Date | undefined, expectedUpdatedAtRaw: string, message: string): void {
+    const expectedUpdatedAt = Date.parse(expectedUpdatedAtRaw);
+    if (Number.isNaN(expectedUpdatedAt)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid expectedUpdatedAt');
+    }
+    if (existingUpdatedAt instanceof Date && existingUpdatedAt.getTime() !== expectedUpdatedAt) {
+      throw new ConflictException(ErrorCode.CONFLICT, message);
+    }
+  }
 
   private normalizeWorkspaces(workspaces?: string[]): string[] {
     return workspaces
@@ -195,19 +226,19 @@ export class PlaybookFlowService {
     };
   }
 
-  async findOne(flowId: string, ownerId: string): Promise<IFlowResponse> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    const flow = await this.flowModel.findById(flowId);
-    if (!flow) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    if (String(flow.ownerId) !== String(ownerId)) {
-      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
-    }
+  async findOneBase(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    const startedAt = Date.now();
+    const flow = await this.findOwnedFlowDocument(flowId, ownerId);
+    const raw = this.toBaseFlowResponse(flow);
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_find_one_duration_ms view=base flowId=${flowId} durationMs=${durationMs}`);
+    return raw;
+  }
 
-    const raw = flow.toJSON() as unknown as IFlowResponse;
+  async findOneEnriched(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    const startedAt = Date.now();
+    const flow = await this.findOwnedFlowDocument(flowId, ownerId);
+    const raw = this.toBaseFlowResponse(flow);
 
     const taskIds = (raw.nodes ?? []).map((node) => node.id);
     const activeReplays = await this.replayService.getActiveReplays(flowId, taskIds);
@@ -236,10 +267,23 @@ export class PlaybookFlowService {
       }
     }
 
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_find_one_replay_enrichment_duration_ms flowId=${flowId} taskCount=${taskIds.length} durationMs=${durationMs}`);
+    this.logger.log(`playbook_find_one_duration_ms view=enriched flowId=${flowId} durationMs=${durationMs}`);
+
     return raw;
   }
 
+  async findOne(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    return this.findOneEnriched(flowId, ownerId);
+  }
+
+  async findOneForExecutionStart(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    return this.findOneBase(flowId, ownerId);
+  }
+
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
+    const startedAt = Date.now();
     if (!Types.ObjectId.isValid(flowId)) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
     }
@@ -252,19 +296,11 @@ export class PlaybookFlowService {
     }
 
     if (dto.expectedUpdatedAt !== undefined) {
-      const expectedUpdatedAt = Date.parse(dto.expectedUpdatedAt);
-      const existingUpdatedAt = (existing as { updatedAt?: Date }).updatedAt;
-      if (Number.isNaN(expectedUpdatedAt)) {
-        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid expectedUpdatedAt');
-      }
-
-      // Suggestion-generated saves should fail loudly when another tab or user already changed the playbook.
-      if (existingUpdatedAt instanceof Date && existingUpdatedAt.getTime() !== expectedUpdatedAt) {
-        throw new ConflictException(
-          ErrorCode.CONFLICT,
-          'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
-        );
-      }
+      this.ensureExpectedUpdatedAt(
+        (existing as { updatedAt?: Date }).updatedAt,
+        dto.expectedUpdatedAt,
+        'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+      );
     }
 
     if (dto.clientMutationId) {
@@ -360,7 +396,136 @@ export class PlaybookFlowService {
     });
     const raw = saved.toJSON() as unknown as IFlowResponse;
     raw.activeReplays = {};
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_save_duration_ms mode=full flowId=${flowId} durationMs=${durationMs}`);
     return raw;
+  }
+
+  async applyDeltaPatch(flowId: string, ownerId: string, dto: PatchPlaybookFlowDeltaDto): Promise<{
+    id: string;
+    updatedAt: string;
+    payloadHash?: string;
+    applied: true;
+    patchSummary: {
+      scalarFields: number;
+      nodesUpserted: number;
+      nodesDeleted: number;
+      edgeChanges: number;
+      dataBindingChanges: number;
+      positionUpdates: number;
+    };
+  }> {
+    const startedAt = Date.now();
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+
+    const existing = await this.flowModel.findById(flowId);
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+    if (String(existing.ownerId) !== String(ownerId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
+    }
+
+    this.ensureExpectedUpdatedAt(
+      (existing as { updatedAt?: Date }).updatedAt,
+      dto.expectedUpdatedAt,
+      'Playbook changed since this autosave started.',
+    );
+
+    if (dto.clientMutationId) {
+      this.logger.debug(`Saving playbook delta mutation ${dto.clientMutationId} for flow ${flowId}`);
+    }
+
+    const fields = dto.patch.fields;
+    const positionUpdates = dto.patch.nodes?.positionUpdates ?? [];
+    const unsupportedStructurePatch = Object.keys(dto.patch).some((key) => key !== 'fields' && key !== 'nodes');
+    if (unsupportedStructurePatch) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
+    }
+
+    if (dto.patch.nodes && dto.patch.nodes.positionUpdates === undefined) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
+    }
+
+    if (!fields && positionUpdates.length === 0) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Delta patch is empty.');
+    }
+
+    const nodesById = new Map((existing.nodes as any[]).map((node: any) => [node.id, node]));
+    const candidateNodes = (existing.nodes as any[]).map((node: any) => ({
+      ...node,
+      metadata: { ...(node.metadata ?? {}) },
+    }));
+    const candidateNodesById = new Map(candidateNodes.map((node: any) => [node.id, node]));
+
+    for (const update of positionUpdates) {
+      const currentNode = nodesById.get(update.id);
+      const candidateNode = candidateNodesById.get(update.id);
+      if (!currentNode || !candidateNode) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
+      }
+      candidateNode.metadata.positionX = update.positionX;
+      candidateNode.metadata.positionY = update.positionY;
+    }
+
+    const normalizedWorkspaces = this.normalizeWorkspaces(fields?.workspaces ?? existing.workspaces);
+    if (fields?.workspaces !== undefined || existing.workspaces.length > 1) {
+      this.ensureWorkspaceSelection(normalizedWorkspaces);
+    }
+
+    this.validatorService.validate(
+      candidateNodes as any,
+      existing.controlEdges as any,
+      existing.dataBindings as any,
+      { allowDraftRouters: true },
+    );
+
+    if (fields) {
+      if (fields.name !== undefined) existing.name = fields.name;
+      if (fields.description !== undefined) existing.description = fields.description;
+      if (fields.designSettings !== undefined) existing.designSettings = fields.designSettings as any;
+      if (fields.settings !== undefined) existing.settings = fields.settings as any;
+      if (fields.reflectionEnabled !== undefined) existing.reflectionEnabled = fields.reflectionEnabled;
+      if (fields.advisorScoringMode !== undefined) existing.advisorScoringMode = fields.advisorScoringMode;
+      if (fields.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = fields.advisorAutopilotEnabled;
+      if (fields.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = fields.advisorAutopilotTargetScore ?? undefined;
+      if (fields.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = fields.advisorAutopilotMaxTurns ?? undefined;
+      if (fields.workspaces !== undefined) existing.workspaces = normalizedWorkspaces;
+    }
+
+    if (positionUpdates.length > 0) {
+      existing.nodes = candidateNodes as any;
+    }
+
+    const saved = await existing.save().catch((err: any) => {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${existing.name}" already exists.`,
+        );
+      }
+      throw err;
+    });
+
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_save_duration_ms mode=delta flowId=${flowId} durationMs=${durationMs}`);
+
+    return {
+      id: String(saved._id),
+      updatedAt: ((saved as { updatedAt?: Date }).updatedAt ?? new Date()).toISOString(),
+      ...(dto.payloadHash ? { payloadHash: dto.payloadHash } : {}),
+      applied: true,
+      patchSummary: {
+        scalarFields: fields ? Object.keys(fields).length : 0,
+        nodesUpserted: 0,
+        nodesDeleted: 0,
+        edgeChanges: 0,
+        dataBindingChanges: 0,
+        positionUpdates: positionUpdates.length,
+      },
+    };
   }
 
   async findById(flowId: string): Promise<FlowDocument> {

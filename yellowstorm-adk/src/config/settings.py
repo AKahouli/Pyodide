@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     PLAYBOOK_RECURSION_LIMIT_MAX: int = 50
     PLAYBOOK_PYTHON_WORKER_POOL_SIZE: int = 8
     PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: int = 4
+    PLAYBOOK_GRAPH_CACHE_ENABLED: bool = False
+    PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES: int = 128
+    PLAYBOOK_GRAPH_CACHE_TTL_SECONDS: int = 900
 
     # External API Configuration for specific brain_ids
     EXTERNAL_API_BRAIN_IDS: List[str] = []  # Brain IDs requiring external routing

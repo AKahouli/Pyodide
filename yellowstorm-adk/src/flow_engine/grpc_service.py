@@ -11,6 +11,7 @@ Implements the runtime RPCs from playbook-flow.proto:
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Optional
 
@@ -20,11 +21,13 @@ from langgraph.types import Command
 from structlog import get_logger
 
 from src.flow_engine.builder import compose
+from src.config.settings import get_settings
 from src.flow_engine.grpc_contract import (
     should_emit_fallback_completion,
     snapshot_to_dict,
     struct_to_dict,
 )
+from src.flow_engine.runtime.graph_cache import CompiledGraphCache
 from src.flow_engine.runtime.checkpointer import ensure_checkpointer, get_checkpointer
 from src.flow_engine.runtime.events import (
     EVENT_APPROVAL_REQUESTED,
@@ -39,6 +42,11 @@ from src.flow_engine.runtime.invoker import stream_graph
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
+app_settings = get_settings()
+compiled_graph_cache = CompiledGraphCache(
+    max_entries=app_settings.PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES,
+    ttl_seconds=app_settings.PLAYBOOK_GRAPH_CACHE_TTL_SECONDS,
+)
 
 
 def _seed_task_outputs(request: Any) -> tuple[dict[tuple[str, int], Any], dict[str, int]]:
@@ -90,7 +98,27 @@ class PlaybookFlowRuntimeServicer:
             checkpointer = get_checkpointer()
             if checkpointer is None:
                 checkpointer = await ensure_checkpointer()
-            graph = compose(snapshot, checkpointer)
+            compile_started_at = time.perf_counter()
+            cache_mode = "disabled"
+            snapshot_key = "disabled"
+            if app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED:
+                graph, snapshot_key, cache_hit = await compiled_graph_cache.get_or_compile(
+                    snapshot,
+                    lambda current_snapshot: compose(current_snapshot, checkpointer),
+                    cache_scope=str(id(checkpointer)),
+                )
+                cache_mode = "hit" if cache_hit else "miss"
+            else:
+                graph = compose(snapshot, checkpointer)
+            logger.info(
+                "playbook_graph_compile_duration_ms",
+                execution_id=execution_id,
+                cache=cache_mode,
+                snapshot_hash=snapshot_key,
+                nodeCount=len(snapshot.get("nodes", [])),
+                durationMs=round((time.perf_counter() - compile_started_at) * 1000),
+            )
+            logger.info("playbook_graph_cache_size", size=compiled_graph_cache.size)
 
             recursion_limit = _pick_positive_setting(
                 getattr(request.settings, "recursion_limit", 0),
@@ -265,7 +293,27 @@ class PlaybookFlowRuntimeServicer:
             checkpointer = get_checkpointer()
             if checkpointer is None:
                 checkpointer = await ensure_checkpointer()
-            graph = compose(snapshot, checkpointer)
+            compile_started_at = time.perf_counter()
+            cache_mode = "disabled"
+            snapshot_key = "disabled"
+            if app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED:
+                graph, snapshot_key, cache_hit = await compiled_graph_cache.get_or_compile(
+                    snapshot,
+                    lambda current_snapshot: compose(current_snapshot, checkpointer),
+                    cache_scope=str(id(checkpointer)),
+                )
+                cache_mode = "hit" if cache_hit else "miss"
+            else:
+                graph = compose(snapshot, checkpointer)
+            logger.info(
+                "playbook_graph_compile_duration_ms",
+                execution_id=execution_id,
+                cache=cache_mode,
+                snapshot_hash=snapshot_key,
+                nodeCount=len(snapshot.get("nodes", [])),
+                durationMs=round((time.perf_counter() - compile_started_at) * 1000),
+            )
+            logger.info("playbook_graph_cache_size", size=compiled_graph_cache.size)
 
             replay_config = await _seed_replay_state(
                 graph, checkpointer, execution_id, source_execution_id,

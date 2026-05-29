@@ -58,6 +58,10 @@ import type {
   AdvisorScoringMode,
   RouterDecision,
   TaskResult,
+  PatchPlaybookFlowDeltaData,
+  PatchPlaybookFlowDeltaResult,
+  PlaybookDeltaPatchFields,
+  PlaybookDeltaNodePositionUpdate,
  } from './types';
 import {
   normalizePlaybook,
@@ -72,6 +76,38 @@ interface PaginatedResponse<T> {
     total: number;
     totalPages: number;
   };
+}
+
+export function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return JSON.stringify(value);
+  }
+  if (typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
+}
+
+function stableHash(value: unknown): string {
+  const serialized = stableStringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function measureSerializedBytes(value: unknown): number {
+  return new TextEncoder().encode(stableStringify(value)).length;
 }
 
 export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
@@ -242,6 +278,165 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
+  };
+}
+
+export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record<string, unknown> {
+  const sanitized = sanitizePlaybookSettings(sanitizePlaybookUpdate(data));
+
+  const body: Record<string, unknown> = {
+    name: sanitized.name,
+    description: sanitized.description,
+    workspaces: sanitized.workspaces,
+  };
+
+  if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
+  if (sanitized.advisorScoringMode !== undefined) body.advisorScoringMode = sanitized.advisorScoringMode;
+  if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
+  if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
+  if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
+  if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
+
+  if (data.settings) body.settings = data.settings;
+
+  if (sanitized.tasks !== undefined) {
+    body.nodes = sanitized.tasks.map(taskToFlowNode);
+  }
+  if (sanitized.edges !== undefined) {
+    body.controlEdges = sanitized.edges
+      .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
+      .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
+  }
+  if (data.dataBindings !== undefined) {
+    body.dataBindings = data.dataBindings;
+  }
+
+  return body;
+}
+
+function isEqualByStableStringify(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function buildDeltaPatchFields(
+  previous: UpdateFlowData,
+  current: UpdateFlowData,
+): PlaybookDeltaPatchFields | undefined {
+  const fields: PlaybookDeltaPatchFields = {};
+
+  if (!isEqualByStableStringify(previous.name, current.name)) fields.name = current.name;
+  if (!isEqualByStableStringify(previous.description, current.description)) fields.description = current.description;
+  if (!isEqualByStableStringify(previous.designSettings, current.designSettings)) fields.designSettings = current.designSettings;
+  if (!isEqualByStableStringify(previous.settings, current.settings)) fields.settings = current.settings;
+  if (!isEqualByStableStringify(previous.reflectionEnabled, current.reflectionEnabled)) fields.reflectionEnabled = current.reflectionEnabled;
+  if (!isEqualByStableStringify(previous.advisorScoringMode, current.advisorScoringMode)) fields.advisorScoringMode = current.advisorScoringMode;
+  if (!isEqualByStableStringify(previous.advisorAutopilotEnabled, current.advisorAutopilotEnabled)) fields.advisorAutopilotEnabled = current.advisorAutopilotEnabled;
+  if (!isEqualByStableStringify(previous.advisorAutopilotTargetScore, current.advisorAutopilotTargetScore)) {
+    fields.advisorAutopilotTargetScore = current.advisorAutopilotTargetScore;
+  }
+  if (!isEqualByStableStringify(previous.advisorAutopilotMaxTurns, current.advisorAutopilotMaxTurns)) {
+    fields.advisorAutopilotMaxTurns = current.advisorAutopilotMaxTurns;
+  }
+  if (!isEqualByStableStringify(previous.workspaces, current.workspaces)) fields.workspaces = current.workspaces;
+
+  return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+function buildPositionUpdates(
+  previousNodes: FlowNode[] | undefined,
+  currentNodes: FlowNode[] | undefined,
+): PlaybookDeltaNodePositionUpdate[] | null {
+  const previousList = previousNodes ?? [];
+  const currentList = currentNodes ?? [];
+  if (previousList.length !== currentList.length) {
+    return null;
+  }
+
+  const previousById = new Map(previousList.map((node) => [node.id, node]));
+  const updates: PlaybookDeltaNodePositionUpdate[] = [];
+
+  for (const currentNode of currentList) {
+    const previousNode = previousById.get(currentNode.id);
+    if (!previousNode) {
+      return null;
+    }
+
+    const previousMetadata = { ...(previousNode.metadata ?? {}) } as Record<string, unknown>;
+    const currentMetadata = { ...(currentNode.metadata ?? {}) } as Record<string, unknown>;
+    const previousX = previousMetadata.positionX;
+    const previousY = previousMetadata.positionY;
+    const currentX = currentMetadata.positionX;
+    const currentY = currentMetadata.positionY;
+
+    delete previousMetadata.positionX;
+    delete previousMetadata.positionY;
+    delete currentMetadata.positionX;
+    delete currentMetadata.positionY;
+
+    const previousComparable = { ...previousNode, metadata: previousMetadata };
+    const currentComparable = { ...currentNode, metadata: currentMetadata };
+    if (!isEqualByStableStringify(previousComparable, currentComparable)) {
+      return null;
+    }
+
+    if (previousX !== currentX || previousY !== currentY) {
+      updates.push({
+        id: currentNode.id,
+        positionX: typeof currentX === 'number' ? currentX : 0,
+        positionY: typeof currentY === 'number' ? currentY : 0,
+      });
+    }
+  }
+
+  return updates;
+}
+
+export function buildPlaybookDeltaPatch(
+  previous: UpdateFlowData,
+  current: UpdateFlowData,
+  options: {
+    expectedUpdatedAt: string;
+    payloadHash?: string;
+    basePayloadHash?: string;
+    clientMutationId?: string;
+  },
+): PatchPlaybookFlowDeltaData | null {
+  const fields = buildDeltaPatchFields(previous, current);
+
+  if (
+    !isEqualByStableStringify(previous.controlEdges, current.controlEdges)
+    || !isEqualByStableStringify(previous.dataBindings, current.dataBindings)
+  ) {
+    return null;
+  }
+
+  const positionUpdates = buildPositionUpdates(previous.nodes, current.nodes);
+  if (positionUpdates === null) {
+    return null;
+  }
+
+  if (!fields && positionUpdates.length === 0) {
+    return null;
+  }
+
+  return {
+    expectedUpdatedAt: options.expectedUpdatedAt,
+    ...(options.payloadHash ? { payloadHash: options.payloadHash } : {}),
+    ...(options.basePayloadHash ? { basePayloadHash: options.basePayloadHash } : {}),
+    ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
+    patch: {
+      ...(fields ? { fields } : {}),
+      ...(positionUpdates.length > 0 ? { nodes: { positionUpdates } } : {}),
+    },
+  };
+}
+
+export function getPlaybookUpdateTelemetry(data: UpdatePlaybookData): { payloadBytes: number; payloadHash: string } {
+  const body = buildPlaybookUpdateRequestBody(data);
+  return {
+    payloadBytes: measureSerializedBytes(body),
+    payloadHash: stableHash(body),
   };
 }
 
@@ -790,35 +985,7 @@ export async function updatePlaybook(
   id: string,
   data: UpdatePlaybookData,
 ): Promise<Playbook> {
-  const sanitized = sanitizePlaybookSettings(sanitizePlaybookUpdate(data));
-
-  const body: Record<string, unknown> = {
-    name: sanitized.name,
-    description: sanitized.description,
-    workspaces: sanitized.workspaces,
-  };
-
-  if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
-  if (sanitized.advisorScoringMode !== undefined) body.advisorScoringMode = sanitized.advisorScoringMode;
-  if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
-  if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
-  if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
-  if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
-  if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
-
-  if (data.settings) body.settings = data.settings;
-
-  if (sanitized.tasks !== undefined) {
-    body.nodes = sanitized.tasks.map(taskToFlowNode);
-  }
-  if (sanitized.edges !== undefined) {
-    body.controlEdges = sanitized.edges
-      .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
-      .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
-  }
-  if (data.dataBindings !== undefined) {
-    body.dataBindings = data.dataBindings;
-  }
+  const body = buildPlaybookUpdateRequestBody(data);
 
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
@@ -1438,9 +1605,10 @@ export async function getFlows(
   return { flows: items, pagination };
 }
 
-export async function getFlow(id: string): Promise<Playbook> {
+export async function getFlow(id: string, options?: { view?: 'base' | 'enriched' }): Promise<Playbook> {
   const response = await apiClient.get<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.byId(id),
+    { params: options?.view ? { view: options.view } : undefined },
   );
   return normalizePlaybook(response.data.data);
 }
@@ -1456,6 +1624,21 @@ export async function createFlow(data: CreateFlowData): Promise<Flow> {
 export async function updateFlow(id: string, data: UpdateFlowData, idempotencyKey?: string): Promise<Flow> {
   const response = await apiClient.patch<ApiResponse<Flow>>(
     API_ENDPOINTS.playbookFlows.byId(id),
+    data,
+    idempotencyKey
+      ? { headers: { 'Idempotency-Key': idempotencyKey } }
+      : undefined,
+  );
+  return response.data.data;
+}
+
+export async function patchFlowDelta(
+  id: string,
+  data: PatchPlaybookFlowDeltaData,
+  idempotencyKey?: string,
+): Promise<PatchPlaybookFlowDeltaResult> {
+  const response = await apiClient.patch<ApiResponse<PatchPlaybookFlowDeltaResult>>(
+    API_ENDPOINTS.playbookFlows.delta(id),
     data,
     idempotencyKey
       ? { headers: { 'Idempotency-Key': idempotencyKey } }

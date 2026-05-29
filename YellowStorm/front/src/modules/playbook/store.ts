@@ -3,7 +3,7 @@
  * Zustand store for playbook management
  */
 
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/notifications';
@@ -53,6 +53,7 @@ import type {
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
   PlaybookDefinitionExport,
+  UpdateFlowData,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -142,6 +143,12 @@ const initialState: PlaybookState = {
   isSaving: false,
   saveRequestId: 0,
   savingDirtyVersion: null,
+  lastSavedPayloadHashByPlaybookId: {},
+  lastSavedRequestBodyByPlaybookId: {},
+  lastAutosaveDurationMs: null,
+  pendingAutosaveAfterCurrent: false,
+  autosaveBackoffUntil: null,
+  lastSaveReason: null,
   currentExecution: null,
   currentExecutionLoading: false,
   executionCache: {},
@@ -217,7 +224,6 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
       .then(() => {
         const execution = usePlaybookStore.getState().executionCache[executionId];
         const hasPendingEvaluations = execution?.taskResults?.some((task) => task.judgeStatus === 'evaluating') ?? false;
-        console.debug('[judge DEBUG] scheduleJudgeRefresh attempt', attempt, '/', JUDGE_REFRESH_MAX_ATTEMPTS, 'hasPending=', hasPendingEvaluations, 'taskStatuses=', execution?.taskResults?.map(t => ({ taskId: t.taskId, judgeStatus: t.judgeStatus, iteration: t.iteration })));
 
         if (!hasPendingEvaluations || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
           clearJudgeRefreshTimer(executionId);
@@ -239,6 +245,44 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
 }
 const MAX_EXECUTION_CACHE = 20;
 const MAX_UNDO_HISTORY = 100;
+const enablePlaybookDevtools =
+  import.meta.env.DEV && import.meta.env.VITE_PLAYBOOK_DEVTOOLS_ENABLED === 'true';
+const enablePlaybookDeltaAutosave = import.meta.env.VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED === 'true';
+
+function logPlaybookPerfMetric(
+  metric: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): void {
+  console.info(`[playbook_perf] ${metric}`, fields);
+}
+
+function getAutosaveRetryDelayMs(backoffUntil: number | null): number {
+  if (!backoffUntil) {
+    return 2000;
+  }
+  return Math.min(Math.max(backoffUntil - Date.now(), 2000) * 2, 15000);
+}
+
+function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: string; clientMutationId?: string }) {
+  return {
+    name: playbook.name,
+    description: playbook.description,
+    designSettings: playbook.designSettings,
+    tasks: playbook.tasks,
+    edges: playbook.edges,
+    controlEdges: playbook.controlEdges,
+    dataBindings: playbook.dataBindings,
+    settings: playbook.settings,
+    workspaces: playbook.workspaces,
+    reflectionEnabled: playbook.reflectionEnabled,
+    advisorScoringMode: playbook.advisorScoringMode,
+    advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
+    advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+    advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
+    expectedUpdatedAt: options?.expectedUpdatedAt,
+    clientMutationId: options?.clientMutationId,
+  };
+}
 
 function getPreferredSelectedStepId(
   taskResults: Array<{ taskId: string; status: string; order?: number | null }>,
@@ -853,7 +897,7 @@ async function hydrateReplayExecutionFromSource(
     return replayExecution;
   }
 
-  let sourceExecution = executionCache[replaySource.executionId] ?? null;
+  let sourceExecution: PlaybookExecution | null = executionCache[replaySource.executionId] ?? null;
   if (!sourceExecution) {
     try {
       sourceExecution = await api.getExecution(playbookId, replaySource.executionId);
@@ -873,9 +917,7 @@ async function hydrateReplayExecutionFromSource(
 
 // ===== Store Implementation =====
 
-export const usePlaybookStore = create<PlaybookStore>()(
-  devtools(
-    (set, get) => ({
+const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       ...initialState,
 
       // ===== CRUD =====
@@ -921,7 +963,25 @@ export const usePlaybookStore = create<PlaybookStore>()(
           }
           const restored = perPlaybookUndoHistory[id] ?? { undoStack: [], redoStack: [] };
           const playbook = await api.getPlaybook(id);
-          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: restored.undoStack, redoStack: restored.redoStack, perPlaybookUndoHistory, canvasSyncVersion: 0 });
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(playbook)) as UpdateFlowData;
+          const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(playbook));
+          set((state) => ({
+            currentPlaybook: playbook,
+            currentPlaybookLoading: false,
+            isDirty: false,
+            undoStack: restored.undoStack,
+            redoStack: restored.redoStack,
+            perPlaybookUndoHistory,
+            canvasSyncVersion: 0,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [playbook.id]: baselineTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [playbook.id]: baselineRequestBody,
+            },
+          }));
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchOneFailed', 'Failed to fetch playbook');
           set({ currentPlaybookLoading: false, error: msg });
@@ -973,13 +1033,38 @@ export const usePlaybookStore = create<PlaybookStore>()(
       updatePlaybook: async (id, data) => {
         const requestId = get().saveRequestId + 1;
         const saveStartDirtyVersion = get().dirtyVersion;
+        const saveStartedAt = performance.now();
+        const requestBody = api.buildPlaybookUpdateRequestBody(data) as UpdateFlowData;
+        const payloadTelemetry = api.getPlaybookUpdateTelemetry(data);
+        const previousRequestBody = get().lastSavedRequestBodyByPlaybookId[id];
+        const expectedUpdatedAt = data.expectedUpdatedAt ?? get().currentPlaybook?.updatedAt;
+        const deltaPatch = enablePlaybookDeltaAutosave && previousRequestBody && expectedUpdatedAt
+          ? api.buildPlaybookDeltaPatch(previousRequestBody, requestBody, {
+            expectedUpdatedAt,
+            payloadHash: payloadTelemetry.payloadHash,
+            basePayloadHash: get().lastSavedPayloadHashByPlaybookId[id],
+            clientMutationId: data.clientMutationId,
+          })
+          : null;
+        const saveMode = deltaPatch ? 'delta' : 'full';
         set({
           isSaving: true,
           saveRequestId: requestId,
           savingDirtyVersion: saveStartDirtyVersion,
         });
         try {
-          const playbook = await api.updatePlaybook(id, data);
+          const playbook = deltaPatch
+            ? await api.patchFlowDelta(id, deltaPatch).then(async (result) => {
+              const current = get().currentPlaybook;
+              if (!current || current.id !== id) {
+                throw new Error('Playbook state changed during delta save.');
+              }
+              return {
+                ...current,
+                updatedAt: result.updatedAt,
+              };
+            })
+            : await api.updatePlaybook(id, data);
           const existing = get().playbooks.find((p) => p.id === id);
           const summary: PlaybookSummary = {
             id: playbook.id,
@@ -996,6 +1081,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestState = get();
           const isLatestSaveRequest = latestState.saveRequestId === requestId;
           const hasNewerLocalChanges = latestState.dirtyVersion !== saveStartDirtyVersion;
+          const saveDurationMs = Math.round(performance.now() - saveStartedAt);
 
           set((state) => ({
             playbooks: state.playbooks.map((p) => (p.id === id ? summary : p)),
@@ -1003,9 +1089,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ? state.currentPlaybook
               : {
                 ...playbook,
-                tasks: state.currentPlaybook.tasks,
-                edges: state.currentPlaybook.edges,
-                dataBindings: state.currentPlaybook.dataBindings,
+                name: hasNewerLocalChanges
+                  ? state.currentPlaybook.name
+                  : playbook.name,
+                description: hasNewerLocalChanges
+                  ? state.currentPlaybook.description
+                  : playbook.description,
+                designSettings: hasNewerLocalChanges
+                  ? state.currentPlaybook.designSettings
+                  : playbook.designSettings,
+                settings: hasNewerLocalChanges
+                  ? state.currentPlaybook.settings
+                  : playbook.settings,
+                workspaces: hasNewerLocalChanges
+                  ? state.currentPlaybook.workspaces
+                  : playbook.workspaces,
+                tasks: hasNewerLocalChanges
+                  ? state.currentPlaybook.tasks
+                  : playbook.tasks,
+                edges: hasNewerLocalChanges
+                  ? state.currentPlaybook.edges
+                  : playbook.edges,
+                dataBindings: hasNewerLocalChanges
+                  ? state.currentPlaybook.dataBindings
+                  : playbook.dataBindings,
                 reflectionEnabled: hasNewerLocalChanges
                   ? state.currentPlaybook.reflectionEnabled
                   : playbook.reflectionEnabled,
@@ -1025,11 +1132,43 @@ export const usePlaybookStore = create<PlaybookStore>()(
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
             savingDirtyVersion: isLatestSaveRequest ? null : state.savingDirtyVersion,
+            pendingAutosaveAfterCurrent: isLatestSaveRequest ? false : state.pendingAutosaveAfterCurrent,
+            autosaveBackoffUntil: latestState.lastSaveReason === 'autosave'
+              ? null
+              : state.autosaveBackoffUntil,
+            lastAutosaveDurationMs: latestState.lastSaveReason === 'autosave' ? saveDurationMs : state.lastAutosaveDurationMs,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [id]: payloadTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [id]: requestBody,
+            },
           }));
+          logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
+            mode: saveMode,
+            playbookId: id,
+            payloadBytes: deltaPatch
+              ? api.measureSerializedBytes(deltaPatch)
+              : payloadTelemetry.payloadBytes,
+            reason: latestState.lastSaveReason,
+          });
+          if (isLatestSaveRequest && latestState.pendingAutosaveAfterCurrent && hasNewerLocalChanges) {
+            void Promise.resolve().then(() => get().saveCurrentPlaybook({ reason: 'autosave' }));
+          }
         } catch (err) {
           const latestState = get();
           if (latestState.saveRequestId === requestId) {
-            set({ isSaving: false, savingDirtyVersion: null });
+            const autosaveFailed = latestState.lastSaveReason === 'autosave';
+            const nextBackoffMs = autosaveFailed ? getAutosaveRetryDelayMs(latestState.autosaveBackoffUntil) : null;
+            set({
+              isSaving: false,
+              savingDirtyVersion: null,
+              autosaveBackoffUntil: autosaveFailed && nextBackoffMs
+                ? Date.now() + nextBackoffMs
+                : latestState.autosaveBackoffUntil,
+            });
           }
           if (
             err &&
@@ -1050,6 +1189,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 : state.currentPlaybook,
             }));
             toast.error(tPlaybook('store.errors.duplicateName', 'A playbook with this name already exists. Renamed to "{{name}}".', { name: dedupedName }));
+            return;
+          }
+          if (
+            latestState.lastSaveReason === 'autosave'
+            && err
+            && typeof err === 'object'
+            && 'statusCode' in err
+            && ((err as { statusCode?: number }).statusCode === 429 || (err as { statusCode?: number }).statusCode === 503)
+          ) {
+            toast.warning(tPlaybook('store.toasts.autosaveRetrying', 'Autosave is backing off and will retry shortly'));
             return;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
@@ -1341,29 +1490,40 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       setDirty: (dirty: boolean) => set({ isDirty: dirty }),
+      setPendingAutosaveAfterCurrent: (pending) => set({ pendingAutosaveAfterCurrent: pending }),
 
       saveCurrentPlaybook: async (options) => {
         const { currentPlaybook, isSaving } = get();
-        if (isSaving) return;
+        if (isSaving) {
+          if (options?.reason === 'autosave') {
+            set({ pendingAutosaveAfterCurrent: true });
+          }
+          return;
+        }
         if (!currentPlaybook) return;
-        await get().updatePlaybook(currentPlaybook.id, {
-          name: currentPlaybook.name,
-          description: currentPlaybook.description,
-          designSettings: currentPlaybook.designSettings,
-          tasks: currentPlaybook.tasks,
-          edges: currentPlaybook.edges,
-          controlEdges: currentPlaybook.controlEdges,
-          dataBindings: currentPlaybook.dataBindings,
-          settings: currentPlaybook.settings,
-          workspaces: currentPlaybook.workspaces,
-          reflectionEnabled: currentPlaybook.reflectionEnabled,
-          advisorScoringMode: currentPlaybook.advisorScoringMode,
-          advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
-          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
-          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
-          expectedUpdatedAt: options?.expectedUpdatedAt,
-          clientMutationId: options?.clientMutationId,
+        const savePayload = buildSavePayload(currentPlaybook, options);
+        const payloadTelemetry = api.getPlaybookUpdateTelemetry(savePayload);
+        const lastSavedPayloadHash = get().lastSavedPayloadHashByPlaybookId[currentPlaybook.id];
+        const shouldSkipSave = lastSavedPayloadHash === payloadTelemetry.payloadHash;
+
+        logPlaybookPerfMetric('playbook_autosave_skipped_hash_match', {
+          playbookId: currentPlaybook.id,
+          skipped: shouldSkipSave,
+          reason: options?.reason ?? 'manual',
         });
+
+        if (shouldSkipSave) {
+          set({
+            isDirty: false,
+            savingDirtyVersion: null,
+            pendingAutosaveAfterCurrent: false,
+            lastSaveReason: options?.reason ?? 'manual',
+          });
+          return;
+        }
+
+        set({ lastSaveReason: options?.reason ?? 'manual' });
+        await get().updatePlaybook(currentPlaybook.id, savePayload);
       },
 
       // ===== Execution =====
@@ -2921,16 +3081,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => {
-        console.debug('[judge DEBUG] onStepJudgeStarted', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) { console.debug('[judge DEBUG] onStepJudgeStarted: no cached execution'); return state; }
+          if (!cached) return state;
 
-          let matched = false;
           const taskResults = cached.taskResults.map((tr) => {
             const isMatch = tr.taskId === data.taskId
               && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
-            if (isMatch) matched = true;
             return isMatch
               ? {
                   ...tr,
@@ -2941,7 +3098,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 }
               : tr;
           });
-          console.debug('[judge DEBUG] onStepJudgeStarted: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2952,16 +3108,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => {
-        console.debug('[judge DEBUG] onStepJudgeUpdated', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration, judgeStatus: data.judgeStatus });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) { console.debug('[judge DEBUG] onStepJudgeUpdated: no cached execution'); return state; }
+          if (!cached) return state;
 
-          let matched = false;
           const taskResults = cached.taskResults.map((tr) => {
             const isMatch = tr.taskId === data.taskId
               && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
-            if (isMatch) matched = true;
             return isMatch
               ? {
                   ...tr,
@@ -2973,7 +3126,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 }
               : tr;
           });
-          console.debug('[judge DEBUG] onStepJudgeUpdated: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -3480,8 +3632,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestCached = get().executionCache[execId];
           let merged = normalizedExecution;
           if (latestCached) {
-            const cachedBefore = latestCached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
-            const apiBefore = normalizedExecution.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
             const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
             const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
               const cachedTr = cachedResultMap.get(getTaskResultCacheKey(apiTr));
@@ -3493,8 +3643,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               return apiTr;
             });
-            const mergedAfter = mergedTaskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
-            console.debug('[judge DEBUG] fetchExecution merge', { execId, cachedBefore, apiBefore, mergedAfter });
             // Also include any task results from cache that are not in the API response
             for (const [taskResultKey, cachedTr] of cachedResultMap) {
               if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
@@ -4233,8 +4381,20 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlow: async (id: string) => {
         set({ currentPlaybookLoading: true });
         try {
-          const flow = await api.getFlow(id);
+          const flow = await api.getFlow(id, { view: 'base' });
           set({ currentPlaybook: flow as any, currentPlaybookLoading: false, error: null });
+          void api.getFlow(id, { view: 'enriched' })
+            .then((enrichedFlow) => {
+              set((state) => ({
+                currentPlaybook: state.currentPlaybook?.id === id
+                  ? {
+                    ...state.currentPlaybook,
+                    activeReplays: (enrichedFlow as any).activeReplays ?? {},
+                  } as any
+                  : state.currentPlaybook,
+              }));
+            })
+            .catch(() => undefined);
           return flow;
         } catch (err) {
           set({ currentPlaybookLoading: false });
@@ -4519,9 +4679,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Cleanup =====
 
       reset: () => set(initialState),
-    }),
-    { name: 'playbook-store' },
-  ),
+    });
+
+export const usePlaybookStore = create<PlaybookStore>()(
+  (enablePlaybookDevtools
+    ? devtools(createPlaybookStore, { name: 'playbook-store' })
+    : createPlaybookStore) as StateCreator<PlaybookStore>,
 );
 
 // ===== Selector Hooks =====

@@ -1203,3 +1203,109 @@ def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
         assert events[-1].event_type == "ExecutionCompleted"
 
     asyncio.run(_run_test())
+
+
+def test_run_reuses_cached_graph_for_same_snapshot(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime.graph_cache import CompiledGraphCache
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request_one = pb.RunRequest(execution_id="exec-cache-1", flow_id="flow-cache")
+        request_two = pb.RunRequest(execution_id="exec-cache-2", flow_id="flow-cache")
+        request_one.snapshot.nodes.add().id = "node-1"
+        request_two.snapshot.nodes.add().id = "node-1"
+        request_one.input_context.update({"prompt": "first"})
+        request_two.input_context.update({"prompt": "second"})
+
+        compose_calls = {"count": 0}
+        fake_checkpointer = object()
+
+        async def fake_ensure_checkpointer():
+            return fake_checkpointer
+
+        def fake_compose(snapshot, checkpointer):
+            compose_calls["count"] += 1
+            return {"snapshot": snapshot, "checkpointer": checkpointer}
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            if False:
+                yield None
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", fake_compose)
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+        monkeypatch.setattr(
+            "src.flow_engine.grpc_service.compiled_graph_cache",
+            CompiledGraphCache(max_entries=8, ttl_seconds=900),
+        )
+        monkeypatch.setattr("src.flow_engine.grpc_service.app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED", True)
+
+        [event async for event in servicer.Run(request_one, None)]
+        [event async for event in servicer.Run(request_two, None)]
+
+        assert compose_calls["count"] == 1
+
+    asyncio.run(_run_test())
+
+
+def test_run_recompiles_when_checkpointer_instance_changes(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime.graph_cache import CompiledGraphCache
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request_one = pb.RunRequest(execution_id="exec-cache-a", flow_id="flow-cache")
+        request_two = pb.RunRequest(execution_id="exec-cache-b", flow_id="flow-cache")
+        request_one.snapshot.nodes.add().id = "node-1"
+        request_two.snapshot.nodes.add().id = "node-1"
+
+        compose_calls = {"count": 0}
+        checkpointers = iter([object(), object()])
+
+        async def fake_ensure_checkpointer():
+            return next(checkpointers)
+
+        def fake_compose(snapshot, checkpointer):
+            compose_calls["count"] += 1
+            return {"snapshot": snapshot, "checkpointer": checkpointer}
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            if False:
+                yield None
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", fake_compose)
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+        monkeypatch.setattr(
+            "src.flow_engine.grpc_service.compiled_graph_cache",
+            CompiledGraphCache(max_entries=8, ttl_seconds=900),
+        )
+        monkeypatch.setattr("src.flow_engine.grpc_service.app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED", True)
+
+        [event async for event in servicer.Run(request_one, None)]
+        [event async for event in servicer.Run(request_two, None)]
+
+        assert compose_calls["count"] == 2
+
+    asyncio.run(_run_test())

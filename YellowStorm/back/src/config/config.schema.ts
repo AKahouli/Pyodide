@@ -181,6 +181,8 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_PYTHON_WORKER_POOL_SIZE: Joi.number().min(1).max(100).default(8),
   PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: Joi.number().min(1).max(20).default(4),
   PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
+  PLAYBOOK_DELTA_PATCH_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_BASE_READ_SPLIT_ENABLED: Joi.boolean().default(false),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),

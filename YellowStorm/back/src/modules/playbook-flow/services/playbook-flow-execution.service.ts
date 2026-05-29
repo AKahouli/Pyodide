@@ -583,7 +583,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     stepExecutionModes?: Record<string, string>,
     modelIdOverride?: string,
   ): Promise<IFlowExecutionResponse> {
-    const flow = await this.flowService.findOne(flowId, ownerId);
+    const preflightStartedAt = Date.now();
+    const flow = await this.flowService.findOneForExecutionStart(flowId, ownerId);
+    this.logger.log(
+      `playbook_execution_start_preflight_ms flowId=${flowId} nodeCount=${flow.nodes?.length ?? 0} edgeCount=${flow.controlEdges?.length ?? 0} durationMs=${Date.now() - preflightStartedAt}`,
+    );
 
     const nodeIds = new Set(flow.nodes.map((n) => n.id));
     const cleanedEdges = flow.controlEdges.filter((e) => {

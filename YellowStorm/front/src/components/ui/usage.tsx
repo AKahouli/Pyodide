@@ -1,5 +1,5 @@
 import { Context, ContextCacheUsage, ContextContent, ContextContentBody, ContextContentFooter, ContextContentHeader, ContextInputUsage, ContextOutputUsage, ContextReasoningUsage, ContextTrigger } from '@/components/ai-elements/context';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { memo } from 'react';
 
 const Usage = memo(function Usage() {

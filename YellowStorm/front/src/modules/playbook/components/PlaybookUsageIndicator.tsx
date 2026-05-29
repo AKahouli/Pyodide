@@ -1,6 +1,6 @@
 import { Zap } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 

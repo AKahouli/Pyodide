@@ -7,7 +7,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { AuthProvider } from '@/modules/auth';
 import { SettingsModalProvider } from '@/modules/profile';
-import { UsageProvider } from '@/modules/usage';
+import { UsageProvider } from '@/modules/usage/UsageContext';
 import { NotificationsProvider } from '@/modules/notifications';
 import { LocalizationProvider } from '@/modules/localization';
 import { ThemeProvider } from '@/contexts/ThemeContext';

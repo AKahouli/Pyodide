@@ -11,4 +11,6 @@ export default registerAs('playbook-flow', () => ({
   pythonWorkerPoolSize: parseInt(process.env.PLAYBOOK_PYTHON_WORKER_POOL_SIZE || '8', 10),
   pythonWorkerMaxInflight: parseInt(process.env.PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT || '4', 10),
   idempotencyTtlHours: parseInt(process.env.PLAYBOOK_IDEMPOTENCY_TTL_HOURS || '24', 10),
+  deltaPatchEnabled: process.env.PLAYBOOK_DELTA_PATCH_ENABLED === 'true',
+  baseReadSplitEnabled: process.env.PLAYBOOK_BASE_READ_SPLIT_ENABLED === 'true',
 }));

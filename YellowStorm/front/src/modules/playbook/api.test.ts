@@ -17,6 +17,7 @@ import {
   getPlaybook,
   getReplayReports,
   getTaskReplays,
+  getPlaybookUpdateTelemetry,
   updatePlaybook,
   validateTaskReplay,
 } from './api';
@@ -105,6 +106,28 @@ describe('sanitizePlaybookUpdate', () => {
         humanApprovalConfig: { promptTemplate: 'Please approve', timeoutSeconds: 900 },
       }),
     ]);
+  });
+});
+
+describe('getPlaybookUpdateTelemetry', () => {
+  it('is deterministic across key-order differences', () => {
+    const first = getPlaybookUpdateTelemetry({
+      name: 'Playbook',
+      description: 'Description',
+      designSettings: { approvalSuggestionMode: 'manual', nodeSuggestionsMode: 'auto', inferenceModelId: 'model-1' },
+      settings: { maxParallelism: 2, recursionLimit: 4 },
+      workspaces: ['w1'],
+    } as any);
+    const second = getPlaybookUpdateTelemetry({
+      name: 'Playbook',
+      description: 'Description',
+      designSettings: { inferenceModelId: 'model-1', nodeSuggestionsMode: 'auto', approvalSuggestionMode: 'manual' },
+      settings: { recursionLimit: 4, maxParallelism: 2 },
+      workspaces: ['w1'],
+    } as any);
+
+    expect(first.payloadHash).toBe(second.payloadHash);
+    expect(first.payloadBytes).toBe(second.payloadBytes);
   });
 });
 

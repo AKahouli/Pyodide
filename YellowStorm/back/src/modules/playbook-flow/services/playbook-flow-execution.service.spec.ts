@@ -33,12 +33,18 @@ function createExecutionServiceForTests(overrides?: {
 }) {
   const executionModel = {
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) })),
+    findById: jest.fn(() => ({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
+      }),
+      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }),
+    })),
     findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     ...overrides?.executionModel,
   };
   const taskResultModel = {
     updateOne: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
     findOne: jest.fn(() => ({ sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue(null) })),
   };
@@ -62,6 +68,7 @@ function createExecutionServiceForTests(overrides?: {
     release: jest.fn(),
   };
   const flowService = {
+    findOneForExecutionStart: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }),
     findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }),
     ...overrides?.flowService,
   };
@@ -222,6 +229,62 @@ describe('buildGrpcHumanApprovalConfig', () => {
       prompt_template: 'Approve this',
       timeout_seconds: 900,
     });
+  });
+});
+
+describe('PlaybookFlowExecutionService start preflight', () => {
+  it('uses the base execution-start read instead of the enriched read path', async () => {
+    const savedExecution = {
+      id: 'exec-new',
+      queuePosition: 0,
+      save: jest.fn(),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-new' }),
+    };
+    savedExecution.save.mockResolvedValue(savedExecution);
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    ExecutionModel.findByIdAndDelete = jest.fn();
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+        settings: {},
+      }),
+      findOne: jest.fn(),
+      findById: jest.fn(),
+    };
+    const service = new PlaybookFlowExecutionService(
+      ExecutionModel,
+      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
+      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { admit: jest.fn().mockResolvedValue(0), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
+      flowService as any,
+      { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) } as any,
+      { validate: jest.fn() } as any,
+      { buildGrpcAgentsForPlaybook: jest.fn() } as any,
+      { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
+      {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
+      { buildCurrentReplayFingerprints: jest.fn() } as any,
+      { evaluateReplayEligibility: jest.fn() } as any,
+      { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
+      new PlaybookFlowOutputContractService() as any,
+      { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
+    );
+    jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
+
+    await service.start('flow-1', 'owner-1');
+
+    expect(flowService.findOneForExecutionStart).toHaveBeenCalledWith('flow-1', 'owner-1');
+    expect(flowService.findOne).not.toHaveBeenCalled();
   });
 });
 
