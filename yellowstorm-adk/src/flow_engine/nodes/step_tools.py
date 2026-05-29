@@ -6,6 +6,7 @@ from typing import Any, List
 
 import litellm
 from structlog import get_logger
+from src.flow_engine.tools.langchain_factory import _last_mcp_actual_args
 
 logger = get_logger(__name__)
 
@@ -201,20 +202,24 @@ async def run_step_with_tools(
                 tool_result = await tool.ainvoke(tool_arguments)
                 duration_ms = int((time.perf_counter() - started_at) * 1000)
                 tool_content = _build_tool_text_content(tool_result)
+                actual_args = _last_mcp_actual_args.get() or (tool_arguments if isinstance(tool_arguments, dict) else {})
+                _last_mcp_actual_args.set({})
                 if trace_collector is not None:
                     trace_collector.record_tool_call(
                         tool_name=tool_name,
-                        args=tool_arguments if isinstance(tool_arguments, dict) else {},
+                        args=actual_args,
                         output_summary=tool_content[:500],
                         status="completed",
                         duration_ms=duration_ms,
                     )
             except Exception as exc:
                 duration_ms = int((time.perf_counter() - started_at) * 1000)
+                actual_args_err = _last_mcp_actual_args.get() or (tool_arguments if isinstance(tool_arguments, dict) else {})
+                _last_mcp_actual_args.set({})
                 if trace_collector is not None:
                     trace_collector.record_tool_call(
                         tool_name=tool_name,
-                        args=tool_arguments if isinstance(tool_arguments, dict) else {},
+                        args=actual_args_err,
                         output_summary=None,
                         status="failed",
                         duration_ms=duration_ms,

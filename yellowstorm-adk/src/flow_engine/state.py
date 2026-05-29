@@ -35,3 +35,4 @@ class ExecutionState(TypedDict):
     pending_approval: Annotated[Optional[PendingApproval], last_write]
     cancelled: Annotated[bool, or_]
     hitl_checkpoint: Annotated[Optional[dict[str, Any]], last_write]
+    evaluation_user_id: Annotated[Optional[str], last_write]

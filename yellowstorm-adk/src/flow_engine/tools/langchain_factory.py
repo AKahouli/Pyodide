@@ -5,11 +5,18 @@ executable LangChain StructuredTool instances, reusing the same search
 infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
+import contextvars
 import copy
 import json
 import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
+# Carries the actual MCP args (after Python overrides) from _execute_mcp to step_tools
+_last_mcp_actual_args: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "_last_mcp_actual_args", default={}
+)
+
+import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
@@ -29,6 +36,85 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Workspace name resolver (brain_id ObjectId → actual workspace name)
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_NAME_CACHE: Dict[str, str] = {}
+_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{24}$", re.IGNORECASE)
+
+
+def _looks_like_object_id(value: str) -> bool:
+    return bool(_OBJECT_ID_RE.match(value or ""))
+
+
+async def _resolve_workspace_names(ids: List[str]) -> Dict[str, str]:
+    """Resolve MongoDB ObjectIds to workspace names via the internal backend endpoint.
+
+    Results are cached in-process for the lifetime of the worker.
+    Unknown or failed IDs fall back to the original ID string.
+    """
+    settings = get_settings()
+    raw_api_url = (getattr(settings, "API_URL", "") or "").rstrip("/")
+    token = getattr(settings, "INTERNAL_SERVICE_SECRET", "") or ""
+
+    if not raw_api_url or not token:
+        return {}
+
+    # Ensure the base URL includes the /api prefix used by NestJS
+    if raw_api_url.endswith("/api") or raw_api_url.endswith("/api/v1"):
+        api_base = raw_api_url.rsplit("/v1", 1)[0] if raw_api_url.endswith("/api/v1") else raw_api_url
+    else:
+        api_base = f"{raw_api_url}/api"
+
+    unresolved = [i for i in ids if i not in _WORKSPACE_NAME_CACHE and _looks_like_object_id(i)]
+    if unresolved:
+        resolve_url = f"{api_base}/workspaces/internal/resolve-names"
+        logger.info(
+            "workspace_name_resolve_calling url=%s ids=%s",
+            resolve_url,
+            unresolved,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    resolve_url,
+                    json={"ids": unresolved},
+                    headers={"X-Internal-Token": token, "Content-Type": "application/json"},
+                )
+                logger.info(
+                    "workspace_name_resolve_response status=%s url=%s",
+                    resp.status_code,
+                    resolve_url,
+                )
+                if resp.status_code == 200:
+                    body = resp.json()
+                    # Unwrap NestJS standard envelope {"success": true, "data": {...}, "meta": {...}}
+                    if isinstance(body, dict) and "data" in body and isinstance(body["data"], dict):
+                        data = body["data"]
+                    elif isinstance(body, dict):
+                        data = body
+                    else:
+                        data = {}
+                    if data:
+                        _WORKSPACE_NAME_CACHE.update({k: v for k, v in data.items() if v})
+                        logger.info(
+                            "workspace_names_resolved count=%s mapping=%s",
+                            len(data),
+                            data,
+                        )
+                else:
+                    logger.warning(
+                        "workspace_name_resolve_failed status=%s url=%s body=%s",
+                        resp.status_code,
+                        resolve_url,
+                        resp.text[:200],
+                    )
+        except Exception as exc:
+            logger.warning("workspace_name_resolve_error error=%s", str(exc))
+
+    return {i: _WORKSPACE_NAME_CACHE.get(i, i) for i in ids}
 
 
 def _log_payload(value: Any) -> str:
@@ -422,6 +508,8 @@ def create_langchain_tools(
     workspace_context_mode: str = "resolved_inputs_only",
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
     initial_components: Optional[List[dict]] = None,
+    user_id: Optional[str] = None,
+    resolved_workspace_names: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -446,13 +534,38 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        agent_workspace_names = agent_config.get("brain_ids") or []
+        # Build workspace names list in priority order:
+        # 1. Pre-resolved names from backend lookup (ObjectId → actual name)
+        # 2. Actual names from workspace_context (set when fallback context available)
+        # 3. brain_ids as-is (may be ObjectIds — last resort)
+        raw_ids = agent_config.get("brain_ids") or []
+        name_map = resolved_workspace_names or {}
+        connector_workspace_names = (
+            [name_map.get(i, i) for i in raw_ids if name_map.get(i, i)]
+            if name_map else
+            [
+                wc.get("workspace_name") or wc.get("workspace_id")
+                for wc in (workspace_context or [])
+                if isinstance(wc, dict) and (wc.get("workspace_name") or wc.get("workspace_id"))
+            ] or raw_ids
+        )
+        # Fallback: when brain_ids is empty, use the resolved output workspace name
+        if not connector_workspace_names and output_workspace_id and name_map:
+            resolved_output_ws = name_map.get(output_workspace_id, "")
+            if resolved_output_ws and not _OBJECT_ID_RE.match(resolved_output_ws):
+                connector_workspace_names = [resolved_output_ws]
+                logger.info(
+                    "connector_workspace_names_fallback output_workspace_id=%s resolved_name=%s",
+                    output_workspace_id,
+                    resolved_output_ws,
+                )
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
-            workspace_names=agent_workspace_names,
+            workspace_names=connector_workspace_names,
             file_names=effective_file_names,
+            user_id=user_id,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -1464,6 +1577,7 @@ def _create_connector_mcp_tools(
     output_workspace_id: str = "",
     workspace_names: Optional[List[str]] = None,
     file_names: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1563,6 +1677,9 @@ def _create_connector_mcp_tools(
                 tn: str = tool_name,
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
+                _uid: Optional[str] = user_id,
+                _wn: Optional[List[str]] = workspace_names,
+                _fn: Optional[List[str]] = file_names,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1585,6 +1702,28 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
+
+                        # Build context headers for streamable_http transport
+                        effective_auth_headers = dict(ah)
+                        if tt == "streamable_http":
+                            # Always override user_id / workspace_name / file_name
+                            # with known-good values so LLM-guessed or fixed_params
+                            # values (ObjectIds) can't reach the backend.
+                            if _uid:
+                                effective_auth_headers["user_id"] = _uid
+                                merged_params["user_id"] = _uid
+                            if _fn:
+                                effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
+                            if _wn:
+                                effective_auth_headers["workspace_name"] = json.dumps(_wn) if len(_wn) > 1 else _wn[0]
+                                merged_params["workspace_name"] = _wn[0] if len(_wn) == 1 else _wn
+                            logger.info(
+                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_name=%s",
+                                _uid,
+                                effective_auth_headers.get("file_name"),
+                                effective_auth_headers.get("workspace_name"),
+                            )
+
                         logger.info(
                             "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
                             cid,
@@ -1592,13 +1731,14 @@ def _create_connector_mcp_tools(
                             tn,
                             _log_payload(merged_params),
                         )
+                        _last_mcp_actual_args.set(dict(merged_params))
                         response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
                             ak,
                             merged_params,
-                            auth_headers=ah,
+                            auth_headers=effective_auth_headers,
                             auth_env=ae,
                         )
                         logger.info(

@@ -79,6 +79,7 @@ class AgentSuggestion(BaseModel):
     agent_params: Optional[Dict] = None
     agent_type: Optional[str] = None  # Can be "normal" or "manager"
     save_memory: Optional[bool] = False
+    mcp: Optional[Dict] = None
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

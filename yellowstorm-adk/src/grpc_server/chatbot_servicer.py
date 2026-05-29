@@ -588,6 +588,23 @@ class ChatbotServicer(
                         }
                     )
 
+        raw_agent_params = (
+            dict(pb_agent.agent_params.params) if pb_agent.HasField("agent_params") else {}
+        )
+        # Extract mcp config from connector_bindings_json
+        mcp_config = None
+        connector_bindings_raw = raw_agent_params.get("connector_bindings_json")
+        if connector_bindings_raw:
+            try:
+                bindings = json.loads(connector_bindings_raw)
+                for binding in bindings:
+                    transport_type = binding.get("mcp_transport_type")
+                    server_url = binding.get("mcp_server_url")
+                    if transport_type and server_url:
+                        mcp_config = {"transport_type": transport_type, "server_url": server_url}
+                        break
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Failed to parse connector_bindings_json for agent {pb_agent.name}")
         return AgentSuggestion(
             id=pb_agent.id if pb_agent.id else "no_id",
             name=pb_agent.name,
@@ -632,25 +649,21 @@ class ChatbotServicer(
             ]
             if pb_agent.skills
             else None,
-            html=False,  # V2 removed this, default to False
-            vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,  # Use environment variable
+            html=False,
+            vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,
             workspace_names=workspace_names,
             brain_ids=workspace_names,
             brain_documents=brain_documents,
-            brain_relations={
-                "nodes": [],
-                "relationships": [],
-            },  # V2 removed this, use empty
+            brain_relations={"nodes": [], "relationships": []},
             chatbot_name={
-                "provider": pb_agent.chatbot.model  # Full model identifier
+                "provider": pb_agent.chatbot.model
             }
             if pb_agent.HasField("chatbot")
             else None,
-            agent_params=dict(pb_agent.agent_params.params)
-            if pb_agent.HasField("agent_params")
-            else None,
+            agent_params=raw_agent_params if raw_agent_params else None,
             agent_type=pb_agent.agent_type if pb_agent.agent_type else None,
             save_memory=pb_agent.save_memory,
+            mcp=mcp_config,
         )
 
     async def _convert_agent_team_request_v2(

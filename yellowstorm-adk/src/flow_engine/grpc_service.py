@@ -112,6 +112,7 @@ class PlaybookFlowRuntimeServicer:
                 "errors": [],
                 "pending_approval": None,
                 "cancelled": False,
+                "evaluation_user_id": str(getattr(request, "owner_id", "") or ""),
             }
 
             config = {"configurable": {"thread_id": execution_id}}

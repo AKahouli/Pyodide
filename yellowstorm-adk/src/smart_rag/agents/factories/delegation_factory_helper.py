@@ -202,6 +202,39 @@ def get_enhanced_prompt(
     return enhanced_prompt
 
 
+def _build_mcp_context_note(config, agent_config: Dict[str, Any]) -> str:
+    """Build a prompt note with MCP context values for streamable_http transport."""
+    mcp = agent_config.get("mcp")
+    if not mcp or mcp.get("transport_type") != "streamable_http":
+        return ""
+
+    user_id = getattr(config, "user_id", None) or ""
+    raw_docs = agent_config.get("brain_documents") or []
+    file_names = [
+        d.get("filename") for d in raw_docs
+        if isinstance(d, dict) and d.get("filename")
+    ]
+    workspace_names = list({
+        d.get("workspace_name") for d in raw_docs
+        if isinstance(d, dict) and d.get("workspace_name")
+    })
+
+    if not user_id and not file_names and not workspace_names:
+        return ""
+
+    lines = ["<mcp_tool_context>"]
+    if user_id:
+        lines.append(f'- user_id: "{user_id}"')
+    if file_names:
+        val = json.dumps(file_names) if len(file_names) > 1 else f'"{file_names[0]}"'
+        lines.append(f"- file_name: {val}")
+    if workspace_names:
+        val = json.dumps(workspace_names) if len(workspace_names) > 1 else f'"{workspace_names[0]}"'
+        lines.append(f"- workspace_name: {val}")
+    lines.append("</mcp_tool_context>")
+    return "\n".join(lines)
+
+
 def create_search_agent_with_tools(
     helper,
     agent_factory,
@@ -247,9 +280,8 @@ def create_search_agent_with_tools(
     top_k = 1
     tools_config = agent_config.get("tools", [])
     connector_bindings = []
-    raw_connector_bindings = agent_config.get("agent_params", {}).get(
-        "connector_bindings_json"
-    )
+    _agent_params_search = agent_config.get("agent_params") or {}
+    raw_connector_bindings = _agent_params_search.get("connector_bindings_json")
     if raw_connector_bindings:
         try:
             connector_bindings = json.loads(raw_connector_bindings)
@@ -340,6 +372,7 @@ def create_search_agent_with_tools(
             logger.exception("Error adding python_interpreter to search agent: %s", e)
 
     _attach_mcp_search_state(agent, config, agent_config)
+    _attach_mcp_toolset(agent, config, agent_config)
 
     return agent, toolkit
 
@@ -421,9 +454,8 @@ def create_standard_agent_with_tools(
     )
 
     connector_bindings = []
-    raw_connector_bindings = agent_config.get("agent_params", {}).get(
-        "connector_bindings_json"
-    )
+    _agent_params_std = agent_config.get("agent_params") or {}
+    raw_connector_bindings = _agent_params_std.get("connector_bindings_json")
     if raw_connector_bindings:
         try:
             connector_bindings = json.loads(raw_connector_bindings)
@@ -469,8 +501,52 @@ def create_standard_agent_with_tools(
             logger.exception("Error adding platform tools to standard agent: %s", e)
 
     _attach_mcp_search_state(agent, config, agent_config)
+    _attach_mcp_toolset(agent, config, agent_config)
 
     return agent, None
+
+
+def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
+    """Create and attach an MCPToolset if the agent config has an mcp field."""
+    mcp = agent_config.get("mcp")
+    if not mcp:
+        return
+
+    transport_type = mcp.get("transport_type")
+    server_url = mcp.get("server_url")
+
+    if transport_type != "streamable_http" or not server_url:
+        return
+
+    raw_docs = agent_config.get("brain_documents") or []
+    file_names = [
+        d.get("filename") for d in raw_docs
+        if isinstance(d, dict) and d.get("filename")
+    ] or None
+    workspace_names = list({
+        d.get("workspace_name") for d in raw_docs
+        if isinstance(d, dict) and d.get("workspace_name")
+    }) or None
+
+    try:
+        toolsets = MCPHelper.create_toolsets([{
+            "type": "mcp",
+            "transport_type": "streamable_http",
+            "url": server_url,
+            "user_id": config.user_id,
+            "file_names": file_names,
+            "workspace_names": workspace_names,
+        }])
+        if toolsets:
+            if not hasattr(agent, "tools") or agent.tools is None:
+                agent.tools = []
+            agent.tools.extend(toolsets)
+            logger.info(
+                f"Attached MCPToolset ({server_url}) to agent {agent.name} "
+                f"for user {config.user_id}"
+            )
+    except Exception as e:
+        logger.exception(f"Error creating MCPToolset for agent {agent.name}: {e}")
 
 
 def _attach_mcp_search_state(agent, config, agent_config: Dict[str, Any]) -> None:

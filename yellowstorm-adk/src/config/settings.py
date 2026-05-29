@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     WEB_SEARCH_PROMPT: str
     API_URL: str
     API_ADK_URL: str
+    INTERNAL_SERVICE_SECRET: Optional[str] = None
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
