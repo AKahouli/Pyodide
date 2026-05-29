@@ -473,6 +473,7 @@
   "node.disable": "Disable step",
   "node.enable": "Enable step",
   "node.resumeFromStep": "Resume from this step",
+  "node.runFromStep": "Run from this step",
   "node.skip": "Skip step",
   "node.staleReplay": "Stale replay",
   "node.replayReady": "Replay ready",

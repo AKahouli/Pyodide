@@ -5,6 +5,7 @@ Implements the runtime RPCs from playbook-flow.proto:
   - Cancel (unary)
   - ResumeApproval (unary)
   - ResumeFromStep (unary)
+  - RunFromCheckpoint (server-streaming) — replays from a historical checkpoint
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Optional
 
 import grpc
+from langgraph.checkpoint.base import copy_checkpoint
 from langgraph.types import Command
 from structlog import get_logger
 
@@ -238,6 +240,123 @@ class PlaybookFlowRuntimeServicer:
             return {"resumed": resumed}
         return pb.ResumeFromStepResponse(resumed=resumed)
 
+    async def RunFromCheckpoint(
+        self, request: Any, context: grpc.aio.ServicerContext,
+    ) -> AsyncGenerator[Any, None]:
+        execution_id = request.execution_id
+        source_execution_id = request.source_execution_id
+        target_node_id = request.target_node_id
+        target_iteration = int(getattr(request, "target_iteration", 0) or 0)
+
+        logger.info(
+            "[grpc] RunFromCheckpoint request received",
+            execution_id=execution_id,
+            source_execution_id=source_execution_id,
+            target_node_id=target_node_id,
+            target_iteration=target_iteration,
+        )
+
+        snapshot = snapshot_to_dict(request.snapshot)
+        input_context = struct_to_dict(request.input_context)
+
+        active = None
+
+        try:
+            checkpointer = get_checkpointer()
+            if checkpointer is None:
+                checkpointer = await ensure_checkpointer()
+            graph = compose(snapshot, checkpointer)
+
+            replay_config = await _seed_replay_state(
+                graph, checkpointer, execution_id, source_execution_id,
+                snapshot, input_context, target_node_id, target_iteration,
+            )
+
+            if replay_config is None:
+                yield _build_event(
+                    EVENT_EXECUTION_FAILED,
+                    execution_id,
+                    "",
+                    {"error": f"Could not seed replay state for node {target_node_id}"},
+                    0,
+                )
+                return
+
+            recursion_limit = _pick_positive_setting(
+                getattr(request.settings, "recursion_limit", 0),
+                snapshot.get("settings", {}).get("recursion_limit", 0),
+                25,
+            )
+            max_parallelism = _pick_positive_setting(
+                getattr(request.settings, "max_parallelism", 0),
+                snapshot.get("settings", {}).get("max_parallelism", 0),
+                5,
+            )
+
+            active = _ActiveExecution(graph=graph, config=replay_config)
+            self._active_executions[execution_id] = active
+
+            graph_input: Any = None
+            saw_terminal_event = False
+
+            while True:
+                active.current_task = asyncio.current_task()
+
+                try:
+                    event_stream = stream_graph(
+                        graph,
+                        graph_input,
+                        recursion_limit=recursion_limit,
+                        max_parallelism=max_parallelism,
+                        config=replay_config,
+                    )
+                    async for event in emit_events(execution_id, event_stream):
+                        if event.event_type in (EVENT_EXECUTION_COMPLETED, EVENT_EXECUTION_FAILED):
+                            saw_terminal_event = True
+                        if event.event_type == EVENT_APPROVAL_REQUESTED:
+                            active.waiting_for_approval = True
+                            active.pending_interrupt = None
+                        elif event.event_type == EVENT_NODE_SUSPENDED:
+                            active.waiting_for_step_resume = True
+                            active.pending_interrupt = {
+                                "node_id": event.node_id,
+                                "iteration": event.iteration,
+                                "interrupt_id": struct_to_dict(event.payload).get("interrupt_id", ""),
+                            }
+                        elif event.event_type == EVENT_APPROVAL_RESOLVED:
+                            active.waiting_for_approval = False
+                        elif active.should_clear_step_resume(event.node_id, event.iteration):
+                            active.waiting_for_step_resume = False
+                            active.pending_interrupt = None
+                        yield event
+                except asyncio.CancelledError:
+                    logger.info("[grpc] RunFromCheckpoint cancelled", execution_id=execution_id)
+                    return
+                finally:
+                    active.current_task = None
+
+                if active.cancelled:
+                    return
+
+                if active.waiting_for_approval or active.waiting_for_step_resume or active.pending_resume_input is not None:
+                    graph_input = await active.next_resume_input()
+                    continue
+
+                active.terminal = True
+                if should_emit_fallback_completion(saw_terminal_event):
+                    yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
+                return
+        except asyncio.CancelledError:
+            logger.info("[grpc] RunFromCheckpoint cancelled while awaiting control input", execution_id=execution_id)
+            return
+        except Exception as exc:
+            logger.exception("[grpc] RunFromCheckpoint failed", execution_id=execution_id)
+            if active is not None:
+                active.terminal = True
+            yield _build_event(EVENT_EXECUTION_FAILED, execution_id, "", {"error": str(exc)}, 0)
+        finally:
+            self._active_executions.pop(execution_id, None)
+
 
 def _pick_positive_setting(primary: Any, secondary: Any, default: int) -> int:
     for value in (primary, secondary):
@@ -248,6 +367,244 @@ def _pick_positive_setting(primary: Any, secondary: Any, default: int) -> int:
         if parsed > 0:
             return parsed
     return default
+
+
+async def _seed_replay_state(
+    graph: Any,
+    checkpointer: Any,
+    execution_id: str,
+    source_execution_id: str,
+    snapshot: dict[str, Any],
+    input_context: dict[str, Any],
+    target_node_id: str,
+    target_iteration: int,
+) -> dict[str, Any] | None:
+    source_config = {"configurable": {"thread_id": source_execution_id}}
+    source_state = await graph.aget_state(source_config)
+    if source_state is None or not source_state.values:
+        logger.error("_seed_replay_state: no source state found", source_execution_id=source_execution_id)
+        return None
+
+    replay_checkpoint_state = await _find_replay_checkpoint_state(
+        graph,
+        source_state,
+        target_node_id,
+        target_iteration,
+    )
+    if replay_checkpoint_state is not None:
+        forked_config = await _fork_replay_checkpoint(checkpointer, execution_id, replay_checkpoint_state)
+        if forked_config is not None:
+            return forked_config
+
+    source_values = source_state.values
+    source_task_outputs = source_values.get("task_outputs", {})
+    source_iterations = source_values.get("iterations", {})
+    source_router_decisions = source_values.get("router_decisions", {})
+
+    raw_edges = snapshot.get("control_edges", [])
+    raw_nodes = snapshot.get("nodes", [])
+    node_ids = {n["id"] for n in raw_nodes}
+    adjacency = _build_adjacency(raw_edges, node_ids)
+    replay_nodes = {target_node_id, *_find_downstream_nodes(target_node_id, adjacency)}
+    completed_nodes_to_keep = node_ids - replay_nodes
+
+    target_outputs_to_keep = {}
+    for key, value in source_task_outputs.items():
+        if isinstance(key, tuple) and len(key) == 2:
+            nid, itr = key
+        elif isinstance(key, str):
+            nid, itr = key, 0
+        else:
+            continue
+        parsed_iteration = int(itr)
+        if nid in completed_nodes_to_keep:
+            target_outputs_to_keep[(nid, parsed_iteration)] = value
+            continue
+        if nid == target_node_id and parsed_iteration < target_iteration:
+            target_outputs_to_keep[(nid, parsed_iteration)] = value
+
+    target_iterations = {}
+    for nid, itr in source_iterations.items():
+        if nid in completed_nodes_to_keep:
+            target_iterations[nid] = itr
+            continue
+        if nid == target_node_id:
+            target_iterations[nid] = min(itr, target_iteration)
+
+    seeded_router_decisions = {
+        nid: decision
+        for nid, decision in source_router_decisions.items()
+        if nid in completed_nodes_to_keep
+    }
+
+    seeded_task_outputs = {}
+    for nid, itr_val in target_iterations.items():
+        for itr in range(int(itr_val)):
+            out = source_task_outputs.get((nid, itr))
+            if out is not None:
+                seeded_task_outputs[(nid, itr)] = out
+
+    replay_config = {"configurable": {"thread_id": execution_id}}
+    state_update = {
+        "execution_id": execution_id,
+        "flow_id": source_values.get("flow_id", ""),
+        "inputs": input_context or source_values.get("inputs", {}),
+        "task_outputs": {**target_outputs_to_keep, **seeded_task_outputs},
+        "iterations": target_iterations,
+        "router_decisions": seeded_router_decisions,
+        "errors": [],
+    }
+
+    fork_config = await graph.aupdate_state(replay_config, state_update, as_node="__input__")
+    fork_state = await graph.aget_state(fork_config)
+    current_next = list(fork_state.next or ())
+
+    nodes_to_complete = [
+        n for n in current_next
+        if n != "__start__" and n in completed_nodes_to_keep
+    ]
+    while nodes_to_complete:
+        frontier_superstep = [
+            (_build_replay_node_update(nid, target_outputs_to_keep, target_iterations, seeded_router_decisions), nid)
+            for nid in sorted(nodes_to_complete)
+        ]
+        fork_config = await graph.abulk_update_state(fork_config, [frontier_superstep])
+
+        fork_state = await graph.aget_state(fork_config)
+        current_next = list(fork_state.next or ())
+
+        new_pending = [
+            n for n in current_next
+            if n != "__start__" and n in completed_nodes_to_keep
+        ]
+        if set(new_pending) == set(nodes_to_complete):
+            break
+        nodes_to_complete = new_pending
+
+    fork_state = await graph.aget_state(fork_config)
+    final_next = list(fork_state.next or ())
+
+    if target_node_id not in final_next:
+        logger.error(
+            "_seed_replay_state: target %s not in final next=%s",
+            target_node_id,
+            final_next,
+        )
+        return None
+
+    return fork_config
+
+
+async def _find_replay_checkpoint_state(
+    graph: Any,
+    source_state: Any,
+    target_node_id: str,
+    target_iteration: int,
+) -> Any | None:
+    current_state = source_state
+    while current_state is not None:
+        current_next = set(getattr(current_state, "next", ()) or ())
+        current_values = getattr(current_state, "values", {}) or {}
+        current_iterations = current_values.get("iterations", {}) if isinstance(current_values, dict) else {}
+        if target_node_id in current_next and int(current_iterations.get(target_node_id, 0) or 0) == target_iteration:
+            return current_state
+
+        parent_config = getattr(current_state, "parent_config", None)
+        if not parent_config:
+            return None
+        current_state = await graph.aget_state(parent_config)
+    return None
+
+
+async def _fork_replay_checkpoint(
+    checkpointer: Any,
+    execution_id: str,
+    replay_checkpoint_state: Any,
+) -> dict[str, Any] | None:
+    checkpoint_config = getattr(replay_checkpoint_state, "config", None)
+    if not checkpoint_config:
+        return None
+
+    checkpoint_tuple = await checkpointer.aget_tuple(checkpoint_config)
+    if checkpoint_tuple is None:
+        return None
+
+    source_configurable = checkpoint_tuple.config.get("configurable", {})
+    fork_config = {
+        "configurable": {
+            "thread_id": execution_id,
+            "checkpoint_ns": source_configurable.get("checkpoint_ns", ""),
+        },
+    }
+
+    next_config = await checkpointer.aput(
+        fork_config,
+        copy_checkpoint(checkpoint_tuple.checkpoint),
+        {
+            "source": "fork",
+            "step": checkpoint_tuple.metadata.get("step", -1),
+            "parents": {},
+        },
+        {},
+    )
+
+    pending_writes = checkpoint_tuple.pending_writes or []
+    writes_by_task_id: dict[str, list[tuple[str, Any]]] = {}
+    for task_id, channel, value in pending_writes:
+        writes_by_task_id.setdefault(task_id, []).append((channel, value))
+    for task_id, writes in writes_by_task_id.items():
+        await checkpointer.aput_writes(next_config, writes, task_id)
+
+    return next_config
+
+
+def _build_replay_node_update(
+    node_id: str,
+    task_outputs: dict[tuple[str, int], Any],
+    iterations: dict[str, int],
+    router_decisions: dict[str, str],
+) -> dict[str, Any]:
+    node_outputs = {
+        (nid, itr): output
+        for (nid, itr), output in task_outputs.items()
+        if nid == node_id
+    }
+    update: dict[str, Any] = {}
+    if node_outputs:
+        update["task_outputs"] = node_outputs
+    if node_id in iterations:
+        update["iterations"] = {node_id: iterations[node_id]}
+    if node_id in router_decisions:
+        update["router_decisions"] = {node_id: router_decisions[node_id]}
+    return update
+
+
+def _build_adjacency(
+    raw_edges: list[dict[str, Any]],
+    node_ids: set[str],
+) -> dict[str, list[str]]:
+    adj: dict[str, list[str]] = {}
+    for edge in raw_edges:
+        source = edge.get("source", "")
+        target = edge.get("target", "")
+        if source in node_ids and target in node_ids:
+            adj.setdefault(source, []).append(target)
+    return adj
+
+
+def _find_downstream_nodes(
+    target_node_id: str,
+    adjacency: dict[str, list[str]],
+) -> set[str]:
+    visited: set[str] = set()
+    stack = list(adjacency.get(target_node_id, []))
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        stack.extend(adjacency.get(node, []))
+    return visited
 
 
 @dataclass

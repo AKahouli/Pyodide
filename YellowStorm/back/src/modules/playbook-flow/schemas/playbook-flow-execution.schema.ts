@@ -73,6 +73,18 @@ export class PendingApproval {
   resumableActions?: string[];
 }
 
+@Schema({ _id: false })
+export class ReplaySource {
+  @Prop({ required: true, type: String })
+  executionId!: string;
+
+  @Prop({ required: true, type: String })
+  taskId!: string;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  iteration?: number;
+}
+
 @Schema({ timestamps: true })
 export class FlowExecution {
   @Prop({ required: true, type: String })
@@ -152,6 +164,9 @@ export class FlowExecution {
 
   @Prop({ required: false, type: String })
   modelIdOverride?: string;
+
+  @Prop({ required: false, type: ReplaySource })
+  replaySource?: ReplaySource;
 
   createdAt?: Date;
 

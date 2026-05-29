@@ -539,3 +539,667 @@ def test_step_resume_survives_unrelated_events():
     assert active.should_clear_step_resume("step-2", 0) is False
     assert active.should_clear_step_resume("step-1", 1) is False
     assert active.should_clear_step_resume("step-1", 0) is True
+
+
+def test_seed_replay_state_returns_none_when_no_source_state(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        values = None
+        next = ()
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            return FakeState()
+
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {"control_edges": [], "nodes": []}, {}, "step-1", 0,
+    ))
+    assert result is None
+
+
+def test_seed_replay_state_prefers_historical_checkpoint_fork(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=(), config=None, parent_config=None):
+            self.values = values or {}
+            self.next = next_nodes
+            self.config = config
+            self.parent_config = parent_config
+
+    class FakeCheckpointTuple:
+        def __init__(self):
+            self.config = {
+                "configurable": {
+                    "thread_id": "exec-src",
+                    "checkpoint_ns": "",
+                    "checkpoint_id": "cp-target",
+                },
+            }
+            self.checkpoint = {
+                "v": 1,
+                "ts": "2026-05-29T00:00:00Z",
+                "id": "cp-target",
+                "channel_values": {"foo": "bar"},
+                "channel_versions": {"__start__": 1},
+                "versions_seen": {"__input__": {}},
+                "pending_sends": [],
+            }
+            self.metadata = {"step": 3, "parents": {}}
+            self.parent_config = {
+                "configurable": {
+                    "thread_id": "exec-src",
+                    "checkpoint_ns": "",
+                    "checkpoint_id": "cp-parent",
+                },
+            }
+            self.pending_writes = [("task-123", "channel-a", {"hello": "world"})]
+
+    class FakeCheckpointer:
+        def __init__(self):
+            self.aput_calls = []
+            self.aput_writes_calls = []
+
+        async def aget_tuple(self, config):
+            checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
+            if checkpoint_id == "cp-target":
+                return FakeCheckpointTuple()
+            return None
+
+        async def aput(self, config, checkpoint, metadata, new_versions):
+            self.aput_calls.append({
+                "config": config,
+                "checkpoint": checkpoint,
+                "metadata": metadata,
+                "new_versions": new_versions,
+            })
+            return {
+                "configurable": {
+                    "thread_id": config["configurable"]["thread_id"],
+                    "checkpoint_ns": config["configurable"].get("checkpoint_ns", ""),
+                    "checkpoint_id": checkpoint["id"],
+                },
+            }
+
+        async def aput_writes(self, config, writes, task_id, task_path=""):
+            self.aput_writes_calls.append({
+                "config": config,
+                "writes": writes,
+                "task_id": task_id,
+                "task_path": task_path,
+            })
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
+            if checkpoint_id == "cp-current":
+                return FakeState(
+                    values={"iterations": {"target": 1}},
+                    next_nodes=("downstream",),
+                    config=config,
+                    parent_config={
+                        "configurable": {
+                            "thread_id": "exec-src",
+                            "checkpoint_ns": "",
+                            "checkpoint_id": "cp-target",
+                        },
+                    },
+                )
+            if checkpoint_id == "cp-target":
+                return FakeState(
+                    values={"iterations": {"target": 0}},
+                    next_nodes=("target",),
+                    config=config,
+                    parent_config={
+                        "configurable": {
+                            "thread_id": "exec-src",
+                            "checkpoint_ns": "",
+                            "checkpoint_id": "cp-parent",
+                        },
+                    },
+                )
+            if config.get("configurable", {}).get("thread_id") == "exec-src":
+                return FakeState(
+                    values={"iterations": {"target": 1}},
+                    next_nodes=("downstream",),
+                    config={
+                        "configurable": {
+                            "thread_id": "exec-src",
+                            "checkpoint_ns": "",
+                            "checkpoint_id": "cp-current",
+                        },
+                    },
+                    parent_config={
+                        "configurable": {
+                            "thread_id": "exec-src",
+                            "checkpoint_ns": "",
+                            "checkpoint_id": "cp-target",
+                        },
+                    },
+                )
+            raise AssertionError(f"Unexpected config: {config}")
+
+        async def aupdate_state(self, config, values, as_node=None):
+            raise AssertionError("fallback state seeding should not run when historical checkpoint fork succeeds")
+
+        async def abulk_update_state(self, config, supersteps):
+            raise AssertionError("fallback bulk replay should not run when historical checkpoint fork succeeds")
+
+        async def astream(self, graph_input, config, **kwargs):
+            raise AssertionError("fallback bootstrap should not run when historical checkpoint fork succeeds")
+
+    checkpointer = FakeCheckpointer()
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), checkpointer, "exec-new", "exec-src",
+        {
+            "control_edges": [],
+            "nodes": [{"id": "target", "kind": "step"}, {"id": "downstream", "kind": "step"}],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result == {
+        "configurable": {
+            "thread_id": "exec-new",
+            "checkpoint_ns": "",
+            "checkpoint_id": "cp-target",
+        },
+    }
+    assert checkpointer.aput_calls == [{
+        "config": {"configurable": {"thread_id": "exec-new", "checkpoint_ns": ""}},
+        "checkpoint": {
+            "v": 1,
+            "ts": "2026-05-29T00:00:00Z",
+            "id": "cp-target",
+            "channel_values": {"foo": "bar"},
+            "channel_versions": {"__start__": 1},
+            "versions_seen": {"__input__": {}},
+            "pending_sends": [],
+            "updated_channels": None,
+        },
+        "metadata": {"source": "fork", "step": 3, "parents": {}},
+        "new_versions": {},
+    }]
+    assert checkpointer.aput_writes_calls == [{
+        "config": {"configurable": {"thread_id": "exec-new", "checkpoint_ns": "", "checkpoint_id": "cp-target"}},
+        "writes": [("channel-a", {"hello": "world"})],
+        "task_id": "task-123",
+        "task_path": "",
+    }]
+
+
+def test_seed_replay_state_pre_completes_upstream_nodes(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    state_map = {}
+
+    class FakeGraph:
+        def __init__(self):
+            self.bulk_updates = []
+
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {("upstream-1", 0): {"out": "a"}, ("target", 0): {"out": "b"}},
+                        "iterations": {"upstream-1": 1, "target": 1},
+                        "router_decisions": {},
+                        "errors": [],
+                    },
+                    next_nodes=(),
+                )
+            if tid == "exec-new" and not state_map.get("upstream_done"):
+                return FakeState(values={"execution_id": tid}, next_nodes=("upstream-1",))
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            if as_node == "__input__":
+                return config
+            if as_node == "upstream-1":
+                state_map["upstream_done"] = True
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            self.bulk_updates.append(supersteps)
+            for values, as_node in supersteps[0]:
+                if as_node == "upstream-1":
+                    state_map["upstream_done"] = True
+            return config
+
+        async def astream(self, graph_input, config, **kwargs):
+            yield {}
+
+    graph = FakeGraph()
+    result = asyncio.run(_seed_replay_state(
+        graph, object(), "exec-new", "exec-src",
+        {
+            "control_edges": [
+                {"source": "upstream-1", "target": "target"},
+            ],
+            "nodes": [
+                {"id": "upstream-1", "kind": "step"},
+                {"id": "target", "kind": "step"},
+            ],
+        },
+        {},
+        "target",
+        0,
+    ))
+    assert result is not None
+    assert graph.bulk_updates == [[ [({"task_outputs": {("upstream-1", 0): {"out": "a"}}, "iterations": {"upstream-1": 1}}, "upstream-1")] ]]
+
+
+def test_seed_replay_state_does_not_bootstrap_with_astream(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    captured = {"astream_called": False}
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {("upstream-1", 0): {"out": "a"}, ("target", 0): {"out": "b"}},
+                        "iterations": {"upstream-1": 1, "target": 1},
+                        "router_decisions": {},
+                        "flow_id": "flow-1",
+                        "inputs": {"foo": "bar"},
+                    },
+                )
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            if as_node == "__input__":
+                captured["seed_values"] = values
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            return config
+
+        async def astream(self, graph_input, config, **kwargs):
+            captured["astream_called"] = True
+            yield {}
+
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {
+            "control_edges": [
+                {"source": "upstream-1", "target": "target"},
+            ],
+            "nodes": [
+                {"id": "upstream-1", "kind": "step"},
+                {"id": "target", "kind": "step"},
+            ],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result is not None
+    assert captured["astream_called"] is False
+    assert captured["seed_values"]["flow_id"] == "flow-1"
+    assert captured["seed_values"]["inputs"] == {"foo": "bar"}
+
+
+def test_seed_replay_state_does_not_seed_downstream_outputs(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    captured = {}
+
+    class FakeGraph:
+        def __init__(self):
+            self.bulk_updates = []
+
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {
+                            ("upstream", 0): {"out": "a"},
+                            ("target", 0): {"out": "b"},
+                            ("downstream", 0): {"out": "c"},
+                        },
+                        "iterations": {"upstream": 1, "target": 1, "downstream": 1},
+                        "router_decisions": {"router-1": "continue"},
+                        "flow_id": "flow-1",
+                    },
+                )
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            if as_node == "__input__":
+                captured["state_update"] = values
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            self.bulk_updates.append(supersteps)
+            return config
+
+        async def astream(self, graph_input, config, **kwargs):
+            yield {}
+
+    graph = FakeGraph()
+    result = asyncio.run(_seed_replay_state(
+        graph, object(), "exec-new", "exec-src",
+        {
+            "control_edges": [
+                {"source": "upstream", "target": "target"},
+                {"source": "target", "target": "downstream"},
+            ],
+            "nodes": [
+                {"id": "upstream", "kind": "step"},
+                {"id": "target", "kind": "step"},
+                {"id": "downstream", "kind": "step"},
+            ],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result is not None
+    assert captured["state_update"]["task_outputs"] == {("upstream", 0): {"out": "a"}}
+    assert captured["state_update"]["iterations"] == {"upstream": 1, "target": 0}
+    assert captured["state_update"]["router_decisions"] == {}
+    assert graph.bulk_updates == []
+
+
+def test_seed_replay_state_bulk_updates_parallel_upstream_frontier(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    captured = {"bulk_updates": []}
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {
+                            ("upstream-a", 0): {"out": "a"},
+                            ("upstream-b", 0): {"out": "b"},
+                            ("target", 0): {"out": "c"},
+                        },
+                        "iterations": {"upstream-a": 1, "upstream-b": 1, "target": 1},
+                        "router_decisions": {},
+                        "flow_id": "flow-1",
+                    },
+                )
+            if not captured["bulk_updates"]:
+                return FakeState(values={"execution_id": tid}, next_nodes=("upstream-a", "upstream-b"))
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            captured["bulk_updates"].append(supersteps)
+            return config
+
+        async def astream(self, graph_input, config, **kwargs):
+            yield {}
+
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {
+            "control_edges": [
+                {"source": "upstream-a", "target": "target"},
+                {"source": "upstream-b", "target": "target"},
+            ],
+            "nodes": [
+                {"id": "upstream-a", "kind": "step"},
+                {"id": "upstream-b", "kind": "step"},
+                {"id": "target", "kind": "step"},
+            ],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result is not None
+    assert captured["bulk_updates"] == [[
+        [
+            ({"task_outputs": {("upstream-a", 0): {"out": "a"}}, "iterations": {"upstream-a": 1}}, "upstream-a"),
+            ({"task_outputs": {("upstream-b", 0): {"out": "b"}}, "iterations": {"upstream-b": 1}}, "upstream-b"),
+        ],
+    ]]
+
+
+def test_run_from_checkpoint_emits_failure_when_seed_fails(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunFromCheckpointRequest(
+            execution_id="exec-replay",
+            source_execution_id="exec-source",
+            flow_id="flow-1",
+            target_node_id="step-1",
+            target_iteration=0,
+        )
+
+        async def fake_ensure_checkpointer():
+            return object()
+
+        class FakeState:
+            values = None
+            next = ()
+
+        class FakeGraph:
+            async def aget_state(self, config):
+                return FakeState()
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: FakeGraph())
+
+        events = [event async for event in servicer.RunFromCheckpoint(request, None)]
+
+        assert len(events) == 1
+        assert events[0].event_type == "ExecutionFailed"
+        assert "step-1" in str(events[0].payload)
+
+    asyncio.run(_run_test())
+
+
+def test_run_from_checkpoint_streams_from_seeded_config(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime.events import _build_event
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunFromCheckpointRequest(
+            execution_id="exec-replay",
+            source_execution_id="exec-source",
+            flow_id="flow-1",
+            target_node_id="step-2",
+            target_iteration=0,
+        )
+
+        async def fake_ensure_checkpointer():
+            return object()
+
+        class FakeState:
+            def __init__(self, values=None, next_nodes=()):
+                self.values = values or {}
+                self.next = next_nodes
+
+        class FakeGraph:
+            async def aget_state(self, config):
+                tid = config.get("configurable", {}).get("thread_id", "")
+                if tid == "exec-source":
+                    return FakeState(
+                        values={
+                            "task_outputs": {("step-1", 0): {"out": "a"}, ("step-2", 0): {"out": "b"}},
+                            "iterations": {"step-1": 1, "step-2": 1},
+                            "router_decisions": {},
+                            "errors": [],
+                            "flow_id": "flow-1",
+                        },
+                    )
+                return FakeState(values={}, next_nodes=("step-1",))
+
+            async def aupdate_state(self, config, values, as_node=None):
+                return config
+
+            async def astream(self, graph_input, config, **kwargs):
+                yield {}
+
+        captured_config = {}
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            captured_config["graph_input"] = graph_input
+            captured_config["config"] = config
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            yield _build_event("NodeStarted", execution_id, "step-2", {}, 0)
+            yield _build_event("NodeCompleted", execution_id, "step-2", {"output": "replayed"}, 0)
+
+        async def fake_seed_replay_state(*args, **kwargs):
+            return {"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}}
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: FakeGraph())
+        monkeypatch.setattr("src.flow_engine.grpc_service._seed_replay_state", fake_seed_replay_state)
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+
+        events = [event async for event in servicer.RunFromCheckpoint(request, None)]
+
+        assert captured_config["graph_input"] is None
+        assert events[-1].event_type == "ExecutionCompleted"
+        assert len(servicer._active_executions) == 0
+
+    asyncio.run(_run_test())
+
+
+def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime.events import _build_event
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunFromCheckpointRequest(
+            execution_id="exec-replay",
+            source_execution_id="exec-source",
+            flow_id="flow-1",
+            target_node_id="step-2",
+            target_iteration=0,
+        )
+
+        async def fake_ensure_checkpointer():
+            return object()
+
+        class FakeState:
+            def __init__(self, values=None, next_nodes=()):
+                self.values = values or {}
+                self.next = next_nodes
+
+        class FakeGraph:
+            async def aget_state(self, config):
+                tid = config.get("configurable", {}).get("thread_id", "")
+                if tid == "exec-source":
+                    return FakeState(
+                        values={
+                            "task_outputs": {("step-1", 0): {"out": "a"}, ("step-2", 0): {"out": "b"}},
+                            "iterations": {"step-1": 1, "step-2": 1},
+                            "router_decisions": {},
+                            "errors": [],
+                            "flow_id": "flow-1",
+                        },
+                    )
+                return FakeState(values={}, next_nodes=("step-1",))
+
+            async def aupdate_state(self, config, values, as_node=None):
+                return config
+
+            async def astream(self, graph_input, config, **kwargs):
+                yield {}
+
+        calls = []
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            calls.append(graph_input)
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            await event_stream.__anext__() if hasattr(event_stream, "__anext__") else None
+            if len(calls) == 1:
+                yield _build_event("ApprovalRequested", execution_id, "step-2", {"prompt": "approve?"}, 0)
+                return
+            yield _build_event("ApprovalResolved", execution_id, "step-2", {"decision": "approved"}, 0)
+            yield _build_event("NodeCompleted", execution_id, "step-2", {"output": "replayed"}, 0)
+
+        async def fake_seed_replay_state(*args, **kwargs):
+            return {"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}}
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: FakeGraph())
+        monkeypatch.setattr("src.flow_engine.grpc_service._seed_replay_state", fake_seed_replay_state)
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+
+        async def collect_events():
+            events = []
+            async for event in servicer.RunFromCheckpoint(request, None):
+                events.append(event)
+                if event.event_type == "ApprovalRequested":
+                    resumed = await servicer.ResumeApproval(
+                        pb.ResumeApprovalRequest(
+                            execution_id="exec-replay",
+                            decision="approved",
+                        ),
+                        None,
+                    )
+                    assert resumed.resumed is True
+            return events
+
+        events = await collect_events()
+
+        assert calls[0] is None
+        assert getattr(calls[1], "resume", None) == {"decision": "approved", "payload": {}}
+        assert events[-1].event_type == "ExecutionCompleted"
+
+    asyncio.run(_run_test())

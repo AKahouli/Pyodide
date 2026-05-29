@@ -37,6 +37,7 @@ import {
   IFlowRouterDecisionResponse,
   IResumeApprovalPayload,
   IResumeFromStepPayload,
+  IRunFromStepPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
@@ -1990,7 +1991,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.streamEvents.emitQueuePositionUpdate(executionId, queuePosition);
       }
 
-      const snapshot = (next as unknown as Record<string, unknown>).snapshot as Record<string, unknown> | undefined;
+      const claimedExecution = await this.executionModel
+        .findById(next.id)
+        .select('+snapshot replaySource')
+        .lean();
+
+      if (!claimedExecution) {
+        this.logger.error(`Drain: claimed execution ${next.id} disappeared before dispatch`);
+        await this.executionModel
+          .findByIdAndUpdate(next.id, {
+            status: 'failed',
+            endedAt: new Date(),
+            error: 'Claimed execution disappeared before runtime dispatch',
+          })
+          .exec();
+        this.streamEvents.emitExecutionComplete(next.id, 'failed', 'Claimed execution disappeared before runtime dispatch');
+        continue;
+      }
+
+      const executionRecord = claimedExecution as unknown as Record<string, unknown>;
+      const snapshot = executionRecord.snapshot as Record<string, unknown> | undefined;
       let flow: Record<string, unknown> | null = null;
 
       if (!snapshot) {
@@ -2013,9 +2033,36 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       }
 
       this.logger.log(`Drain: starting queued execution ${next.id} for owner ${ownerId}`);
-      this.callGrpcRun(next.id, next.flowId, ownerId, flow, next.inputContext, snapshot).catch((err) => {
-        this.logger.error(`Drain: execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
-      });
+
+      const replaySource = executionRecord.replaySource as { executionId: string; taskId: string; iteration?: number } | undefined;
+
+      if (replaySource) {
+        this.logger.log(
+          `Drain: dispatching replay execution ${next.id} from source ${replaySource.executionId} task ${replaySource.taskId} iteration ${replaySource.iteration ?? 0} via RunFromCheckpoint`,
+        );
+        this.callGrpcRunFromCheckpoint(
+          next.id, next.flowId, ownerId,
+          replaySource.executionId,
+          snapshot || {},
+          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {},
+          replaySource.taskId,
+          replaySource.iteration ?? 0,
+        ).catch((err) => {
+          this.logger.error(`Drain: checkpoint replay execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
+        });
+      } else {
+        this.logger.log(`Drain: dispatching normal execution ${next.id} via Run`);
+        this.callGrpcRun(
+          next.id,
+          next.flowId,
+          ownerId,
+          flow,
+          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext,
+          snapshot,
+        ).catch((err) => {
+          this.logger.error(`Drain: execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
+        });
+      }
     }
   }
 
@@ -2271,5 +2318,272 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     execution.pendingApproval = null;
     execution.status = 'running';
     return execution.toJSON() as unknown as IFlowExecutionResponse;
+  }
+
+  async runFromStep(
+    executionId: string,
+    ownerId: string,
+    payload: IRunFromStepPayload,
+  ): Promise<IFlowExecutionResponse> {
+    const sourceExecution = await this.executionModel
+      .findById(executionId)
+      .select('+snapshot');
+    if (!sourceExecution) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Source execution not found',
+      );
+    }
+    if (String(sourceExecution.ownerId) !== String(ownerId)) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Source execution not found',
+      );
+    }
+    if (sourceExecution.status !== 'completed') {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Source execution must be completed to run from step',
+      );
+    }
+    if (!sourceExecution.snapshot) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Source execution has no persisted snapshot',
+      );
+    }
+
+    const snapshot = sourceExecution.snapshot as Record<string, unknown>;
+    const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
+    const targetNode = nodes.find((n) => n.id === payload.taskId);
+    if (!targetNode || targetNode.kind !== 'step') {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Target must be a top-level step node',
+      );
+    }
+
+    const iteration = payload.iteration ?? 0;
+
+    const newExecution = new this.executionModel({
+      flowId: sourceExecution.flowId,
+      ownerId,
+      status: 'queued',
+      recursionLimit: sourceExecution.recursionLimit,
+      maxParallelism: sourceExecution.maxParallelism,
+      inputContext: sourceExecution.inputContext,
+      snapshot: sourceExecution.snapshot,
+      replaySource: {
+        executionId: sourceExecution.id,
+        taskId: payload.taskId,
+        iteration,
+      },
+    });
+    await newExecution.save();
+
+    this.logger.log(
+      `Created replay execution ${newExecution.id} from source ${sourceExecution.id} task ${payload.taskId} iteration ${iteration}`,
+    );
+
+    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+    await this.queueService.admit(
+      ownerId,
+      (newExecution as any).id || (newExecution as any)._id?.toString(),
+      maxConcurrent,
+      maxDepth,
+    );
+    void this.drainQueue(ownerId);
+
+    return newExecution.toJSON() as unknown as IFlowExecutionResponse;
+  }
+
+  private async callGrpcRunFromCheckpoint(
+    executionId: string,
+    flowId: string,
+    ownerId: string,
+    sourceExecutionId: string,
+    snapshotOverride: Record<string, unknown>,
+    inputContext: Record<string, unknown>,
+    targetNodeId: string,
+    targetIteration: number,
+  ): Promise<void> {
+    const snapshot = snapshotOverride as any;
+    const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
+    const recursionLimit = snapshot.settings?.recursionLimit || 25;
+    const maxParallelism = snapshot.settings?.maxParallelism || 5;
+
+    const agentIds = new Set<string>();
+    for (const node of snapshot.nodes as any[]) {
+      const assignedAgentId = node.metadata?.assignedAgentId;
+      if (assignedAgentId && typeof assignedAgentId === 'string') {
+        agentIds.add(assignedAgentId);
+      }
+    }
+    const agentMap = new Map<string, Record<string, unknown>>();
+    if (agentIds.size > 0) {
+      const resolved = await this.agentService.buildGrpcAgentsForPlaybook(
+        normalizedOwnerId,
+        [...agentIds],
+        undefined,
+        executionId,
+      );
+      for (const agent of resolved) {
+        agentMap.set(agent.id, {
+          agent_name: agent.name,
+          agent_description: agent.description,
+          agent_model: agent.chatbot?.model,
+          agent_prompt: agent.prompt,
+          agent_type: agent.agent_type,
+          agent_tools: agent.tools,
+          agent_params: agent.agent_params?.params || {},
+          connector_bindings: agent.connector_bindings || [],
+          brain_context: agent.brain_context || [],
+        });
+      }
+    }
+
+    const enrichedNodes = (snapshot.nodes as any[]).map((n) => {
+      const assignedAgentId = n.metadata?.assignedAgentId;
+      const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
+      const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+      return {
+        ...n,
+        metadata: { ...baseMetadata, ...(resolvedAgent || {}) },
+      };
+    });
+
+    const snapshotProto = {
+      nodes: enrichedNodes.map((n) => ({
+        id: n.id,
+        kind: n.kind,
+        label: n.label || '',
+        task_template_id: n.taskTemplateId || '',
+        prompt_template_id: n.promptTemplateId || '',
+        output_format_id: n.outputFormatId || '',
+        input: n.input ? {
+          raw: n.input.raw || '',
+          ports: (n.input.ports || []).map((p: Record<string, unknown>) => ({
+            id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required),
+          })),
+        } : undefined,
+        output: n.output ? {
+          raw: n.output.raw || '',
+          ports: (n.output.ports || []).map((p: Record<string, unknown>) => ({
+            id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required),
+          })),
+        } : undefined,
+        router_config: n.routerConfig ? {
+          output_labels: n.routerConfig.outputLabels || [],
+          max_iterations: n.routerConfig.maxIterations || 0,
+          conditions: (n.routerConfig.conditions || []).map((c: Record<string, unknown>) => ({
+            label: c.label || '', source_node: c.sourceNode || '', source_port: c.sourcePort || '',
+            path: c.path || '', operator: c.operator || '', value: toGrpcValue(c.value),
+          })),
+          default_label: n.routerConfig.defaultLabel || '',
+        } : undefined,
+        iterator_config: n.iteratorConfig ? {
+          collection_path: n.iteratorConfig.collectionPath || '', max_items: n.iteratorConfig.maxItems || 0,
+        } : undefined,
+        human_approval_config: buildGrpcHumanApprovalConfig(n.humanApprovalConfig),
+        retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
+        model_id: n.modelId || '',
+        metadata: toGrpcStruct(n.metadata),
+      })),
+      control_edges: (snapshot.controlEdges as any[]).map((e) => ({
+        id: e.id, kind: e.kind, source: e.source, target: e.target,
+        router_label: e.routerLabel || '', priority: e.priority || 0,
+        source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
+      })),
+      data_bindings: (snapshot.dataBindings as any[]).map((b) => ({
+        id: b.id, target_node: b.targetNode, target_port: b.targetPort,
+        source_kind: b.sourceKind, source_node: b.sourceNode || '', source_port: b.sourcePort || '',
+        iteration: b.iteration || '', trigger_path: b.triggerPath || '', state_path: b.statePath || '',
+        constant_value: toGrpcValue(b.constantValue), expression: b.expression || '',
+      })),
+      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+    };
+
+    const request = {
+      execution_id: executionId,
+      source_execution_id: sourceExecutionId,
+      flow_id: flowId,
+      owner_id: normalizedOwnerId,
+      snapshot: snapshotProto,
+      input_context: toGrpcStruct(inputContext || {}),
+      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      target_node_id: targetNodeId,
+      target_iteration: targetIteration,
+    };
+
+    const call = this.playbookFlowClient.RunFromCheckpoint(request);
+    let finalized = false;
+    let completionEmitted = false;
+    let lastHandlePromise = Promise.resolve();
+
+    const releaseOnce = () => {
+      if (finalized) return;
+      finalized = true;
+      this.drainQueue(ownerId);
+    };
+
+    const waitForHandledEvents = async () => { await lastHandlePromise; };
+
+    call.on('data', (event: Record<string, unknown>) => {
+      lastHandlePromise = lastHandlePromise
+        .then(() => this.handleRunEvent(executionId, event))
+        .catch((err) => {
+          this.logger.error(`Failed to handle checkpoint replay event for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
+        });
+      const eventType = event.event_type as string;
+      if (eventType === 'ExecutionCompleted' || eventType === 'ExecutionFailed') {
+        completionEmitted = true;
+      }
+    });
+
+    call.on('error', (err: Error) => {
+      void (async () => {
+        await waitForHandledEvents();
+        this.logger.error(`gRPC RunFromCheckpoint stream error for execution ${executionId}: ${err.message}`, err.stack);
+        await this.executionModel
+          .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
+          .exec();
+        if (!completionEmitted) {
+          this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
+          completionEmitted = true;
+        }
+        releaseOnce();
+      })().catch((updateErr) => {
+        this.logger.error(`Failed to finalize errored checkpoint replay stream for execution ${executionId}`, updateErr instanceof Error ? updateErr.stack : undefined);
+        releaseOnce();
+      });
+    });
+
+    call.on('end', () => {
+      void (async () => {
+        this.logger.log(`gRPC RunFromCheckpoint stream ended for execution ${executionId}`);
+        await waitForHandledEvents();
+        if (!completionEmitted) {
+          const execution = await this.executionModel.findById(executionId).lean();
+          const status = String((execution as Record<string, unknown> | null)?.status || '');
+          if (shouldFinalizeStreamAsCompleted(false, false, status)) {
+            const result = await this.executionModel
+              .updateOne(
+                { _id: executionId, status: { $in: ['queued', 'running'] } },
+                { status: 'completed', endedAt: new Date() },
+              )
+              .exec();
+            if ((result as { modifiedCount?: number }).modifiedCount) {
+              completionEmitted = true;
+              this.streamEvents.emitExecutionComplete(executionId, 'completed');
+            }
+          }
+        }
+        releaseOnce();
+      })().catch((err) => {
+        this.logger.error(`Failed to finalize gRPC RunFromCheckpoint stream for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
+        releaseOnce();
+      });
+    });
   }
 }

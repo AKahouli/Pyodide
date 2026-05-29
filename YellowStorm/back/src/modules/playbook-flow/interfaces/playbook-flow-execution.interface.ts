@@ -26,6 +26,7 @@ export interface IFlowExecutionResponse {
   pendingApproval: PendingApproval | null;
   queuePosition?: number;
   threadId?: string;
+  replaySource?: { executionId: string; taskId: string; iteration?: number };
   reflectionEnabled?: boolean;
   advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
@@ -107,4 +108,9 @@ export interface IResumeFromStepPayload {
   reason?: string;
   feedback?: string;
   payload?: Record<string, unknown>;
+}
+
+export interface IRunFromStepPayload {
+  taskId: string;
+  iteration?: number;
 }

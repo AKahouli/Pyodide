@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -89,11 +89,13 @@ export interface NodeContextMenuActions {
   onToggleEnabled: (nodeId: string) => void;
   onExecuteStep: (nodeId: string) => void;
   onResumeFromStep: (nodeId: string) => void;
+  onRunFromStep: (nodeId: string) => void;
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
+  canRunFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
   canSaveBaseline: (nodeId: string) => boolean;
   onCopySelection?: () => void;
@@ -1092,6 +1094,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem disabled={!actions?.canSkipStep(id)} onClick={() => actions?.onSkipStep(id)}>
           <SkipForward className="h-4 w-4" />
           {t('node.skip')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.canRunFromStep(id)} onClick={() => actions?.onRunFromStep(id)}>
+          <FastForward className="h-4 w-4" />
+          {t('node.runFromStep')}
         </ContextMenuItem>
         <ContextMenuItem disabled={!actions?.canSaveBaseline(id)} onClick={() => actions?.onSaveBaseline(id)}>
           <FileText className="h-4 w-4" />

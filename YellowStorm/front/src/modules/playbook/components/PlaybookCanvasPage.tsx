@@ -432,6 +432,7 @@ function PlaybookCanvasInner() {
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
+  const runFromStep = usePlaybookStore((s) => s.runFromStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
@@ -1603,6 +1604,28 @@ function PlaybookCanvasInner() {
     [currentExecution, id],
   );
 
+  const canRunFromStep = useCallback(
+    (nodeId: string) => {
+      if (!currentExecution || currentExecution.playbookId !== id) return false;
+      if (currentExecution.status !== 'completed') return false;
+      if (hasActiveExecution) return false;
+      const taskResult = currentExecution.taskResults.find(
+        (tr) => tr.taskId === nodeId && tr.status === 'completed',
+      );
+      if (!taskResult) return false;
+      const node = playbook?.tasks.find((t) => t.id === nodeId);
+      if (!node) return false;
+      if ((node as any).containerConfig?.parentIteratorId) return false;
+      return true;
+    },
+    [currentExecution, id, hasActiveExecution, playbook],
+  );
+
+  const handleRunFromStep = useCallback((nodeId: string) => {
+    if (!currentExecution || currentExecution.playbookId !== id) return;
+    void runFromStep(id, currentExecution.id, nodeId);
+  }, [currentExecution, id, runFromStep]);
+
   const handleResumeFromStep = useCallback((nodeId: string) => {
     if (!currentExecution || currentExecution.playbookId !== id) {
       return;
@@ -1683,11 +1706,13 @@ function PlaybookCanvasInner() {
       onToggleEnabled: handleToggleEnabled,
       onExecuteStep: handleExecuteStep,
       onResumeFromStep: handleResumeFromStep,
+      onRunFromStep: handleRunFromStep,
       onSkipStep: () => undefined,
       onSaveBaseline: handleSaveBaseline,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
       isExecuting,
       canResumeFromStep,
+      canRunFromStep,
       canSkipStep,
       canSaveBaseline,
       onCopySelection: () => { void copySelection(); },
@@ -1703,12 +1728,14 @@ function PlaybookCanvasInner() {
       handleToggleEnabled,
       handleExecuteStep,
       handleResumeFromStep,
+      handleRunFromStep,
       handleSaveBaseline,
       hasActiveExecution,
       isSaving,
       isDirty,
       isExecuting,
       canResumeFromStep,
+      canRunFromStep,
       canSkipStep,
       canSaveBaseline,
       copySelection,

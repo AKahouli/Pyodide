@@ -267,6 +267,7 @@ export const API_ENDPOINTS = {
     nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,
+    runFromStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/run-from-step`,
     resumeFromStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/resume-from-step`,
     stream: '/playbooks/stream',
     design: (id: string) => `/playbooks/${id}/design`,

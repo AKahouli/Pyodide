@@ -1185,6 +1185,39 @@ describe('getExecution', () => {
     });
   });
 
+  it('normalizes replay source from execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-replay',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'running',
+          replaySource: {
+            executionId: 'source-exec',
+            taskId: 'task-9',
+            iteration: 2,
+          },
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-replay');
+
+    expect(execution.replaySource).toEqual({
+      executionId: 'source-exec',
+      taskId: 'task-9',
+      iteration: 2,
+    });
+  });
+
   it('hydrates clarification interrupt payloads from pendingApproval', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({

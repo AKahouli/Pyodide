@@ -664,6 +664,14 @@ function normalizeExecution(raw: any): PlaybookExecution {
     advisorAutopilotLastError: toNullableString(raw.advisorAutopilotLastError),
     judgeSummaryStatus: raw.judgeSummaryStatus ?? 'idle',
     judgeSummary: raw.judgeSummary ?? null,
+    replaySource:
+      raw.replaySource && typeof raw.replaySource === 'object'
+        ? {
+            executionId: toNullableString(raw.replaySource.executionId) ?? '',
+            taskId: toNullableString(raw.replaySource.taskId) ?? '',
+            iteration: toNullableNumber(raw.replaySource.iteration) ?? undefined,
+          }
+        : null,
     replaySourceByTask: raw.replaySourceByTask ?? null,
     replayPlanningByTask:
       replayPlanningByTask && typeof replayPlanningByTask === 'object'
@@ -942,6 +950,18 @@ export async function rerunPlaybookStep(
 ): Promise<{ status: string; executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ status: string; executionId: string }>>(
     API_ENDPOINTS.playbooks.rerunStep(playbookId, executionId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function runPlaybookFromStep(
+  playbookId: string,
+  executionId: string,
+  data: { taskId: string; iteration?: number },
+): Promise<{ executionId: string }> {
+  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
+    API_ENDPOINTS.playbooks.runFromStep(playbookId, executionId),
     data,
   );
   return response.data.data;

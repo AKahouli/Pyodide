@@ -577,6 +577,7 @@
   "node.disable": "D\u00e9sactiver l'\u00e9tape",
   "node.enable": "Activer l'\u00e9tape",
   "node.resumeFromStep": "Reprendre depuis cette \u00e9tape",
+  "node.runFromStep": "Relancer depuis cette \u00e9tape",
   "node.skip": "Ignorer l'\u00e9tape",
   "node.staleReplay": "Replay obsol\u00e8te",
   "node.replayReady": "Replay pr\u00eat",

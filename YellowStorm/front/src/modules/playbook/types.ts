@@ -1086,6 +1086,11 @@ export interface PlaybookExecution {
     recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
   } | null;
+  replaySource?: {
+    executionId: string;
+    taskId: string;
+    iteration?: number;
+  } | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
   replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
   stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
@@ -1930,6 +1935,12 @@ export interface PlaybookActions {
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
     skipStepExecution?: boolean,
+  ) => Promise<void>;
+  runFromStep: (
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    iteration?: number,
   ) => Promise<void>;
   resumeFromStep: (
     playbookId: string,

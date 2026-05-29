@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
   cancelFlowExecution: vi.fn(),
   resumeFlowApproval: vi.fn(),
   rerunPlaybookStep: vi.fn(),
+  runPlaybookFromStep: vi.fn(),
   resumePlaybookFromStep: vi.fn(),
   deleteExecution: vi.fn(),
   deleteAllExecutions: vi.fn(),
@@ -318,6 +319,168 @@ describe('playbook store', () => {
     expect(exec.taskResults.find((tr) => tr.taskId === 't3')?.output).toBe('result-3');
   });
 
+  it('creates an optimistic replay execution when running from a step', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Step 3', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't2', targetId: 't3', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't2', target: 't3', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Step 1', agentName: '', order: 1, status: 'completed', output: 'result-1', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Step 2', agentName: '', order: 2, status: 'completed', output: 'result-2', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Step 3', agentName: '', order: 3, status: 'completed', output: 'result-3', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't2');
+
+    const state = usePlaybookStore.getState();
+    expect(apiMock.runPlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2', iteration: undefined });
+    expect(state.currentExecution?.id).toBe('e2');
+    expect(state.currentExecution?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.output).toBe('result-1');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.output).toBeNull();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.status).toBe('pending');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.output).toBeNull();
+  });
+
+  it('preserves graph upstream results when replay target is not first by execution order', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'target-result', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'downstream-result', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'upstream-result', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't1');
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.output).toBe('upstream-result');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.output).toBeNull();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.status).toBe('pending');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.output).toBeNull();
+  });
+
+  it('preserves optimistic replay task results when execution_start arrives without singleStepTaskId', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'target-result', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'downstream-result', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'upstream-result', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't1');
+
+    usePlaybookStore.getState().onExecutionStart({
+      executionId: 'e2',
+      playbookId: 'p1',
+      executionNumber: 2,
+      status: 'running',
+      taskResults: [],
+    });
+
+    const replayExecution = usePlaybookStore.getState().executionCache.e2;
+    expect(replayExecution.singleStepTaskId).toBe('t1');
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'upstream-result',
+    });
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'running',
+      output: null,
+    });
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'pending',
+      output: null,
+    });
+  });
+
   it('refreshes execution details after completion so terminal task states win', async () => {
     const execution = makeExecution({
       id: 'e1',
@@ -404,6 +567,143 @@ describe('playbook store', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(usePlaybookStore.getState().currentExecution?.status).toBe('completed');
     expect(usePlaybookStore.getState().currentExecution?.taskResults[0].status).toBe('completed');
+  });
+
+  it('rehydrates replay upstream results from replay source during fetchExecution', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const sourceExecution = makeExecution({
+      id: 'source-e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'source-target', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'source-downstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'source-upstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+    const replayExecution = makeExecution({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'running',
+      singleStepTaskId: 't1',
+      replaySource: { executionId: 'source-e1', taskId: 't1', iteration: 0 },
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'running', output: null, error: null, durationMs: null, startedAt: '2025-01-01T00:00:04.000Z', completedAt: null },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'pending', output: null, error: null, durationMs: null, startedAt: null, completedAt: null },
+      ],
+    });
+
+    apiMock.getExecution.mockResolvedValueOnce(replayExecution);
+    apiMock.getExecution.mockResolvedValueOnce(sourceExecution);
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionCache: {}, currentExecution: null });
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'replay-e2');
+
+    const refreshed = usePlaybookStore.getState().executionCache['replay-e2'];
+    expect(refreshed.replaySource).toEqual({ executionId: 'source-e1', taskId: 't1', iteration: 0 });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'source-upstream',
+    });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'running',
+      output: null,
+    });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'pending',
+      output: null,
+    });
+  });
+
+  it('hydrates replay upstream results into cache during fetchExecutions', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const sourceExecution = makeExecution({
+      id: 'source-e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'source-target', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'source-downstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'source-upstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+    const replaySummary = makeExecutionSummary({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'completed',
+    });
+    const replayExecution = makeExecution({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'completed',
+      singleStepTaskId: 't1',
+      replaySource: { executionId: 'source-e1', taskId: 't1', iteration: 0 },
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'rerun-target', error: null, durationMs: 10, startedAt: '2025-01-01T00:00:04.000Z', completedAt: '2025-01-01T00:00:05.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'rerun-downstream', error: null, durationMs: 10, startedAt: '2025-01-01T00:00:05.000Z', completedAt: '2025-01-01T00:00:06.000Z' },
+      ],
+    });
+
+    apiMock.getExecutions.mockResolvedValueOnce({ executions: [replaySummary] });
+    apiMock.getExecution.mockResolvedValueOnce(replayExecution);
+    apiMock.getExecution.mockResolvedValueOnce(sourceExecution);
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: null,
+      executionCache: {},
+      executionHistory: [],
+      executionHistoryByPlaybook: {},
+    });
+
+    await usePlaybookStore.getState().fetchExecutions('p1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const hydrated = usePlaybookStore.getState().executionCache['replay-e2'];
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'source-upstream',
+    });
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'completed',
+      output: 'rerun-target',
+    });
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'completed',
+      output: 'rerun-downstream',
+    });
   });
 
   it('stores generate retry payload when generation fails', async () => {
