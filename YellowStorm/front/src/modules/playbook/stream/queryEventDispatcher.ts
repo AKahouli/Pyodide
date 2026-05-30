@@ -1,0 +1,193 @@
+import type { QueryClient } from '@tanstack/react-query';
+
+import { playbookQueryClient } from '@/modules/playbook/query/queryClient';
+import { playbookKeys } from '@/modules/playbook/query/queryKeys';
+import { playbookFeatures } from '@/modules/playbook/features';
+import { dispatchExecutionLifecycleStreamEvent } from '@/modules/playbook/machines/execution/executionLifecycleEvents';
+import type { Playbook, PlaybookExecution, PlaybookExecutionSummary } from '@/modules/playbook/types';
+import type { PlaybookStreamEvent } from './eventTypes';
+import {
+  mergeExecutionQueued,
+  mergeExecutionStarted,
+  mergeStepStarted,
+  mergeStepUpdated,
+  mergeStepCompleted,
+} from './executionEventMerger';
+import {
+  mergeAdvisorAutopilotUpdated,
+  mergeExecutionCompleted,
+  mergeInterrupt,
+  mergeIteratorChildCompleted,
+  mergeIteratorChildStarted,
+  mergeIteratorChildUpdated,
+  mergeJudgeSummaryUpdated,
+  mergeStepEvaluationUpdated,
+  mergeStepJudgeStarted,
+  mergeStepJudgeUpdated,
+} from './executionEventMerger.extra';
+
+type DispatchOptions = {
+  queryClient?: QueryClient;
+};
+
+/** Routes SSE payloads into the TanStack cache without forcing a global Zustand snapshot update. */
+export function dispatchPlaybookStreamEvent(event: PlaybookStreamEvent, options: DispatchOptions = {}) {
+  const queryClient = options.queryClient ?? playbookQueryClient;
+
+  if (playbookFeatures.xstateExecutionEnabled) {
+    dispatchExecutionLifecycleStreamEvent(event);
+  }
+
+  switch (event.type) {
+    case 'playbook_connected':
+      if (Array.isArray(event.data.activeExecutions)) {
+        setActiveExecutions(queryClient, event.data.activeExecutions as PlaybookExecution[]);
+      }
+      return;
+    case 'playbook_execution_start':
+      setExecution(queryClient, event.data.executionId, (previous) => (
+        event.data.status === 'queued'
+          ? mergeExecutionQueued(previous, event.data)
+          : mergeExecutionStarted(previous, event.data)
+      ));
+      upsertActiveExecution(queryClient, queryClient.getQueryData(playbookKeys.execution(event.data.executionId)));
+      return;
+    case 'playbook_step_start':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepStarted(previous, event.data));
+      return;
+    case 'playbook_step_update':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepUpdated(previous, event.data));
+      return;
+    case 'playbook_step_complete':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepCompleted(previous, event.data));
+      return;
+    case 'playbook_iterator_child_step_start':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeIteratorChildStarted(previous, event.data));
+      return;
+    case 'playbook_iterator_child_step_update':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeIteratorChildUpdated(previous, event.data));
+      return;
+    case 'playbook_iterator_child_step_complete':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeIteratorChildCompleted(previous, event.data));
+      return;
+    case 'playbook_step_judge_started':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepJudgeStarted(previous, event.data));
+      return;
+    case 'playbook_step_judge_updated':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepJudgeUpdated(previous, event.data));
+      return;
+    case 'playbook_step_evaluation_updated':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeStepEvaluationUpdated(previous, event.data));
+      return;
+    case 'playbook_judge_summary_updated':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeJudgeSummaryUpdated(previous, event.data));
+      return;
+    case 'playbook_advisor_autopilot_updated':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeAdvisorAutopilotUpdated(previous, event.data));
+      return;
+    case 'playbook_replay_format_guide_updated':
+      updatePlaybookTask(queryClient, event.data.playbookId, event.data.taskId, {
+        hasValidatedReplay: true,
+        activeReplayId: event.data.replay.status === 'active' ? event.data.replay.id : undefined,
+        activeReplayVersion: event.data.replay.status === 'active' ? event.data.replay.validationVersion : undefined,
+        activeReplayIsStale: event.data.replay.isStale || false,
+        activeReplayStaleReasons: event.data.replay.staleReasons || [],
+        activeReplayPreserveOutputFormat: event.data.replay.preserveOutputFormat || false,
+        activeReplayFormatGuideStatus: event.data.replay.formatGuideStatus || 'disabled',
+        activeReplayFormatGuideError: event.data.replay.formatGuideError || null,
+        isSavingReplayBaseline: false,
+      });
+      return;
+    case 'playbook_output_format_template_updated':
+      updatePlaybookTask(queryClient, event.data.playbookId, event.data.taskId, {
+        hasOutputFormatTemplate: event.data.template.status === 'active',
+        activeOutputFormatTemplateId: event.data.template.status === 'active' ? event.data.template.id : null,
+        activeOutputFormatTemplateVersion: event.data.template.status === 'active' ? event.data.template.templateVersion : null,
+        activeOutputFormatStatus: event.data.template.status === 'active' ? event.data.template.generationStatus : null,
+        activeOutputFormatError: event.data.template.status === 'active' ? event.data.template.generationError || null : null,
+      });
+      return;
+    case 'playbook_execution_complete':
+    case 'playbook_execution_error':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeExecutionCompleted(previous, event.data));
+      removeActiveExecution(queryClient, event.data.executionId);
+      invalidateExecutionHistory(queryClient, event.data.executionId);
+      return;
+    case 'playbook_interrupt':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeInterrupt(previous, event.data));
+      return;
+  }
+}
+
+function updateExecution(
+  queryClient: QueryClient,
+  executionId: string,
+  merge: (previous: PlaybookExecution | undefined) => PlaybookExecution | undefined,
+) {
+  const updated = setExecution(queryClient, executionId, merge);
+  upsertActiveExecution(queryClient, updated);
+}
+
+function setExecution(
+  queryClient: QueryClient,
+  executionId: string,
+  merge: (previous: PlaybookExecution | undefined) => PlaybookExecution | undefined,
+) {
+  let updated: PlaybookExecution | undefined;
+  queryClient.setQueryData<PlaybookExecution | undefined>(playbookKeys.execution(executionId), (previous) => {
+    updated = merge(previous);
+    return updated ?? previous;
+  });
+  return updated;
+}
+
+function setActiveExecutions(queryClient: QueryClient, executions: PlaybookExecution[]) {
+  queryClient.setQueryData(playbookKeys.activeExecutions(), executions);
+  for (const execution of executions) {
+    queryClient.setQueryData(playbookKeys.execution(execution.id), execution);
+  }
+}
+
+function upsertActiveExecution(queryClient: QueryClient, execution: PlaybookExecution | undefined) {
+  if (!execution || !isActiveExecutionStatus(execution.status)) return;
+  queryClient.setQueryData<PlaybookExecution[]>(playbookKeys.activeExecutions(), (previous = []) => [
+    execution,
+    ...previous.filter((item) => item.id !== execution.id),
+  ]);
+}
+
+function removeActiveExecution(queryClient: QueryClient, executionId: string) {
+  queryClient.setQueryData<PlaybookExecution[]>(playbookKeys.activeExecutions(), (previous = []) => (
+    previous.filter((execution) => execution.id !== executionId)
+  ));
+}
+
+function invalidateExecutionHistory(queryClient: QueryClient, executionId: string) {
+  const execution = queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution(executionId));
+  if (!execution?.playbookId) return;
+  queryClient.setQueryData<PlaybookExecutionSummary[]>(playbookKeys.executions(execution.playbookId), (previous) => (
+    previous?.map((summary) => summary.id === executionId ? { ...summary, status: execution.status } : summary)
+  ));
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.executions(execution.playbookId) });
+}
+
+function updatePlaybookTask(
+  queryClient: QueryClient,
+  playbookId: string,
+  taskId: string,
+  patch: Record<string, unknown>,
+) {
+  for (const view of ['base', 'enriched'] as const) {
+    queryClient.setQueryData<Playbook | undefined>(playbookKeys.detail(playbookId, view), (previous) => {
+      if (!previous) return previous;
+      return {
+        ...previous,
+        tasks: previous.tasks.map((task) => task.id === taskId ? { ...task, ...patch } : task),
+      };
+    });
+  }
+}
+
+function isActiveExecutionStatus(status: string | null | undefined) {
+  return status === 'queued' || status === 'running' || status === 'interrupted' || status === 'pending_approval';
+}

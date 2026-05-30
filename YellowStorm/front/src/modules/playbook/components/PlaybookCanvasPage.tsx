@@ -54,6 +54,7 @@ import {
   useCanRedo,
   useIntentSuggestionHistory,
 } from '../store';
+import { usePlaybookUiStore } from '../uiStore';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
@@ -590,14 +591,25 @@ function PlaybookCanvasInner() {
     if (id && !isGeneratingRoute) {
       // Reset execution state when switching playbooks, but preserve panel preference
       const panelPref = (() => { try { return localStorage.getItem('ys_playbook_exec_panel') === '1'; } catch { return false; } })();
+      const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
+      usePlaybookUiStore.setState({
+        selectedStepId: null,
+        selectedIterationIndex: 0,
+        executionPanelOpen: panelPref,
+        workspaceExplorerOpen: workspaceExplorerPref,
+        connectorSidebarOpen: false,
+        nodeEditorOpen: false,
+        pageMode: 'design',
+      });
       usePlaybookStore.setState({
         currentExecution: null,
         selectedStepId: null,
         executionPanelOpen: panelPref,
+        workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
         pageMode: 'design',
       });
-      setExecutionPanelCollapsed(true);
+      setExecutionPanelCollapsed(!panelPref);
       setIntentBarCollapsed(false);
       setToolbarCollapsed(true);
       setDataBindingsVisible(false);

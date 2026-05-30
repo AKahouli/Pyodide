@@ -1684,6 +1684,24 @@ export interface DesignPlaybookData {
   query: string;
 }
 
+export type DesignOperationStatus = 'queued' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
+
+export interface DesignOperation {
+  id: string;
+  flowId: string;
+  ownerId: string;
+  query: string;
+  status: DesignOperationStatus;
+  error: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  resultPreview: Record<string, unknown> | null;
+  appliedMessageId: string | null;
+  lockVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UpdatePlaybookData {
   name?: string;
   description?: string;

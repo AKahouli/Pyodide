@@ -195,6 +195,62 @@ describe('playbook store', () => {
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
+  it('falls back to full save when a migrated delta contains undefined node ids', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({ id: 'p1', name: 'Migrated delta fallback' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 'ERR_2522',
+            message: 'Duplicate node id: undefined; Duplicate node id: undefined',
+            statusCode: 400,
+          },
+        },
+      },
+      config: {
+        url: '/api/v1/playbooks/p1/delta',
+      },
+    });
+    parseApiErrorMock.mockImplementation(((error: unknown) => {
+      const rawError = error as {
+        response?: { data?: { error?: { code?: string; message?: string; statusCode?: number } }; status?: number };
+      };
+      return {
+        code: rawError.response?.data?.error?.code ?? 'ERR_0000',
+        message: rawError.response?.data?.error?.message ?? 'parseApiError message',
+        statusCode: rawError.response?.data?.error?.statusCode ?? rawError.response?.status ?? 500,
+        requiresReAuth: false,
+        raw: error,
+      };
+    }) as any);
+    apiMock.updatePlaybook.mockResolvedValueOnce({
+      ...playbook,
+      updatedAt: '2026-05-30T00:35:00.000Z',
+    });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: {
+        ...playbook,
+        description: 'Changed locally',
+      },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledTimes(1);
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe('2026-05-30T00:35:00.000Z');
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+  });
+
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {
     const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
     const enrichedFlow = {

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import { PlaybookFlowStreamGatewayService } from './playbook-flow-stream-gateway.service';
 import {
@@ -15,11 +16,13 @@ import type {
 export class PlaybookFlowStreamEventsService {
   private readonly logger = new Logger(PlaybookFlowStreamEventsService.name);
   private executionOwnerCache = new Map<string, string>();
+  private queuePositionEmissionCache = new Map<string, { position: number; emittedAt: number }>();
 
   constructor(
     private readonly streamGateway: PlaybookFlowStreamGatewayService,
     @InjectModel(FlowExecution.name)
     private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly configService: ConfigService,
   ) {}
 
   cacheOwner(executionId: string, ownerId: string): void {
@@ -372,6 +375,14 @@ export class PlaybookFlowStreamEventsService {
   emitQueuePositionUpdate(executionId: string, queuePosition: number): void {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
+
+    const throttleMs = this.configService.get<number>('playbook-flow.queuePositionUpdateThrottleMs', 500);
+    const cached = this.queuePositionEmissionCache.get(executionId);
+    const now = Date.now();
+    if (cached && cached.position === queuePosition && now - cached.emittedAt < throttleMs) {
+      return;
+    }
+    this.queuePositionEmissionCache.set(executionId, { position: queuePosition, emittedAt: now });
 
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_execution_queue_update',

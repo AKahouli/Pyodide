@@ -2,9 +2,6 @@ import {
   buildGrpcHumanApprovalConfig,
   isTerminalStatus,
   PlaybookFlowExecutionService,
-  shouldEmitCompletedAfterUpdate,
-  shouldEmitFailureOnStreamError,
-  shouldFinalizeStreamAsCompleted,
   toGrpcStruct,
   toGrpcValue,
 } from './playbook-flow-execution.service';
@@ -21,6 +18,7 @@ function createExecutionServiceForTests(overrides?: {
   flowService?: Record<string, any>;
   streamEvents?: Record<string, any>;
   configService?: Record<string, any>;
+  runtimeClient?: Record<string, any>;
   routerDecisionModel?: Record<string, any>;
   builderService?: Record<string, any>;
   replayArtifactService?: Record<string, any>;
@@ -30,6 +28,10 @@ function createExecutionServiceForTests(overrides?: {
   replayReportService?: Record<string, any>;
   replayDriftService?: Record<string, any>;
   outputFormatService?: Record<string, any>;
+  tokenBufferService?: Record<string, any>;
+  executionLeaseService?: Record<string, any>;
+  graphSanitizerService?: Record<string, any>;
+  executionDispatcherService?: Record<string, any>;
 }) {
   const executionModel = {
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
@@ -56,6 +58,16 @@ function createExecutionServiceForTests(overrides?: {
   const configService = {
     get: jest.fn((key: string, fallback: unknown) => fallback),
     ...overrides?.configService,
+  };
+  const runtimeClient = {
+    init: jest.fn(),
+    isAvailable: jest.fn().mockReturnValue(false),
+    run: jest.fn(),
+    runFromCheckpoint: jest.fn(),
+    cancel: jest.fn(),
+    resumeApproval: jest.fn(),
+    resumeFromStep: jest.fn(),
+    ...overrides?.runtimeClient,
   };
   const queueService = {
     release: jest.fn(),
@@ -157,6 +169,14 @@ function createExecutionServiceForTests(overrides?: {
     getActiveTemplates: jest.fn().mockResolvedValue(new Map()),
     ...overrides?.outputFormatService,
   };
+  const executionLeaseService = {
+    isEnabled: jest.fn().mockReturnValue(false),
+    acquire: jest.fn().mockResolvedValue({ acquired: true }),
+    release: jest.fn().mockResolvedValue(undefined),
+    startHeartbeat: jest.fn(),
+    hasActiveLease: jest.fn().mockResolvedValue(false),
+    ...overrides?.executionLeaseService,
+  };
   replayReportService.createPreRunReport = replayDriftService.createPreRunReport;
   replayReportService.updateStructuralDrift = replayDriftService.recordCompletedTaskDrift;
   replayReportService.updateSemanticMatch = replayDriftService.backfillSemanticMatch;
@@ -167,6 +187,7 @@ function createExecutionServiceForTests(overrides?: {
     taskResultModel as any,
     routerDecisionModel as any,
     configService as any,
+    runtimeClient as any,
     queueService as any,
     idempotencyService as any,
     flowService as any,
@@ -186,6 +207,12 @@ function createExecutionServiceForTests(overrides?: {
     outputFormatService as any,
     replayPlanService as any,
     replayDriftService as any,
+    undefined as any,
+    undefined as any,
+    overrides?.tokenBufferService as any,
+    executionLeaseService as any,
+    overrides?.graphSanitizerService as any,
+    overrides?.executionDispatcherService as any,
   );
 
   return {
@@ -208,6 +235,22 @@ function createExecutionServiceForTests(overrides?: {
     replayPlanService,
     outputContractService,
     outputFormatService,
+    executionLeaseService,
+    runtimeClient,
+  };
+}
+
+function createNoopGraphSanitizer() {
+  return {
+    sanitize: jest.fn(({ nodes, controlEdges, dataBindings }) => ({
+      nodes,
+      controlEdges,
+      dataBindings,
+      removedDisabledNodeCount: 0,
+      removedOrphanedEdgeCount: 0,
+      removedOrphanedBindingCount: 0,
+      removedStaleBindingCount: 0,
+    })),
   };
 }
 
@@ -259,6 +302,7 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(0), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       flowService as any,
@@ -891,6 +935,7 @@ describe('single-step execution safety', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn(), find: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
@@ -960,6 +1005,12 @@ describe('single-step execution safety', () => {
   it('rejects single-step execution for disabled nodes', async () => {
     const { service } = createExecutionServiceForTests({
       flowService: {
+        findOneForExecutionStart: jest.fn().mockResolvedValue({
+          nodes: [{ id: 'task-2', kind: 'step', metadata: { enabled: false } }],
+          controlEdges: [],
+          dataBindings: [],
+          settings: {},
+        }),
         findOne: jest.fn().mockResolvedValue({
           nodes: [{ id: 'task-2', kind: 'step', metadata: { enabled: false } }],
           controlEdges: [],
@@ -975,6 +1026,7 @@ describe('single-step execution safety', () => {
           dataBindings: [],
         }),
       },
+      graphSanitizerService: createNoopGraphSanitizer(),
     });
 
     await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
@@ -1024,6 +1076,7 @@ describe('single-step execution safety', () => {
       } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
@@ -1151,6 +1204,7 @@ describe('single-step execution safety', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
@@ -1214,6 +1268,23 @@ describe('single-step execution safety', () => {
         }),
       },
       flowService: {
+        findOneForExecutionStart: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'summary' }] } },
+            { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+          settings: {},
+        }),
         findOne: jest.fn().mockResolvedValue({
           nodes: [
             { id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'summary' }] } },
@@ -1251,6 +1322,7 @@ describe('single-step execution safety', () => {
           }],
         }),
       },
+      graphSanitizerService: createNoopGraphSanitizer(),
     }).service;
 
     await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
@@ -1262,6 +1334,15 @@ describe('single-step execution safety', () => {
   it('rejects single-step execution for router-controlled nodes', async () => {
     const { service } = createExecutionServiceForTests({
       flowService: {
+        findOneForExecutionStart: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'router-1', kind: 'router', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'conditional', source: 'router-1', target: 'task-2', routerLabel: 'valid' }],
+          dataBindings: [],
+          settings: {},
+        }),
         findOne: jest.fn().mockResolvedValue({
           nodes: [
             { id: 'router-1', kind: 'router', metadata: {} },
@@ -1283,6 +1364,7 @@ describe('single-step execution safety', () => {
           dataBindings: [],
         }),
       },
+      graphSanitizerService: createNoopGraphSanitizer(),
     });
 
     await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
@@ -1312,6 +1394,7 @@ describe('single-step execution safety', () => {
       } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
@@ -1433,6 +1516,7 @@ describe('single-step execution safety', () => {
       } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
@@ -1522,38 +1606,77 @@ describe('single-step execution safety', () => {
   });
 });
 
-describe('shouldFinalizeStreamAsCompleted', () => {
-  it('prevents false completion after terminal or paused states', () => {
-    expect(shouldFinalizeStreamAsCompleted(true, false, 'running')).toBe(false);
-    expect(shouldFinalizeStreamAsCompleted(false, true, 'running')).toBe(false);
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'cancelled')).toBe(false);
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'pending_approval')).toBe(false);
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'failed')).toBe(false);
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'completed')).toBe(false);
-  });
-
-  it('allows completion only for active non-paused streams', () => {
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'running')).toBe(true);
-    expect(shouldFinalizeStreamAsCompleted(false, false, 'queued')).toBe(true);
-  });
-});
-
-describe('shouldEmitFailureOnStreamError', () => {
-  it('emits a failure only once per stream', () => {
-    expect(shouldEmitFailureOnStreamError(false)).toBe(true);
-    expect(shouldEmitFailureOnStreamError(true)).toBe(false);
-  });
-});
-
-describe('shouldEmitCompletedAfterUpdate', () => {
-  it('emits completion only when the guarded update wins', () => {
-    expect(shouldEmitCompletedAfterUpdate(1)).toBe(true);
-    expect(shouldEmitCompletedAfterUpdate(0)).toBe(false);
-    expect(shouldEmitCompletedAfterUpdate(undefined)).toBe(false);
-  });
-});
-
 describe('service terminal handling', () => {
+  it('routes NodeToken through the token buffer when enabled', async () => {
+    const tokenBufferService = {
+      isEnabled: jest.fn().mockReturnValue(true),
+      appendToken: jest.fn().mockResolvedValue(undefined),
+      flushTask: jest.fn(),
+      flushExecution: jest.fn(),
+    };
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests({ tokenBufferService });
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeToken',
+      node_id: 'step-1',
+      iteration: 2,
+      payload: { token: 'Hello' },
+    });
+
+    expect(tokenBufferService.appendToken).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 2 },
+      'Hello',
+    );
+    expect(taskResultModel.updateOne).not.toHaveBeenCalled();
+    expect(streamEvents.emitStepUpdate).not.toHaveBeenCalled();
+  });
+
+  it('flushes buffered task tokens before persisting a completed node result', async () => {
+    const tokenBufferService = {
+      isEnabled: jest.fn(),
+      appendToken: jest.fn(),
+      flushTask: jest.fn().mockResolvedValue(undefined),
+      flushExecution: jest.fn(),
+    };
+    const { service, taskResultModel } = createExecutionServiceForTests({ tokenBufferService });
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted',
+      node_id: 'step-1',
+      iteration: 1,
+      payload: { output: 'done' },
+    });
+
+    expect(tokenBufferService.flushTask).toHaveBeenCalledWith({
+      executionId: 'exec-1',
+      taskId: 'step-1',
+      iteration: 1,
+    });
+    expect(taskResultModel.updateOne).toHaveBeenCalled();
+  });
+
+  it('flushes buffered execution tokens before marking execution failed', async () => {
+    const tokenBufferService = {
+      isEnabled: jest.fn(),
+      appendToken: jest.fn(),
+      flushTask: jest.fn(),
+      flushExecution: jest.fn().mockResolvedValue(undefined),
+    };
+    const { service, executionModel } = createExecutionServiceForTests({ tokenBufferService });
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'ExecutionFailed',
+      payload: { error: 'boom' },
+    });
+
+    expect(tokenBufferService.flushExecution).toHaveBeenCalledWith('exec-1');
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
+      { status: 'failed', error: 'boom', endedAt: expect.any(Date) },
+    );
+  });
+
   it('persists enriched node results without collapsing metadata into output', async () => {
     const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
     taskResultModel.updateOne.mockResolvedValue(undefined);
@@ -2501,7 +2624,11 @@ describe('service terminal handling', () => {
   it('fails a claimed execution when its flow cannot be loaded', async () => {
     const executionModel = {
       updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+      findById: jest.fn(() => ({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
+        }),
+      })),
       findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     };
     const queueService = {
@@ -2578,6 +2705,7 @@ describe('service terminal handling', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
@@ -2631,6 +2759,7 @@ describe('service terminal handling', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
@@ -2711,6 +2840,7 @@ describe('service terminal handling', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
@@ -3064,6 +3194,7 @@ describe('service terminal handling', () => {
       { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
@@ -3109,7 +3240,7 @@ describe('service terminal handling', () => {
         }),
       },
     });
-    const drainQueueSpy = jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
+    const scheduleQueueDrainSpy = jest.spyOn(service as any, 'scheduleQueueDrain').mockImplementation(() => undefined);
     agentService.buildGrpcAgentsForPlaybook.mockRejectedValue(new Error('bootstrap failed'));
 
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', {
@@ -3119,8 +3250,8 @@ describe('service terminal handling', () => {
       settings: {},
     }, {});
 
-    expect(drainQueueSpy).toHaveBeenCalledWith('owner-1');
-    drainQueueSpy.mockRestore();
+    expect(scheduleQueueDrainSpy).toHaveBeenCalledWith('owner-1');
+    scheduleQueueDrainSpy.mockRestore();
   });
 
   it('does not start gRPC when a claimed execution is cancelled before launch', async () => {
@@ -3267,19 +3398,23 @@ describe('service terminal handling', () => {
     const { service } = createExecutionServiceForTests({ executionModel, queueService, flowService });
     (service as any).isGrpcAvailable = true;
 
-    const callGrpcRunSpy = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
+    const scheduleQueueDrainSpy = jest.spyOn(service as any, 'scheduleQueueDrain').mockImplementation(() => undefined);
 
     await (service as any).recoverQueuedExecutions();
 
     expect(executionModel.distinct).toHaveBeenCalledWith('ownerId', { status: 'queued' });
-    expect(callGrpcRunSpy).toHaveBeenCalledTimes(3);
-    callGrpcRunSpy.mockRestore();
+    expect(scheduleQueueDrainSpy).toHaveBeenCalledWith('owner-1');
+    scheduleQueueDrainSpy.mockRestore();
   });
 
   it('drainQueue continues draining after a flow-not-found failure', async () => {
     const executionModel = {
       updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+      findById: jest.fn(() => ({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
+        }),
+      })),
       findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     };
     const queueService = {
@@ -3310,180 +3445,53 @@ describe('service terminal handling', () => {
     expect(callGrpcRunSpy).toHaveBeenCalledWith('exec-ok', 'flow-ok', 'owner-1', { settings: {} }, {}, undefined);
     callGrpcRunSpy.mockRestore();
   });
+
+  it('re-queues a claimed execution when distributed capacity is exhausted', async () => {
+    const executionModel = {
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      findById: jest.fn(),
+      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    };
+    const queueService = {
+      release: jest.fn().mockResolvedValueOnce({ id: 'exec-1', flowId: 'flow-1', inputContext: {} }).mockResolvedValueOnce(null),
+      refreshPositions: jest.fn().mockResolvedValue([{ executionId: 'exec-1', queuePosition: 1 }]),
+    };
+    const { service, streamEvents, executionLeaseService } = createExecutionServiceForTests({
+      executionModel,
+      queueService,
+      executionLeaseService: {
+        isEnabled: jest.fn().mockReturnValue(true),
+        acquire: jest.fn().mockResolvedValue({ acquired: false, reason: 'global_limit' }),
+        release: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    (service as any).isGrpcAvailable = true;
+
+    await (service as any).drainQueue('owner-1');
+
+    expect(executionLeaseService.acquire).toHaveBeenCalledWith('exec-1', 'owner-1', 'flow-1', {});
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-1', status: 'running' },
+      {
+        $set: { status: 'queued', queuePosition: 0 },
+        $unset: { startedAt: 1 },
+      },
+    );
+    expect(streamEvents.emitQueuePositionUpdate).toHaveBeenCalledWith('exec-1', 1);
+  });
 });
 
-describe('unwrapGrpcValue', () => {
-  const { service } = createExecutionServiceForTests();
-  const unwrap = (v: unknown) => (service as any).unwrapGrpcValue(v);
-
-  it('passes through null and undefined', () => {
-    expect(unwrap(null)).toBeNull();
-    expect(unwrap(undefined)).toBeUndefined();
-  });
-
-  it('passes through primitives', () => {
-    expect(unwrap('hello')).toBe('hello');
-    expect(unwrap(42)).toBe(42);
-    expect(unwrap(true)).toBe(true);
-  });
-
-  it('recurses into plain arrays', () => {
-    expect(unwrap([1, 'two', true])).toEqual([1, 'two', true]);
-  });
-
-  it('unwraps selector-less Struct { fields: {...} }', () => {
-    const input = {
-      fields: {
-        name: { kind: 'stringValue', stringValue: 'Alan' },
-        score: { kind: 'numberValue', numberValue: 100 },
-      },
-    };
-    expect(unwrap(input)).toEqual({ name: 'Alan', score: 100 });
-  });
-
-  it('unwraps selector-less Value with stringValue', () => {
-    expect(unwrap({ stringValue: 'test' })).toBe('test');
-  });
-
-  it('unwraps selector-less Value with numberValue', () => {
-    expect(unwrap({ numberValue: 3.14 })).toBe(3.14);
-  });
-
-  it('unwraps selector-less Value with boolValue', () => {
-    expect(unwrap({ boolValue: true })).toBe(true);
-  });
-
-  it('unwraps selector-less Value with nullValue', () => {
-    expect(unwrap({ nullValue: 'NULL_VALUE' })).toBeNull();
-  });
-
-  it('unwraps selector-less listValue', () => {
-    const input = {
-      listValue: {
-        values: [
-          { kind: 'stringValue', stringValue: 'a' },
-          { kind: 'numberValue', numberValue: 1 },
-        ],
-      },
-    };
-    expect(unwrap(input)).toEqual(['a', 1]);
-  });
-
-  it('unwraps selector-less structValue', () => {
-    const input = {
-      structValue: {
-        fields: {
-          key: { kind: 'stringValue', stringValue: 'val' },
-        },
-      },
-    };
-    expect(unwrap(input)).toEqual({ key: 'val' });
-  });
-
-  it('unwraps kind-tagged structValue', () => {
-    const input = {
-      kind: 'structValue',
-      structValue: {
-        fields: {
-          key: { kind: 'stringValue', stringValue: 'val' },
-        },
-      },
-    };
-    expect(unwrap(input)).toEqual({ key: 'val' });
-  });
-
-  it('unwraps kind-tagged listValue', () => {
-    const input = {
-      kind: 'listValue',
-      listValue: {
-        values: [
-          { kind: 'numberValue', numberValue: 7 },
-          { kind: 'numberValue', numberValue: 14 },
-        ],
-      },
-    };
-    expect(unwrap(input)).toEqual([7, 14]);
-  });
-
-  it('unwraps kind-tagged scalar values', () => {
-    expect(unwrap({ kind: 'numberValue', numberValue: 99 })).toBe(99);
-    expect(unwrap({ kind: 'stringValue', stringValue: 's' })).toBe('s');
-    expect(unwrap({ kind: 'boolValue', boolValue: false })).toBe(false);
-    expect(unwrap({ kind: 'nullValue' })).toBeNull();
-  });
-
-  it('unwraps deeply nested Struct with 3+ levels', () => {
-    const input = {
-      fields: {
-        output: {
-          kind: 'structValue',
-          structValue: {
-            fields: {
-              metadata: {
-                kind: 'structValue',
-                structValue: {
-                  fields: {
-                    fields: {
-                      kind: 'structValue',
-                      structValue: {
-                        fields: {
-                          preserved: { kind: 'boolValue', boolValue: true },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              items: {
-                kind: 'listValue',
-                listValue: {
-                  values: [
-                    { kind: 'numberValue', numberValue: 1 },
-                    { kind: 'stringValue', stringValue: 'two' },
-                    { kind: 'nullValue' },
-                  ],
-                },
-              },
-              empty: {
-                kind: 'structValue',
-                structValue: { fields: {} },
-              },
-            },
-          },
-        },
-      },
-    };
-    expect(unwrap(input)).toEqual({
-      output: {
-        metadata: { fields: { preserved: true } },
-        items: [1, 'two', null],
-        empty: {},
+describe('PlaybookFlowExecutionService lease release', () => {
+  it('releases the distributed lease when an execution completes', async () => {
+    const { service, executionLeaseService } = createExecutionServiceForTests({
+      executionLeaseService: {
+        isEnabled: jest.fn().mockReturnValue(true),
+        release: jest.fn().mockResolvedValue(undefined),
       },
     });
-  });
 
-  it('recurse-unwraps plain objects (proto-loader auto-unwrapped)', () => {
-    const input = {
-      a: { kind: 'stringValue', stringValue: 'x' },
-      b: { kind: 'numberValue', numberValue: 2 },
-      nested: {
-        x: { kind: 'boolValue', boolValue: true },
-      },
-    };
-    expect(unwrap(input)).toEqual({
-      a: 'x',
-      b: 2,
-      nested: { x: true },
-    });
-  });
+    await (service as any).handleRunEvent('exec-1', { event_type: 'ExecutionCompleted', payload: {} });
 
-  it('unwraps real round-trip: toGrpcStruct → unwrapGrpcValue', () => {
-    const original = {
-      metadata: { fields: { preserved: true } },
-      items: [1, null, 'three'],
-    };
-    const wrapped = toGrpcStruct(original);
-    const unwrapped = unwrap(wrapped);
-    expect(unwrapped).toEqual(original);
+    expect(executionLeaseService.release).toHaveBeenCalledWith('exec-1');
   });
 });

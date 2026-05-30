@@ -71,7 +71,7 @@ def test_concurrent_identical_lookups_compile_once():
 
 
 def test_ttl_expires_entries():
-    cache = CompiledGraphCache(ttl_seconds=0.001)
+    cache = CompiledGraphCache(ttl_seconds=0.01)
     snapshot = {"nodes": [{"id": "node-1"}]}
     compile_calls = {"count": 0}
 
@@ -81,7 +81,7 @@ def test_ttl_expires_entries():
 
     async def run_test():
         graph_a, _, hit_a = await cache.get_or_compile(snapshot, compile_graph)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         graph_b, _, hit_b = await cache.get_or_compile(snapshot, compile_graph)
 
         assert hit_a is False

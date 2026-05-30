@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ConfigType } from '@nestjs/config';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowDesignService } from '../services/playbook-flow-design.service';
+import { PlaybookFlowDesignOperationService } from '../services/playbook-flow-design-operation.service';
 import { PlaybookFlowEvaluationService } from '../services/playbook-flow-evaluation.service';
 import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
@@ -28,6 +29,7 @@ export class PlaybookFlowController {
   constructor(
     private readonly playbookFlowService: PlaybookFlowService,
     private readonly designService: PlaybookFlowDesignService,
+    private readonly designOperationService: PlaybookFlowDesignOperationService,
     private readonly evaluationService: PlaybookFlowEvaluationService,
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
     @Inject(playbookFlowConfig.KEY)
@@ -146,6 +148,39 @@ export class PlaybookFlowController {
     @Body() body: { query: string },
   ) {
     return this.designService.designFlow(userId, id, body.query);
+  }
+
+  @Post(':id/design-operations')
+  @ApiOperation({ summary: 'Queue an asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async startDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { query: string; idempotencyKey?: string },
+  ) {
+    return this.designOperationService.enqueue(userId, id, body.query, body.idempotencyKey);
+  }
+
+  @Get(':id/design-operations/:operationId')
+  @ApiOperation({ summary: 'Get an asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.designOperationService.findOne(userId, id, operationId);
+  }
+
+  @Post(':id/design-operations/:operationId/cancel')
+  @ApiOperation({ summary: 'Cancel a queued asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async cancelDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.designOperationService.cancel(userId, id, operationId);
   }
 
   @Post(':id/clone')

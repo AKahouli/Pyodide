@@ -1,0 +1,165 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
+
+type TokenBufferKey = {
+  executionId: string;
+  taskId: string;
+  iteration: number;
+};
+
+type TokenBufferEntry = TokenBufferKey & {
+  chunks: string[];
+  bytes: number;
+  timer?: NodeJS.Timeout;
+  createdAt: number;
+};
+
+/**
+ * Buffers streaming node tokens in memory so token-heavy executions do not write
+ * to MongoDB once per token while preserving immediate SSE updates for the UI.
+ */
+@Injectable()
+export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
+  private readonly logger = new Logger(PlaybookFlowTokenBufferService.name);
+  private readonly buffers = new Map<string, TokenBufferEntry>();
+
+  constructor(
+    @InjectModel(FlowTaskResult.name)
+    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly configService: ConfigService,
+    private readonly streamEvents: PlaybookFlowStreamEventsService,
+  ) {}
+
+  isEnabled(): boolean {
+    return this.configService.get<boolean>('playbook-flow.tokenBufferEnabled', false);
+  }
+
+  async appendToken(key: TokenBufferKey, token: string): Promise<void> {
+    if (!token) return;
+    this.streamEvents.emitStepUpdate(key.executionId, key.taskId, token);
+
+    const maxTaskBytes = this.getMaxTaskBytes();
+    if (Buffer.byteLength(token, 'utf8') >= maxTaskBytes) {
+      await this.flushToken(key, token);
+      return;
+    }
+
+    const entry = this.getOrCreateEntry(key);
+    entry.chunks.push(token);
+    entry.bytes += Buffer.byteLength(token, 'utf8');
+
+    if (entry.bytes >= this.getMaxBytes()) {
+      await this.flushKey(this.keyOf(key));
+    }
+  }
+
+  async flushTask(key: TokenBufferKey): Promise<void> {
+    await this.flushKey(this.keyOf(key));
+  }
+
+  async flushExecution(executionId: string): Promise<void> {
+    const keys = Array.from(this.buffers.keys()).filter((key) => key.startsWith(`${executionId}:`));
+    for (const key of keys) {
+      await this.flushKey(key);
+    }
+  }
+
+  discardExecution(executionId: string): void {
+    for (const [key, entry] of this.buffers.entries()) {
+      if (entry.executionId === executionId) {
+        this.clearEntryTimer(entry);
+        this.buffers.delete(key);
+      }
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    for (const key of Array.from(this.buffers.keys())) {
+      await this.flushKey(key);
+    }
+  }
+
+  private getOrCreateEntry(key: TokenBufferKey): TokenBufferEntry {
+    const bufferKey = this.keyOf(key);
+    const existing = this.buffers.get(bufferKey);
+    if (existing) return existing;
+
+    this.makeRoomForNewBuffer();
+    const entry: TokenBufferEntry = { ...key, chunks: [], bytes: 0, createdAt: Date.now() };
+    entry.timer = setTimeout(() => {
+      this.flushKey(bufferKey).catch((err) => {
+        this.logger.error(`Failed to flush token buffer ${bufferKey}`, err instanceof Error ? err.stack : undefined);
+      });
+    }, this.getFlushIntervalMs());
+    this.buffers.set(bufferKey, entry);
+    return entry;
+  }
+
+  private makeRoomForNewBuffer(): void {
+    const maxActiveBuffers = this.configService.get<number>('playbook-flow.tokenBufferMaxActiveBuffers', 1000);
+    if (this.buffers.size < maxActiveBuffers) return;
+
+    const oldest = Array.from(this.buffers.entries()).sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
+    if (!oldest) return;
+
+    this.logger.warn(`Token buffer cap reached; forcing oldest buffer flush for ${oldest[0]}`);
+    this.flushKey(oldest[0]).catch((err) => {
+      this.logger.error(`Failed to flush oldest token buffer ${oldest[0]}`, err instanceof Error ? err.stack : undefined);
+    });
+  }
+
+  private async flushKey(bufferKey: string): Promise<void> {
+    const entry = this.buffers.get(bufferKey);
+    if (!entry) return;
+
+    this.clearEntryTimer(entry);
+    this.buffers.delete(bufferKey);
+
+    const text = entry.chunks.join('');
+    if (!text) return;
+    await this.flushToken(entry, text);
+  }
+
+  private async flushToken(key: TokenBufferKey, token: string): Promise<void> {
+    await this.taskResultModel.updateOne(
+      { executionId: key.executionId, taskId: key.taskId, iteration: key.iteration },
+      [
+        {
+          $set: {
+            status: 'running',
+            output: {
+              $concat: [{ $ifNull: ['$output', ''] }, token],
+            },
+          },
+        },
+      ],
+      { upsert: true },
+    );
+  }
+
+  private clearEntryTimer(entry: TokenBufferEntry): void {
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
+  }
+
+  private keyOf(key: TokenBufferKey): string {
+    return `${key.executionId}:${key.taskId}:${key.iteration}`;
+  }
+
+  private getFlushIntervalMs(): number {
+    return this.configService.get<number>('playbook-flow.tokenBufferFlushIntervalMs', 750);
+  }
+
+  private getMaxBytes(): number {
+    return this.configService.get<number>('playbook-flow.tokenBufferMaxBytes', 4096);
+  }
+
+  private getMaxTaskBytes(): number {
+    return this.configService.get<number>('playbook-flow.tokenBufferMaxTaskBytes', 65536);
+  }
+}

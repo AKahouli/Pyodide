@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
 import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/required-port-validation';
+import { playbookFeatures } from '../features';
+import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
 const IDLE_DEBOUNCE_MS = 1200;
 const ACTIVE_EDIT_DEBOUNCE_MS = 3000;
@@ -40,6 +42,7 @@ export function useAutosave() {
   const isDirty = useIsDirty();
   const isSaving = useIsSaving();
   const dirtyVersion = useDirtyVersion();
+  const autosaveActor = useAutosaveActor(playbookFeatures.xstateAutosaveEnabled);
   const saveCurrentPlaybook = usePlaybookStore((s) => s.saveCurrentPlaybook);
   const setPendingAutosaveAfterCurrent = usePlaybookStore((s) => s.setPendingAutosaveAfterCurrent);
   const lastAutosaveDurationMs = usePlaybookStore((s) => s.lastAutosaveDurationMs);
@@ -64,8 +67,21 @@ export function useAutosave() {
 
   const doSave = useCallback(() => {
     clearTimer();
-    return saveCurrentPlaybook({ reason: 'autosave' });
-  }, [clearTimer, saveCurrentPlaybook]);
+    if (playbookFeatures.xstateAutosaveEnabled) {
+      autosaveActor.send({ type: 'SAVE_NOW', reason: 'autosave' });
+    }
+    return Promise.resolve(saveCurrentPlaybook({ reason: 'autosave' })).then((result) => {
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_SUCCEEDED', durationMs: lastAutosaveDurationMs });
+      }
+      return result;
+    }).catch((error: unknown) => {
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+      }
+      throw error;
+    });
+  }, [autosaveActor, clearTimer, lastAutosaveDurationMs, saveCurrentPlaybook]);
 
   useEffect(() => {
     if (!isDirty || dirtyVersion === 0 || hasUnboundRequiredPorts || hasIncompleteBindings) return;
@@ -73,6 +89,9 @@ export function useAutosave() {
     const now = Date.now();
     const previousDirtyAt = lastDirtyAtRef.current;
     lastDirtyAtRef.current = now;
+    if (playbookFeatures.xstateAutosaveEnabled) {
+      autosaveActor.send({ type: 'LOCAL_CHANGE', dirtyVersion });
+    }
 
     if (isSaving) {
       setPendingAutosaveAfterCurrent(true);
@@ -89,6 +108,7 @@ export function useAutosave() {
     return clearTimer;
   }, [
     autosaveBackoffUntil,
+    autosaveActor,
     clearTimer,
     dirtyVersion,
     doSave,
@@ -106,8 +126,28 @@ export function useAutosave() {
   const saveNow = useCallback(() => {
     if (hasUnboundRequiredPorts || hasIncompleteBindings) return Promise.resolve();
     clearTimer();
-    return saveCurrentPlaybook({ reason: 'manual' });
-  }, [clearTimer, saveCurrentPlaybook, hasUnboundRequiredPorts, hasIncompleteBindings]);
+    if (playbookFeatures.xstateAutosaveEnabled) {
+      autosaveActor.send({ type: 'SAVE_NOW', reason: 'manual' });
+    }
+    return Promise.resolve(saveCurrentPlaybook({ reason: 'manual' })).then((result) => {
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_SUCCEEDED', durationMs: lastAutosaveDurationMs });
+      }
+      return result;
+    }).catch((error: unknown) => {
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+      }
+      throw error;
+    });
+  }, [
+    autosaveActor,
+    clearTimer,
+    hasIncompleteBindings,
+    hasUnboundRequiredPorts,
+    lastAutosaveDurationMs,
+    saveCurrentPlaybook,
+  ]);
 
   return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings };
 }

@@ -7,6 +7,11 @@ import { FlowExecution } from '../schemas/playbook-flow-execution.schema';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
 import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
+import { FlowAccessService } from '../domain/flow-access.service';
+import { FlowResponseAssemblerService } from '../domain/flow-response-assembler.service';
+import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.service';
+import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
+import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
 
 describe('PlaybookFlowService', () => {
   it('findOneBase returns the flow without replay enrichment', async () => {
@@ -30,6 +35,11 @@ describe('PlaybookFlowService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -79,6 +89,11 @@ describe('PlaybookFlowService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -144,6 +159,11 @@ describe('PlaybookFlowService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -199,6 +219,11 @@ describe('PlaybookFlowService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -271,6 +296,11 @@ describe('PlaybookFlowService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: validatorService },

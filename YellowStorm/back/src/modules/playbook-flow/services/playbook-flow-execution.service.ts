@@ -2,10 +2,6 @@ import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
-import * as grpc from '@grpc/grpc-js';
-import * as protoLoader from '@grpc/proto-loader';
-import * as path from 'node:path';
-import * as fs from 'node:fs';
 import { AgentService } from '@modules/agent/agent.service';
 import {
   FlowExecution,
@@ -39,6 +35,7 @@ import {
   IResumeFromStepPayload,
   IRunFromStepPayload,
 } from '../interfaces/playbook-flow-execution.interface';
+import { IFlowResponse } from '../interfaces/playbook-flow.interface';
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
@@ -69,51 +66,14 @@ import {
 } from '../interfaces/playbook-flow-observability.interface';
 import { PublicReasoningTraceItem } from '../interfaces/playbook-flow-reasoning.interface';
 import { PlaybookFlowReplayPostRunEvaluationService } from './playbook-flow-replay-post-run-evaluation.service';
-
-export function toGrpcValue(value: unknown): Record<string, unknown> {
-  if (value === null || value === undefined) {
-    // Match the working chatbot/playbook gRPC path: proto-loader expects camelCase
-    // Value selectors here, otherwise Struct map entries arrive as empty/null values.
-    return { nullValue: 'NULL_VALUE', kind: 'nullValue' };
-  }
-  if (Array.isArray(value)) {
-    return {
-      listValue: { values: value.map((item) => toGrpcValue(item)) },
-      kind: 'listValue',
-    };
-  }
-  switch (typeof value) {
-    case 'string':
-      return { stringValue: value, kind: 'stringValue' };
-    case 'number':
-      return { numberValue: value, kind: 'numberValue' };
-    case 'boolean':
-      return { boolValue: value, kind: 'boolValue' };
-    case 'object':
-      return {
-        structValue: toGrpcStruct(value as Record<string, unknown>),
-        kind: 'structValue',
-      };
-    default:
-      return { stringValue: String(value), kind: 'stringValue' };
-  }
-}
-
-export function toGrpcStruct(value?: Record<string, unknown>): Record<string, unknown> {
-  const fields = Object.entries(value || {}).reduce<Record<string, unknown>>((acc, [key, entry]) => {
-    acc[key] = toGrpcValue(entry);
-    return acc;
-  }, {});
-  return { fields };
-}
-
-export function buildGrpcHumanApprovalConfig(config?: { promptTemplate?: string; timeoutSeconds?: number | null } | null) {
-  if (!config) return undefined;
-  return {
-    prompt_template: config.promptTemplate || '',
-    ...(config.timeoutSeconds == null || config.timeoutSeconds === 0 ? {} : { timeout_seconds: config.timeoutSeconds }),
-  };
-}
+import { PlaybookFlowTokenBufferService } from './playbook-flow-token-buffer.service';
+import { PlaybookFlowExecutionLeaseService } from './playbook-flow-execution-lease.service';
+export { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
+import { buildGrpcHumanApprovalConfig, fromGrpcValue, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
+import { PlaybookFlowRuntimeClientService } from '../execution/grpc/playbook-flow-runtime-client.service';
+import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
+import { PlaybookExecutionDispatcherService } from '../execution/runtime/playbook-execution-dispatcher.service';
+import { PlaybookExecutionStreamFinalizerService } from '../execution/runtime/playbook-execution-stream-finalizer.service';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
@@ -130,27 +90,6 @@ const RUNTIME_AGENT_METADATA_KEYS = [
 
 export function isTerminalStatus(status: string): boolean {
   return (TERMINAL_STATUSES as readonly string[]).includes(status);
-}
-
-export function shouldFinalizeStreamAsCompleted(
-  completionEmitted: boolean,
-  awaitingApproval: boolean,
-  status: string,
-): boolean {
-  return !completionEmitted
-    && !awaitingApproval
-    && status !== 'cancelled'
-    && status !== 'pending_approval'
-    && status !== 'failed'
-    && status !== 'completed';
-}
-
-export function shouldEmitFailureOnStreamError(completionEmitted: boolean): boolean {
-  return !completionEmitted;
-}
-
-export function shouldEmitCompletedAfterUpdate(modifiedCount?: number): boolean {
-  return Boolean(modifiedCount);
 }
 
 function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -176,13 +115,20 @@ interface SeededTaskOutput {
 @Injectable()
 export class PlaybookFlowExecutionService implements OnModuleInit {
   private readonly logger = new Logger(PlaybookFlowExecutionService.name);
-  private playbookFlowClient: any;
+  private playbookFlowClient?: {
+    Run?: (request: Record<string, unknown>) => any;
+    RunFromCheckpoint?: (request: Record<string, unknown>) => any;
+    Cancel?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
+    ResumeApproval?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
+    ResumeFromStep?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
+  };
   private isGrpcAvailable = false;
   private readonly selectedReplayArtifactsByExecution = new Map<
     string,
     Map<string, ResolvedReplayArtifacts>
   >();
   private readonly trackedReplayTasksByExecution = new Map<string, Set<string>>();
+  private fallbackExecutionDispatcherService?: PlaybookExecutionDispatcherService;
 
   constructor(
     @InjectModel(FlowExecution.name)
@@ -192,6 +138,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @InjectModel(FlowRouterDecision.name)
     private readonly routerDecisionModel: Model<FlowRouterDecisionDocument>,
     private readonly configService: ConfigService,
+    private readonly runtimeClient: PlaybookFlowRuntimeClientService,
     private readonly queueService: PlaybookFlowQueueService,
     private readonly idempotencyService: PlaybookFlowIdempotencyService,
     @Inject(forwardRef(() => PlaybookFlowService))
@@ -215,6 +162,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly replayDriftService?: PlaybookFlowReplayDriftService,
     @Optional() private readonly postRunEvaluationService?: PlaybookFlowReplayPostRunEvaluationService,
     @Optional() private readonly systemService?: SystemService,
+    @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
+    @Optional() private readonly executionLeaseService?: PlaybookFlowExecutionLeaseService,
+    @Optional() private readonly graphSanitizerService?: FlowGraphSanitizerService,
+    @Optional() private readonly executionDispatcherService?: PlaybookExecutionDispatcherService,
+    @Optional() private readonly executionStreamFinalizerService?: PlaybookExecutionStreamFinalizerService,
   ) {}
 
   private getReplayDriftService(): PlaybookFlowReplayDriftService {
@@ -229,9 +181,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.initGrpcClient();
-    if (this.isGrpcAvailable) {
-      this.recoverQueuedExecutions()
+    this.runtimeClient.init();
+    if (this.isRuntimeAvailable()) {
+      this.recoverStaleRunningExecutions()
+        .then(() => this.recoverQueuedExecutions())
         .catch((err) => {
           this.logger.error('Failed to recover queued executions', err instanceof Error ? err.stack : undefined);
         });
@@ -516,56 +469,130 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private async recoverQueuedExecutions(): Promise<void> {
     const owners = await this.executionModel.distinct('ownerId', { status: 'queued' });
     for (const ownerId of owners as string[]) {
-      while (true) {
-        const queuedCount = await this.executionModel.countDocuments({ ownerId, status: 'queued' });
-        const runningCount = await this.queueService.getRunningCount(ownerId);
-        const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
-        if (queuedCount === 0 || runningCount >= maxConcurrent) {
-          break;
-        }
-        await this.drainQueue(ownerId);
+      this.scheduleQueueDrain(ownerId);
+    }
+  }
+
+  private async recoverStaleRunningExecutions(): Promise<void> {
+    if (!this.executionLeaseService?.isEnabled()) return;
+
+    const startupTimeoutMs = this.configService.get<number>('playbook-flow.executionStartupTimeoutMs', 180_000);
+    const staleBefore = new Date(Date.now() - startupTimeoutMs);
+    const staleExecutions = await this.executionModel.find(
+      { status: 'running', startedAt: { $lte: staleBefore } },
+      'ownerId queuePosition startedAt',
+    ).lean().exec();
+
+    for (const execution of staleExecutions as Array<Record<string, unknown>>) {
+      const executionId = String(execution._id);
+      const activeLease = await this.executionLeaseServiceHasLease(executionId);
+      if (activeLease) {
+        continue;
+      }
+
+      this.logger.warn(`Re-queueing stale running execution ${executionId} without an active lease`);
+      await this.executionModel.updateOne(
+        { _id: executionId, status: 'running' },
+        {
+          $set: {
+            status: 'queued',
+            queuePosition: 0,
+            error: null,
+          },
+          $unset: { startedAt: 1 },
+        },
+      ).exec();
+
+      const ownerId = String(execution.ownerId || '');
+      const changes = await this.queueService.refreshPositions(ownerId);
+      for (const { executionId: queuedExecutionId, queuePosition } of changes) {
+        this.streamEvents.emitQueuePositionUpdate(queuedExecutionId, queuePosition);
       }
     }
   }
 
-  private initGrpcClient() {
-    try {
-      const protoPath = this.resolvePlaybookFlowProtoPath();
-      const packageDefinition = protoLoader.loadSync(protoPath, {
-        keepCase: true,
-        longs: String,
-        enums: String,
-        defaults: true,
-        oneofs: true,
-      });
-      const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
-      const pfPackage = protoDescriptor.playbook_flow as any;
-      const grpcUrl = this.configService.get<string>('playbook-flow.grpcUrl', 'localhost:50051');
-      this.playbookFlowClient = new pfPackage.PlaybookFlowRuntime(
-        grpcUrl,
-        grpc.credentials.createInsecure(),
+  private async executionLeaseServiceHasLease(executionId: string): Promise<boolean> {
+    if (!this.executionLeaseService?.isEnabled()) {
+      return false;
+    }
+    return this.executionLeaseService.hasActiveLease(executionId);
+  }
+
+  private async releaseExecutionLease(executionId: string): Promise<void> {
+    await this.executionLeaseService?.release(executionId);
+  }
+
+  private getStreamFinalizer(): PlaybookExecutionStreamFinalizerService {
+    return this.executionStreamFinalizerService
+      ?? new PlaybookExecutionStreamFinalizerService(
+        this.executionModel,
+        this.taskResultModel,
+        this.streamEvents,
+        this.tokenBufferService,
+        this.executionLeaseService,
       );
-      this.isGrpcAvailable = true;
-      this.logger.log(`Playbook flow gRPC client initialized at ${grpcUrl}`);
-    } catch (err) {
-      this.isGrpcAvailable = false;
-      this.logger.error('Failed to initialize playbook flow gRPC client', err instanceof Error ? err.stack : undefined);
-    }
   }
 
-  private resolvePlaybookFlowProtoPath(): string {
-    const candidates = [
-      path.join(__dirname, '..', 'proto', 'playbook-flow.proto'),
-      path.join(__dirname, '..', '..', 'playbook-flow', 'proto', 'playbook-flow.proto'),
-      path.join(process.cwd(), 'dist', 'modules', 'playbook-flow', 'proto', 'playbook-flow.proto'),
-      path.join(process.cwd(), 'src', 'modules', 'playbook-flow', 'proto', 'playbook-flow.proto'),
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        return candidate;
+  private isRuntimeAvailable(): boolean {
+    return this.runtimeClient.isAvailable() || this.isGrpcAvailable;
+  }
+
+  private runRuntime(request: Record<string, unknown>): any {
+    return this.playbookFlowClient?.Run?.(request) ?? this.runtimeClient.run(request);
+  }
+
+  private runFromCheckpointRuntime(request: Record<string, unknown>): any {
+    return this.playbookFlowClient?.RunFromCheckpoint?.(request) ?? this.runtimeClient.runFromCheckpoint(request);
+  }
+
+  private cancelRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
+    this.playbookFlowClient?.Cancel?.(request, callback) ?? this.runtimeClient.cancel(request, callback);
+  }
+
+  private resumeApprovalRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
+    this.playbookFlowClient?.ResumeApproval?.(request, callback) ?? this.runtimeClient.resumeApproval(request, callback);
+  }
+
+  private resumeFromStepRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
+    this.playbookFlowClient?.ResumeFromStep?.(request, callback) ?? this.runtimeClient.resumeFromStep(request, callback);
+  }
+
+  private async loadFlowForExecutionStart(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    if (typeof this.flowService.findOneForExecutionStart === 'function') {
+      return this.flowService.findOneForExecutionStart(flowId, ownerId);
+    }
+    return this.flowService.findOne(flowId, ownerId);
+  }
+
+  private getGraphSanitizerService(): FlowGraphSanitizerService {
+    return this.graphSanitizerService ?? new FlowGraphSanitizerService();
+  }
+
+  private resolveLeaseModelScope(execution: Record<string, unknown>): { providerKey?: string; modelKey?: string } {
+    const modelKey = typeof execution.modelIdOverride === 'string' && execution.modelIdOverride.trim()
+      ? execution.modelIdOverride.trim()
+      : this.findFirstSnapshotModel(execution.snapshot as Record<string, unknown> | undefined);
+    if (!modelKey) return {};
+    const [providerKey] = modelKey.includes('/') ? modelKey.split('/', 1) : ['default'];
+    return { providerKey, modelKey };
+  }
+
+  private findFirstSnapshotModel(snapshot?: Record<string, unknown>): string | undefined {
+    const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : [];
+    for (const node of nodes as Array<Record<string, unknown>>) {
+      const metadata = node.metadata as Record<string, unknown> | undefined;
+      const model = metadata?.modelId ?? metadata?.model_id ?? metadata?.agent_model;
+      if (typeof model === 'string' && model.trim()) {
+        return model.trim();
       }
     }
-    return candidates[2];
+    return undefined;
+  }
+
+  private scheduleQueueDrain(ownerId: string): void {
+    const dispatcher = this.executionDispatcherService
+      ?? (this.fallbackExecutionDispatcherService ??= new PlaybookExecutionDispatcherService(this.configService));
+    dispatcher.schedule(ownerId, (queuedOwnerId) => this.drainQueue(queuedOwnerId));
   }
 
   async start(
@@ -584,60 +611,33 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     modelIdOverride?: string,
   ): Promise<IFlowExecutionResponse> {
     const preflightStartedAt = Date.now();
-    const flow = await this.flowService.findOneForExecutionStart(flowId, ownerId);
+    const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
       `playbook_execution_start_preflight_ms flowId=${flowId} nodeCount=${flow.nodes?.length ?? 0} edgeCount=${flow.controlEdges?.length ?? 0} durationMs=${Date.now() - preflightStartedAt}`,
     );
 
-    const nodeIds = new Set(flow.nodes.map((n) => n.id));
-    const cleanedEdges = flow.controlEdges.filter((e) => {
-      const valid = nodeIds.has(e.source) && nodeIds.has(e.target);
-      if (!valid) {
-        this.logger.warn(`Cleaning orphaned edge ${e.id}: source=${e.source} target=${e.target}`);
-      }
-      return valid;
-    });
-    const cleanedBindings = flow.dataBindings.filter((b) => {
-      const valid = nodeIds.has(b.targetNode)
-        && (b.sourceNode ? nodeIds.has(b.sourceNode) : true);
-      if (!valid) {
-        this.logger.warn(`Cleaning orphaned data binding ${b.id}: targetNode=${b.targetNode} sourceNode=${b.sourceNode}`);
-      }
-      return valid;
+    const sanitizedGraph = this.getGraphSanitizerService().sanitize({
+      nodes: flow.nodes,
+      controlEdges: flow.controlEdges,
+      dataBindings: flow.dataBindings,
+      edgeAction: 'Cleaning',
+      bindingAction: 'Cleaning',
     });
 
-    const nodesById = new Map(flow.nodes.map((n) => [n.id, n]));
-    const portCleanedBindings = cleanedBindings.filter((b) => {
-      const targetNode = nodesById.get(b.targetNode);
-      if (!targetNode) return true;
-      const targetPortExists = targetNode.input?.ports?.some((p) => p.id === b.targetPort);
-      if (!targetPortExists) {
-        this.logger.warn(`Cleaning stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
-        return false;
-      }
-      if (b.sourceKind === 'node-output' && b.sourceNode) {
-        const sourceNode = nodesById.get(b.sourceNode);
-        if (sourceNode) {
-          const sourcePortExists = sourceNode.output?.ports?.some((p) => p.id === b.sourcePort);
-          if (!sourcePortExists) {
-            this.logger.warn(`Cleaning stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
-            return false;
-          }
-        }
-      }
-      return true;
-    });
-
-    if (cleanedEdges.length !== flow.controlEdges.length || portCleanedBindings.length !== flow.dataBindings.length) {
+    if (
+      sanitizedGraph.removedOrphanedEdgeCount > 0
+      || sanitizedGraph.removedOrphanedBindingCount > 0
+      || sanitizedGraph.removedStaleBindingCount > 0
+    ) {
       this.logger.warn(
-        `Cleaned ${flow.controlEdges.length - cleanedEdges.length} orphaned edge(s) and ${flow.dataBindings.length - portCleanedBindings.length} orphaned binding(s) for flow ${flowId}`,
+        `Cleaned ${sanitizedGraph.removedOrphanedEdgeCount} orphaned edge(s), ${sanitizedGraph.removedOrphanedBindingCount} orphaned binding(s), and ${sanitizedGraph.removedStaleBindingCount} stale binding(s) for flow ${flowId}`,
       );
       const doc = await this.flowService.findById(flowId);
-      doc.controlEdges = cleanedEdges as any;
-      doc.dataBindings = portCleanedBindings as any;
+      doc.controlEdges = sanitizedGraph.controlEdges as any;
+      doc.dataBindings = sanitizedGraph.dataBindings as any;
       await doc.save();
-      flow.controlEdges = cleanedEdges as any;
-      flow.dataBindings = portCleanedBindings as any;
+      flow.controlEdges = sanitizedGraph.controlEdges as any;
+      flow.dataBindings = sanitizedGraph.dataBindings as any;
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
@@ -778,7 +778,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     saved.queuePosition = position;
     await saved.save();
 
-    await this.drainQueue(ownerId);
+    this.scheduleQueueDrain(ownerId);
 
     return saved.toJSON() as unknown as IFlowExecutionResponse;
   }
@@ -1225,9 +1225,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ).exec();
       if (!(startResult as { modifiedCount?: number }).modifiedCount) {
         this.clearSelectedReplayArtifacts(executionId);
+        await this.releaseExecutionLease(executionId);
         this.logger.warn(`Skipping gRPC start for execution ${executionId} because it is no longer runnable`);
         return;
       }
+
+      this.executionLeaseService?.startHeartbeat(executionId);
 
       const executionStartState = await this.executionModel.findById(
         executionId,
@@ -1369,7 +1372,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }),
         })),
       };
-    const call = this.playbookFlowClient.Run(request);
+    const call = this.runRuntime(request);
     let finalized = false;
     let completionEmitted = false;
     let lastHandlePromise = Promise.resolve();
@@ -1377,7 +1380,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       if (finalized) return;
       finalized = true;
       this.clearSelectedReplayArtifacts(executionId);
-      this.drainQueue(ownerId);
+      this.scheduleQueueDrain(ownerId);
     };
     const waitForHandledEvents = async () => {
       await lastHandlePromise;
@@ -1399,11 +1402,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       void (async () => {
         await waitForHandledEvents();
         this.logger.error(`gRPC stream error for execution ${executionId}: ${err.message}`, err.stack);
-        await this.executionModel
-          .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
-          .exec();
         if (!completionEmitted) {
-          this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
+          await this.getStreamFinalizer().finalizeErroredStream(executionId, err.message);
           completionEmitted = true;
         }
         releaseOnce();
@@ -1417,39 +1417,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          const execution = await this.executionModel.findById(executionId).lean();
-          const status = String((execution as Record<string, unknown> | null)?.status || '');
-          if (shouldFinalizeStreamAsCompleted(false, false, status)) {
-            const failedTask = await this.taskResultModel
-              .findOne({ executionId, status: 'failed' })
-              .sort({ endedAt: -1 })
-              .lean();
-
-            if (failedTask) {
-              const errorMessage = String(failedTask.error || 'Execution failed');
-              const result = await this.executionModel
-                .updateOne(
-                  { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-                  { status: 'failed', error: errorMessage, endedAt: new Date() },
-                )
-                .exec();
-              if ((result as { modifiedCount?: number }).modifiedCount) {
-                completionEmitted = true;
-                this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
-              }
-            } else {
-              const result = await this.executionModel
-                .updateOne(
-                  { _id: executionId, status: { $in: ['queued', 'running'] } },
-                  { status: 'completed', endedAt: new Date() },
-                )
-                .exec();
-              if ((result as { modifiedCount?: number }).modifiedCount) {
-                completionEmitted = true;
-                this.streamEvents.emitExecutionComplete(executionId, 'completed');
-              }
-            }
-          }
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, true);
         }
         releaseOnce();
       })().catch((err) => {
@@ -1465,82 +1433,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         endedAt: new Date(),
         error: err instanceof Error ? err.message : String(err),
       }).exec();
+      await this.tokenBufferService?.flushExecution(executionId);
+      await this.releaseExecutionLease(executionId);
       this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
-      await this.drainQueue(ownerId);
+      this.scheduleQueueDrain(ownerId);
     }
-  }
-
-  private unwrapGrpcValue(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value !== 'object') return value;
-
-    if (Array.isArray(value)) return value.map((v) => this.unwrapGrpcValue(v));
-
-    const obj = value as Record<string, unknown>;
-
-    // Selector-less protobuf Struct: { fields: { … } }
-    if (!obj.kind && typeof obj.fields === 'object' && obj.fields !== null && !Array.isArray(obj.fields)) {
-      const result: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(obj.fields as Record<string, unknown>)) {
-        result[k] = this.unwrapGrpcValue(v);
-      }
-      return result;
-    }
-
-    // Selector-less protobuf Value: { stringValue, numberValue, … }
-    if (!obj.kind && 'stringValue' in obj) return obj.stringValue ?? '';
-    if (!obj.kind && 'numberValue' in obj) return obj.numberValue ?? 0;
-    if (!obj.kind && 'boolValue' in obj) return Boolean(obj.boolValue);
-    if (!obj.kind && 'nullValue' in obj) return null;
-    if (!obj.kind && 'listValue' in obj && typeof obj.listValue === 'object' && obj.listValue !== null) {
-      const values = (obj.listValue as Record<string, unknown>).values;
-      if (Array.isArray(values)) return values.map((v) => this.unwrapGrpcValue(v));
-    }
-    if (!obj.kind && 'structValue' in obj && typeof obj.structValue === 'object' && obj.structValue !== null) {
-      const fields = (obj.structValue as Record<string, unknown>).fields;
-      if (fields && typeof fields === 'object' && !Array.isArray(fields)) {
-        const result: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(fields as Record<string, unknown>)) {
-          result[k] = this.unwrapGrpcValue(v);
-        }
-        return result;
-      }
-    }
-
-    // Kind-tagged protobuf Value: { kind: "structValue", … }
-    if (obj.kind === 'structValue' && typeof obj.structValue === 'object' && obj.structValue !== null) {
-      const fields = (obj.structValue as Record<string, unknown>).fields;
-      if (fields && typeof fields === 'object' && !Array.isArray(fields)) {
-        const result: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(fields as Record<string, unknown>)) {
-          result[k] = this.unwrapGrpcValue(v);
-        }
-        return result;
-      }
-    }
-
-    if (obj.kind === 'listValue' && typeof obj.listValue === 'object' && obj.listValue !== null) {
-      const values = (obj.listValue as Record<string, unknown>).values;
-      if (Array.isArray(values)) return values.map((v) => this.unwrapGrpcValue(v));
-    }
-
-    if (obj.kind === 'numberValue') return obj.numberValue ?? 0;
-    if (obj.kind === 'stringValue') return obj.stringValue ?? '';
-    if (obj.kind === 'boolValue') return Boolean(obj.boolValue);
-    if (obj.kind === 'nullValue') return null;
-
-    // Already a plain object (proto-loader auto-unwrapped) — recurse children
-    const result: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      result[k] = this.unwrapGrpcValue(v);
-    }
-    return result;
   }
 
   private async handleRunEvent(executionId: string, event: Record<string, unknown>): Promise<void> {
     const eventType = event.event_type as string;
     const rawPayload = (event.payload as Record<string, unknown>) || {};
-    const payload = (this.unwrapGrpcValue(rawPayload) as Record<string, unknown>) || {};
+    const payload = (fromGrpcValue(rawPayload) as Record<string, unknown>) || {};
     const taskNodeId = event.node_id as string;
     const iteration = Number(event.iteration ?? payload.iteration ?? 0);
 
@@ -1573,23 +1476,28 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     } else if (eventType === 'NodeToken') {
       const token = String(payload.token ?? '');
       if (token) {
-        await this.taskResultModel.updateOne(
-          { executionId, taskId: taskNodeId, iteration },
-          [
-            {
-              $set: {
-                status: 'running',
-                output: {
-                  $concat: [{ $ifNull: ['$output', ''] }, token],
+        if (this.tokenBufferService?.isEnabled()) {
+          await this.tokenBufferService.appendToken({ executionId, taskId: taskNodeId, iteration }, token);
+        } else {
+          await this.taskResultModel.updateOne(
+            { executionId, taskId: taskNodeId, iteration },
+            [
+              {
+                $set: {
+                  status: 'running',
+                  output: {
+                    $concat: [{ $ifNull: ['$output', ''] }, token],
+                  },
                 },
               },
-            },
-          ],
-          { upsert: true },
-        );
-        this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
+            ],
+            { upsert: true },
+          );
+          this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
+        }
       }
     } else if (eventType === 'NodeCompleted') {
+      await this.tokenBufferService?.flushTask({ executionId, taskId: taskNodeId, iteration });
       const resultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
         executionId,
         taskId: taskNodeId,
@@ -1671,6 +1579,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         });
       }
     } else if (eventType === 'NodeFailed') {
+      await this.tokenBufferService?.flushTask({ executionId, taskId: taskNodeId, iteration });
       const errorMessage = String(payload.error || 'Node execution failed');
       await this.taskResultModel.updateOne(
         { executionId, taskId: taskNodeId, iteration },
@@ -1799,14 +1708,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           .exec();
 
         if ((result as { modifiedCount?: number }).modifiedCount) {
+          await this.tokenBufferService?.flushExecution(executionId);
+          await this.releaseExecutionLease(executionId);
           this.streamEvents.emitExecutionComplete(executionId, terminalStatus, errorMsg);
 
           const execution = await this.executionModel.findById(executionId, { ownerId: 1 }).lean();
           const owner = execution ? (execution as unknown as Record<string, unknown>).ownerId as string : undefined;
           if (owner) {
-            this.drainQueue(owner).catch((err) => {
-              this.logger.error(`Failed to drain queue after ${label} for owner ${owner}`, err instanceof Error ? err.stack : undefined);
-            });
+            this.scheduleQueueDrain(owner);
           }
         }
       }
@@ -1841,6 +1750,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         );
       }
     } else if (eventType === 'ExecutionCompleted') {
+      await this.tokenBufferService?.flushExecution(executionId);
       const result = await this.executionModel
         .updateOne(
           { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
@@ -1851,10 +1761,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
         { status: 'completed' },
       );
-      if (shouldEmitCompletedAfterUpdate((result as { modifiedCount?: number }).modifiedCount)) {
+      if ((result as { modifiedCount?: number }).modifiedCount) {
+        await this.releaseExecutionLease(executionId);
         this.streamEvents.emitExecutionComplete(executionId, 'completed');
       }
     } else if (eventType === 'ExecutionFailed') {
+      await this.tokenBufferService?.flushExecution(executionId);
       const errorMessage = String(payload.error || 'Execution failed');
       const result = await this.executionModel
         .updateOne(
@@ -1867,6 +1779,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         { status: 'failed' },
       );
       if ((result as { modifiedCount?: number }).modifiedCount) {
+        await this.releaseExecutionLease(executionId);
         this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
       }
     }
@@ -1984,11 +1897,38 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private async drainQueue(ownerId: string): Promise<void> {
     const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
-    if (!this.isGrpcAvailable) return;
+    if (!this.isRuntimeAvailable()) return;
 
     while (true) {
       const next = await this.queueService.release(ownerId, maxConcurrent);
       if (!next) return;
+
+      const leaseResult = await this.executionLeaseService?.acquire(
+        next.id,
+        ownerId,
+        next.flowId,
+        this.resolveLeaseModelScope(next as unknown as Record<string, unknown>),
+      );
+      if (leaseResult && !leaseResult.acquired) {
+        // Keep queue order stable when the oldest runnable execution is blocked by
+        // a shared capacity limit. A later execution should not jump the queue.
+        await this.executionModel.updateOne(
+          { _id: next.id, status: 'running' },
+          {
+            $set: {
+              status: 'queued',
+              queuePosition: 0,
+            },
+            $unset: { startedAt: 1 },
+          },
+        ).exec();
+
+        const restoredChanges = await this.queueService.refreshPositions(ownerId);
+        for (const { executionId, queuePosition } of restoredChanges) {
+          this.streamEvents.emitQueuePositionUpdate(executionId, queuePosition);
+        }
+        return;
+      }
 
       const changes = await this.queueService.refreshPositions(ownerId);
       for (const { executionId, queuePosition } of changes) {
@@ -2002,6 +1942,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       if (!claimedExecution) {
         this.logger.error(`Drain: claimed execution ${next.id} disappeared before dispatch`);
+        await this.releaseExecutionLease(next.id);
         await this.executionModel
           .findByIdAndUpdate(next.id, {
             status: 'failed',
@@ -2024,6 +1965,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         }) as unknown as Record<string, unknown> | null;
 
         if (!flow) {
+          await this.releaseExecutionLease(next.id);
           await this.executionModel
             .findByIdAndUpdate(next.id, {
               status: 'failed',
@@ -2092,6 +2034,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     execution.status = 'cancelled';
     execution.endedAt = new Date();
     await execution.save();
+    await this.tokenBufferService?.flushExecution(executionId);
+    await this.releaseExecutionLease(executionId);
 
     await this.taskResultModel.updateMany(
       { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
@@ -2100,8 +2044,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     this.streamEvents.emitExecutionCancelled(executionId);
 
-    if (this.isGrpcAvailable) {
-      this.playbookFlowClient.Cancel({ execution_id: executionId }, (err: Error | null) => {
+    if (this.isRuntimeAvailable()) {
+      this.cancelRuntime({ execution_id: executionId }, (err: Error | null) => {
         if (err) {
         }
       });
@@ -2171,7 +2115,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    if (!this.isGrpcAvailable) {
+    if (!this.isRuntimeAvailable()) {
       throw new ServiceUnavailableException(
         ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
         'Flow runtime is currently unavailable',
@@ -2179,7 +2123,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const resumed = await new Promise<boolean>((resolve, reject) => {
-      this.playbookFlowClient.ResumeApproval(
+      this.resumeApprovalRuntime(
         {
           execution_id: executionId,
           decision: payload.decision,
@@ -2257,7 +2201,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    if (!this.isGrpcAvailable) {
+    if (!this.isRuntimeAvailable()) {
       throw new ServiceUnavailableException(
         ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
         'Flow runtime is currently unavailable',
@@ -2274,7 +2218,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
 
     const resumed = await new Promise<boolean>((resolve, reject) => {
-      this.playbookFlowClient.ResumeFromStep(
+      this.resumeFromStepRuntime(
         {
           execution_id: executionId,
           node_id: payload.taskId,
@@ -2397,7 +2341,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       maxConcurrent,
       maxDepth,
     );
-    void this.drainQueue(ownerId);
+    this.scheduleQueueDrain(ownerId);
 
     return newExecution.toJSON() as unknown as IFlowExecutionResponse;
   }
@@ -2520,7 +2464,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       target_iteration: targetIteration,
     };
 
-    const call = this.playbookFlowClient.RunFromCheckpoint(request);
+    const call = this.runFromCheckpointRuntime(request);
+    this.executionLeaseService?.startHeartbeat(executionId);
     let finalized = false;
     let completionEmitted = false;
     let lastHandlePromise = Promise.resolve();
@@ -2528,7 +2473,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const releaseOnce = () => {
       if (finalized) return;
       finalized = true;
-      this.drainQueue(ownerId);
+      this.scheduleQueueDrain(ownerId);
     };
 
     const waitForHandledEvents = async () => { await lastHandlePromise; };
@@ -2549,11 +2494,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       void (async () => {
         await waitForHandledEvents();
         this.logger.error(`gRPC RunFromCheckpoint stream error for execution ${executionId}: ${err.message}`, err.stack);
-        await this.executionModel
-          .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
-          .exec();
         if (!completionEmitted) {
-          this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
+          await this.getStreamFinalizer().finalizeErroredStream(executionId, err.message);
           completionEmitted = true;
         }
         releaseOnce();
@@ -2568,20 +2510,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC RunFromCheckpoint stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          const execution = await this.executionModel.findById(executionId).lean();
-          const status = String((execution as Record<string, unknown> | null)?.status || '');
-          if (shouldFinalizeStreamAsCompleted(false, false, status)) {
-            const result = await this.executionModel
-              .updateOne(
-                { _id: executionId, status: { $in: ['queued', 'running'] } },
-                { status: 'completed', endedAt: new Date() },
-              )
-              .exec();
-            if ((result as { modifiedCount?: number }).modifiedCount) {
-              completionEmitted = true;
-              this.streamEvents.emitExecutionComplete(executionId, 'completed');
-            }
-          }
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, false);
         }
         releaseOnce();
       })().catch((err) => {

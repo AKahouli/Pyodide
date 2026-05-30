@@ -1,0 +1,24 @@
+{
+  "apiUrl": "http://localhost:3000/api/v1",
+  "scenario": "mixed",
+  "flowCount": 1,
+  "requested": 100,
+  "succeeded": 100,
+  "failed": 0,
+  "pass": true,
+  "durationMs": 262473,
+  "averageLatencyMs": 125,
+  "byKind": {
+    "execution": 50,
+    "design": 50
+  },
+  "finalStatusByKind": {
+    "execution:completed": 50,
+    "design:completed": 50
+  },
+  "duplicateIds": [],
+  "missingIds": 0,
+  "polled": 100,
+  "pollFailures": [],
+  "failures": []
+}

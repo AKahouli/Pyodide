@@ -11,6 +11,7 @@ import type {
   PlaybookExecution,
   PlaybookExecutionSummary,
   DesignMessage,
+  DesignOperation,
   CreatePlaybookData,
   GeneratePlaybookData,
   RewritePlaybookPromptData,
@@ -301,10 +302,14 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
 
   if (data.settings) body.settings = data.settings;
 
-  if (sanitized.tasks !== undefined) {
+  if (data.nodes !== undefined) {
+    body.nodes = data.nodes;
+  } else if (sanitized.tasks !== undefined) {
     body.nodes = sanitized.tasks.map(taskToFlowNode);
   }
-  if (sanitized.edges !== undefined) {
+  if (data.controlEdges !== undefined) {
+    body.controlEdges = data.controlEdges;
+  } else if (sanitized.edges !== undefined) {
     body.controlEdges = sanitized.edges
       .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
       .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
@@ -348,8 +353,16 @@ function buildNodeDeltaPatch(
   previousNodes: FlowNode[] | undefined,
   currentNodes: FlowNode[] | undefined,
 ): PlaybookDeltaNodePatch | undefined {
-  const previousList = previousNodes ?? [];
-  const currentList = currentNodes ?? [];
+  if (currentNodes === undefined) {
+    return undefined;
+  }
+
+  if (previousNodes === undefined) {
+    return currentNodes.length > 0 ? { upserts: currentNodes } : undefined;
+  }
+
+  const previousList = previousNodes;
+  const currentList = currentNodes;
   const previousById = new Map(previousList.map((node) => [node.id, node]));
   const currentIds = new Set(currentList.map((node) => node.id));
   const deleteIds = previousList
@@ -416,8 +429,10 @@ export function buildPlaybookDeltaPatch(
 ): PatchPlaybookFlowDeltaData | null {
   const fields = buildDeltaPatchFields(previous, current);
   const nodes = buildNodeDeltaPatch(previous.nodes, current.nodes);
-  const controlEdgesChanged = !isEqualByStableStringify(previous.controlEdges, current.controlEdges);
-  const dataBindingsChanged = !isEqualByStableStringify(previous.dataBindings, current.dataBindings);
+  const controlEdgesChanged = current.controlEdges !== undefined
+    && !isEqualByStableStringify(previous.controlEdges, current.controlEdges);
+  const dataBindingsChanged = current.dataBindings !== undefined
+    && !isEqualByStableStringify(previous.dataBindings, current.dataBindings);
 
   if (!fields && !nodes && !controlEdgesChanged && !dataBindingsChanged) {
     return null;
@@ -1896,6 +1911,31 @@ export async function designFlow(id: string, data: { query: string }): Promise<a
   const response = await apiClient.post<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.design(id),
     data,
+  );
+  return response.data.data;
+}
+
+export async function startDesignOperation(
+  id: string,
+  data: { query: string; idempotencyKey?: string },
+): Promise<DesignOperation> {
+  const response = await apiClient.post<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.designOperations(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getDesignOperation(id: string, operationId: string): Promise<DesignOperation> {
+  const response = await apiClient.get<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.designOperation(id, operationId),
+  );
+  return response.data.data;
+}
+
+export async function cancelDesignOperation(id: string, operationId: string): Promise<DesignOperation> {
+  const response = await apiClient.post<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.cancelDesignOperation(id, operationId),
   );
   return response.data.data;
 }

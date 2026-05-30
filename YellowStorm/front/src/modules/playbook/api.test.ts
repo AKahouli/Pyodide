@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildPlaybookDeltaPatch,
+  buildPlaybookUpdateRequestBody,
   clonePlaybook,
   executePlaybook,
   getFlowNodeTemplates,
@@ -132,7 +133,43 @@ describe('getPlaybookUpdateTelemetry', () => {
   });
 });
 
+describe('buildPlaybookUpdateRequestBody', () => {
+  it('preserves first-class flow graph fields when callers send them directly', () => {
+    const body = buildPlaybookUpdateRequestBody({
+      nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
+      controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+    });
+
+    expect(body).toMatchObject({
+      nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
+      controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+    });
+  });
+});
+
 describe('buildPlaybookDeltaPatch', () => {
+  it('keeps omitted graph fields unchanged for partial scalar saves', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        name: 'Old name',
+        nodes: [{ id: 'task-1', kind: 'step', label: 'Task' }],
+        controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+        dataBindings: [{ id: 'binding-1', targetNode: 'task-1', targetPort: 'default', sourceKind: 'constant' }],
+      },
+      {
+        name: 'New name',
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        fields: { name: 'New name' },
+      },
+    });
+  });
+
   it('builds structural node, edge, and binding delta patches', () => {
     const patch = buildPlaybookDeltaPatch(
       {
@@ -934,6 +971,48 @@ describe('updatePlaybook', () => {
 });
 
 describe('getPlaybook', () => {
+  it('normalizes flow-shaped tasks from the backend into legacy playbook tasks', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          tasks: [{
+            id: 'node-1',
+            kind: 'step',
+            label: 'Flow node',
+            metadata: {
+              description: 'Flow description',
+              executionOrder: 2,
+              positionX: 10,
+              positionY: 20,
+              nodeType: 'agent',
+            },
+          }],
+          controlEdges: [],
+          dataBindings: [],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    const playbook = await getPlaybook('playbook-1');
+
+    expect(playbook.tasks).toEqual([
+      expect.objectContaining({
+        id: 'node-1',
+        title: 'Flow node',
+        description: 'Flow description',
+        executionOrder: 2,
+        positionX: 10,
+        positionY: 20,
+      }),
+    ]);
+  });
+
   it('restores saved control-edge port ids into legacy edge handles', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({
