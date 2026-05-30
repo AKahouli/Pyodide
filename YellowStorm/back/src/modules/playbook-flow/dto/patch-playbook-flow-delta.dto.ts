@@ -88,6 +88,19 @@ class PatchPlaybookFlowDeltaNodesDto {
   @ValidateNested({ each: true })
   @Type(() => PatchPlaybookFlowNodePositionUpdateDto)
   positionUpdates?: PatchPlaybookFlowNodePositionUpdateDto[];
+
+  @ApiPropertyOptional({ type: [Object] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  upserts?: Record<string, unknown>[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  deleteIds?: string[];
 }
 
 class PatchPlaybookFlowDeltaPatchDto {
@@ -102,6 +115,18 @@ class PatchPlaybookFlowDeltaPatchDto {
   @ValidateNested()
   @Type(() => PatchPlaybookFlowDeltaNodesDto)
   nodes?: PatchPlaybookFlowDeltaNodesDto;
+
+  @ApiPropertyOptional({ type: [Object] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  controlEdges?: Record<string, unknown>[];
+
+  @ApiPropertyOptional({ type: [Object] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  dataBindings?: Record<string, unknown>[];
 }
 
 export class PatchPlaybookFlowDeltaDto {

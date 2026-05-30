@@ -2362,6 +2362,12 @@ export interface PlaybookDeltaNodePositionUpdate {
   positionY: number;
 }
 
+export interface PlaybookDeltaNodePatch {
+  positionUpdates?: PlaybookDeltaNodePositionUpdate[];
+  upserts?: FlowNode[];
+  deleteIds?: string[];
+}
+
 export interface PlaybookDeltaPatchFields {
   name?: string;
   description?: string;
@@ -2382,9 +2388,9 @@ export interface PatchPlaybookFlowDeltaData {
   clientMutationId?: string;
   patch: {
     fields?: PlaybookDeltaPatchFields;
-    nodes?: {
-      positionUpdates?: PlaybookDeltaNodePositionUpdate[];
-    };
+    nodes?: PlaybookDeltaNodePatch;
+    controlEdges?: ControlEdge[];
+    dataBindings?: DataBinding[];
   };
 }
 

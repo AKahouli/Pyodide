@@ -61,6 +61,7 @@ import type {
   PatchPlaybookFlowDeltaData,
   PatchPlaybookFlowDeltaResult,
   PlaybookDeltaPatchFields,
+  PlaybookDeltaNodePatch,
   PlaybookDeltaNodePositionUpdate,
  } from './types';
 import {
@@ -343,23 +344,25 @@ function buildDeltaPatchFields(
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
-function buildPositionUpdates(
+function buildNodeDeltaPatch(
   previousNodes: FlowNode[] | undefined,
   currentNodes: FlowNode[] | undefined,
-): PlaybookDeltaNodePositionUpdate[] | null {
+): PlaybookDeltaNodePatch | undefined {
   const previousList = previousNodes ?? [];
   const currentList = currentNodes ?? [];
-  if (previousList.length !== currentList.length) {
-    return null;
-  }
-
   const previousById = new Map(previousList.map((node) => [node.id, node]));
-  const updates: PlaybookDeltaNodePositionUpdate[] = [];
+  const currentIds = new Set(currentList.map((node) => node.id));
+  const deleteIds = previousList
+    .filter((node) => !currentIds.has(node.id))
+    .map((node) => node.id);
+  const upserts: FlowNode[] = [];
+  const positionUpdates: PlaybookDeltaNodePositionUpdate[] = [];
 
   for (const currentNode of currentList) {
     const previousNode = previousById.get(currentNode.id);
     if (!previousNode) {
-      return null;
+      upserts.push(currentNode);
+      continue;
     }
 
     const previousMetadata = { ...(previousNode.metadata ?? {}) } as Record<string, unknown>;
@@ -377,11 +380,12 @@ function buildPositionUpdates(
     const previousComparable = { ...previousNode, metadata: previousMetadata };
     const currentComparable = { ...currentNode, metadata: currentMetadata };
     if (!isEqualByStableStringify(previousComparable, currentComparable)) {
-      return null;
+      upserts.push(currentNode);
+      continue;
     }
 
     if (previousX !== currentX || previousY !== currentY) {
-      updates.push({
+      positionUpdates.push({
         id: currentNode.id,
         positionX: typeof currentX === 'number' ? currentX : 0,
         positionY: typeof currentY === 'number' ? currentY : 0,
@@ -389,7 +393,15 @@ function buildPositionUpdates(
     }
   }
 
-  return updates;
+  if (upserts.length === 0 && deleteIds.length === 0 && positionUpdates.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(positionUpdates.length > 0 ? { positionUpdates } : {}),
+    ...(upserts.length > 0 ? { upserts } : {}),
+    ...(deleteIds.length > 0 ? { deleteIds } : {}),
+  };
 }
 
 export function buildPlaybookDeltaPatch(
@@ -403,20 +415,11 @@ export function buildPlaybookDeltaPatch(
   },
 ): PatchPlaybookFlowDeltaData | null {
   const fields = buildDeltaPatchFields(previous, current);
+  const nodes = buildNodeDeltaPatch(previous.nodes, current.nodes);
+  const controlEdgesChanged = !isEqualByStableStringify(previous.controlEdges, current.controlEdges);
+  const dataBindingsChanged = !isEqualByStableStringify(previous.dataBindings, current.dataBindings);
 
-  if (
-    !isEqualByStableStringify(previous.controlEdges, current.controlEdges)
-    || !isEqualByStableStringify(previous.dataBindings, current.dataBindings)
-  ) {
-    return null;
-  }
-
-  const positionUpdates = buildPositionUpdates(previous.nodes, current.nodes);
-  if (positionUpdates === null) {
-    return null;
-  }
-
-  if (!fields && positionUpdates.length === 0) {
+  if (!fields && !nodes && !controlEdgesChanged && !dataBindingsChanged) {
     return null;
   }
 
@@ -427,7 +430,9 @@ export function buildPlaybookDeltaPatch(
     ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
     patch: {
       ...(fields ? { fields } : {}),
-      ...(positionUpdates.length > 0 ? { nodes: { positionUpdates } } : {}),
+      ...(nodes ? { nodes } : {}),
+      ...(controlEdgesChanged ? { controlEdges: current.controlEdges ?? [] } : {}),
+      ...(dataBindingsChanged ? { dataBindings: current.dataBindings ?? [] } : {}),
     },
   };
 }

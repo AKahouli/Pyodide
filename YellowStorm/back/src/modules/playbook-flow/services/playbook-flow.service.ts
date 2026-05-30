@@ -439,36 +439,113 @@ export class PlaybookFlowService {
     }
 
     const fields = dto.patch.fields;
+    const nodeUpserts = dto.patch.nodes?.upserts ?? [];
+    const nodeDeleteIds = dto.patch.nodes?.deleteIds ?? [];
     const positionUpdates = dto.patch.nodes?.positionUpdates ?? [];
-    const unsupportedStructurePatch = Object.keys(dto.patch).some((key) => key !== 'fields' && key !== 'nodes');
+    const controlEdgesPatch = dto.patch.controlEdges;
+    const dataBindingsPatch = dto.patch.dataBindings;
+    const unsupportedStructurePatch = Object.keys(dto.patch)
+      .some((key) => !['fields', 'nodes', 'controlEdges', 'dataBindings'].includes(key));
     if (unsupportedStructurePatch) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
     }
 
-    if (dto.patch.nodes && dto.patch.nodes.positionUpdates === undefined) {
+    if (
+      dto.patch.nodes
+      && dto.patch.nodes.positionUpdates === undefined
+      && dto.patch.nodes.upserts === undefined
+      && dto.patch.nodes.deleteIds === undefined
+    ) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
     }
 
-    if (!fields && positionUpdates.length === 0) {
+    if (
+      !fields
+      && nodeUpserts.length === 0
+      && nodeDeleteIds.length === 0
+      && positionUpdates.length === 0
+      && controlEdgesPatch === undefined
+      && dataBindingsPatch === undefined
+    ) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Delta patch is empty.');
     }
 
-    const nodesById = new Map((existing.nodes as any[]).map((node: any) => [node.id, node]));
-    const candidateNodes = (existing.nodes as any[]).map((node: any) => ({
+    const candidateNodesById = new Map((existing.nodes as any[]).map((node: any) => [node.id, {
       ...node,
       metadata: { ...(node.metadata ?? {}) },
-    }));
-    const candidateNodesById = new Map(candidateNodes.map((node: any) => [node.id, node]));
+    }]));
+    const candidateNodeOrder = (existing.nodes as any[]).map((node: any) => node.id);
+
+    for (const deleteId of nodeDeleteIds) {
+      if (!candidateNodesById.delete(deleteId)) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
+      }
+    }
+
+    const filteredNodeOrder = candidateNodeOrder.filter((nodeId) => candidateNodesById.has(nodeId));
+
+    for (const nodeUpsert of nodeUpserts) {
+      const candidateNode = {
+        ...nodeUpsert,
+        metadata: { ...((nodeUpsert as { metadata?: Record<string, unknown> }).metadata ?? {}) },
+      };
+      if (candidateNodesById.has((nodeUpsert as { id: string }).id)) {
+        candidateNodesById.set((nodeUpsert as { id: string }).id, candidateNode);
+        continue;
+      }
+      filteredNodeOrder.push((nodeUpsert as { id: string }).id);
+      candidateNodesById.set((nodeUpsert as { id: string }).id, candidateNode);
+    }
 
     for (const update of positionUpdates) {
-      const currentNode = nodesById.get(update.id);
       const candidateNode = candidateNodesById.get(update.id);
-      if (!currentNode || !candidateNode) {
+      if (!candidateNode) {
         throw new ConflictException(ErrorCode.CONFLICT, 'Delta patch requires full refresh.');
       }
       candidateNode.metadata.positionX = update.positionX;
       candidateNode.metadata.positionY = update.positionY;
     }
+
+    const candidateNodes = filteredNodeOrder.map((nodeId) => candidateNodesById.get(nodeId));
+    const effectiveNodeIds = new Set(filteredNodeOrder);
+    const candidateControlEdges = (controlEdgesPatch ?? existing.controlEdges).filter((edge: any) => {
+      const valid = effectiveNodeIds.has(edge.source) && effectiveNodeIds.has(edge.target);
+      if (!valid) {
+        this.logger.warn(`Removing orphaned edge ${edge.id}: source=${edge.source} target=${edge.target}`);
+      }
+      return valid;
+    });
+    const nodesById = new Map(candidateNodes.map((node: any) => [node.id, node]));
+    const candidateDataBindings = (dataBindingsPatch ?? existing.dataBindings).filter((binding: any) => {
+      const valid = effectiveNodeIds.has(binding.targetNode)
+        && (binding.sourceNode ? effectiveNodeIds.has(binding.sourceNode) : true);
+      if (!valid) {
+        this.logger.warn(
+          `Removing orphaned data binding ${binding.id}: targetNode=${binding.targetNode} sourceNode=${binding.sourceNode}`,
+        );
+        return false;
+      }
+      const targetNode = nodesById.get(binding.targetNode);
+      const targetPortExists = targetNode?.input?.ports?.some((port: any) => port.id === binding.targetPort);
+      if (!targetPortExists) {
+        this.logger.warn(
+          `Removing stale data binding ${binding.id}: target port ${binding.targetNode}.${binding.targetPort} no longer exists`,
+        );
+        return false;
+      }
+      if (binding.sourceKind !== 'node-output' || !binding.sourceNode) {
+        return true;
+      }
+      const sourceNode = nodesById.get(binding.sourceNode);
+      const sourcePortExists = sourceNode?.output?.ports?.some((port: any) => port.id === binding.sourcePort);
+      if (!sourcePortExists) {
+        this.logger.warn(
+          `Removing stale data binding ${binding.id}: source port ${binding.sourceNode}.${binding.sourcePort} no longer exists`,
+        );
+        return false;
+      }
+      return true;
+    });
 
     const normalizedWorkspaces = this.normalizeWorkspaces(fields?.workspaces ?? existing.workspaces);
     if (fields?.workspaces !== undefined || existing.workspaces.length > 1) {
@@ -477,8 +554,8 @@ export class PlaybookFlowService {
 
     this.validatorService.validate(
       candidateNodes as any,
-      existing.controlEdges as any,
-      existing.dataBindings as any,
+      candidateControlEdges as any,
+      candidateDataBindings as any,
       { allowDraftRouters: true },
     );
 
@@ -495,8 +572,14 @@ export class PlaybookFlowService {
       if (fields.workspaces !== undefined) existing.workspaces = normalizedWorkspaces;
     }
 
-    if (positionUpdates.length > 0) {
+    if (nodeUpserts.length > 0 || nodeDeleteIds.length > 0 || positionUpdates.length > 0) {
       existing.nodes = candidateNodes as any;
+    }
+    if (controlEdgesPatch !== undefined || nodeUpserts.length > 0 || nodeDeleteIds.length > 0) {
+      existing.controlEdges = candidateControlEdges as any;
+    }
+    if (dataBindingsPatch !== undefined || nodeUpserts.length > 0 || nodeDeleteIds.length > 0) {
+      existing.dataBindings = candidateDataBindings as any;
     }
 
     const saved = await existing.save().catch((err: any) => {
@@ -519,10 +602,10 @@ export class PlaybookFlowService {
       applied: true,
       patchSummary: {
         scalarFields: fields ? Object.keys(fields).length : 0,
-        nodesUpserted: 0,
-        nodesDeleted: 0,
-        edgeChanges: 0,
-        dataBindingChanges: 0,
+        nodesUpserted: nodeUpserts.length,
+        nodesDeleted: nodeDeleteIds.length,
+        edgeChanges: controlEdgesPatch?.length ?? 0,
+        dataBindingChanges: dataBindingsPatch?.length ?? 0,
         positionUpdates: positionUpdates.length,
       },
     };

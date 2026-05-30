@@ -216,4 +216,150 @@ describe('PlaybookFlowService', () => {
       lastExecutionAt: null,
     });
   });
+
+  it('applies structural delta patches for nodes, edges, and bindings', async () => {
+    const save = jest.fn().mockImplementation(function save(this: any) {
+      this.updatedAt = new Date('2026-05-30T06:10:00.000Z');
+      return Promise.resolve(this);
+    });
+    const flowDocument = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      updatedAt: new Date('2026-05-30T06:00:00.000Z'),
+      name: 'Alpha',
+      description: '',
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      nodes: [
+        {
+          id: 'task-1',
+          kind: 'step',
+          label: 'Draft',
+          input: { ports: [{ id: 'input' }] },
+          output: { ports: [{ id: 'output' }] },
+          metadata: { positionX: 10, positionY: 20 },
+        },
+        {
+          id: 'task-2',
+          kind: 'step',
+          label: 'Remove',
+          input: { ports: [{ id: 'input' }] },
+          output: { ports: [{ id: 'output' }] },
+          metadata: { positionX: 30, positionY: 40 },
+        },
+      ],
+      controlEdges: [
+        { id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' },
+      ],
+      dataBindings: [
+        {
+          id: 'binding-1',
+          targetNode: 'task-2',
+          targetPort: 'input',
+          sourceKind: 'node-output',
+          sourceNode: 'task-1',
+          sourcePort: 'output',
+        },
+      ],
+      workspaces: ['workspace-1'],
+      save,
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(flowDocument),
+    };
+    const validatorService = { validate: jest.fn() };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: validatorService },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    const result = await service.applyDeltaPatch('507f1f77bcf86cd799439011', 'user-1', {
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          deleteIds: ['task-2'],
+          upserts: [
+            {
+              id: 'task-1',
+              kind: 'step',
+              label: 'Draft revised',
+              input: { ports: [{ id: 'input' }] },
+              output: { ports: [{ id: 'output' }] },
+              metadata: { positionX: 11, positionY: 21 },
+            },
+            {
+              id: 'task-3',
+              kind: 'step',
+              label: 'Added',
+              input: { ports: [{ id: 'input' }] },
+              output: { ports: [{ id: 'output' }] },
+              metadata: { positionX: 50, positionY: 60 },
+            },
+          ],
+        },
+        controlEdges: [
+          { id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' },
+        ],
+        dataBindings: [
+          {
+            id: 'binding-2',
+            targetNode: 'task-3',
+            targetPort: 'input',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'output',
+          },
+        ],
+      },
+    } as any);
+
+    expect(validatorService.validate).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-1', label: 'Draft revised' }),
+        expect.objectContaining({ id: 'task-3', label: 'Added' }),
+      ]),
+      [{ id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' }],
+      [{
+        id: 'binding-2',
+        targetNode: 'task-3',
+        targetPort: 'input',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'output',
+      }],
+      { allowDraftRouters: true },
+    );
+    expect(flowDocument.nodes).toEqual([
+      expect.objectContaining({ id: 'task-1', label: 'Draft revised' }),
+      expect.objectContaining({ id: 'task-3', label: 'Added' }),
+    ]);
+    expect(flowDocument.controlEdges).toEqual([
+      { id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' },
+    ]);
+    expect(flowDocument.dataBindings).toEqual([
+      {
+        id: 'binding-2',
+        targetNode: 'task-3',
+        targetPort: 'input',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'output',
+      },
+    ]);
+    expect(result.patchSummary).toEqual({
+      scalarFields: 0,
+      nodesUpserted: 2,
+      nodesDeleted: 1,
+      edgeChanges: 1,
+      dataBindingChanges: 1,
+      positionUpdates: 0,
+    });
+  });
 });

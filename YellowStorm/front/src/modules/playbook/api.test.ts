@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildPlaybookDeltaPatch,
   clonePlaybook,
   executePlaybook,
   getFlowNodeTemplates,
@@ -128,6 +129,117 @@ describe('getPlaybookUpdateTelemetry', () => {
 
     expect(first.payloadHash).toBe(second.payloadHash);
     expect(first.payloadBytes).toBe(second.payloadBytes);
+  });
+});
+
+describe('buildPlaybookDeltaPatch', () => {
+  it('builds structural node, edge, and binding delta patches', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        name: 'Playbook',
+        nodes: [
+          {
+            id: 'task-1',
+            kind: 'step',
+            label: 'Draft',
+            metadata: { positionX: 10, positionY: 20, description: 'old' },
+          },
+          {
+            id: 'task-2',
+            kind: 'step',
+            label: 'Keep',
+            metadata: { positionX: 30, positionY: 40 },
+          },
+        ],
+        controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+        dataBindings: [{
+          id: 'binding-1',
+          targetNode: 'task-2',
+          targetPort: 'input',
+          sourceKind: 'node-output',
+          sourceNode: 'task-1',
+          sourcePort: 'output',
+        }],
+      },
+      {
+        name: 'Playbook',
+        nodes: [
+          {
+            id: 'task-1',
+            kind: 'step',
+            label: 'Draft revised',
+            metadata: { positionX: 11, positionY: 21, description: 'new' },
+          },
+          {
+            id: 'task-3',
+            kind: 'step',
+            label: 'Added',
+            metadata: { positionX: 50, positionY: 60 },
+          },
+        ],
+        controlEdges: [{ id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' }],
+        dataBindings: [{
+          id: 'binding-2',
+          targetNode: 'task-3',
+          targetPort: 'input',
+          sourceKind: 'constant',
+          constantValue: 'hello',
+        }],
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          upserts: [
+            {
+              id: 'task-1',
+              kind: 'step',
+              label: 'Draft revised',
+              metadata: { positionX: 11, positionY: 21, description: 'new' },
+            },
+            {
+              id: 'task-3',
+              kind: 'step',
+              label: 'Added',
+              metadata: { positionX: 50, positionY: 60 },
+            },
+          ],
+          deleteIds: ['task-2'],
+        },
+        controlEdges: [{ id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' }],
+        dataBindings: [{
+          id: 'binding-2',
+          targetNode: 'task-3',
+          targetPort: 'input',
+          sourceKind: 'constant',
+          constantValue: 'hello',
+        }],
+      },
+    });
+  });
+
+  it('keeps pure node drags on the position-only path', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 10, positionY: 20, description: 'same' } }],
+      },
+      {
+        nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 15, positionY: 25, description: 'same' } }],
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
+        },
+      },
+    });
   });
 });
 

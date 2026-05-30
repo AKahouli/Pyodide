@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeExecution, makeExecutionSummary, makePlaybook, makeTask } from './test-utils';
-import { usePlaybookStore } from './store';
+import { __setDeltaAutosaveAvailableForTests, usePlaybookStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
   getPlaybooks: vi.fn(),
@@ -8,6 +8,7 @@ const apiMock = vi.hoisted(() => ({
   createPlaybook: vi.fn(),
   generatePlaybook: vi.fn(),
   updatePlaybook: vi.fn(),
+  patchFlowDelta: vi.fn(),
   deletePlaybook: vi.fn(),
   clonePlaybook: vi.fn(),
   executePlaybook: vi.fn(),
@@ -56,11 +57,17 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
 describe('playbook store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.updatePlaybook.mockReset();
+    apiMock.patchFlowDelta.mockReset();
+    parseApiErrorMock.mockReset();
+    parseApiErrorMock.mockImplementation(() => ({ message: 'parseApiError message' }));
     usePlaybookStore.getState().reset();
+    __setDeltaAutosaveAvailableForTests(false);
   });
 
   afterEach(() => {
     usePlaybookStore.getState().reset();
+    __setDeltaAutosaveAvailableForTests(false);
   });
 
   it('fetches playbooks and applies default pagination query', async () => {
@@ -131,6 +138,63 @@ describe('playbook store', () => {
     expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
   });
 
+  it('falls back to full save when delta patch is disabled by the backend', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({ id: 'p1', name: 'Delta fallback' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 'ERR_1006',
+            message: 'Playbook delta patch is disabled.',
+            statusCode: 400,
+          },
+        },
+      },
+      config: {
+        url: '/api/v1/playbooks/p1/delta',
+      },
+    });
+    parseApiErrorMock.mockImplementation(((error: unknown) => {
+      const rawError = error as {
+        response?: { data?: { error?: { code?: string; message?: string; statusCode?: number } }; status?: number };
+      };
+      return {
+        code: rawError.response?.data?.error?.code ?? 'ERR_0000',
+        message: rawError.response?.data?.error?.message ?? 'parseApiError message',
+        statusCode: rawError.response?.data?.error?.statusCode ?? rawError.response?.status ?? 500,
+        requiresReAuth: false,
+        raw: error,
+      };
+    }) as any);
+    apiMock.updatePlaybook.mockResolvedValueOnce({
+      ...playbook,
+      updatedAt: '2026-05-30T00:30:00.000Z',
+    });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: {
+        ...playbook,
+        description: 'Changed locally',
+      },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledTimes(1);
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe('2026-05-30T00:30:00.000Z');
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {
     const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
     const enrichedFlow = {
@@ -159,6 +223,10 @@ describe('playbook store', () => {
     expect(apiMock.getFlow).toHaveBeenNthCalledWith(2, 'flow-1', { view: 'enriched' });
     await Promise.resolve();
 
+    expect(usePlaybookStore.getState().lastSavedRequestBodyByPlaybookId['flow-1']).toMatchObject({
+      name: baseFlow.name,
+      description: baseFlow.description,
+    });
     expect((usePlaybookStore.getState().currentPlaybook as any)?.activeReplays).toEqual(enrichedFlow.activeReplays);
     expect(usePlaybookStore.getState().currentPlaybookLoading).toBe(false);
   });

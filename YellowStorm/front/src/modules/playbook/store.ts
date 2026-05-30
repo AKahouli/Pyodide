@@ -248,6 +248,11 @@ const MAX_UNDO_HISTORY = 100;
 const enablePlaybookDevtools =
   import.meta.env.DEV && import.meta.env.VITE_PLAYBOOK_DEVTOOLS_ENABLED === 'true';
 const enablePlaybookDeltaAutosave = import.meta.env.VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED === 'true';
+let deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+
+export function __setDeltaAutosaveAvailableForTests(value: boolean): void {
+  deltaAutosaveAvailableInSession = value;
+}
 
 function logPlaybookPerfMetric(
   metric: string,
@@ -261,6 +266,21 @@ function getAutosaveRetryDelayMs(backoffUntil: number | null): number {
     return 2000;
   }
   return Math.min(Math.max(backoffUntil - Date.now(), 2000) * 2, 15000);
+}
+
+function isDisabledDeltaPatchError(error: unknown): boolean {
+  const apiError = parseApiError(error);
+  if (apiError.code !== 'ERR_1006' || apiError.statusCode !== 400) {
+    return false;
+  }
+
+  const rawError = apiError.raw as {
+    config?: { url?: string };
+    response?: { data?: { error?: { message?: string } } };
+  } | undefined;
+
+  return rawError?.config?.url?.endsWith('/delta') === true
+    && rawError?.response?.data?.error?.message === 'Playbook delta patch is disabled.';
 }
 
 function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: string; clientMutationId?: string }) {
@@ -1038,7 +1058,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const payloadTelemetry = api.getPlaybookUpdateTelemetry(data);
         const previousRequestBody = get().lastSavedRequestBodyByPlaybookId[id];
         const expectedUpdatedAt = data.expectedUpdatedAt ?? get().currentPlaybook?.updatedAt;
-        const deltaPatch = enablePlaybookDeltaAutosave && previousRequestBody && expectedUpdatedAt
+        const deltaPatch = deltaAutosaveAvailableInSession && previousRequestBody && expectedUpdatedAt
           ? api.buildPlaybookDeltaPatch(previousRequestBody, requestBody, {
             expectedUpdatedAt,
             payloadHash: payloadTelemetry.payloadHash,
@@ -1046,25 +1066,37 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             clientMutationId: data.clientMutationId,
           })
           : null;
-        const saveMode = deltaPatch ? 'delta' : 'full';
+        let effectiveSaveMode: 'delta' | 'full' = deltaPatch ? 'delta' : 'full';
         set({
           isSaving: true,
           saveRequestId: requestId,
           savingDirtyVersion: saveStartDirtyVersion,
         });
         try {
-          const playbook = deltaPatch
-            ? await api.patchFlowDelta(id, deltaPatch).then(async (result) => {
-              const current = get().currentPlaybook;
-              if (!current || current.id !== id) {
-                throw new Error('Playbook state changed during delta save.');
+          let playbook: Playbook;
+          if (deltaPatch) {
+            try {
+              playbook = await api.patchFlowDelta(id, deltaPatch).then(async (result) => {
+                const current = get().currentPlaybook;
+                if (!current || current.id !== id) {
+                  throw new Error('Playbook state changed during delta save.');
+                }
+                return {
+                  ...current,
+                  updatedAt: result.updatedAt,
+                };
+              });
+            } catch (err) {
+              if (!isDisabledDeltaPatchError(err)) {
+                throw err;
               }
-              return {
-                ...current,
-                updatedAt: result.updatedAt,
-              };
-            })
-            : await api.updatePlaybook(id, data);
+              deltaAutosaveAvailableInSession = false;
+              effectiveSaveMode = 'full';
+              playbook = await api.updatePlaybook(id, data);
+            }
+          } else {
+            playbook = await api.updatePlaybook(id, data);
+          }
           const existing = get().playbooks.find((p) => p.id === id);
           const summary: PlaybookSummary = {
             id: playbook.id,
@@ -1147,9 +1179,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             },
           }));
           logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
-            mode: saveMode,
+            mode: effectiveSaveMode,
             playbookId: id,
-            payloadBytes: deltaPatch
+            payloadBytes: effectiveSaveMode === 'delta'
               ? api.measureSerializedBytes(deltaPatch)
               : payloadTelemetry.payloadBytes,
             reason: latestState.lastSaveReason,
@@ -4382,7 +4414,22 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         set({ currentPlaybookLoading: true });
         try {
           const flow = await api.getFlow(id, { view: 'base' });
-          set({ currentPlaybook: flow as any, currentPlaybookLoading: false, error: null });
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(flow as any)) as UpdateFlowData;
+          const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(flow as any));
+          set((state) => ({
+            currentPlaybook: flow as any,
+            currentPlaybookLoading: false,
+            error: null,
+            isDirty: false,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [(flow as any).id]: baselineTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [(flow as any).id]: baselineRequestBody,
+            },
+          }));
           void api.getFlow(id, { view: 'enriched' })
             .then((enrichedFlow) => {
               set((state) => ({
@@ -4678,7 +4725,10 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
       // ===== Cleanup =====
 
-      reset: () => set(initialState),
+      reset: () => {
+        deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+        set(initialState);
+      },
     });
 
 export const usePlaybookStore = create<PlaybookStore>()(
