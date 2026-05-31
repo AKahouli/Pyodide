@@ -195,9 +195,59 @@ describe('playbook store', () => {
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
-  it('falls back to full save when a migrated delta contains undefined node ids', async () => {
+  it('builds delta control edges from current canvas edges', async () => {
     __setDeltaAutosaveAvailableForTests(true);
-    const playbook = makePlaybook({ id: 'p1', name: 'Migrated delta fallback' });
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Source' }),
+        makeTask({ id: 't2', title: 'Target' }),
+      ],
+      edges: [],
+      controlEdges: [],
+    });
+    const editedPlaybook = {
+      ...playbook,
+      edges: [
+        {
+          id: 'edge-1',
+          sourceId: 't1',
+          targetId: 't2',
+          sourceOutputPortId: 'default',
+          targetInputPortId: 'default',
+        },
+      ],
+    };
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z' });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: editedPlaybook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledWith('p1', expect.objectContaining({
+      patch: expect.objectContaining({
+        controlEdges: [
+          expect.objectContaining({
+            id: 'edge-1',
+            source: 't1',
+            target: 't2',
+          }),
+        ],
+      }),
+    }));
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+  });
+
+  it('keeps autosave dirty when the backend rejects an invalid delta', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({ id: 'p1', name: 'Rejected delta' });
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
     apiMock.patchFlowDelta.mockRejectedValueOnce({
       isAxiosError: true,
@@ -227,11 +277,6 @@ describe('playbook store', () => {
         raw: error,
       };
     }) as any);
-    apiMock.updatePlaybook.mockResolvedValueOnce({
-      ...playbook,
-      updatedAt: '2026-05-30T00:35:00.000Z',
-    });
-
     await usePlaybookStore.getState().fetchPlaybook('p1');
     usePlaybookStore.setState({
       currentPlaybook: {
@@ -246,9 +291,10 @@ describe('playbook store', () => {
     await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
 
     expect(apiMock.patchFlowDelta).toHaveBeenCalledTimes(1);
-    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
-    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe('2026-05-30T00:35:00.000Z');
-    expect(usePlaybookStore.getState().isDirty).toBe(false);
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe(playbook.updatedAt);
+    expect(usePlaybookStore.getState().isDirty).toBe(true);
+    expect(usePlaybookStore.getState().autosaveBackoffUntil).toEqual(expect.any(Number));
   });
 
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {

@@ -110,6 +110,9 @@ import { FlowGraphSanitizerService } from './domain/flow-graph-sanitizer.service
 import { FlowDeltaPatchService } from './domain/flow-delta-patch.service';
 import { PlaybookFlowRuntimeClientService } from './execution/grpc/playbook-flow-runtime-client.service';
 import { PlaybookExecutionDispatcherService } from './execution/runtime/playbook-execution-dispatcher.service';
+import { PlaybookExecutionEventHandlerService } from './execution/runtime/playbook-execution-event-handler.service';
+import { PlaybookExecutionNodeEventHandlerService } from './execution/runtime/playbook-execution-node-event-handler.service';
+import { PlaybookExecutionReplayRuntimeService } from './execution/runtime/playbook-execution-replay-runtime.service';
 import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/playbook-execution-stream-finalizer.service';
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
@@ -172,6 +175,9 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     FlowDeltaPatchService,
     PlaybookFlowRuntimeClientService,
     PlaybookExecutionDispatcherService,
+    PlaybookExecutionEventHandlerService,
+    PlaybookExecutionNodeEventHandlerService,
+    PlaybookExecutionReplayRuntimeService,
     PlaybookExecutionStreamFinalizerService,
     PlaybookDesignRequestBuilderService,
     PlaybookDesignResultApplierService,

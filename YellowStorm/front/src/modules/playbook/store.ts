@@ -595,24 +595,6 @@ function isDisabledDeltaPatchError(error: unknown): boolean {
     && rawError?.response?.data?.error?.message === 'Playbook delta patch is disabled.';
 }
 
-function isRecoverableDeltaValidationError(error: unknown): boolean {
-  const apiError = parseApiError(error);
-  const rawError = apiError.raw as {
-    config?: { url?: string };
-    response?: { data?: { error?: { message?: string } } };
-  } | undefined;
-  const message = rawError?.response?.data?.error?.message ?? apiError.message ?? '';
-
-  return apiError.code === 'ERR_2522'
-    && apiError.statusCode === 400
-    && message.includes('Duplicate node id: undefined');
-}
-
-function isRecoverableDeltaSaveError(error: unknown): boolean {
-  const apiError = parseApiError(error);
-  return apiError.statusCode === 400;
-}
-
 function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: string; clientMutationId?: string }) {
   return {
     name: playbook.name,
@@ -620,7 +602,6 @@ function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: st
     designSettings: playbook.designSettings,
     tasks: playbook.tasks,
     edges: playbook.edges,
-    controlEdges: playbook.controlEdges,
     dataBindings: playbook.dataBindings,
     settings: playbook.settings,
     workspaces: playbook.workspaces,
@@ -1422,13 +1403,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 };
               });
             } catch (err) {
-              if (
-                !isDisabledDeltaPatchError(err)
-                && !isRecoverableDeltaValidationError(err)
-                && !isRecoverableDeltaSaveError(err)
-              ) {
+              if (!isDisabledDeltaPatchError(err)) {
                 throw err;
               }
+              // Only the explicit feature-disabled response is safe to replay as a full save.
+              // Validation failures mean the backend rejected this graph shape.
               deltaAutosaveAvailableInSession = false;
               effectiveSaveMode = 'full';
               playbook = playbookFeatures.queryMutationsEnabled

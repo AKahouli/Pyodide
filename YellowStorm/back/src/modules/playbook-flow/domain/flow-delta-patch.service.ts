@@ -63,13 +63,14 @@ export class FlowDeltaPatchService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Delta patch is empty.');
     }
 
+    const plainNodes = (flow.nodes as FlowNode[]).map((node) => this.toPlainFlowNode(node));
     const candidateNodesById = new Map(
-      (flow.nodes as FlowNode[]).map((node) => [
+      plainNodes.map((node) => [
         node.id,
         { ...node, metadata: { ...(node.metadata ?? {}) } } as FlowNode,
       ]),
     );
-    const candidateNodeOrder = (flow.nodes as FlowNode[]).map((node) => node.id);
+    const candidateNodeOrder = plainNodes.map((node) => node.id);
 
     for (const deleteId of nodeDeleteIds) {
       if (!candidateNodesById.delete(deleteId)) {
@@ -131,5 +132,11 @@ export class FlowDeltaPatchService {
       dataBindingChanges: dataBindingsPatch?.length ?? 0,
       positionUpdates: positionUpdates.length,
     };
+  }
+
+  private toPlainFlowNode(node: FlowNode): FlowNode {
+    const maybeDocument = node as FlowNode & { toObject?: () => FlowNode };
+    // Mongoose subdocuments do not expose schema paths through object spread.
+    return maybeDocument.toObject ? maybeDocument.toObject() : { ...node };
   }
 }

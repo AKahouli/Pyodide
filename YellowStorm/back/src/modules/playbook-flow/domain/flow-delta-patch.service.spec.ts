@@ -106,4 +106,40 @@ describe('FlowDeltaPatchService', () => {
     expect(result.dataBindingChanges).toBe(1);
     expect(result.positionUpdates).toBe(0);
   });
+
+  it('preserves node ids from hydrated flow subdocuments', () => {
+    const service = new FlowDeltaPatchService(
+      new FlowWorkspacePolicyService(),
+      new FlowGraphSanitizerService(),
+    );
+    const hydratedNode = {
+      toObject: () => ({
+        id: 'task-1',
+        kind: 'step',
+        label: 'Hydrated',
+        metadata: { positionX: 10, positionY: 20 },
+      }),
+    };
+
+    const result = service.buildPatchedGraph({
+      workspaces: ['workspace-1'],
+      nodes: [hydratedNode],
+      controlEdges: [],
+      dataBindings: [],
+    } as any, {
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
+        },
+      },
+    } as any);
+
+    expect(result.nodes).toEqual([
+      expect.objectContaining({
+        id: 'task-1',
+        metadata: expect.objectContaining({ positionX: 15, positionY: 25 }),
+      }),
+    ]);
+  });
 });
