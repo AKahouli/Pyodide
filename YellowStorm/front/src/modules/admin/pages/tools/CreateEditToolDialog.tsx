@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { useForm, FormProvider } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2 } from "lucide-react";
+import { ExternalLink, Loader2, Plus } from "lucide-react";
 
 import {
   Dialog,
@@ -31,12 +31,17 @@ import {
   defaultFormValues,
   type ToolFormValues,
 } from "./tool-form-schema";
-import type { ToolResponse, AgentTypeResponse } from "../../types";
-import { getActiveAgentTypes } from "../../api";
+import type { ToolResponse, AgentTypeResponse, ToolCategoryResponse } from "../../types";
+import { getActiveAgentTypes, getToolCategories } from "../../api";
+import { ManageToolCategoriesDialog } from "./ManageToolCategoriesDialog";
+import { IconPickerPreview } from "../connectors/IconDisplay";
+import { ColorPicker } from "../connectors/ColorPicker";
 import { getAvailableApps } from "@/modules/connected-app/api";
 import type { ConnectedAppWithStatus } from "@/modules/connected-app/types";
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
+
+const ADD_CATEGORY_VALUE = "__add_category__";
 
 interface CreateEditToolDialogProps {
   open: boolean;
@@ -55,7 +60,15 @@ export function CreateEditToolDialog({
 }: CreateEditToolDialogProps) {
   const [agentTypeOptions, setAgentTypeOptions] = useState<{ value: string; label: string }[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppWithStatus[]>([]);
+  const [categories, setCategories] = useState<ToolCategoryResponse[]>([]);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const refreshCategories = useCallback(() => {
+    getToolCategories()
+      .then(setCategories)
+      .catch(() => {});
+  }, []);
   const { t } = useModuleTranslation("admin");
   const { t: tCommon } = useModuleTranslation("common");
   const schema = useMemo(() => createToolFormSchema(t), [t]);
@@ -74,14 +87,20 @@ export function CreateEditToolDialog({
       Promise.all([
         getActiveAgentTypes().catch(() => [] as AgentTypeResponse[]),
         getAvailableApps().catch(() => [] as ConnectedAppWithStatus[]),
-      ]).then(([types, apps]) => {
+        getToolCategories().catch(() => [] as ToolCategoryResponse[]),
+      ]).then(([types, apps, cats]) => {
         setAgentTypeOptions(types.map((at: AgentTypeResponse) => ({ value: at.name, label: at.name })));
         setConnectedApps(apps);
+        setCategories(cats);
 
         if (tool) {
           reset({
             name: tool.name,
             description: tool.description || "",
+            icon: tool.icon || "",
+            color: tool.color || "",
+            iconColor: tool.iconColor || "light",
+            categoryId: tool.categoryId || "",
             defaultAgentTypes: tool.defaultAgentTypes as ToolFormValues["defaultAgentTypes"],
             requiredAppKey: tool.requiredAppKey || "",
             attributes: tool.attributes.map((attr) => ({
@@ -167,6 +186,81 @@ export function CreateEditToolDialog({
                       {errors.description.message}
                     </p>
                   )}
+                </div>
+
+                {/* Category */}
+                <div className="space-y-2">
+                  <Label>Category</Label>
+                  <Select
+                    value={watch("categoryId") || "__none__"}
+                    onValueChange={(value) => {
+                      if (value === ADD_CATEGORY_VALUE) {
+                        setShowCategoriesDialog(true);
+                        return;
+                      }
+                      setValue("categoryId", value === "__none__" ? "" : value);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ADD_CATEGORY_VALUE} className="text-primary">
+                        <span className="flex items-center gap-2">
+                          <Plus className="h-3.5 w-3.5" />
+                          Add category
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="__none__">No category</SelectItem>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Icon + Color */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="tool-icon">Icon</Label>
+                    <div className="flex gap-2">
+                      <IconPickerPreview
+                        icon={watch("icon")}
+                        color={watch("color")}
+                        iconColor={watch("iconColor")}
+                        onClear={() => setValue("icon", "")}
+                        onToggleColorMode={() =>
+                          setValue("iconColor", watch("iconColor") === "light" ? "dark" : "light")
+                        }
+                      />
+                      <div className="flex-1 space-y-1">
+                        <Input
+                          id="tool-icon"
+                          placeholder="FaSearch"
+                          {...register("icon")}
+                        />
+                        <a
+                          href="https://react-icons.github.io/react-icons/search/#q="
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:underline flex items-center gap-1"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Browse icons
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Color</Label>
+                    <ColorPicker
+                      value={watch("color")}
+                      onChange={(value) => setValue("color", value)}
+                      placeholder="#4285f4"
+                    />
+                  </div>
                 </div>
 
                 {/* Default Agent Types */}
@@ -265,6 +359,12 @@ export function CreateEditToolDialog({
         </FormProvider>
         )}
       </DialogContent>
+
+      <ManageToolCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={refreshCategories}
+      />
     </Dialog>
   );
 }

@@ -161,6 +161,8 @@ export enum ErrorCode {
   // Tool errors (2200-2299)
   TOOL_NOT_FOUND = 'ERR_2200',
   TOOL_ALREADY_EXISTS = 'ERR_2201',
+  TOOL_CATEGORY_NOT_FOUND = 'ERR_2210',
+  TOOL_CATEGORY_ALREADY_EXISTS = 'ERR_2211',
 
   // Skill errors (2250-2299)
   SKILL_NOT_FOUND = 'ERR_2250',
@@ -410,6 +412,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.TOOL_NOT_FOUND]: 'Tool not found.',
   [ErrorCode.TOOL_ALREADY_EXISTS]: 'A tool with this name already exists.',
+  [ErrorCode.TOOL_CATEGORY_NOT_FOUND]: 'Tool category not found.',
+  [ErrorCode.TOOL_CATEGORY_ALREADY_EXISTS]: 'A tool category with this name already exists.',
   [ErrorCode.SKILL_NOT_FOUND]: 'Skill not found.',
   [ErrorCode.SKILL_ALREADY_EXISTS]: 'A skill with this name already exists.',
 

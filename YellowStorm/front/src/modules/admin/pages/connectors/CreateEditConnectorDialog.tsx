@@ -34,6 +34,7 @@ import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config'
 import { ExternalLink, Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { IconPickerPreview } from './IconDisplay';
 import { ColorPicker } from './ColorPicker';
+import { ManageCategoriesDialog } from './ManageCategoriesDialog';
 import { toast } from 'sonner';
 import {
   authorizeConnectorAppOAuth,
@@ -46,6 +47,8 @@ import {
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminConnectedApps } from '@/modules/connected-app/api';
 import type { ConnectedAppAdminResponse } from '@/modules/connected-app/types';
+
+const ADD_CATEGORY_VALUE = '__add_category__';
 
 const AUTH_SOURCE_TYPES = [
   { value: 'credential', label: 'Credential' },
@@ -204,9 +207,16 @@ export function CreateEditConnectorDialog({
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
   const [availableCategories, setAvailableCategories] = useState<ConnectorCategoryResponse[]>([]);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<Record<string, boolean>>({});
   const [oauthConnecting, setOauthConnecting] = useState(false);
+
+  const refreshCategories = useCallback(() => {
+    getConnectorCategories()
+      .then((data) => setAvailableCategories(data))
+      .catch(() => {});
+  }, []);
 
   const refreshConnectionStatus = useCallback(async (appKey: string) => {
     try {
@@ -569,12 +579,24 @@ export function CreateEditConnectorDialog({
             <Label>Category</Label>
             <Select
               value={form.categoryId || '__none__'}
-              onValueChange={(value) => setForm({ ...form, categoryId: value === '__none__' ? '' : value })}
+              onValueChange={(value) => {
+                if (value === ADD_CATEGORY_VALUE) {
+                  setShowCategoriesDialog(true);
+                  return;
+                }
+                setForm({ ...form, categoryId: value === '__none__' ? '' : value });
+              }}
             >
               <SelectTrigger>
                 <SelectValue placeholder='Select a category' />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={ADD_CATEGORY_VALUE} className='text-primary'>
+                  <span className='flex items-center gap-2'>
+                    <Plus className='h-3.5 w-3.5' />
+                    Add category
+                  </span>
+                </SelectItem>
                 <SelectItem value='__none__'>No category</SelectItem>
                 {availableCategories.map((cat) => (
                   <SelectItem key={cat.id} value={cat.id}>
@@ -976,6 +998,12 @@ export function CreateEditConnectorDialog({
           <Button onClick={handleSubmit}>{connector ? t('connectors.form.dialog.update') : t('connectors.form.dialog.create')}</Button>
         </DialogFooter>
       </DialogContent>
+
+      <ManageCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={refreshCategories}
+      />
     </Dialog>
   );
 }

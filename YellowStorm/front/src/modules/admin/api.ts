@@ -63,8 +63,11 @@ import type {
   UpdatePlaybookNodeTemplateRequest,
   ToolListResponse,
   ToolResponse,
+  ToolCategoryResponse,
   CreateToolRequest,
   UpdateToolRequest,
+  CreateToolCategoryRequest,
+  UpdateToolCategoryRequest,
   ToolQueryParams,
   SkillListResponse,
   SkillResponse,
@@ -650,6 +653,40 @@ export async function updateTool(
 
 export async function deleteTool(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminTools.byId(id));
+}
+
+// Tool Categories API
+
+export async function getToolCategories(): Promise<ToolCategoryResponse[]> {
+  const response = await apiClient.get<ApiResponse<ToolCategoryResponse[]>>(
+    API_ENDPOINTS.adminToolCategories.list,
+  );
+  return response.data.data;
+}
+
+export async function createToolCategory(
+  data: CreateToolCategoryRequest,
+): Promise<ToolCategoryResponse> {
+  const response = await apiClient.post<ApiResponse<ToolCategoryResponse>>(
+    API_ENDPOINTS.adminToolCategories.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateToolCategory(
+  id: string,
+  data: UpdateToolCategoryRequest,
+): Promise<ToolCategoryResponse> {
+  const response = await apiClient.patch<ApiResponse<ToolCategoryResponse>>(
+    API_ENDPOINTS.adminToolCategories.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteToolCategory(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminToolCategories.byId(id));
 }
 
 // Skills API

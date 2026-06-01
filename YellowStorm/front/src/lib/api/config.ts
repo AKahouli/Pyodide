@@ -180,6 +180,10 @@ export const API_ENDPOINTS = {
     list: '/admin/tools',
     byId: (id: string) => `/admin/tools/${id}`,
   },
+  adminToolCategories: {
+    list: '/admin/tool-categories',
+    byId: (id: string) => `/admin/tool-categories/${id}`,
+  },
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,

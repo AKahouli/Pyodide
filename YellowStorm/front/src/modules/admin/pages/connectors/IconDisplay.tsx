@@ -8,42 +8,43 @@ import type { IconType } from 'react-icons';
 
 type IconModule = Record<string, unknown>;
 
-// Prefix → loader for the matching react-icons subpackage.
-const COLLECTION_LOADERS: Record<string, () => Promise<IconModule>> = {
-  Ai: () => import('react-icons/ai'),
-  Bi: () => import('react-icons/bi'),
-  Bs: () => import('react-icons/bs'),
-  Cg: () => import('react-icons/cg'),
-  Ci: () => import('react-icons/ci'),
-  Di: () => import('react-icons/di'),
-  Fa6: () => import('react-icons/fa6'),
-  Fa: () => import('react-icons/fa'),
-  Fc: () => import('react-icons/fc'),
-  Fi: () => import('react-icons/fi'),
-  Gi: () => import('react-icons/gi'),
-  Go: () => import('react-icons/go'),
-  Gr: () => import('react-icons/gr'),
-  Hi2: () => import('react-icons/hi2'),
-  Hi: () => import('react-icons/hi'),
-  Im: () => import('react-icons/im'),
-  Io5: () => import('react-icons/io5'),
-  Io: () => import('react-icons/io'),
-  Lia: () => import('react-icons/lia'),
-  Lu: () => import('react-icons/lu'),
-  Md: () => import('react-icons/md'),
-  Pi: () => import('react-icons/pi'),
-  Ri: () => import('react-icons/ri'),
-  Rx: () => import('react-icons/rx'),
-  Si: () => import('react-icons/si'),
-  Sl: () => import('react-icons/sl'),
-  Tb: () => import('react-icons/tb'),
-  Tfi: () => import('react-icons/tfi'),
-  Ti: () => import('react-icons/ti'),
-  Vsc: () => import('react-icons/vsc'),
-  Wi: () => import('react-icons/wi'),
+// Prefix → ordered list of react-icons subpackage loaders.
+// Some sets share a component prefix across versions (Font Awesome 5/6 both
+// export `Fa*`, Ionicons 4/5 both export `Io*`, Heroicons 1/2 both export `Hi*`).
+// The version digit lives only in the package name, never in the component name,
+// so we try the newest package first and fall back to the older one.
+const COLLECTION_LOADERS: Record<string, Array<() => Promise<IconModule>>> = {
+  Ai: [() => import('react-icons/ai')],
+  Bi: [() => import('react-icons/bi')],
+  Bs: [() => import('react-icons/bs')],
+  Cg: [() => import('react-icons/cg')],
+  Ci: [() => import('react-icons/ci')],
+  Di: [() => import('react-icons/di')],
+  Fa: [() => import('react-icons/fa6'), () => import('react-icons/fa')],
+  Fc: [() => import('react-icons/fc')],
+  Fi: [() => import('react-icons/fi')],
+  Gi: [() => import('react-icons/gi')],
+  Go: [() => import('react-icons/go')],
+  Gr: [() => import('react-icons/gr')],
+  Hi: [() => import('react-icons/hi2'), () => import('react-icons/hi')],
+  Im: [() => import('react-icons/im')],
+  Io: [() => import('react-icons/io5'), () => import('react-icons/io')],
+  Lia: [() => import('react-icons/lia')],
+  Lu: [() => import('react-icons/lu')],
+  Md: [() => import('react-icons/md')],
+  Pi: [() => import('react-icons/pi')],
+  Ri: [() => import('react-icons/ri')],
+  Rx: [() => import('react-icons/rx')],
+  Si: [() => import('react-icons/si')],
+  Sl: [() => import('react-icons/sl')],
+  Tb: [() => import('react-icons/tb')],
+  Tfi: [() => import('react-icons/tfi')],
+  Ti: [() => import('react-icons/ti')],
+  Vsc: [() => import('react-icons/vsc')],
+  Wi: [() => import('react-icons/wi')],
 };
 
-// Longer prefixes first to avoid Hi/Hi2, Io/Io5, Fa/Fa6, Li/Lia collisions.
+// Longer prefixes first to avoid Lia/Lu, Tfi/Ti, Tb/Ti collisions.
 const PREFIXES = Object.keys(COLLECTION_LOADERS).sort((a, b) => b.length - a.length);
 
 function findPrefix(name: string): string | null {
@@ -77,15 +78,22 @@ export function IconDisplay({ icon, size = 24, className = '', iconColor = 'ligh
     }
 
     let cancelled = false;
-    COLLECTION_LOADERS[prefix]()
-      .then((mod) => {
-        if (cancelled) return;
-        const Comp = mod[name];
-        setIconComponent(() => (typeof Comp === 'function' ? (Comp as IconType) : null));
-      })
-      .catch(() => {
-        if (!cancelled) setIconComponent(null);
-      });
+    void (async () => {
+      for (const load of COLLECTION_LOADERS[prefix]) {
+        try {
+          const mod = await load();
+          if (cancelled) return;
+          const Comp = mod[name];
+          if (typeof Comp === 'function') {
+            setIconComponent(() => Comp as IconType);
+            return;
+          }
+        } catch {
+          // try the next candidate package for this prefix
+        }
+      }
+      if (!cancelled) setIconComponent(null);
+    })();
 
     return () => {
       cancelled = true;
