@@ -18,6 +18,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -54,6 +61,7 @@ export function ToolsPage() {
   const [categories, setCategories] = useState<ToolCategoryResponse[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("__all__");
   const [saving, setSaving] = useState(false);
 
   // Dialog states
@@ -134,6 +142,10 @@ export function ToolsPage() {
     }
     return groups;
   })();
+
+  const visibleGroups = categoryFilter === "__all__"
+    ? groupedTools
+    : groupedTools.filter((group) => group.key === categoryFilter);
 
   const handleSave = async (data: ToolFormValues) => {
     setSaving(true);
@@ -284,15 +296,29 @@ export function ToolsPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder={t("defaultTools.search.placeholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      {/* Search + category filter */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder={t("defaultTools.search.placeholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className="w-full sm:w-[220px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All categories</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+            ))}
+            <SelectItem value={UNCATEGORIZED_KEY}>Uncategorized</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -305,9 +331,13 @@ export function ToolsPage() {
             ? t("defaultTools.table.empty.search")
             : t("defaultTools.table.empty.default")}
         </div>
+      ) : visibleGroups.length === 0 ? (
+        <div className="flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground">
+          No tools in this category.
+        </div>
       ) : (
         <div className="space-y-8">
-          {groupedTools.map((group) => {
+          {visibleGroups.map((group) => {
             const isExpanded = expandedCategories.has(group.key);
             const visible = isExpanded ? group.items : group.items.slice(0, CARDS_PER_CATEGORY);
             const hasMore = group.items.length > CARDS_PER_CATEGORY;

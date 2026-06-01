@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2, Plus } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -9,9 +9,22 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { scrollToFirstError } from '@/lib/form-utils';
-import type { SkillResponse } from '../../types';
+import type { SkillResponse, SkillCategoryResponse } from '../../types';
+import { getSkillCategories } from '../../api';
 import { defaultSkillFormValues, skillFormSchema, type SkillFormValues } from './skill-form-schema';
+import { ManageSkillCategoriesDialog } from './ManageSkillCategoriesDialog';
+import { IconPickerPreview } from '../connectors/IconDisplay';
+import { ColorPicker } from '../connectors/ColorPicker';
+
+const ADD_CATEGORY_VALUE = '__add_category__';
 
 interface CreateEditSkillDialogProps {
   open: boolean;
@@ -22,20 +35,35 @@ interface CreateEditSkillDialogProps {
 }
 
 export function CreateEditSkillDialog({ open, onOpenChange, skill, onSave, saving }: CreateEditSkillDialogProps) {
+  const [categories, setCategories] = useState<SkillCategoryResponse[]>([]);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
+
   const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<SkillFormValues>({
     resolver: zodResolver(skillFormSchema),
     defaultValues: defaultSkillFormValues,
   });
+
+  const refreshCategories = useCallback(() => {
+    getSkillCategories()
+      .then(setCategories)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
+    refreshCategories();
+
     if (skill) {
       reset({
         name: skill.name,
         description: skill.description,
+        icon: skill.icon || '',
+        color: skill.color || '',
+        iconColor: skill.iconColor || 'light',
+        categoryId: skill.categoryId || '',
         license: skill.license || '',
         compatibility: skill.compatibility || '',
         allowedToolsText: (skill.allowedTools || []).join(', '),
@@ -47,7 +75,7 @@ export function CreateEditSkillDialog({ open, onOpenChange, skill, onSave, savin
     }
 
     reset(defaultSkillFormValues);
-  }, [open, reset, skill]);
+  }, [open, reset, skill, refreshCategories]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -70,6 +98,77 @@ export function CreateEditSkillDialog({ open, onOpenChange, skill, onSave, savin
                 <Label htmlFor='skill-description'>Description</Label>
                 <Textarea id='skill-description' rows={3} {...register('description')} />
                 {errors.description && <p className='text-xs text-destructive'>{errors.description.message}</p>}
+              </div>
+
+              {/* Category */}
+              <div className='space-y-2'>
+                <Label>Category</Label>
+                <Select
+                  value={watch('categoryId') || '__none__'}
+                  onValueChange={(value) => {
+                    if (value === ADD_CATEGORY_VALUE) {
+                      setShowCategoriesDialog(true);
+                      return;
+                    }
+                    setValue('categoryId', value === '__none__' ? '' : value);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder='Select a category' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ADD_CATEGORY_VALUE} className='text-primary'>
+                      <span className='flex items-center gap-2'>
+                        <Plus className='h-3.5 w-3.5' />
+                        Add category
+                      </span>
+                    </SelectItem>
+                    <SelectItem value='__none__'>No category</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Icon + Color */}
+              <div className='grid grid-cols-2 gap-4'>
+                <div className='space-y-2'>
+                  <Label htmlFor='skill-icon'>Icon</Label>
+                  <div className='flex gap-2'>
+                    <IconPickerPreview
+                      icon={watch('icon')}
+                      color={watch('color')}
+                      iconColor={watch('iconColor')}
+                      onClear={() => setValue('icon', '')}
+                      onToggleColorMode={() =>
+                        setValue('iconColor', watch('iconColor') === 'light' ? 'dark' : 'light')
+                      }
+                    />
+                    <div className='flex-1 space-y-1'>
+                      <Input id='skill-icon' placeholder='FaBrain' {...register('icon')} />
+                      <a
+                        href='https://react-icons.github.io/react-icons/search/#q='
+                        target='_blank'
+                        rel='noopener noreferrer'
+                        className='text-xs text-primary hover:underline flex items-center gap-1'
+                      >
+                        <ExternalLink className='h-3 w-3' />
+                        Browse icons
+                      </a>
+                    </div>
+                  </div>
+                </div>
+                <div className='space-y-2'>
+                  <Label>Color</Label>
+                  <ColorPicker
+                    value={watch('color')}
+                    onChange={(value) => setValue('color', value)}
+                    placeholder='#4285f4'
+                  />
+                </div>
               </div>
 
               <div className='grid gap-4 md:grid-cols-2'>
@@ -129,6 +228,12 @@ export function CreateEditSkillDialog({ open, onOpenChange, skill, onSave, savin
           </DialogFooter>
         </form>
       </DialogContent>
+
+      <ManageSkillCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={refreshCategories}
+      />
     </Dialog>
   );
 }
