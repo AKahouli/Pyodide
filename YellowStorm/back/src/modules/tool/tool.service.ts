@@ -41,6 +41,10 @@ export class ToolService {
     const tool = await this.toolModel.create({
       name: dto.name,
       description: dto.description ?? '',
+      icon: dto.icon ?? '',
+      color: dto.color ?? '',
+      iconColor: dto.iconColor ?? 'light',
+      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
       defaultAgentTypes: dto.defaultAgentTypes ?? [],
       attributes: dto.attributes ?? [],
       requiredAppKey: dto.requiredAppKey || null,
@@ -168,6 +172,9 @@ export class ToolService {
     if ('requiredAppKey' in updateData) {
       (updateData as Record<string, unknown>).requiredAppKey = updateData.requiredAppKey || null;
     }
+    if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
+      (updateData as Record<string, unknown>).categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
+    }
 
     const tool = await this.toolModel
       .findByIdAndUpdate(id, { $set: updateData }, { new: true })
@@ -265,6 +272,10 @@ export class ToolService {
       id: (doc._id as { toString(): string }).toString(),
       name: doc.name as string,
       description: (doc.description as string) || '',
+      icon: (doc.icon as string) || '',
+      color: (doc.color as string) || '',
+      iconColor: ((doc.iconColor as 'light' | 'dark') || 'light'),
+      categoryId: doc.categoryId ? (doc.categoryId as { toString(): string }).toString() : null,
       defaultAgentTypes: (doc.defaultAgentTypes as string[]) || [],
       attributes: ((doc.attributes as Record<string, unknown>[]) || []).map((attr) => ({
         id: attr._id ? (attr._id as { toString(): string }).toString() : undefined,

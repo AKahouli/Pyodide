@@ -12,10 +12,22 @@ export interface IToolResponse {
   id: string;
   name: string;
   description: string;
+  icon: string;
+  color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string | null;
   defaultAgentTypes: string[];
   attributes: IToolAttribute[];
   requiredAppKey?: string;
   isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IToolCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -1210,12 +1210,34 @@ export interface ToolResponse {
   id: string;
   name: string;
   description: string;
+  icon: string;
+  color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string | null;
   defaultAgentTypes: string[];
   attributes: ToolAttributeResponse[];
   requiredAppKey?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ToolCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateToolCategoryRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateToolCategoryRequest {
+  name?: string;
+  description?: string;
 }
 
 export interface ToolListResponse {
@@ -1238,6 +1260,10 @@ export interface ToolAttributeInput {
 export interface CreateToolRequest {
   name: string;
   description?: string;
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
   requiredAppKey?: string;
@@ -1247,6 +1273,10 @@ export interface CreateToolRequest {
 export interface UpdateToolRequest {
   name?: string;
   description?: string;
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
   requiredAppKey?: string;

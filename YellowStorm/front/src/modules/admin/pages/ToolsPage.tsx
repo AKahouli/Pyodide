@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Wrench,
+  FolderTree,
   Loader2,
   AlertCircle,
   RefreshCw,
@@ -15,25 +15,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,18 +32,17 @@ import {
   createTool,
   updateTool,
   deleteTool,
+  getToolCategories,
 } from "../api";
-import type { ToolResponse, ToolListResponse } from "../types";
+import type { ToolResponse, ToolListResponse, ToolCategoryResponse } from "../types";
 import { CreateEditToolDialog } from "./tools/CreateEditToolDialog";
+import { ManageToolCategoriesDialog } from "./tools/ManageToolCategoriesDialog";
+import { IconDisplay } from "./connectors/IconDisplay";
 import type { ToolFormValues } from "./tools/tool-form-schema";
 import { useModuleTranslation } from "@/modules/localization";
-import type { ModuleTranslationKey } from "@/modules/localization";
 
-const AGENT_TYPE_LABEL_KEYS: Record<string, ModuleTranslationKey<"admin">> = {
-  manager: "defaultTools.agentTypes.manager",
-  visualizer: "defaultTools.agentTypes.visualizer",
-  simple: "defaultTools.agentTypes.simple",
-};
+const CARDS_PER_CATEGORY = 6;
+const UNCATEGORIZED_KEY = "__uncategorized__";
 
 export function ToolsPage() {
   const { t } = useModuleTranslation("admin");
@@ -69,49 +51,89 @@ export function ToolsPage() {
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolResponse[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [categories, setCategories] = useState<ToolCategoryResponse[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Dialog states
   const [showCreateEditDialog, setShowCreateEditDialog] = useState(false);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [editingTool, setEditingTool] = useState<ToolResponse | null>(null);
   const [deletingTool, setDeletingTool] = useState<ToolResponse | null>(null);
 
-  const fetchTools = useCallback(async (searchValue?: string, pageValue?: number) => {
+  const fetchTools = useCallback(async (searchValue?: string) => {
     setLoading(true);
     setError(null);
 
     try {
       const data: ToolListResponse = await getTools({
-        page: pageValue ?? page,
-        limit: 10,
+        page: 1,
+        limit: 1000,
         search: searchValue ?? search,
       });
       setTools(data.data);
       setTotal(data.meta.total);
-      setTotalPages(data.meta.totalPages);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("defaultTools.errors.load"));
     } finally {
       setLoading(false);
     }
-  }, [page, search, t]);
+  }, [search, t]);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const data = await getToolCategories();
+      setCategories(data);
+    } catch {
+      setCategories([]);
+    }
+  }, []);
 
   useEffect(() => {
-    fetchTools();
-  }, [fetchTools]);
+    void fetchTools();
+    void fetchCategories();
+  }, [fetchTools, fetchCategories]);
 
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
-      setPage(1);
-      fetchTools(search, 1);
+      void fetchTools(search);
     }, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+
+  const toggleCategoryExpanded = (key: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const groupedTools = (() => {
+    const byCategory = new Map<string, ToolResponse[]>();
+    for (const tool of tools) {
+      const key = tool.categoryId || UNCATEGORIZED_KEY;
+      const list = byCategory.get(key) ?? [];
+      list.push(tool);
+      byCategory.set(key, list);
+    }
+    const groups: Array<{ key: string; name: string; description: string; items: ToolResponse[] }> = [];
+    for (const cat of categories) {
+      const items = byCategory.get(cat.id);
+      if (items && items.length > 0) {
+        groups.push({ key: cat.id, name: cat.name, description: cat.description, items });
+      }
+    }
+    const uncategorized = byCategory.get(UNCATEGORIZED_KEY);
+    if (uncategorized && uncategorized.length > 0) {
+      groups.push({ key: UNCATEGORIZED_KEY, name: "Uncategorized", description: "", items: uncategorized });
+    }
+    return groups;
+  })();
 
   const handleSave = async (data: ToolFormValues) => {
     setSaving(true);
@@ -121,6 +143,10 @@ export function ToolsPage() {
         await updateTool(editingTool.id, {
           name: data.name,
           description: data.description,
+          icon: data.icon || undefined,
+          color: data.color || undefined,
+          iconColor: data.iconColor || undefined,
+          categoryId: data.categoryId ? data.categoryId : null,
           defaultAgentTypes: data.defaultAgentTypes,
           attributes: data.attributes,
           requiredAppKey: data.requiredAppKey || undefined,
@@ -133,6 +159,10 @@ export function ToolsPage() {
         await createTool({
           name: data.name,
           description: data.description,
+          icon: data.icon || undefined,
+          color: data.color || undefined,
+          iconColor: data.iconColor || undefined,
+          categoryId: data.categoryId ? data.categoryId : null,
           defaultAgentTypes: data.defaultAgentTypes,
           attributes: data.attributes,
           requiredAppKey: data.requiredAppKey || undefined,
@@ -243,6 +273,10 @@ export function ToolsPage() {
           <Button onClick={() => fetchTools()} variant="outline" size="icon">
             <RefreshCw className="h-4 w-4" />
           </Button>
+          <Button variant="outline" onClick={() => setShowCategoriesDialog(true)}>
+            <FolderTree className="mr-2 h-4 w-4" />
+            Manage Categories
+          </Button>
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
             {t("defaultTools.actions.add")}
@@ -261,149 +295,117 @@ export function ToolsPage() {
         />
       </div>
 
-      {/* Tools Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-              <Wrench className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle>{t("defaultTools.card.title")}</CardTitle>
-              <CardDescription>{t("defaultTools.card.description", { count: total })}</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("defaultTools.table.columns.name")}</TableHead>
-                  <TableHead className="hidden md:table-cell">
-                    {t("defaultTools.table.columns.description")}
-                  </TableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    {t("defaultTools.table.columns.agentTypes")}
-                  </TableHead>
-                  <TableHead className="hidden sm:table-cell">
-                    {t("defaultTools.table.columns.attributes")}
-                  </TableHead>
-                  <TableHead>{t("defaultTools.table.columns.active")}</TableHead>
-                  <TableHead className="text-right">{t("defaultTools.table.columns.actions")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tools.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center">
-                      {search
-                        ? t("defaultTools.table.empty.search")
-                        : t("defaultTools.table.empty.default")}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  tools.map((tool) => (
-                    <TableRow
-                      key={tool.id}
-                      className={!tool.isActive ? "opacity-50" : undefined}
-                    >
-                      <TableCell>
-                        <span className="font-medium">{tool.name}</span>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell max-w-[200px] truncate">
-                        {tool.description || (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <div className="flex flex-wrap gap-1">
-                          {tool.defaultAgentTypes.length > 0 ? (
-                            tool.defaultAgentTypes.map((type) => {
-                              const agentTypeKey =
-                                AGENT_TYPE_LABEL_KEYS[type as keyof typeof AGENT_TYPE_LABEL_KEYS] ??
-                                "defaultTools.agentTypes.fallback";
-                              return (
-                                <Badge key={type} variant="secondary" className="text-xs">
-                                  {t(agentTypeKey as ModuleTranslationKey<"admin">, { type })}
-                                </Badge>
-                              );
-                            })
-                          ) : (
-                            <span className="text-muted-foreground text-sm">
-                              {t("defaultTools.table.noAgentTypes")}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        <Badge variant="outline" className="text-xs">
-                          {tool.attributes.length}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={tool.isActive}
-                          onCheckedChange={() => handleToggleActive(tool)}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEdit(tool)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeletingTool(tool)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+      <p className="text-sm text-muted-foreground">
+        {t("defaultTools.card.description", { count: total })}
+      </p>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4">
-              <p className="text-sm text-muted-foreground">
-                {t("defaultTools.pagination.summary", { page, totalPages })}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setPage((p) => Math.max(1, p - 1));
-                  }}
-                  disabled={page <= 1}
-                >
-                  {t("defaultTools.pagination.previous")}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setPage((p) => Math.min(totalPages, p + 1));
-                  }}
-                  disabled={page >= totalPages}
-                >
-                  {t("defaultTools.pagination.next")}
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {tools.length === 0 ? (
+        <div className="flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground">
+          {search
+            ? t("defaultTools.table.empty.search")
+            : t("defaultTools.table.empty.default")}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {groupedTools.map((group) => {
+            const isExpanded = expandedCategories.has(group.key);
+            const visible = isExpanded ? group.items : group.items.slice(0, CARDS_PER_CATEGORY);
+            const hasMore = group.items.length > CARDS_PER_CATEGORY;
+            return (
+              <section key={group.key} className="space-y-3">
+                <div>
+                  <h3 className="text-lg font-semibold">{group.name}</h3>
+                  {group.description && (
+                    <p className="text-sm text-muted-foreground">{group.description}</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {visible.map((tool) => {
+                    const iconTextColor = tool.iconColor === "dark" ? "text-black" : "text-white";
+                    const initial = tool.name?.trim().charAt(0).toUpperCase() || "?";
+                    return (
+                      <div
+                        key={tool.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openEdit(tool)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openEdit(tool);
+                          }
+                        }}
+                        className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!tool.isActive ? "opacity-60" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await handleToggleActive(tool);
+                          }}
+                          className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label={tool.isActive ? "Deactivate tool" : "Activate tool"}
+                          aria-pressed={tool.isActive}
+                          title={tool.isActive ? "Active — click to deactivate" : "Inactive — click to activate"}
+                        >
+                          <span className={`h-2.5 w-2.5 rounded-full transition-colors ${tool.isActive ? "bg-green-500" : "bg-red-500"}`} />
+                        </button>
+
+                        <div className="absolute top-2 right-9 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={(e) => { e.stopPropagation(); openEdit(tool); }}
+                            aria-label="Edit tool"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            onClick={(e) => { e.stopPropagation(); setDeletingTool(tool); }}
+                            aria-label="Delete tool"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+
+                        <div className="flex items-start gap-3 pr-12">
+                          <div
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
+                            style={{ backgroundColor: tool.color || "transparent" }}
+                          >
+                            {tool.icon ? (
+                              <IconDisplay icon={tool.icon} size={22} iconColor={tool.iconColor} />
+                            ) : (
+                              <span className={`text-sm font-bold ${iconTextColor}`}>{initial}</span>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold truncate">{tool.name}</div>
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {tool.description || "-"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {hasMore && (
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={() => toggleCategoryExpanded(group.key)}>
+                      {isExpanded ? "Show less" : `View all (${group.items.length})`}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
 
       {/* Create/Edit Dialog */}
       <CreateEditToolDialog
@@ -415,6 +417,12 @@ export function ToolsPage() {
         tool={editingTool}
         onSave={handleSave}
         saving={saving}
+      />
+
+      <ManageToolCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={() => { void fetchCategories(); void fetchTools(); }}
       />
 
       {/* Delete Confirmation Dialog */}
