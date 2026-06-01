@@ -146,7 +146,20 @@ export function NewConversationPage() {
     }
   };
 
-  const handleSubmit = async (message: PromptInputMessage, modelId: string, agentIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
+  const handleSubmit = async (
+    message: PromptInputMessage,
+    modelId: string,
+    agentIds?: string[],
+    _memberIds?: string[],
+    workspaceIds?: string[],
+    connectorRepo?: {
+      connectorId: string;
+      connectorName: string;
+      repoId: string;
+      repoName: string;
+      repoUrl?: string;
+    },
+  ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
 
@@ -182,7 +195,7 @@ export function NewConversationPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
-        connectorRepo: connectorRepo,
+        connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
       });
 
       clearAll();

@@ -104,7 +104,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         parentMessageId: replyingToMessage?.id,
-        connectorRepo: connectorRepo,
+        connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
       });
 
       clearAll();

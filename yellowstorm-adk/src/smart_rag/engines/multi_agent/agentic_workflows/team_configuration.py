@@ -119,6 +119,7 @@ def create_team_config(user_request: RunAgentTeamRequest) -> AgentTeamConfig:
         attached_files=user_request.attached_files,
         attached_images=user_request.attached_images,
         previous_attached_files=user_request.previous_attached_files,
+        connector_repo=user_request.connector_repo,
     )
 
 

@@ -436,7 +436,14 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       const memberIds = [...memberIdSet];
 
       if (externalSubmit) {
-        externalSubmit(message, model, agentIds.length > 0 ? agentIds : undefined, selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined, memberIds.length > 0 ? memberIds : undefined, selectedConnectorRepo || undefined);
+        externalSubmit(
+          message,
+          model,
+          agentIds.length > 0 ? agentIds : undefined,
+          memberIds.length > 0 ? memberIds : undefined,
+          selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined,
+          selectedConnectorRepo || undefined,
+        );
         setMentionMap(new Map());
         resetSelectedWorkspaceIds();
         return;

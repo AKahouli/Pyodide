@@ -17,6 +17,94 @@ import json
 logger = get_logger("api.smart_rag.agents.factories.delegation_factory_helper")
 
 
+def _build_connector_repo_fixed_params(
+    connector_repo: Dict[str, str],
+) -> Dict[str, str]:
+    repo_id = connector_repo.get("repo_id", "").strip()
+    repo_name = connector_repo.get("repo_name", "").strip()
+    repo_url = connector_repo.get("repo_url", "").strip()
+    if not repo_name:
+        return {}
+
+    fixed_params = {
+        "repo_name": repo_name,
+        "repo_id": repo_id,
+        "repo_url": repo_url,
+        "repository": repo_name,
+        "full_name": repo_name,
+    }
+
+    if "/" in repo_name:
+        owner, repo = repo_name.split("/", 1)
+        owner = owner.strip()
+        repo = repo.strip()
+        if owner:
+            fixed_params["owner"] = owner
+            fixed_params["repo_owner"] = owner
+        if repo:
+            fixed_params["repo"] = repo
+            fixed_params["repository_name"] = repo
+
+    return {key: value for key, value in fixed_params.items() if value}
+
+
+def _inject_connector_repo_into_bindings(
+    bindings: List[Dict[str, Any]],
+    connector_repo: Optional[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    if not connector_repo:
+        return bindings
+    repo_name = connector_repo.get("repo_name", "").strip()
+    if not repo_name:
+        return bindings
+    connector_id = connector_repo.get("connector_id", "").strip()
+    repo_fixed_params = _build_connector_repo_fixed_params(connector_repo)
+    augmented = []
+    for binding in bindings:
+        binding_copy = dict(binding)
+        if not connector_id or binding.get("connector_id") == connector_id:
+            existing_fixed = dict(binding_copy.get("fixed_params") or {})
+            existing_fixed.update(repo_fixed_params)
+            binding_copy["fixed_params"] = existing_fixed
+        augmented.append(binding_copy)
+    logger.info(
+        "connector_bindings_injected_repo connector_id=%s repo=%s binding_count=%s",
+        connector_id or "(any)",
+        repo_name,
+        len(augmented),
+    )
+    return augmented
+
+
+def _append_connector_repo_context(
+    prompt: str,
+    connector_repo: Optional[Dict[str, str]],
+) -> str:
+    if not connector_repo:
+        return prompt
+    repo_name = connector_repo.get("repo_name", "").strip()
+    if not repo_name:
+        return prompt
+
+    connector_name = connector_repo.get("connector_name", "").strip() or "connector"
+    repo_url = connector_repo.get("repo_url", "").strip()
+    target = f"{repo_name} ({repo_url})" if repo_url else repo_name
+    context = (
+        "\n\n<selected_connector_repository>\n"
+        f"Connector: {connector_name}\n"
+        f"Repository: {target}\n"
+        "Use the connector tools for repository-level actions on this repository. "
+        "Do not ask the user which repository to use.\n"
+        "</selected_connector_repository>"
+    )
+    return f"{prompt}{context}"
+
+
+def _get_connector_repo(config: Any) -> Optional[Dict[str, str]]:
+    connector_repo = getattr(config, "connector_repo", None)
+    return connector_repo if isinstance(connector_repo, dict) else None
+
+
 def create_agent_for_delegation(
     helper,
     tool_helper,
@@ -226,6 +314,10 @@ def create_search_agent_with_tools(
     ) = prepare_agent_data(
         helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
     )
+    enhanced_prompt = _append_connector_repo_context(
+        enhanced_prompt,
+        _get_connector_repo(config),
+    )
 
     temp = (
         agent_config.get("agent_params").get("temperature", 0.0)
@@ -287,6 +379,10 @@ def create_search_agent_with_tools(
             connector_workspace_id = agent_factory._resolve_connector_workspace_id(
                 config.brain_ids[0] if config.brain_ids else None,
                 agent_config.get("brain_documents", []),
+            )
+            connector_bindings = _inject_connector_repo_into_bindings(
+                connector_bindings,
+                _get_connector_repo(config),
             )
             agent.tools.extend(
                 create_connector_tools(
@@ -416,6 +512,10 @@ def create_standard_agent_with_tools(
     ) = prepare_agent_data(
         helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
     )
+    enhanced_prompt = _append_connector_repo_context(
+        enhanced_prompt,
+        _get_connector_repo(config),
+    )
 
     connector_bindings = []
     raw_connector_bindings = agent_config.get("agent_params", {}).get(
@@ -454,7 +554,10 @@ def create_standard_agent_with_tools(
         brain_documents=agent_config.get("brain_documents", []),
         conversation_brain_id=config.brain_ids[0] if config.brain_ids else None,
         user_id=config.user_id,
-        connector_bindings=connector_bindings,
+        connector_bindings=_inject_connector_repo_into_bindings(
+            connector_bindings,
+            _get_connector_repo(config),
+        ),
     )
 
     # Platform tools (save_file_to_workspace)
