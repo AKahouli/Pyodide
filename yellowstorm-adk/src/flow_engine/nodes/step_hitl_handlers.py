@@ -33,7 +33,10 @@ from src.flow_engine.nodes.step_hitl import (
 
 logger = get_logger(__name__)
 
-DEFAULT_CLARIFICATION_LIMIT = 3
+def _default_hitl_round_limit() -> int:
+    return max(int(getattr(get_settings(), "PLAYBOOK_MAX_HITL_ROUNDS", 5) or 0), 0)
+
+
 def _build_proceed_instruction(node_description: str) -> str:
     return (
         f"{node_description}\n\n"
@@ -75,7 +78,7 @@ async def handle_clarification_before(
     raw_limit = _meta_get(metadata, "max_clarifications", "maxClarifications")
     # Existing playbooks may omit maxClarifications; keep HITL useful by allowing
     # a short bounded clarification dialogue instead of a single partial answer.
-    clarification_limit = DEFAULT_CLARIFICATION_LIMIT if raw_limit is None else max(int(raw_limit or 0), 0)
+    clarification_limit = _default_hitl_round_limit() if raw_limit is None else max(int(raw_limit or 0), 0)
     clarification_prompt_text = str(_meta_get(metadata, "clarification_prompt", "clarificationPrompt") or "").strip()
 
     llm = ChatOpenAI(
@@ -222,7 +225,7 @@ async def handle_clarification_after(
         return result
 
     raw_limit = _meta_get(metadata, "max_clarifications", "maxClarifications")
-    clarification_limit = DEFAULT_CLARIFICATION_LIMIT if raw_limit is None else max(int(raw_limit or 0), 0)
+    clarification_limit = _default_hitl_round_limit() if raw_limit is None else max(int(raw_limit or 0), 0)
     if clarification_limit <= 0:
         return result
     if round_number > clarification_limit:

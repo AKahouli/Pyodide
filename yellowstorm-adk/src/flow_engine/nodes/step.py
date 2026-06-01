@@ -32,9 +32,8 @@ from src.flow_engine.nodes.step_hitl_handlers import (
     handle_interrupt_before,
 )
 from src.flow_engine.nodes.step_hitl_blockers import (
-    build_llm_judge_blocker_decision,
     evaluate_hitl_blocker,
-    evaluate_llm_judge_blocker,
+    handle_llm_judge_blocker,
     handle_smart_hitl_blocker,
 )
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
@@ -295,21 +294,17 @@ async def run_step(
         if early:
             return _with_human_context(early, new_human_context)
 
-        llm_judgement = await evaluate_llm_judge_blocker(
+        hitl = await handle_llm_judge_blocker(
             node_config,
             input_context if isinstance(input_context, dict) else {},
             hitl_policy,
             hitl_blockers,
             model_id,
-        )
-        hitl = handle_smart_hitl_blocker(
-            build_llm_judge_blocker_decision(llm_judgement),
             node_id,
             label,
             node_description,
             iteration,
             writer,
-            hitl_policy,
         )
         early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
         new_human_context.extend(context_updates)

@@ -187,12 +187,14 @@ def build_blocker_judge_prompt(
     node_description: str,
     input_context: dict[str, Any],
     blockers: list[dict[str, Any]],
+    feedback_history: list[dict[str, str]] | None = None,
 ) -> str:
-    blocker_lines = []
+    blocker_lines: list[str] = []
+    seen_blockers: set[str] = set()
     for blocker in blockers:
         matcher_config = blocker.get("matcherConfig") or blocker.get("matcher_config") or {}
         natural_rule = matcher_config.get("naturalLanguageRule") or matcher_config.get("natural_language_rule") if isinstance(matcher_config, dict) else ""
-        blocker_lines.append(json.dumps({
+        blocker_payload = {
             "id": blocker.get("id"),
             "kind": blocker.get("kind"),
             "action": blocker.get("action"),
@@ -200,19 +202,37 @@ def build_blocker_judge_prompt(
             "description": blocker.get("description"),
             "naturalLanguageRule": natural_rule,
             "promptTemplate": blocker.get("promptTemplate") or blocker.get("prompt_template"),
-        }, ensure_ascii=False))
+        }
+        blocker_key = json.dumps(
+            {
+                "kind": blocker_payload["kind"],
+                "action": blocker_payload["action"],
+                "label": blocker_payload["label"],
+                "description": blocker_payload["description"],
+                "naturalLanguageRule": blocker_payload["naturalLanguageRule"],
+                "promptTemplate": blocker_payload["promptTemplate"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if blocker_key in seen_blockers:
+            continue
+        seen_blockers.add(blocker_key)
+        blocker_lines.append(json.dumps(blocker_payload, ensure_ascii=False))
     return "\n\n".join([
-        "Must always Evaluate whether any configured human-in-the-loop blocker applies regarding the given task description and ask for clarification or approval if needed.",
+        "Must always Evaluate **every** configured human-in-the-loop blocker definition (listed below) to determine if it applies regarding the given task description and ask for clarification or approval if needed.",
         "Return exactly one JSON object and no markdown.",
-        "If no blocker applies, return {\"decision\":\"clear\"}.",
         "If a blocker applies, return {\"decision\":\"block\",\"blocker_id\":\"...\",\"message\":\"one concise question or approval request for the user\"}.",
+        "If no blocker applies, return {\"decision\":\"clear\"}.",
         "Do not invent missing user requirements. Judge only from the task, current inputs, and blocker definitions.",
         "When a blocker describes missing or ambiguous criteria that are still not provided, prefer block over clear.",
+        "If prior user feedback is insufficient, contradictory, or too broad, block again and ask a better question with brief examples.",
         "For clarify actions, the message must be one direct user-facing question asking only for the missing information.",
         "For approval actions, the message must be one concise approval request.",
         f"Task title: {label}",
         f"Task description:\n{node_description}",
         f"Current inputs/context:\n{json.dumps(input_context, ensure_ascii=False, default=str)}",
+        f"Prior HITL feedback:\n{json.dumps(feedback_history or [], ensure_ascii=False, default=str)}",
         "Blocker definitions:\n" + "\n".join(blocker_lines),
     ])
 

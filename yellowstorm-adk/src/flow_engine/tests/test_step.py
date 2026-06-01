@@ -158,6 +158,25 @@ class TestStepPrompt:
         assert "Do not put reasoning steps inside `outputs`" in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" not in prompt
 
+    def test_build_prompt_keeps_human_guidance_without_raw_hitl_rules(self):
+        prompt = build_step_prompt(
+            label="Search leads",
+            node_id="step-1",
+            input_context={},
+            hitl_policy={"mode": "auto"},
+            hitl_blockers=[{"id": "custom-rule", "description": "population gender missing"}],
+            human_context=[{"message": "Target female founders in France."}],
+            hitl_memory=[{"message": "Prefer verified company websites."}],
+        )
+
+        assert "Human guidance from earlier workflow steps:" in prompt
+        assert "Target female founders in France." in prompt
+        assert "Reusable HITL memory:" in prompt
+        assert "Prefer verified company websites." in prompt
+        assert "Smart HITL policy:" not in prompt
+        assert "Active blocker rules:" not in prompt
+        assert "custom-rule" not in prompt
+
 
 def test_build_prompt_sandbox_note_can_be_appended() -> None:
     prompt = build_step_prompt(
@@ -619,9 +638,9 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
     monkeypatch.setattr("src.flow_engine.nodes.step.handle_smart_hitl_blocker", _fake_handle_smart_hitl_blocker)
 
     async def _no_llm_judge(*args, **kwargs):
-        return None
+        return _FakeStepHitlResult()
 
-    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_llm_judge_blocker", _no_llm_judge)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_llm_judge_blocker", _no_llm_judge)
     monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fake_execute_step)
 
     result = await run_step(

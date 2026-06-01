@@ -93,6 +93,7 @@ async def evaluate_llm_judge_blocker(
     hitl_policy: dict[str, Any],
     hitl_blockers: list[dict[str, Any]],
     model_id: str,
+    feedback_history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     if hitl_policy.get("mode") != "auto":
         return None
@@ -108,6 +109,7 @@ async def evaluate_llm_judge_blocker(
         node_description=_node_text(node_config),
         input_context=input_context,
         blockers=rules,
+        feedback_history=feedback_history,
     )
     llm = ChatOpenAI(
         base_url=settings.LITELLM_API_BASE_URL,
@@ -140,6 +142,148 @@ async def evaluate_llm_judge_blocker(
         )
         return None
     return {"rule": rule, "message": judged["message"]}
+
+
+async def handle_llm_judge_blocker(
+    node_config: dict[str, Any],
+    input_context: dict[str, Any],
+    hitl_policy: dict[str, Any],
+    hitl_blockers: list[dict[str, Any]],
+    model_id: str,
+    node_id: str,
+    label: str,
+    node_description: str,
+    iteration: int,
+    writer: Any,
+) -> StepHitlResult:
+    result = StepHitlResult()
+    max_rounds = max(int(getattr(get_settings(), "PLAYBOOK_MAX_HITL_ROUNDS", 5) or 0), 0)
+    feedback_history: list[dict[str, str]] = []
+    current_description = node_description
+    for round_index in range(max_rounds):
+        judgement = await evaluate_llm_judge_blocker(
+            node_config, input_context, hitl_policy, hitl_blockers, model_id,
+            feedback_history=feedback_history,
+        )
+        decision = build_llm_judge_blocker_decision(judgement)
+        if decision is None:
+            result.updated_description = current_description if feedback_history else None
+            return result
+        payload = _build_blocker_interrupt_payload(
+            decision, node_id, label, current_description, iteration + round_index + 1, hitl_policy,
+        )
+        writer({"type": "NodeSuspended", "node_id": node_id, "iteration": iteration, "payload": payload})
+        current_description = _record_blocker_reply(
+            result, interrupt(payload), decision, current_description,
+            feedback_history, node_id, label, hitl_policy,
+        )
+        if result.skipped or result.failed or result.suppress_follow_up_clarification:
+            return result
+
+    if feedback_history:
+        result.updated_description = (
+            f"{current_description}\n\n"
+            "Clarification from system: The HITL round limit was reached. Proceed with the available information."
+        )
+        result.suppress_follow_up_clarification = True
+    return result
+
+
+def _build_blocker_interrupt_payload(
+    decision: HitlBlockerDecision,
+    node_id: str,
+    label: str,
+    node_description: str,
+    round_number: int,
+    hitl_policy: dict[str, Any],
+) -> dict[str, Any]:
+    return _build_interrupt_payload(
+        decision.interrupt_type,
+        decision.message,
+        node_id=node_id,
+        label=label,
+        node_description=node_description,
+        round_number=round_number,
+        resumable_actions=_resumable_actions(decision.interrupt_type),
+        reason_code=decision.reason_code,
+        risk_level=decision.risk_level,
+        feedback_scope_default=str(_default_feedback_scope(decision, hitl_policy)),
+        blocker_rule_id=decision.blocker_rule_id,
+        blocker_kind=decision.blocker_kind,
+    )
+
+
+def _record_blocker_reply(
+    result: StepHitlResult,
+    response: Any,
+    decision: HitlBlockerDecision,
+    node_description: str,
+    feedback_history: list[dict[str, str]],
+    node_id: str,
+    label: str,
+    hitl_policy: dict[str, Any],
+) -> str:
+    action = normalize_interrupt_action(response, decision.interrupt_type)
+    if _finish_on_terminal_action(result, action, response):
+        return node_description
+    message = extract_interrupt_message(response)
+    if not message:
+        result.failed = True
+        result.error_msg = "Clarification response was empty"
+        return node_description
+    if decision.interrupt_type == "clarification" and should_proceed_without_more_clarification(message):
+        result.updated_description = _build_bypass_instruction(node_description)
+        result.suppress_follow_up_clarification = True
+        return node_description
+    feedback_history.append({"question": decision.message, "answer": message})
+    _append_context_entry(result, response, decision, node_id, label, hitl_policy)
+    return _append_feedback_to_description(node_description, decision.interrupt_type, message)
+
+
+def _finish_on_terminal_action(result: StepHitlResult, action: str, response: Any) -> bool:
+    if action == "skip":
+        result.skipped = True
+        return True
+    if action == "reject":
+        result.failed = True
+        result.error_msg = extract_interrupt_message(response) or "Task blocked by human"
+        return True
+    return False
+
+
+def _append_context_entry(
+    result: StepHitlResult,
+    response: Any,
+    decision: HitlBlockerDecision,
+    node_id: str,
+    label: str,
+    hitl_policy: dict[str, Any],
+) -> None:
+    context_entry = build_human_context_entry(
+        response,
+        node_id=node_id,
+        label=label,
+        interrupt_type=decision.interrupt_type,
+        message=decision.message,
+        default_scope=str(_default_feedback_scope(decision, hitl_policy)),
+    )
+    if context_entry:
+        result.human_context.append(context_entry)
+
+
+def _append_feedback_to_description(node_description: str, interrupt_type: str, message: str) -> str:
+    label = "Clarification from user" if interrupt_type == "clarification" else "Human Feedback"
+    return f"{node_description}\n\n{label}: {message}"
+
+
+def _build_bypass_instruction(node_description: str) -> str:
+    return (
+        f"{node_description}\n\n"
+        "Clarification from user: The user explicitly bypassed missing HITL requirements. "
+        "Proceed with the available information, choose broad reasonable defaults for "
+        "missing criteria, and produce the best possible final result now. Do not ask "
+        "another clarification question."
+    )
 
 
 def build_llm_judge_blocker_decision(judgement: dict[str, Any] | None) -> HitlBlockerDecision | None:

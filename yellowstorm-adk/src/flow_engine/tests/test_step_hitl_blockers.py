@@ -14,6 +14,7 @@ from src.flow_engine.nodes.step_hitl_blockers import (
     build_llm_judge_blocker_decision,
     evaluate_hitl_blocker,
     evaluate_llm_judge_blocker,
+    handle_llm_judge_blocker,
 )
 
 
@@ -143,6 +144,49 @@ def test_blocker_judge_prompt_includes_custom_blocker_definition() -> None:
     assert "prefer block over clear" in prompt
 
 
+def test_blocker_judge_prompt_deduplicates_blockers() -> None:
+    prompt = build_blocker_judge_prompt(
+        label="Search agro leads",
+        node_description="Search leads in agro sector.",
+        input_context={},
+        blockers=[
+            {
+                "id": "rule-1",
+                "kind": "custom",
+                "description": "population gender missing",
+                "action": "clarify",
+                "label": "population gender missing",
+                "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+            },
+            {
+                "id": "rule-1-duplicate",
+                "kind": "custom",
+                "description": "population gender missing",
+                "action": "clarify",
+                "label": "population gender missing",
+                "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+            },
+        ],
+    )
+
+    assert '"id": "rule-1"' in prompt
+    assert '"id": "rule-1-duplicate"' not in prompt
+
+
+def test_blocker_judge_prompt_includes_prior_feedback() -> None:
+    prompt = build_blocker_judge_prompt(
+        label="Search agro leads",
+        node_description="Search leads in agro sector.",
+        input_context={},
+        blockers=[{"id": "custom-population-gender", "kind": "custom"}],
+        feedback_history=[{"question": "Which population and gender?", "answer": "everyone"}],
+    )
+
+    assert "Prior HITL feedback:" in prompt
+    assert "everyone" in prompt
+    assert "ask a better question with brief examples" in prompt
+
+
 def test_parse_blocker_judge_response_extracts_block_decision() -> None:
     parsed = parse_blocker_judge_response('{"decision":"block","blocker_id":"rule-1","message":"Which gender?"}')
 
@@ -250,6 +294,72 @@ async def test_evaluate_llm_judge_blocker_returns_none_for_clear_response(monkey
     )
 
     assert judgement is None
+
+
+@pytest.mark.asyncio
+async def test_handle_llm_judge_blocker_reasks_until_clear(monkeypatch) -> None:
+    responses = iter([
+        {"rule": {"id": "custom-population-gender", "kind": "custom", "action": "clarify"}, "message": "Which population and gender?"},
+        {"rule": {"id": "custom-population-gender", "kind": "custom", "action": "clarify"}, "message": "Please be specific, for example female founders or all farmers."},
+        None,
+    ])
+    replies = iter([
+        {"action": "reply", "message": "everyone", "scope": "downstream_run"},
+        {"action": "reply", "message": "female founders in France", "scope": "downstream_run"},
+    ])
+
+    async def _fake_judge(*args, **kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(blockers, "evaluate_llm_judge_blocker", _fake_judge)
+    monkeypatch.setattr(blockers, "interrupt", lambda _payload: next(replies))
+    monkeypatch.setattr(blockers, "get_settings", lambda: SimpleNamespace(PLAYBOOK_MAX_HITL_ROUNDS=3))
+
+    result = await handle_llm_judge_blocker(
+        node_config={"label": "Search agro leads"},
+        input_context={},
+        hitl_policy={"mode": "auto", "feedbackScopeDefault": "downstream_run"},
+        hitl_blockers=[],
+        model_id="gpt-test",
+        node_id="step-1",
+        label="Search agro leads",
+        node_description="Search leads.",
+        iteration=0,
+        writer=lambda _event: None,
+    )
+
+    assert result.failed is False
+    assert result.updated_description is not None
+    assert "everyone" in result.updated_description
+    assert "female founders in France" in result.updated_description
+    assert [entry["message"] for entry in result.human_context] == ["everyone", "female founders in France"]
+
+
+@pytest.mark.asyncio
+async def test_handle_llm_judge_blocker_bypass_proceeds(monkeypatch) -> None:
+    async def _fake_judge(*args, **kwargs):
+        return {"rule": {"id": "custom-population-gender", "kind": "custom", "action": "clarify"}, "message": "Which population and gender?"}
+
+    monkeypatch.setattr(blockers, "evaluate_llm_judge_blocker", _fake_judge)
+    monkeypatch.setattr(blockers, "interrupt", lambda _payload: {"action": "reply", "message": "proceed", "scope": "downstream_run"})
+    monkeypatch.setattr(blockers, "get_settings", lambda: SimpleNamespace(PLAYBOOK_MAX_HITL_ROUNDS=3))
+
+    result = await handle_llm_judge_blocker(
+        node_config={"label": "Search agro leads"},
+        input_context={},
+        hitl_policy={"mode": "auto"},
+        hitl_blockers=[],
+        model_id="gpt-test",
+        node_id="step-1",
+        label="Search agro leads",
+        node_description="Search leads.",
+        iteration=0,
+        writer=lambda _event: None,
+    )
+
+    assert result.suppress_follow_up_clarification is True
+    assert result.updated_description is not None
+    assert "explicitly bypassed missing HITL requirements" in result.updated_description
 
 
 def test_evaluate_hitl_blocker_pauses_for_destructive_action_rule() -> None:
