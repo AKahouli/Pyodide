@@ -13,6 +13,8 @@ export interface ConnectorFormValues {
   description: string;
   icon: string;
   color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string;
   authType: string;
   authSourceType: string;
   connectedAppKey: string;
@@ -39,6 +41,8 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   description: '',
   icon: '',
   color: '',
+  iconColor: 'light',
+  categoryId: '',
   authType: 'none',
   authSourceType: 'none',
   connectedAppKey: '',

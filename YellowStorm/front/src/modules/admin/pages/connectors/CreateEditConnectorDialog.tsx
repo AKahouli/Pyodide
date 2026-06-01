@@ -22,6 +22,7 @@ import {
 import type {
   ConnectorResponse,
   ConnectorActionResponse,
+  ConnectorCategoryResponse,
   ConnectorDynamicHeader,
   ConnectorDynamicHeaderSource,
   SkillResponse,
@@ -30,12 +31,15 @@ import type {
 import type { ConnectorFormValues, DynamicHeaderRow } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
 import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
-import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
+import { ExternalLink, Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
+import { IconPickerPreview } from './IconDisplay';
+import { ColorPicker } from './ColorPicker';
 import { toast } from 'sonner';
 import {
   authorizeConnectorAppOAuth,
   disconnectConnectorAppOAuth,
   getConnectorAppOAuthStatus,
+  getConnectorCategories,
   getSkills,
   inspectMcp,
 } from '../../api';
@@ -199,6 +203,7 @@ export function CreateEditConnectorDialog({
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<ConnectorCategoryResponse[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<Record<string, boolean>>({});
   const [oauthConnecting, setOauthConnecting] = useState(false);
@@ -227,6 +232,9 @@ export function CreateEditConnectorDialog({
       getSkills({ isActive: true, limit: 1000 })
         .then((result) => setAvailableSkills(result.data || []))
         .catch(() => setAvailableSkills([]));
+      getConnectorCategories()
+        .then((data) => setAvailableCategories(data))
+        .catch(() => setAvailableCategories([]));
       getAdminConnectedApps()
         .then((apps) => {
           const enabledApps = apps.filter((app) => app.enabled);
@@ -251,6 +259,8 @@ export function CreateEditConnectorDialog({
           description: connector.description,
           icon: connector.icon || '',
           color: connector.color || '',
+          iconColor: connector.iconColor || 'light',
+          categoryId: connector.categoryId || '',
           authType: connector.authType || 'none',
           authSourceType: connector.authSourceType || 'credential',
           connectedAppKey: connector.connectedAppKey || '',
@@ -555,14 +565,64 @@ export function CreateEditConnectorDialog({
             <Textarea placeholder={t('connectors.form.fields.description.placeholder')} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
           </div>
 
+          <div>
+            <Label>Category</Label>
+            <Select
+              value={form.categoryId || '__none__'}
+              onValueChange={(value) => setForm({ ...form, categoryId: value === '__none__' ? '' : value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder='Select a category' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='__none__'>No category</SelectItem>
+                {availableCategories.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className='grid grid-cols-2 gap-4'>
             <div>
               <Label>{t('connectors.form.fields.icon.label')}</Label>
-              <Input placeholder={t('connectors.form.fields.icon.placeholder')} value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} />
+              <div className='flex gap-2'>
+                <IconPickerPreview
+                  icon={form.icon}
+                  color={form.color}
+                  iconColor={form.iconColor}
+                  onClear={() => setForm({ ...form, icon: '' })}
+                  onToggleColorMode={() =>
+                    setForm({ ...form, iconColor: form.iconColor === 'light' ? 'dark' : 'light' })
+                  }
+                />
+                <div className='flex-1 space-y-1'>
+                  <Input
+                    placeholder='FaGithub'
+                    value={form.icon}
+                    onChange={(e) => setForm({ ...form, icon: e.target.value })}
+                  />
+                  <a
+                    href='https://react-icons.github.io/react-icons/search/#q='
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className='text-xs text-primary hover:underline flex items-center gap-1'
+                  >
+                    <ExternalLink className='h-3 w-3' />
+                    Browse icons
+                  </a>
+                </div>
+              </div>
             </div>
             <div>
               <Label>{t('connectors.form.fields.color.label')}</Label>
-              <Input placeholder={t('connectors.form.fields.color.placeholder')} value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
+              <ColorPicker
+                value={form.color}
+                onChange={(value) => setForm({ ...form, color: value })}
+                placeholder='#24292e'
+              />
             </div>
           </div>
 
