@@ -20,7 +20,7 @@ def mock_agent_suggestion():
         prompt="You are a helpful agent",
         tools=[{"name": "search"}, {"name": "calculator"}],
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=["brain-1"],
+        workspace_names=["brain-1"],
         save_memory=False,
         agent_params={"temperature": 0.7}
     )
@@ -35,7 +35,7 @@ def mock_manager_suggestion():
         description="A manager agent",
         prompt="You are a manager",
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=[],
+        workspace_names=[],
         agent_type="manager",
         save_memory=False,
         agent_params={"temperature": 0.8}
@@ -67,7 +67,7 @@ def mock_config():
     config.session_id = "session-123"
     config.user_id = "user-123"
     config.chatbot_name = "gpt-4"
-    config.brain_ids = ["brain-1"]
+    config.workspace_names = ["brain-1"]
     config.vectorstore_name = "test-vectorstore"
     return config
 

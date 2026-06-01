@@ -39,10 +39,10 @@ async def process_extraction_and_webhook(
             api_key=litellm_api_key,
             base_url=litellm_base_url,
             model=model,
-            brain_ids=user_request.brain_ids,
+            workspace_names=user_request.workspace_names,
             vectorstore=user_request.vectorstore,
             top_k=user_request.top_k,
-            external_ids=user_request.external_ids,
+            file_names=user_request.file_names,
             sheet_name=user_request.sheet_name
         )
 
@@ -62,8 +62,8 @@ async def process_extraction_and_webhook(
             "event_type": "task_enrichissement",
             "status": "completed",
             "data": result_dict,
-            "brain_ids": user_request.brain_ids,
-            "external_id": user_request.external_ids[0] if user_request.external_ids else None,
+            "workspace_names": user_request.workspace_names,
+            "file_name": user_request.file_names[0] if user_request.file_names else None,
             "sheet_name": user_request.sheet_name
         }
 
@@ -78,15 +78,15 @@ async def process_extraction_and_webhook(
 
     except HTTPException as exc:
         logger.error(f"[Job {job_id}] HTTP exception during extraction: {exc.detail}")
-        external_id = user_request.external_ids[0] if user_request.external_ids else None
-        await send_error_to_webhook(job_id, user_request.webhook_url, f"Extraction failed: {exc.detail}", external_id, user_request.sheet_name)
+        file_name = user_request.file_names[0] if user_request.file_names else None
+        await send_error_to_webhook(job_id, user_request.webhook_url, f"Extraction failed: {exc.detail}", file_name, user_request.sheet_name)
     except Exception as exc:
         logger.error(f"[Job {job_id}] Unexpected error: {str(exc)}")
-        external_id = user_request.external_ids[0] if user_request.external_ids else None
-        await send_error_to_webhook(job_id, user_request.webhook_url, f"Unexpected error: {str(exc)}", external_id, user_request.sheet_name)
+        file_name = user_request.file_names[0] if user_request.file_names else None
+        await send_error_to_webhook(job_id, user_request.webhook_url, f"Unexpected error: {str(exc)}", file_name, user_request.sheet_name)
 
 
-async def send_error_to_webhook(job_id: str, webhook_url: str, error_message: str, external_id: str = None, sheet_name: str = None):
+async def send_error_to_webhook(job_id: str, webhook_url: str, error_message: str, file_name: str = None, sheet_name: str = None):
     """
     Send error notification to webhook (async version).
 
@@ -94,7 +94,7 @@ async def send_error_to_webhook(job_id: str, webhook_url: str, error_message: st
         job_id: Job identifier
         webhook_url: Webhook URL to send error to
         error_message: Error message to include in payload
-        external_id: Optional external ID from the original request
+        file_name: Optional file name from the original request
         sheet_name: Optional sheet name from the original request
     """
     try:
@@ -103,7 +103,7 @@ async def send_error_to_webhook(job_id: str, webhook_url: str, error_message: st
             "event_type": "task_enrichissement",
             "status": "failed",
             "error": error_message,
-            "external_id": external_id,
+            "file_name": file_name,
             "sheet_name": sheet_name
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -116,7 +116,7 @@ async def send_error_to_webhook(job_id: str, webhook_url: str, error_message: st
         logger.error(f"[Job {job_id}] Failed to send error to webhook: {str(webhook_exc)}")
 
 
-def sync_send_error_to_webhook(job_id: str, webhook_url: str, error_message: str, external_id: str = None, sheet_name: str = None):
+def sync_send_error_to_webhook(job_id: str, webhook_url: str, error_message: str, file_name: str = None, sheet_name: str = None):
     """
     Send error notification to webhook (sync version for Celery tasks).
 
@@ -124,7 +124,7 @@ def sync_send_error_to_webhook(job_id: str, webhook_url: str, error_message: str
         job_id: Job identifier
         webhook_url: Webhook URL to send error to
         error_message: Error message to include in payload
-        external_id: Optional external ID from the original request
+        file_name: Optional file name from the original request
         sheet_name: Optional sheet name from the original request
     """
     try:
@@ -133,7 +133,7 @@ def sync_send_error_to_webhook(job_id: str, webhook_url: str, error_message: str
             "event_type": "task_enrichissement",
             "status": "failed",
             "error": error_message,
-            "external_id": external_id,
+            "file_name": file_name,
             "sheet_name": sheet_name
         }
         with httpx.Client(timeout=10.0) as client:

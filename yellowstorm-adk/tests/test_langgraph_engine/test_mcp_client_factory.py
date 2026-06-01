@@ -50,10 +50,10 @@ def test_normalize_mcp_response_extracts_sources_and_citations_from_inline_text(
         {
             "type": "text",
             "source": "Q1-report.txt",
-            "external_id": "item-123",
+            "file_name": "item-123",
             "page": "",
             "page_content": "Quarterly revenue increased by 18%.",
-            "workspace_id": "",
+            "workspace_name": "",
             "reference": "",
         }
     ]
@@ -71,10 +71,10 @@ def test_register_connector_response_sources_assigns_references_and_updates_text
             {
                 "type": "text",
                 "source": "Q1-report.txt",
-                "external_id": "item-123",
+                "file_name": "item-123",
                 "page": "",
                 "page_content": "Quarterly revenue increased by 18%.",
-                "workspace_id": "",
+                "workspace_name": "",
                 "reference": "",
             }
         ],
@@ -99,10 +99,10 @@ def test_register_connector_response_sources_reuses_existing_reference():
             {
                 "type": "text",
                 "source": "Q1-report.txt",
-                "external_id": "item-123",
+                "file_name": "item-123",
                 "page": "",
                 "page_content": "Quarterly revenue increased by 18%.",
-                "workspace_id": "",
+                "workspace_name": "",
                 "reference": "",
             }
         ],
@@ -121,8 +121,8 @@ def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks()
         "result": """
         [
           {
-            "brain_id": "69e643ae25a48c9410bff159",
-            "external_id": "69e643d725a48c9410bff182",
+            "workspace_name": "69e643ae25a48c9410bff159",
+            "file_name": "69e643d725a48c9410bff182",
             "source": "https://yssametachatbotdev001.blob.core.windows.net/metachatbot/6992fc709968567dc766a12d/69e643ae25a48c9410bff159/69e643d725a48c9410bff182/SLA_Indicateurs_Performance.docx",
             "block_id": "p0_b0",
             "block_type": "text",
@@ -130,7 +130,7 @@ def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks()
             "page_number": 0
           },
           {
-            "brain_id": "69e643ae25a48c9410bff159",
+            "workspace_name": "69e643ae25a48c9410bff159",
             "block_id": "p0_b6",
             "block_type": "paragraph_title",
             "content": "1. Objectifs de Niveau de Service (SLA)",
@@ -148,24 +148,24 @@ def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks()
 
     assert len(normalized["citation_sources"]) == 2
     assert normalized["citation_sources"][0]["source"] == "SLA_Indicateurs_Performance.docx"
-    assert normalized["citation_sources"][0]["external_id"] == "69e643d725a48c9410bff182"
+    assert normalized["citation_sources"][0]["file_name"] == "69e643d725a48c9410bff182"
     assert normalized["citation_sources"][0]["page"] == "1"
-    assert normalized["citation_sources"][0]["workspace_id"] == "69e643ae25a48c9410bff159"
+    assert normalized["citation_sources"][0]["workspace_name"] == "69e643ae25a48c9410bff159"
 
 
 def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload():
     payload = [
         {
-            "brain_id": "69e7a3d5f884ead008992093",
-            "external_id": "69e7a3d9f884ead0089920a8",
+            "workspace_name": "69e7a3d5f884ead008992093",
+            "file_name": "69e7a3d9f884ead0089920a8",
             "source": "https://example.com/Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx",
             "block_id": "p1_b0",
             "block_type": "text",
             "content": "Garantie constructeur standard de 2 ans.",
         },
         {
-            "brain_id": "69e7a3d5f884ead008992093",
-            "external_id": "69e7a3d9f884ead0089920a8",
+            "workspace_name": "69e7a3d5f884ead008992093",
+            "file_name": "69e7a3d9f884ead0089920a8",
             "source": "https://example.com/Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx",
             "block_id": "p1_b1",
             "block_type": "text",
@@ -182,5 +182,5 @@ def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload()
     assert normalized["result"] == payload
     assert len(normalized["citation_sources"]) == 2
     assert normalized["citation_sources"][0]["source"] == "Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx"
-    assert normalized["citation_sources"][0]["external_id"] == "69e7a3d9f884ead0089920a8"
-    assert normalized["citation_sources"][0]["workspace_id"] == "69e7a3d5f884ead008992093"
+    assert normalized["citation_sources"][0]["file_name"] == "69e7a3d9f884ead0089920a8"
+    assert normalized["citation_sources"][0]["workspace_name"] == "69e7a3d5f884ead008992093"

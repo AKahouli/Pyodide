@@ -505,12 +505,8 @@ You have access to delegate functions for each agent. Use the appropriate delega
         Returns:
             dict: Prepared agent data with populated brain documents and adjusted tools.
         """
-        agent_data = agent_dict
-        if not isinstance(agent_data, dict):
-            agent_data = agent_data.__dict__
+        agent_data = dict(DocumentHelpers.agent_to_dict(agent_dict))
         tools = agent_data.get('tools', []) or []
-
-        # Extract tool names from flexible format
         tool_names = extract_tool_names(tools)
 
         if 'search' in tool_names:

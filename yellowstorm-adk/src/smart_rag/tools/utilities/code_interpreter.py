@@ -26,7 +26,7 @@ MAX_TIMEOUT_SECONDS = 300  # 5 minutes maximum
 
 # Session state keys used to pass per-request params via ADK tool_context.state
 _STATE_KEY_SESSION_ID = "_code_interpreter_session_id"
-_STATE_KEY_BRAIN_ID = "_code_interpreter_brain_id"
+_STATE_KEY_BRAIN_ID = "_code_interpreter_brain_id"  # Kept for backward compatibility with in-flight sessions
 _STATE_KEY_BRAIN_DOCS = "_code_interpreter_brain_docs"
 _STATE_KEY_USER_ID = "_code_interpreter_user_id"
 _STATE_KEY_GENERATED_FILES = "_code_interpreter_generated_files"
@@ -85,20 +85,19 @@ async def python_interpreter(
 
     # Read per-request params from session state
     session_id = None
-    brain_id = None
+    workspace_name = None
     user_id = None
     resolved_workspace_id = None
 
     if tool_context:
         session_id = tool_context.state.get(_STATE_KEY_SESSION_ID)
-        brain_id = tool_context.state.get(_STATE_KEY_BRAIN_ID)
+        workspace_name = tool_context.state.get(_STATE_KEY_BRAIN_ID)
         user_id = tool_context.state.get(_STATE_KEY_USER_ID)
         brain_documents = tool_context.state.get(_STATE_KEY_BRAIN_DOCS)
         previously_generated = tool_context.state.get(_STATE_KEY_GENERATED_FILES, [])
 
-        # Fix 4: Resolve workspace_id from brain_documents first (like connector tools do),
-        # then fall back to the frozen conversation_brain_id.
-        resolved_workspace_id = brain_id
+        # Resolve workspace_id from brain_documents first, then fall back to workspace_name
+        resolved_workspace_id = workspace_name
         resolved_workspace_name = ""
         if brain_documents:
             for doc in brain_documents:
@@ -125,8 +124,8 @@ async def python_interpreter(
 
         if session_id:
             logger.info(f"[PYTHON TOOL] Using session_id from state: {session_id}")
-        if brain_id:
-            logger.info(f"[PYTHON TOOL] Using brain_id from state: {brain_id}, resolved_workspace_id: {resolved_workspace_id}")
+        if workspace_name:
+            logger.info(f"[PYTHON TOOL] Using workspace_name from state: {workspace_name}, resolved_workspace_id: {resolved_workspace_id}")
         if user_id:
             logger.info(f"[PYTHON TOOL] Using user_id from state: {user_id}")
 

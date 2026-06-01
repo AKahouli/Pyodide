@@ -8,7 +8,7 @@ from typing import Any
 @dataclass(frozen=True)
 class StepToolScope:
     workspace_context: list[dict[str, Any]]
-    input_files: list[str]
+    file_names: list[str]
     documents_by_port: dict[str, list[str]]
     code_interpreter_files: list[dict[str, str]]
     workspace_context_mode: str
@@ -21,7 +21,7 @@ def build_step_tool_scope(
 ) -> StepToolScope:
     workspace_context = _normalize_workspace_context(metadata.get("brain_context"))
     documents_by_port: dict[str, list[str]] = {}
-    input_files: list[str] = []
+    file_names: list[str] = []
     code_interpreter_files: list[dict[str, str]] = []
     mounted_filenames: list[str] = []
     seen_doc_ids: set[str] = set()
@@ -43,13 +43,16 @@ def build_step_tool_scope(
         for ref in refs:
             ref = _hydrate_file_ref(ref, workspace_context)
             document_id = ref.get("document_id", "")
-            if document_id:
-                if document_id not in port_seen_doc_ids:
-                    port_doc_ids.append(document_id)
-                    port_seen_doc_ids.add(document_id)
-                if document_id not in seen_doc_ids:
-                    input_files.append(document_id)
-                    seen_doc_ids.add(document_id)
+            file_name = ref.get("file_name") or ref.get("filename", "")
+            search_file_name = file_name or document_id
+            if search_file_name:
+                port_key = document_id or search_file_name
+                if port_key not in port_seen_doc_ids:
+                    port_doc_ids.append(search_file_name)
+                    port_seen_doc_ids.add(port_key)
+                if search_file_name and search_file_name not in seen_doc_ids:
+                    file_names.append(search_file_name)
+                    seen_doc_ids.add(search_file_name)
 
             filename = ref.get("filename", "")
             filepath = ref.get("filepath", "")
@@ -71,7 +74,7 @@ def build_step_tool_scope(
 
     return StepToolScope(
         workspace_context=[] if has_port_sources else workspace_context,
-        input_files=input_files,
+        file_names=file_names,
         documents_by_port=documents_by_port,
         code_interpreter_files=code_interpreter_files,
         workspace_context_mode=workspace_context_mode,
@@ -109,6 +112,9 @@ def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
             continue
 
         workspace_id = str(workspace.get("workspace_id") or "").strip()
+        workspace_name = str(
+            workspace.get("workspace_name") or workspace_id
+        ).strip()
         raw_documents = workspace.get("documents")
         if not isinstance(raw_documents, list):
             raw_documents = workspace.get("workspace_documents")
@@ -128,9 +134,13 @@ def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
                     "id": _document_id(document),
                     "_id": _document_id(document),
                     "filename": filename,
+                    "file_name": _file_name(document) or filename,
                     "filepath": filepath,
                     "workspace_id": str(
                         document.get("workspace_id") or workspace_id
+                    ).strip(),
+                    "workspace_name": str(
+                        document.get("workspace_name") or workspace_name
                     ).strip(),
                 }
             )
@@ -138,6 +148,7 @@ def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
         normalized.append(
             {
                 "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
                 "documents": documents,
             }
         )
@@ -192,8 +203,10 @@ def _file_ref_from_dict(value: dict[str, Any]) -> dict[str, str] | None:
     return {
         "document_id": document_id,
         "filename": filename,
+        "file_name": _file_name(value) or filename,
         "filepath": filepath,
         "workspace_id": _workspace_id(value),
+        "workspace_name": _workspace_name(value),
     }
 
 
@@ -222,8 +235,10 @@ def _hydrate_file_ref(
             return {
                 "document_id": document_id,
                 "filename": str(document.get("filename") or "").strip() or ref.get("filename") or "",
+                "file_name": str(document.get("file_name") or document.get("filename") or "").strip() or ref.get("file_name") or ref.get("filename") or "",
                 "filepath": ref.get("filepath") or str(document.get("filepath") or "").strip(),
                 "workspace_id": ref.get("workspace_id") or str(document.get("workspace_id") or workspace.get("workspace_id") or "").strip(),
+                "workspace_name": ref.get("workspace_name") or str(document.get("workspace_name") or workspace.get("workspace_name") or "").strip(),
             }
 
     return ref
@@ -262,6 +277,23 @@ def _display_filename(value: dict[str, Any]) -> str:
     return Path(filepath).name if filepath else ""
 
 
+def _file_name(value: dict[str, Any]) -> str:
+    metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+    for candidate in (
+        value.get("file_name"),
+        value.get("fileName"),
+        metadata.get("file_name"),
+        metadata.get("fileName"),
+        value.get("filename"),
+        metadata.get("filename"),
+    ):
+        normalized = str(candidate or "").strip()
+        if normalized:
+            return normalized
+    filepath = _storage_filepath(value)
+    return Path(filepath).name if filepath else ""
+
+
 def _document_id(value: dict[str, Any]) -> str:
     metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
     for candidate in (
@@ -289,6 +321,21 @@ def _workspace_id(value: dict[str, Any]) -> str:
         value.get("workspaceId"),
         metadata.get("workspace_id"),
         metadata.get("workspaceId"),
+    ):
+        normalized = str(candidate or "").strip()
+        if normalized:
+            return normalized
+    return ""
+
+
+def _workspace_name(value: dict[str, Any]) -> str:
+    metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+    for candidate in (
+        value.get("workspace_name"),
+        value.get("workspaceName"),
+        metadata.get("workspace_name"),
+        metadata.get("workspaceName"),
+        _workspace_id(value),
     ):
         normalized = str(candidate or "").strip()
         if normalized:

@@ -48,8 +48,8 @@ class TaskConfig(TypedDict):
     max_clarifications: int
     input_keys: Optional[List[str]]
     output_key: Optional[str]
-    input_files: Optional[List[str]]
-    input_files_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
+    file_names: Optional[List[str]]
+    file_names_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
     task_type: Optional[str]
     task_metadata: Optional[Dict[str, Any]]
     evaluation_config: Optional[Dict[str, Any]]

@@ -11,7 +11,7 @@ from src.flow_engine.mcp import call_mcp_tool
 async def create_tools_for_node(
     node_config: Dict[str, Any],
     workspace_context: Optional[list] = None,
-    input_files: Optional[List[str]] = None,
+    file_names: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Create tools for a flow engine node.
 

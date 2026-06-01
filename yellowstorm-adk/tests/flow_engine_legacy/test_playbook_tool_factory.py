@@ -37,7 +37,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
             {
                 "type": "text",
                 "source": "Q1-report.txt",
-                "external_id": "item-123",
+                "file_name": "item-123",
                 "page": "2",
                 "page_content": "Quarterly revenue increased by 18%.",
                 "workspace_id": "workspace-1",
@@ -70,7 +70,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                 "text_source": {
                     "type": "text",
                     "source": "Q1-report.txt",
-                    "external_id": "item-123",
+                    "file_name": "item-123",
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
@@ -174,7 +174,7 @@ def test_code_interpreter_generated_xlsx_emits_explicit_output_port(
                 "user_id": "user-1",
             }
         },
-        brain_ids=["workspace-1"],
+        workspace_names=["workspace-1"],
         code_interpreter_files=[],
         collector=collector,
         output_ports=[
@@ -244,7 +244,7 @@ def test_code_interpreter_generated_file_uses_object_key_fallback(
                 "user_id": "user-1",
             }
         },
-        brain_ids=["workspace-1"],
+        workspace_names=["workspace-1"],
         code_interpreter_files=[],
         collector=collector,
         output_ports=[{"id": "default", "artifact_kind": "document"}],
@@ -298,7 +298,7 @@ def test_code_interpreter_request_normalizes_prefixed_workspace_name(
                 "user_id": "user-1",
             }
         },
-        brain_ids=["workspace-1"],
+        workspace_names=["workspace-1"],
         code_interpreter_files=[
             {
                 "filepath": "owner-123/workspace-prefix/report.csv",
@@ -463,7 +463,7 @@ def test_code_interpreter_description_lists_only_mounted_files(
                 "user_id": "owner-a",
             }
         },
-        brain_ids=["ws-a"],
+        workspace_names=["ws-a"],
         code_interpreter_files=[
             {
                 "filepath": "owner-a/ws-a/A.docx",
@@ -653,7 +653,7 @@ def test_collect_connector_response_components_reuses_connector_references() -> 
             {
                 "type": "text",
                 "source": "Q1-report.txt",
-                "external_id": "item-123",
+                "file_name": "item-123",
                 "page": "2",
                 "page_content": "Quarterly revenue increased by 18%.",
                 "workspace_id": "workspace-1",
@@ -683,7 +683,7 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
                     "text_source": {
                         "type": "text",
                         "source": "Doc 1",
-                        "external_id": "doc-1",
+                        "file_name": "doc-1",
                         "page": "1",
                         "page_content": "Existing evidence",
                         "workspace_id": "workspace-1",
@@ -702,7 +702,7 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
                 {
                     "type": "text",
                     "source": "Doc 1",
-                    "external_id": "doc-1",
+                    "file_name": "doc-1",
                     "page": "1",
                     "page_content": "Existing evidence",
                     "workspace_id": "workspace-1",
@@ -721,7 +721,7 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
                 {
                     "type": "text",
                     "source": "Doc 2",
-                    "external_id": "doc-2",
+                    "file_name": "doc-2",
                     "page": "3",
                     "page_content": "New evidence",
                     "workspace_id": "workspace-1",
@@ -744,7 +744,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
                 {
                     "type": "text",
                     "source": "Q1-report.txt",
-                    "external_id": "item-123",
+                    "file_name": "item-123",
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
@@ -796,7 +796,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
                 "text_source": {
                     "type": "text",
                     "source": "Q1-report.txt",
-                    "external_id": "item-123",
+                    "file_name": "item-123",
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
@@ -846,8 +846,8 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         ],
         collector,
         output_workspace_id="playbook-workspace-1",
-        brain_ids=["agent-brain-1", "agent-brain-2"],
-        external_ids=["doc-1", "doc-2"],
+        workspace_names=["agent-brain-1", "agent-brain-2"],
+        file_names=["doc-1", "doc-2"],
     )
 
     search_tool = next(
@@ -901,7 +901,7 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         ],
         collector,
         output_workspace_id="",
-        brain_ids=["agent-brain-1"],
+        workspace_names=["agent-brain-1"],
     )
 
     search_tool = next(

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { parseApiError } from '@/lib/api-error';
 import { normalizeHitlBlocker } from '@/modules/playbook/api';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateHitlBlockerMutation } from '@/modules/playbook/query/hooks/useHitlMutations';
@@ -21,11 +22,13 @@ export function HitlBlockerEditorDialog({ flowId, nodeId, open, onOpenChange }: 
   const createBlocker = useCreateHitlBlockerMutation();
   const [description, setDescription] = useState('');
   const [isNormalizing, setIsNormalizing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSave = async () => {
     const trimmed = description.trim();
     if (!trimmed) return;
     setIsNormalizing(true);
+    setError(null);
     try {
       const normalized = await normalizeHitlBlocker(flowId, { description: trimmed, nodeId });
       await createBlocker.mutateAsync({
@@ -42,6 +45,8 @@ export function HitlBlockerEditorDialog({ flowId, nodeId, open, onOpenChange }: 
       });
       setDescription('');
       onOpenChange(false);
+    } catch (err) {
+      setError(parseApiError(err).message || t('hitl.editor.error'));
     } finally {
       setIsNormalizing(false);
     }
@@ -59,10 +64,14 @@ export function HitlBlockerEditorDialog({ flowId, nodeId, open, onOpenChange }: 
           <Textarea
             id="hitl-blocker-description"
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => {
+              setDescription(event.target.value);
+              setError(null);
+            }}
             rows={4}
             placeholder={t('hitl.editor.placeholder')}
           />
+          {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

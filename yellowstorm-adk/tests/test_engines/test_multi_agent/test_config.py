@@ -30,14 +30,14 @@ class TestAgentTeamConfig:
         assert config.chatbot_name == {"provider": "openai", "model": "gpt-4"}
         assert config.doc_tree is None
         assert config.brain_tree is None
-        assert config.brain_ids is None
+        assert config.workspace_names is None
         assert config.vectorstore_name == "default"
 
     def test_config_initialization_full(self):
         """Test config initialization with all parameters."""
         doc_tree = [{"id": "doc1", "name": "Document 1"}]
         brain_tree = [{"id": "brain1", "name": "Brain 1"}]
-        brain_ids = ["brain1", "brain2"]
+        workspace_names = ["brain1", "brain2"]
 
         config = AgentTeamConfig(
             session_id="test-session-456",
@@ -45,7 +45,7 @@ class TestAgentTeamConfig:
             chatbot_name={"provider": "anthropic", "model": "claude-3"},
             doc_tree=doc_tree,
             brain_tree=brain_tree,
-            brain_ids=brain_ids,
+            workspace_names=workspace_names,
             vectorstore_name="custom-vectorstore"
         )
 
@@ -54,7 +54,7 @@ class TestAgentTeamConfig:
         assert config.chatbot_name == {"provider": "anthropic", "model": "claude-3"}
         assert config.doc_tree == doc_tree
         assert config.brain_tree == brain_tree
-        assert config.brain_ids == brain_ids
+        assert config.workspace_names == workspace_names
         assert config.vectorstore_name == "custom-vectorstore"
 
     def test_config_defaults(self):
@@ -69,7 +69,7 @@ class TestAgentTeamConfig:
         assert config.vectorstore_name == "default"
         assert config.doc_tree is None
         assert config.brain_tree is None
-        assert config.brain_ids is None
+        assert config.workspace_names is None
 
     def test_config_mutability(self):
         """Test that config fields can be modified after creation."""
@@ -82,11 +82,11 @@ class TestAgentTeamConfig:
         # Modify fields
         config.top_k = 15
         config.vectorstore_name = "modified-store"
-        config.brain_ids = ["new-brain"]
+        config.workspace_names = ["new-brain"]
 
         assert config.top_k == 15
         assert config.vectorstore_name == "modified-store"
-        assert config.brain_ids == ["new-brain"]
+        assert config.workspace_names == ["new-brain"]
 
     def test_config_with_complex_chatbot_name(self):
         """Test config with complex chatbot name structure."""

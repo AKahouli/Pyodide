@@ -27,7 +27,7 @@ class TestSmartRAGOrchestrator:
         mock_request.user_id = "user123"
         mock_request.session_id = "session456"
         mock_request.message = "Test user query"
-        mock_request.brain_ids = ["brain1"]
+        mock_request.workspace_names = ["brain1"]
         mock_request.top_k = 5
         mock_request.brain_documents = []
         mock_request.brain_relations = {}
@@ -114,7 +114,7 @@ class TestSmartRAGOrchestrator:
         mock_request.user_id = "user123"
         mock_request.session_id = "session456"
         mock_request.message = "Test user query"
-        mock_request.brain_ids = ["brain1"]
+        mock_request.workspace_names = ["brain1"]
         mock_request.top_k = 5
         mock_request.brain_documents = [{"id": "doc1", "content": "Document content"}]
         mock_request.brain_relations = {"nodes": [], "relationships": []}
@@ -151,7 +151,7 @@ class TestSmartRAGOrchestrator:
         mock_request.session_id = "session456"
         mock_request.message = "Test user query"
         # Missing required attributes to trigger exception
-        del mock_request.brain_ids
+        del mock_request.workspace_names
 
         mock_queue = AsyncMock()
 
@@ -193,7 +193,7 @@ class TestSmartRAGOrchestrator:
         mock_request.user_id = "user123"
         mock_request.session_id = "session456"
         mock_request.message = "Test user query"
-        mock_request.brain_ids = ["brain1"]
+        mock_request.workspace_names = ["brain1"]
         mock_request.top_k = 5
         mock_request.brain_documents = []
         mock_request.brain_relations = {}

@@ -413,7 +413,7 @@ def _citation_component(reference: str, source: str, content: str, parent_id: st
             "text_source": {
                 "type": "text",
                 "source": source,
-                "external_id": source.lower().replace(" ", "-"),
+                "file_name": source.lower().replace(" ", "-"),
                 "page": "1",
                 "page_content": content,
                 "workspace_id": "workspace-1",

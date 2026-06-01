@@ -48,16 +48,16 @@ async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     from src.flow_engine.runtime.indexing_webhook import resolve_indexing_webhook
 
     metadata = payload.get("metadata") or {}
-    doc_id = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
+    external_id_value = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
     raw_status = str(payload.get("status") or "").strip()
 
-    if not doc_id:
-        logger.warning("[index/webhook] Received payload with no external_id", payload=payload)
-        return {"ok": False, "error": "missing external_id"}
+    if not external_id_value:
+        logger.warning("[index/webhook] Received payload with no external identifier", payload=payload)
+        return {"ok": False, "error": "missing external identifier"}
 
-    resolved = resolve_indexing_webhook(doc_id, raw_status, payload)
+    resolved = resolve_indexing_webhook(external_id_value, raw_status, payload)
     logger.info(
-        f"[index/webhook] doc_id={doc_id} status={raw_status} resolved={resolved}"
+        f"[index/webhook] external_id={external_id_value} status={raw_status} resolved={resolved}"
     )
     return {"ok": True, "resolved": resolved}
 

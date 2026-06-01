@@ -36,14 +36,14 @@ def _build_connector_source_signature(source: Dict[str, Any]) -> str:
         parts = [
             source_type,
             str(source.get("path") or ""),
-            str(source.get("external_id") or ""),
+            str(source.get("workspace_name") or ""),
             str(source.get("page") or ""),
         ]
     else:
         parts = [
             source_type,
             str(source.get("source") or ""),
-            str(source.get("external_id") or ""),
+            str(source.get("file_name") or ""),
             str(source.get("page") or ""),
             str(source.get("page_content") or ""),
         ]
@@ -71,11 +71,11 @@ def _register_connector_text_source(
     if existing_reference:
         source["reference"] = existing_reference
         logger.info(
-            "connector_citation_reused reference=%s source_type=%s source=%s external_id=%s page=%s",
+            "connector_citation_reused reference=%s source_type=%s source=%s file_name=%s page=%s",
             existing_reference,
             source.get("type", "text"),
             source.get("source") or source.get("path") or "",
-            source.get("external_id") or "",
+            source.get("file_name") or "",
             source.get("page") or "",
         )
         return source
@@ -96,8 +96,9 @@ def _register_connector_text_source(
                         "path": str(source.get("path") or ""),
                         "page": str(source.get("page") or ""),
                         "file_name": str(source.get("file_name") or ""),
-                        "external_id": str(source.get("external_id") or ""),
-                        "brain_id": str(source.get("workspace_id") or ""),
+                        "workspace_name": str(
+                            source.get("workspace_name") or source.get("workspace_id") or ""
+                        ),
                         "height": str(source.get("height") or ""),
                         "width": str(source.get("width") or ""),
                     }
@@ -111,21 +112,23 @@ def _register_connector_text_source(
                 "object": {
                     "content": {
                         "source": str(source.get("source") or ""),
-                        "external_id": str(source.get("external_id") or ""),
+                        "file_name": str(source.get("file_name") or ""),
                         "page": str(source.get("page") or ""),
                         "page_content": str(source.get("page_content") or ""),
-                        "brain_id": str(source.get("workspace_id") or ""),
+                        "workspace_name": str(
+                            source.get("workspace_name") or source.get("workspace_id") or ""
+                        ),
                     }
                 },
             }
         )
 
     logger.info(
-        "connector_citation_registered reference=%s source_type=%s source=%s external_id=%s page=%s text_source_total=%s image_source_total=%s",
+        "connector_citation_registered reference=%s source_type=%s source=%s file_name=%s page=%s text_source_total=%s image_source_total=%s",
         reference,
         source_type,
         source.get("source") or source.get("path") or "",
-        source.get("external_id") or "",
+        source.get("file_name") or "",
         source.get("page") or "",
         len(text_sources),
         len(image_sources),
@@ -491,14 +494,26 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
     return inspect.Signature(parameters)
 
 
-_SINGULAR_BRAIN_ID_PARAMS = ("brain_id", "brainId", "workspace_id", "workspaceId")
-_PLURAL_BRAIN_ID_PARAMS = ("brain_ids", "brainIds", "workspace_ids", "workspaceIds")
+_SINGULAR_WORKSPACE_NAME_PARAMS = ("workspace_name", "workspaceName")
+_PLURAL_WORKSPACE_NAME_PARAMS = ("workspace_names", "workspaceNames")
+_SINGULAR_LEGACY_WORKSPACE_PARAMS = (
+    "brain_id",
+    "brainId",
+    "workspace_id",
+    "workspaceId",
+)
+_PLURAL_LEGACY_WORKSPACE_PARAMS = (
+    "brain_ids",
+    "brainIds",
+    "workspace_ids",
+    "workspaceIds",
+)
 
 
-def _resolve_default_brain_id(
-    brain_ids: Optional[List[str]], workspace_id: Optional[str]
+def _resolve_default_workspace_name(
+    workspace_names: Optional[List[str]], workspace_id: Optional[str]
 ) -> Optional[str]:
-    for value in brain_ids or []:
+    for value in workspace_names or []:
         normalized = str(value or "").strip()
         if normalized:
             return normalized
@@ -506,11 +521,11 @@ def _resolve_default_brain_id(
     return normalized_workspace_id or None
 
 
-def _relax_bound_brain_id_requirements(
+def _relax_bound_workspace_requirements(
     parameter_schema: Dict[str, Any],
-    default_brain_id: Optional[str],
+    default_workspace_name: Optional[str],
 ) -> Dict[str, Any]:
-    if not default_brain_id or not isinstance(parameter_schema, dict):
+    if not default_workspace_name or not isinstance(parameter_schema, dict):
         return parameter_schema
 
     properties = parameter_schema.get("properties")
@@ -519,7 +534,13 @@ def _relax_bound_brain_id_requirements(
         return parameter_schema
 
     bound_names = {
-        name for name in (*_SINGULAR_BRAIN_ID_PARAMS, *_PLURAL_BRAIN_ID_PARAMS)
+        name
+        for name in (
+            *_SINGULAR_WORKSPACE_NAME_PARAMS,
+            *_PLURAL_WORKSPACE_NAME_PARAMS,
+            *_SINGULAR_LEGACY_WORKSPACE_PARAMS,
+            *_PLURAL_LEGACY_WORKSPACE_PARAMS,
+        )
         if name in properties
     }
     if not bound_names:
@@ -530,14 +551,16 @@ def _relax_bound_brain_id_requirements(
     return relaxed_schema
 
 
-def _with_default_brain_id_params(
+def _with_default_workspace_params(
     params: Dict[str, Any],
     parameter_schema: Dict[str, Any],
-    brain_ids: Optional[List[str]],
+    workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
 ) -> Dict[str, Any]:
-    default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
-    if not default_brain_id:
+    default_workspace_name = _resolve_default_workspace_name(
+        workspace_names, workspace_id
+    )
+    if not default_workspace_name:
         return params
 
     merged_params = dict(params)
@@ -548,21 +571,23 @@ def _with_default_brain_id_params(
     )
 
     # Generic connector schemas expose a free-form `params` object, so bind the
-    # canonical brain_id there. Explicit schemas only receive declared id fields.
+    # canonical workspace_name there. Explicit schemas only receive declared fields.
     if not isinstance(properties, dict) or not properties:
-        merged_params.setdefault("brain_id", default_brain_id)
+        merged_params.setdefault("workspace_name", default_workspace_name)
         return merged_params
 
-    for name in _SINGULAR_BRAIN_ID_PARAMS:
+    for name in (*_SINGULAR_WORKSPACE_NAME_PARAMS, *_SINGULAR_LEGACY_WORKSPACE_PARAMS):
         if name in properties and not merged_params.get(name):
-            merged_params[name] = default_brain_id
+            merged_params[name] = default_workspace_name
 
-    available_brain_ids = [
-        str(value).strip() for value in (brain_ids or []) if str(value or "").strip()
-    ] or [default_brain_id]
-    for name in _PLURAL_BRAIN_ID_PARAMS:
+    available_workspace_names = [
+        str(value).strip()
+        for value in (workspace_names or [])
+        if str(value or "").strip()
+    ] or [default_workspace_name]
+    for name in (*_PLURAL_WORKSPACE_NAME_PARAMS, *_PLURAL_LEGACY_WORKSPACE_PARAMS):
         if name in properties and not merged_params.get(name):
-            merged_params[name] = available_brain_ids
+            merged_params[name] = available_workspace_names
 
     return merged_params
 
@@ -571,8 +596,10 @@ def create_connector_tools(
     bindings: List[Dict[str, Any]],
     workspace_id: Optional[str] = None,
     brain_ids: Optional[List[str]] = None,
+    workspace_names: Optional[List[str]] = None,
 ) -> List[Any]:
     tools: List[Any] = []
+    effective_workspace_names = workspace_names if workspace_names is not None else brain_ids
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
 
@@ -742,10 +769,12 @@ def create_connector_tools(
                 f"{description} Use this tool to search, browse, or inspect remote items first. "
                 "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
             )
-            default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
-            parameter_schema = _relax_bound_brain_id_requirements(
+            default_workspace_name = _resolve_default_workspace_name(
+                effective_workspace_names, workspace_id
+            )
+            parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
-                default_brain_id,
+                default_workspace_name,
             )
             schema = _build_function_schema(tool_name, description, parameter_schema)
             signature = _build_signature(parameter_schema)
@@ -777,10 +806,10 @@ def create_connector_tools(
                     else kwargs
                 )
                 merged_params = {**_fixed_params, **params}
-                merged_params = _with_default_brain_id_params(
+                merged_params = _with_default_workspace_params(
                     merged_params,
                     _parameter_schema,
-                    brain_ids,
+                    effective_workspace_names,
                     workspace_id,
                 )
                 logger.info(
@@ -843,11 +872,11 @@ def create_connector_tools(
             tools.append(SearchToolADK(_connector_tool, schema))
 
         logger.info(
-            "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s brain_ids=%s",
+            "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s workspace_names=%s",
             connector_id,
             connector_name,
             len(binding.get("actions") or []),
-            brain_ids,
+            effective_workspace_names,
         )
 
     return tools

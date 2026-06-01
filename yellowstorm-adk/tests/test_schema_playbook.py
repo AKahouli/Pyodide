@@ -24,7 +24,7 @@ class TestRunPlaybookStepRequest:
             prompt="You are a helpful agent",
             tools=[{"name": "search", "top_k": 3}],
             chatbot_name={"provider": "gpt-4"},
-            brain_ids=["brain-1"],
+            workspace_names=["brain-1"],
             save_memory=False,
         )
 
@@ -37,7 +37,7 @@ class TestRunPlaybookStepRequest:
             description="A manager agent",
             prompt="You are a manager",
             chatbot_name={"provider": "gpt-4"},
-            brain_ids=[],
+            workspace_names=[],
             agent_type="manager",
         )
 
@@ -296,7 +296,7 @@ class TestRunPlaybookRequest:
                 "description": "Manager",
                 "prompt": "You manage tasks",
                 "chatbot_name": {"provider": "gpt-4"},
-                "brain_ids": [],
+                "workspace_names": [],
                 "agent_type": "manager",
             },
             steps=[
@@ -313,7 +313,7 @@ class TestRunPlaybookRequest:
                         "description": "Worker",
                         "prompt": "Do the work",
                         "chatbot_name": {"provider": "gpt-4"},
-                        "brain_ids": [],
+                        "workspace_names": [],
                     },
                     "manager_agent": {
                         "id": "manager-1",
@@ -321,7 +321,7 @@ class TestRunPlaybookRequest:
                         "description": "Manager",
                         "prompt": "You manage tasks",
                         "chatbot_name": {"provider": "gpt-4"},
-                        "brain_ids": [],
+                        "workspace_names": [],
                         "agent_type": "manager",
                     },
                     "call_id": "call-1",

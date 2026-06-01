@@ -1,8 +1,16 @@
 """Pydantic models for chatbot endpoints."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
+
+
+def _sync_workspace_aliases(data: Dict[str, Any]) -> Dict[str, Any]:
+    if data.get("brain_ids") is None and data.get("workspace_names") is not None:
+        data["brain_ids"] = data["workspace_names"]
+    if data.get("workspace_names") is None and data.get("brain_ids") is not None:
+        data["workspace_names"] = data["brain_ids"]
+    return data
 
 
 class SkillFile(BaseModel):
@@ -35,12 +43,16 @@ class ChatWithADKRequest(BaseModel):
     image_input: Optional[List[Dict]] = None
     top_k: int = 2
     vectorstore_name: Optional[str] = "vectorstorerec"
+    workspace_names: Optional[List[str]] = None
     brain_ids: Optional[List[str]] = None
     enable_multilingual: bool = False
     brain_documents: Optional[List] = None
     brain_relations: Optional[Dict] = None
     languages: Optional[List[str]] = None
     search_web: Optional[bool] = False
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**_sync_workspace_aliases(data))
 
 
 class AgentSuggestion(BaseModel):
@@ -52,12 +64,13 @@ class AgentSuggestion(BaseModel):
     instruction: Optional[str] = None # Compatibility alias for prompt
     model: Optional[str] = None       # Compatibility alias for chatbot_name['name']
     tools: Optional[List[Dict]] = None
-    brain_ids: Optional[List[str]] = None
-    knowledge_bases: Optional[List[str]] = None # Compatibility alias for brain_ids
+    workspace_names: Optional[List[str]] = None
+    knowledge_bases: Optional[List[str]] = None # Compatibility alias for workspace_names
     skills: Optional[List[Skill]] = None
     #tools example : [{"name": "search_web","prompt":"","description": "Useful for when you need to answer questions about current events or the web. Input should be a search query.", "top_k": 3}]
     html: Optional[bool] = False
     vectorstore_name: Optional[str] = "vectorstorerec"
+    workspace_names: Optional[List[str]] = []
     brain_ids: Optional[List[str]] = []
     brain_documents: Optional[List] = []
     brain_relations: Optional[Dict] = {'nodes': [], 'relationships': []}
@@ -66,6 +79,10 @@ class AgentSuggestion(BaseModel):
     agent_params: Optional[Dict] = None
     agent_type: Optional[str] = None  # Can be "normal" or "manager"
     save_memory: Optional[bool] = False
+    mcp: Optional[Dict] = None
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**_sync_workspace_aliases(data))
 
 
 class RunAgentTeamRequest(BaseModel):
@@ -84,11 +101,15 @@ class RunAgentTeamRequest(BaseModel):
     available_agents: Optional[List[AgentSuggestion]] = []
     available_tools: Optional[List[Dict]] = []
     vectorstore_name: str = "default"
+    workspace_names: Optional[List[str]] = None
     brain_ids: Optional[List[str]] = None
     brain_documents: Optional[List] = None
     brain_relations: Optional[Dict] = None
     search_web: Optional[bool] = False
     agent_mode: str
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**_sync_workspace_aliases(data))
 
 class UserContext(BaseModel):
     """Schema for user context (user_id + username together)."""

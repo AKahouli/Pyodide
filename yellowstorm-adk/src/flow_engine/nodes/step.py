@@ -472,6 +472,7 @@ async def _execute_step(
     litellm.drop_params = True
 
     from src.flow_engine.tools import create_langchain_tools
+    from src.flow_engine.tools.langchain_factory import _resolve_workspace_names, _looks_like_object_id
 
     output_workspace_id = _resolve_output_workspace_id(
         metadata,
@@ -479,16 +480,36 @@ async def _execute_step(
         state,
     )
 
+    # Resolve ObjectId brain_ids → real workspace names before tool creation
+    raw_brain_ids = agent_config.get("brain_ids") or []
+    ids_to_resolve = [i for i in raw_brain_ids if _looks_like_object_id(str(i))]
+    # Also resolve output_workspace_id so connector tools get a real name as fallback
+    if output_workspace_id and _looks_like_object_id(output_workspace_id) and output_workspace_id not in ids_to_resolve:
+        ids_to_resolve.append(output_workspace_id)
+    logger.info(
+        "[step] workspace_name_resolution brain_ids=%s output_workspace_id=%s ids_to_resolve=%s",
+        raw_brain_ids,
+        output_workspace_id,
+        ids_to_resolve,
+    )
+    resolved_workspace_names = await _resolve_workspace_names(ids_to_resolve) if ids_to_resolve else {}
+    logger.info(
+        "[step] workspace_name_resolution_result resolved=%s",
+        resolved_workspace_names,
+    )
+
     tools, collector = create_langchain_tools(
         agent_config=agent_config,
         workspace_context=tool_scope.workspace_context,
-        input_files=tool_scope.input_files,
+        input_files=tool_scope.file_names,
         documents_by_port=tool_scope.documents_by_port,
         code_interpreter_files=tool_scope.code_interpreter_files,
         output_ports=(output_contract or {}).get("ports") if isinstance(output_contract, dict) else None,
         step_connector_bindings=connector_bindings,
         output_workspace_id=output_workspace_id,
         workspace_context_mode=tool_scope.workspace_context_mode,
+        user_id=str(state.get("evaluation_user_id") or ""),
+        resolved_workspace_names=resolved_workspace_names,
     )
     components: list[dict[str, Any]] = []
     should_stream_tokens = (
