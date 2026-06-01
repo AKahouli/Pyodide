@@ -161,6 +161,8 @@ export enum ErrorCode {
   // Tool errors (2200-2299)
   TOOL_NOT_FOUND = 'ERR_2200',
   TOOL_ALREADY_EXISTS = 'ERR_2201',
+  TOOL_CATEGORY_NOT_FOUND = 'ERR_2210',
+  TOOL_CATEGORY_ALREADY_EXISTS = 'ERR_2211',
 
   // Skill errors (2250-2299)
   SKILL_NOT_FOUND = 'ERR_2250',
@@ -244,6 +246,8 @@ export enum ErrorCode {
   CONNECTOR_NOT_FOUND = 'ERR_3100',
   CONNECTOR_ALREADY_EXISTS = 'ERR_3101',
   CONNECTOR_CREDENTIAL_NOT_FOUND = 'ERR_3110',
+  CONNECTOR_CATEGORY_NOT_FOUND = 'ERR_3120',
+  CONNECTOR_CATEGORY_ALREADY_EXISTS = 'ERR_3121',
 
   // Telegram integration errors (3200-3299)
   TELEGRAM_INTEGRATION_NOT_FOUND = 'ERR_3200',
@@ -408,6 +412,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.TOOL_NOT_FOUND]: 'Tool not found.',
   [ErrorCode.TOOL_ALREADY_EXISTS]: 'A tool with this name already exists.',
+  [ErrorCode.TOOL_CATEGORY_NOT_FOUND]: 'Tool category not found.',
+  [ErrorCode.TOOL_CATEGORY_ALREADY_EXISTS]: 'A tool category with this name already exists.',
   [ErrorCode.SKILL_NOT_FOUND]: 'Skill not found.',
   [ErrorCode.SKILL_ALREADY_EXISTS]: 'A skill with this name already exists.',
 
@@ -488,6 +494,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
   [ErrorCode.CONNECTOR_CREDENTIAL_NOT_FOUND]: 'Connector credential not found.',
+  [ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND]: 'Connector category not found.',
+  [ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS]: 'A connector category with this name already exists.',
   [ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND]: 'Telegram integration not found for this agent.',
   [ErrorCode.TELEGRAM_TOKEN_INVALID]: 'Telegram bot token is invalid.',
   [ErrorCode.TELEGRAM_WEBHOOK_UNAUTHORIZED]: 'Telegram webhook secret validation failed.',

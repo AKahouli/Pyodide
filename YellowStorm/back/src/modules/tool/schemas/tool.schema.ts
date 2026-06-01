@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, HydratedDocument, Schema as MongooseSchema } from 'mongoose';
+import { Document, HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type ToolDocument = HydratedDocument<Tool>;
 
@@ -37,6 +37,18 @@ export class Tool extends Document {
 
   @Prop({ default: '' })
   description!: string;
+
+  @Prop({ default: '', maxlength: 64 })
+  icon!: string;
+
+  @Prop({ default: '', maxlength: 64 })
+  color!: string;
+
+  @Prop({ default: 'light', enum: ['light', 'dark'] })
+  iconColor!: 'light' | 'dark';
+
+  @Prop({ type: Types.ObjectId, ref: 'ToolCategory', default: null, index: true })
+  categoryId?: Types.ObjectId | null;
 
   @Prop({ type: [String], default: [] })
   defaultAgentTypes!: string[];

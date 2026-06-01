@@ -180,6 +180,10 @@ export const API_ENDPOINTS = {
     list: '/admin/tools',
     byId: (id: string) => `/admin/tools/${id}`,
   },
+  adminToolCategories: {
+    list: '/admin/tool-categories',
+    byId: (id: string) => `/admin/tool-categories/${id}`,
+  },
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,
@@ -195,6 +199,10 @@ export const API_ENDPOINTS = {
     oauthAuthorize: (appKey: string) => `/admin/connectors/oauth/${appKey}/authorize`,
     oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
     oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
+  },
+  adminConnectorCategories: {
+    list: '/admin/connector-categories',
+    byId: (id: string) => `/admin/connector-categories/${id}`,
   },
   connectors: {
     list: '/connectors',

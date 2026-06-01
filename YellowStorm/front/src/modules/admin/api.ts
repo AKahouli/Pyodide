@@ -63,8 +63,11 @@ import type {
   UpdatePlaybookNodeTemplateRequest,
   ToolListResponse,
   ToolResponse,
+  ToolCategoryResponse,
   CreateToolRequest,
   UpdateToolRequest,
+  CreateToolCategoryRequest,
+  UpdateToolCategoryRequest,
   ToolQueryParams,
   SkillListResponse,
   SkillResponse,
@@ -78,6 +81,9 @@ import type {
   ConnectorQueryParams,
   McpInspectResult,
   ConnectorOAuthStatusResponse,
+  ConnectorCategoryResponse,
+  CreateConnectorCategoryRequest,
+  UpdateConnectorCategoryRequest,
 } from './types';
 
 // Helper to build query string
@@ -649,6 +655,40 @@ export async function deleteTool(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminTools.byId(id));
 }
 
+// Tool Categories API
+
+export async function getToolCategories(): Promise<ToolCategoryResponse[]> {
+  const response = await apiClient.get<ApiResponse<ToolCategoryResponse[]>>(
+    API_ENDPOINTS.adminToolCategories.list,
+  );
+  return response.data.data;
+}
+
+export async function createToolCategory(
+  data: CreateToolCategoryRequest,
+): Promise<ToolCategoryResponse> {
+  const response = await apiClient.post<ApiResponse<ToolCategoryResponse>>(
+    API_ENDPOINTS.adminToolCategories.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateToolCategory(
+  id: string,
+  data: UpdateToolCategoryRequest,
+): Promise<ToolCategoryResponse> {
+  const response = await apiClient.patch<ApiResponse<ToolCategoryResponse>>(
+    API_ENDPOINTS.adminToolCategories.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteToolCategory(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminToolCategories.byId(id));
+}
+
 // Skills API
 
 function buildSkillQueryString(params: SkillQueryParams): string {
@@ -750,6 +790,40 @@ export async function updateConnector(id: string, data: UpdateConnectorRequest):
 
 export async function deleteConnector(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
+}
+
+// Connector Categories API
+
+export async function getConnectorCategories(): Promise<ConnectorCategoryResponse[]> {
+  const response = await apiClient.get<ApiResponse<ConnectorCategoryResponse[]>>(
+    API_ENDPOINTS.adminConnectorCategories.list,
+  );
+  return response.data.data;
+}
+
+export async function createConnectorCategory(
+  data: CreateConnectorCategoryRequest,
+): Promise<ConnectorCategoryResponse> {
+  const response = await apiClient.post<ApiResponse<ConnectorCategoryResponse>>(
+    API_ENDPOINTS.adminConnectorCategories.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateConnectorCategory(
+  id: string,
+  data: UpdateConnectorCategoryRequest,
+): Promise<ConnectorCategoryResponse> {
+  const response = await apiClient.patch<ApiResponse<ConnectorCategoryResponse>>(
+    API_ENDPOINTS.adminConnectorCategories.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteConnectorCategory(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminConnectorCategories.byId(id));
 }
 
 export async function inspectMcp(
