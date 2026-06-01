@@ -20,6 +20,7 @@ import {
 } from '../store';
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
+import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
 import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, InterruptType } from '../types';
 
 interface Props {
@@ -332,12 +333,15 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const handleInterruptSubmit = useCallback(async (
     action: 'reply' | 'approve' | 'reject',
     extra?: { reason?: string; feedback?: string; message?: string },
+    options?: { scope?: HitlFeedbackScope; remember?: boolean },
   ) => {
     if (!playbookId || !currentExecution || !activeInterruptEntry) return;
 
     setIsSubmittingInterrupt(true);
     try {
       const responseMessage = extra?.message || extra?.feedback || extra?.reason || '';
+      const responseScope = options?.scope ?? feedbackScope;
+      const responseRemember = options?.remember ?? rememberFeedback;
       const answeredEntry: InterruptEntry = {
         ...activeInterruptEntry,
         status: 'answered',
@@ -347,8 +351,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         approved: action === 'approve' ? true : action === 'reject' ? false : activeInterruptEntry.approved,
         reason: extra?.reason || activeInterruptEntry.reason,
         feedback: extra?.feedback || activeInterruptEntry.feedback,
-        scope: feedbackScope,
-        remember: rememberFeedback,
+        scope: responseScope,
+        remember: responseRemember,
         respondedAt: new Date().toISOString(),
       };
       setLocalInterruptThread({
@@ -366,8 +370,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         approved: action === 'approve' ? true : action === 'reject' ? false : undefined,
         reason: extra?.reason,
         feedback: extra?.feedback,
-        scope: feedbackScope,
-        remember: rememberFeedback,
+        scope: responseScope,
+        remember: responseRemember,
       });
       setResponse('');
       setRejectReason('');
@@ -379,6 +383,42 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       setIsSubmittingInterrupt(false);
     }
   }, [playbookId, currentExecution, activeInterruptEntry, interruptPayload?.taskId, interruptPayload?.interruptId, interruptedTask?.taskId, interruptThread, resumeExecution, feedbackScope, rememberFeedback]);
+
+  const handleQuickResume = useCallback(async (scope: HitlFeedbackScope) => {
+    await handleInterruptSubmit('reply', {
+      message: PROCEED_WITH_AVAILABLE_INFORMATION,
+      feedback: PROCEED_WITH_AVAILABLE_INFORMATION,
+    }, { scope, remember: false });
+  }, [handleInterruptSubmit]);
+
+  const handleDisableSmartHitlForNode = useCallback(async () => {
+    const nodeId = interruptPayload?.taskId || interruptedTask?.taskId;
+    if (!playbookId || !nodeId) return;
+    await updateNodeHitlPolicy(playbookId, nodeId, {
+      mode: 'off',
+      disabledReason: 'Disabled from run-mode HITL assistant.',
+    });
+  }, [interruptPayload?.taskId, interruptedTask?.taskId, playbookId]);
+
+  const handleSaveWorkflowRule = useCallback(async () => {
+    if (!playbookId || !activeInterruptEntry) return;
+    const label = activeInterruptEntry.reasonCode || activeInterruptEntry.blockerKind || activeInterruptEntry.message || t('interrupt.saveWorkflowRule');
+    await createHitlBlocker(playbookId, {
+      scope: 'workflow',
+      nodeId: null,
+      enabled: true,
+      kind: 'custom',
+      label: String(label).slice(0, 80),
+      description: activeInterruptEntry.message || String(label),
+      action: activeInterruptEntry.interruptType === 'approval_request' ? 'approve' : 'clarify',
+      riskLevel: (activeInterruptEntry.riskLevel === 'low' || activeInterruptEntry.riskLevel === 'high' || activeInterruptEntry.riskLevel === 'critical')
+        ? activeInterruptEntry.riskLevel
+        : 'medium',
+      sensitivity: 'balanced',
+      matcherType: 'llm_judge',
+      matcherConfig: { interruptId: activeInterruptEntry.interruptId, reasonCode: activeInterruptEntry.reasonCode },
+    });
+  }, [activeInterruptEntry, playbookId, t]);
 
   const handleDisableBlocker = useCallback(async () => {
     if (!currentExecution || !activeInterruptEntry?.interruptId) return;
@@ -671,6 +711,46 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               />
               <span>{t('interrupt.rememberFeedback')}</span>
             </label>
+            <div className="grid grid-cols-1 gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 justify-start px-2 text-xs text-muted-foreground"
+                disabled={isSubmittingInterrupt}
+                onClick={() => void handleQuickResume('entire_run')}
+              >
+                {t('interrupt.disableForRun')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 justify-start px-2 text-xs text-muted-foreground"
+                disabled={isSubmittingInterrupt}
+                onClick={() => void handleQuickResume('step_only')}
+              >
+                {t('interrupt.disableForStep')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 justify-start px-2 text-xs text-muted-foreground"
+                onClick={() => void handleDisableSmartHitlForNode()}
+              >
+                {t('interrupt.disableSmartForNode')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 justify-start px-2 text-xs text-muted-foreground"
+                onClick={() => void handleSaveWorkflowRule()}
+              >
+                {t('interrupt.saveWorkflowRule')}
+              </Button>
+            </div>
             {activeInterruptEntry.blockerRuleId && (
               <Button
                 type="button"

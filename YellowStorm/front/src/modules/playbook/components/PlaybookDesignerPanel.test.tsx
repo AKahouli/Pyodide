@@ -13,6 +13,9 @@ type StoreSnapshot = {
   selectStep: ReturnType<typeof vi.fn>;
 };
 
+const createHitlBlockerMock = vi.fn();
+const updateNodeHitlPolicyMock = vi.fn();
+
 const storeState: StoreSnapshot = {
   currentExecution: null,
   copilotMode: 'interrupt',
@@ -28,6 +31,11 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('../hooks/useAutosave', () => ({
   useAutosave: () => ({ saveNow: vi.fn() }),
+}));
+
+vi.mock('../api', () => ({
+  createHitlBlocker: (...args: unknown[]) => createHitlBlockerMock(...args),
+  updateNodeHitlPolicy: (...args: unknown[]) => updateNodeHitlPolicyMock(...args),
 }));
 
 vi.mock('@/components/ui/select', () => ({
@@ -166,6 +174,8 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     storeState.resumeExecution = vi.fn().mockResolvedValue(undefined);
     storeState.disableHitlBlocker = vi.fn().mockResolvedValue(undefined);
     storeState.selectStep = vi.fn();
+    createHitlBlockerMock.mockResolvedValue({ id: 'blocker-2' });
+    updateNodeHitlPolicyMock.mockResolvedValue({ mode: 'off' });
   });
 
   it('defaults sensitive approvals to step-only feedback without memory', async () => {
@@ -241,6 +251,31 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(storeState.disableHitlBlocker).toHaveBeenCalledWith('execution-1', 'interrupt-1');
     expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('future_node_runs');
     expect(screen.getByLabelText('interrupt.rememberFeedback')).toBeChecked();
+  });
+
+  it('offers the run-mode blocker quick actions', async () => {
+    const user = userEvent.setup();
+    await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium', blockerRuleId: 'blocker-1' }));
+
+    await user.click(screen.getByRole('button', { name: 'interrupt.disableForRun' }));
+
+    expect(storeState.resumeExecution).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+      executionId: 'execution-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      scope: 'entire_run',
+      remember: false,
+    }));
+
+    await user.click(screen.getByRole('button', { name: 'interrupt.disableSmartForNode' }));
+    expect(updateNodeHitlPolicyMock).toHaveBeenCalledWith('playbook-1', 'task-1', expect.objectContaining({ mode: 'off' }));
+
+    await user.click(screen.getByRole('button', { name: 'interrupt.saveWorkflowRule' }));
+    expect(createHitlBlockerMock).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+      scope: 'workflow',
+      nodeId: null,
+      action: 'clarify',
+    }));
   });
 
   it('keeps the answered HITL thread visible after the active interrupt clears', async () => {
