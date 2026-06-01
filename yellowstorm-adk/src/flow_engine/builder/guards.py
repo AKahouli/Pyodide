@@ -120,13 +120,13 @@ def wrap_node_for_iteration(
         max_iterations = rc.get("max_iterations")
         output_labels = rc.get("output_labels", ["continue"])
 
-    async def _wrapped(state: ExecutionState, _fn=fn, _nid=node_id, _max=max_iterations, _labels=output_labels) -> dict[str, Any]:
+    async def _wrapped(state: ExecutionState, config=None, *, _fn=fn, _nid=node_id, _max=max_iterations, _labels=output_labels) -> dict[str, Any]:
         iteration = state["iterations"].get(_nid, 0)
         if _max is not None and iteration >= _max:
             terminal_label = _labels[-1] if len(_labels) > 1 else _labels[0]
             logger.info("[guards] Max iterations reached — writing terminal label", node_id=_nid, iteration=iteration, max=_max, terminal=terminal_label)
             return {"router_decisions": {_nid: terminal_label}}
-        return await _fn(state)
+        return await _fn(state, config)
 
     return _wrapped
 
@@ -136,9 +136,9 @@ def wrap_node_for_error_routing(
     node_id: str,
     router_id: str,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
-    async def _wrapped(state: ExecutionState, _fn=fn, _nid=node_id, _rid=router_id) -> dict[str, Any]:
+    async def _wrapped(state: ExecutionState, config=None, *, _fn=fn, _nid=node_id, _rid=router_id) -> dict[str, Any]:
         try:
-            return await _fn(state)
+            return await _fn(state, config)
         except Exception as exc:
             iteration = state["iterations"].get(_nid, 0)
             logger.error("[guards] Node failed — routing to __error__", node_id=_nid, router_id=_rid, error=str(exc))

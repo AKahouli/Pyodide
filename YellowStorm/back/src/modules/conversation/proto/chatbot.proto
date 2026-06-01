@@ -14,7 +14,7 @@ message ImageData {
 
 message DocumentData {
     // === Identity & Location ===
-    string filepath = 1;                 // Path in Azure Data Lake (e.g., "workspaceId/docId.pdf")
+    string filepath = 1;                 // S3 object key in the shared Ceph bucket. Layout: {workspaceOwnerUserId}/{workspaceStoragePrefix}/{filename} (e.g., "abc123/my-project/report_q4.pdf")
     string filename = 2;                 // Display name (e.g., "report_q4.pdf")
     string external_id = 3;              // Unique document ID across systems
     string workspace_id = 4;                 // Brain/workspace this file belongs to
@@ -84,7 +84,7 @@ message Document {
                                          // Used for: Display, search results, agent context
 
     // === Storage & Access Fields ===
-    string filepath = 3;                 // Full file path (e.g., "workspaceId/documentId.xlsx")
+    string filepath = 3;                 // S3 object key in the shared Ceph bucket. Layout: {workspaceOwnerUserId}/{workspaceStoragePrefix}/{filename} (e.g., "abc123/marketing/finance.xlsx")
                                          // Used for: File retrieval, storage access
 
     bool in_memory = 4;                  // Whether document is cached in memory

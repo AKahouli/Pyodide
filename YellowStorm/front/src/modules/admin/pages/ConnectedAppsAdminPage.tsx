@@ -68,7 +68,6 @@ import { AppKeySelect } from '@/modules/connected-app/components/AppKeySelect';
 interface ConnectedAppAdmin {
   id: string;
   appKey: string;
-  authType: 'oauth2' | 'api_key';
   displayName: string;
   description?: string;
   iconKey?: string;
@@ -80,7 +79,6 @@ interface ConnectedAppAdmin {
   revokeUrl?: string;
   scopes: string[];
   pkceEnabled: boolean;
-  apiKey: string;
   enabled: boolean;
   sortOrder: number;
   connectedUserCount: number;
@@ -90,7 +88,6 @@ interface ConnectedAppAdmin {
 
 interface FormData {
   appKey: string;
-  authType: 'oauth2' | 'api_key';
   displayName: string;
   description: string;
   iconKey: string;
@@ -102,7 +99,6 @@ interface FormData {
   revokeUrl: string;
   scopes: string;
   pkceEnabled: boolean;
-  apiKey: string;
   enabled: boolean;
   sortOrder: number;
 }
@@ -111,7 +107,6 @@ const MASKED_VALUE = '****';
 
 const initialFormData: FormData = {
   appKey: '',
-  authType: 'oauth2',
   displayName: '',
   description: '',
   iconKey: '',
@@ -123,7 +118,6 @@ const initialFormData: FormData = {
   revokeUrl: '',
   scopes: '',
   pkceEnabled: true,
-  apiKey: '',
   enabled: true,
   sortOrder: 0,
 };
@@ -204,7 +198,6 @@ export function ConnectedAppsAdminPage() {
     setEditingApp(app);
     setFormData({
       appKey: app.appKey,
-      authType: app.authType || 'oauth2',
       displayName: app.displayName,
       description: app.description ?? '',
       iconKey: app.iconKey ?? '',
@@ -216,7 +209,6 @@ export function ConnectedAppsAdminPage() {
       revokeUrl: app.revokeUrl ?? '',
       scopes: app.scopes.join(', '),
       pkceEnabled: app.pkceEnabled,
-      apiKey: app.apiKey,
       enabled: app.enabled,
       sortOrder: app.sortOrder,
     });
@@ -232,53 +224,39 @@ export function ConnectedAppsAdminPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const payload: Record<string, any> = {
-      authType: formData.authType,
       displayName: formData.displayName,
-      scopes: formData.authType === 'oauth2' ? scopes : [],
+      authorizationUrl: formData.authorizationUrl,
+      tokenUrl: formData.tokenUrl,
+      scopes,
       sortOrder: formData.sortOrder,
+      pkceEnabled: formData.pkceEnabled,
       enabled: formData.enabled,
     };
 
     if (!isEdit) {
       payload.appKey = formData.appKey;
-    }
-
-    if (formData.authType === 'oauth2') {
-      payload.authorizationUrl = formData.authorizationUrl;
-      payload.tokenUrl = formData.tokenUrl;
-      payload.pkceEnabled = formData.pkceEnabled;
-      if (formData.revokeUrl) payload.revokeUrl = formData.revokeUrl;
-
-      if (!isEdit) {
-        payload.clientId = formData.clientId;
-        payload.clientSecret = formData.clientSecret;
-        if (formData.tenantId) {
-          payload.tenantId = formData.tenantId;
-        }
-      } else {
-        if (formData.clientId !== MASKED_VALUE) {
-          payload.clientId = formData.clientId;
-        }
-        if (formData.clientSecret !== MASKED_VALUE) {
-          payload.clientSecret = formData.clientSecret;
-        }
-        if (formData.tenantId && formData.tenantId !== MASKED_VALUE) {
-          payload.tenantId = formData.tenantId;
-        }
+      // For create, always include required secret fields
+      payload.clientId = formData.clientId;
+      payload.clientSecret = formData.clientSecret;
+      if (formData.tenantId) {
+        payload.tenantId = formData.tenantId;
       }
     } else {
-      // API key type
-      if (!isEdit) {
-        payload.apiKey = formData.apiKey;
-      } else {
-        if (formData.apiKey !== MASKED_VALUE) {
-          payload.apiKey = formData.apiKey;
-        }
+      // For edit, only include secret fields if they were changed from the masked value
+      if (formData.clientId !== MASKED_VALUE) {
+        payload.clientId = formData.clientId;
+      }
+      if (formData.clientSecret !== MASKED_VALUE) {
+        payload.clientSecret = formData.clientSecret;
+      }
+      if (formData.tenantId && formData.tenantId !== MASKED_VALUE) {
+        payload.tenantId = formData.tenantId;
       }
     }
 
     if (formData.description) payload.description = formData.description;
     if (formData.iconKey) payload.iconKey = formData.iconKey;
+    if (formData.revokeUrl) payload.revokeUrl = formData.revokeUrl;
 
     return payload;
   };
@@ -368,14 +346,12 @@ export function ConnectedAppsAdminPage() {
 
   const isFormValid =
     formData.displayName.trim() &&
-    (editingApp || formData.appKey.trim()) &&
-    (formData.authType === 'oauth2'
-      ? formData.clientId.trim() &&
-        formData.clientSecret.trim() &&
-        formData.authorizationUrl.trim() &&
-        formData.tokenUrl.trim() &&
-        formData.scopes.trim()
-      : formData.apiKey.trim());
+    formData.clientId.trim() &&
+    formData.clientSecret.trim() &&
+    formData.authorizationUrl.trim() &&
+    formData.tokenUrl.trim() &&
+    formData.scopes.trim() &&
+    (editingApp || formData.appKey.trim());
 
   if (loading && apps.length === 0) {
     return (
@@ -459,7 +435,6 @@ export function ConnectedAppsAdminPage() {
                   <TableHead className="hidden md:table-cell">
                     {tApp('admin.fields.appKey')}
                   </TableHead>
-                  <TableHead>Auth Type</TableHead>
                   <TableHead className="hidden lg:table-cell">
                     {tApp('admin.fields.scopes')}
                   </TableHead>
@@ -473,7 +448,7 @@ export function ConnectedAppsAdminPage() {
               <TableBody>
                 {filteredApps.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
+                    <TableCell colSpan={6} className="h-24 text-center">
                       {search ? 'No matching apps found.' : 'No apps configured yet.'}
                     </TableCell>
                   </TableRow>
@@ -492,11 +467,6 @@ export function ConnectedAppsAdminPage() {
                         <span className="text-sm font-mono text-muted-foreground">
                           {app.appKey}
                         </span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={app.authType === 'api_key' ? 'default' : 'secondary'}>
-                          {app.authType === 'api_key' ? 'API Key' : 'OAuth 2.0'}
-                        </Badge>
                       </TableCell>
                       <TableCell className="hidden lg:table-cell">
                         <span className="text-sm text-muted-foreground truncate max-w-48 block">
@@ -585,31 +555,6 @@ export function ConnectedAppsAdminPage() {
               </div>
             )}
 
-            {/* Auth Type Selector */}
-            <div className="space-y-2">
-              <Label htmlFor="authType">Authentication Type</Label>
-              <Select
-                value={formData.authType}
-                onValueChange={(value: 'oauth2' | 'api_key') =>
-                  setFormData((prev) => ({ ...prev, authType: value }))
-                }
-                disabled={!!editingApp}
-              >
-                <SelectTrigger id="authType">
-                  <SelectValue placeholder="Select authentication type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="oauth2">OAuth 2.0</SelectItem>
-                  <SelectItem value="api_key">API Key</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {formData.authType === 'oauth2'
-                  ? 'OAuth 2.0 requires users to connect their accounts through authorization flow.'
-                  : 'API Key type uses a static key that is stored in the app definition. No user connection required.'}
-              </p>
-            </div>
-
             {/* Display Name */}
             <div className="space-y-2">
               <Label htmlFor="displayName">{tApp('admin.fields.displayName')}</Label>
@@ -637,140 +582,103 @@ export function ConnectedAppsAdminPage() {
               />
             </div>
 
-            {/* OAuth 2.0 Fields */}
-            {formData.authType === 'oauth2' && (
-              <>
-                {/* Client ID & Client Secret */}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="clientId">{tApp('admin.fields.clientId')}</Label>
-                    <Input
-                      id="clientId"
-                      placeholder={editingApp ? MASKED_VALUE : 'OAuth client ID'}
-                      value={formData.clientId}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, clientId: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="clientSecret">{tApp('admin.fields.clientSecret')}</Label>
-                    <Input
-                      id="clientSecret"
-                      placeholder={editingApp ? MASKED_VALUE : 'OAuth client secret'}
-                      value={formData.clientSecret}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, clientSecret: e.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* Tenant ID */}
-                <div className="space-y-2">
-                  <Label htmlFor="tenantId">{tApp('admin.fields.tenantId')}</Label>
-                  <Input
-                    id="tenantId"
-                    placeholder="Azure AD tenant ID (optional)"
-                    value={formData.tenantId}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, tenantId: e.target.value }))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Required for Microsoft/Azure AD. Use &quot;common&quot; for multi-tenant or a specific tenant ID.
-                  </p>
-                </div>
-
-                {/* Authorization URL */}
-                <div className="space-y-2">
-                  <Label htmlFor="authorizationUrl">{tApp('admin.fields.authorizationUrl')}</Label>
-                  <Input
-                    id="authorizationUrl"
-                    placeholder="https://accounts.google.com/o/oauth2/v2/auth"
-                    value={formData.authorizationUrl}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, authorizationUrl: e.target.value }))
-                    }
-                  />
-                </div>
-
-                {/* Token URL */}
-                <div className="space-y-2">
-                  <Label htmlFor="tokenUrl">{tApp('admin.fields.tokenUrl')}</Label>
-                  <Input
-                    id="tokenUrl"
-                    placeholder="https://oauth2.googleapis.com/token"
-                    value={formData.tokenUrl}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, tokenUrl: e.target.value }))
-                    }
-                  />
-                </div>
-
-                {/* Revoke URL */}
-                <div className="space-y-2">
-                  <Label htmlFor="revokeUrl">{tApp('admin.fields.revokeUrl')}</Label>
-                  <Input
-                    id="revokeUrl"
-                    placeholder="https://oauth2.googleapis.com/revoke (optional)"
-                    value={formData.revokeUrl}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, revokeUrl: e.target.value }))
-                    }
-                  />
-                </div>
-
-                {/* Scopes */}
-                <div className="space-y-2">
-                  <Label htmlFor="scopes">{tApp('admin.fields.scopes')}</Label>
-                  <Textarea
-                    id="scopes"
-                    placeholder="Files.Read.All, Sites.Read.All, Mail.Read"
-                    value={formData.scopes}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, scopes: e.target.value }))
-                    }
-                    rows={2}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Comma-separated list of OAuth scopes to request from the provider.
-                  </p>
-                </div>
-
-                {/* PKCE Enabled toggle */}
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="pkceEnabled"
-                    checked={formData.pkceEnabled}
-                    onCheckedChange={(checked) =>
-                      setFormData((prev) => ({ ...prev, pkceEnabled: checked }))
-                    }
-                  />
-                  <Label htmlFor="pkceEnabled">{tApp('admin.fields.pkceEnabled')}</Label>
-                </div>
-              </>
-            )}
-
-            {/* API Key Field */}
-            {formData.authType === 'api_key' && (
+            {/* Client ID & Client Secret */}
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="apiKey">API Key</Label>
+                <Label htmlFor="clientId">{tApp('admin.fields.clientId')}</Label>
                 <Input
-                  id="apiKey"
-                  type="password"
-                  placeholder={editingApp ? MASKED_VALUE : 'Enter the API key'}
-                  value={formData.apiKey}
+                  id="clientId"
+                  placeholder={editingApp ? MASKED_VALUE : 'OAuth client ID'}
+                  value={formData.clientId}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, apiKey: e.target.value }))
+                    setFormData((prev) => ({ ...prev, clientId: e.target.value }))
                   }
                 />
-                <p className="text-xs text-muted-foreground">
-                  The API key will be encrypted and stored in the database. It will be used for all MCP requests to this service.
-                </p>
               </div>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="clientSecret">{tApp('admin.fields.clientSecret')}</Label>
+                <Input
+                  id="clientSecret"
+                  placeholder={editingApp ? MASKED_VALUE : 'OAuth client secret'}
+                  value={formData.clientSecret}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, clientSecret: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
 
+            {/* Tenant ID */}
+            <div className="space-y-2">
+              <Label htmlFor="tenantId">{tApp('admin.fields.tenantId')}</Label>
+              <Input
+                id="tenantId"
+                placeholder="Azure AD tenant ID (optional)"
+                value={formData.tenantId}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, tenantId: e.target.value }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Required for Microsoft/Azure AD. Use &quot;common&quot; for multi-tenant or a specific tenant ID.
+              </p>
+            </div>
+
+            {/* Authorization URL */}
+            <div className="space-y-2">
+              <Label htmlFor="authorizationUrl">{tApp('admin.fields.authorizationUrl')}</Label>
+              <Input
+                id="authorizationUrl"
+                placeholder="https://accounts.google.com/o/oauth2/v2/auth"
+                value={formData.authorizationUrl}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, authorizationUrl: e.target.value }))
+                }
+              />
+            </div>
+
+            {/* Token URL */}
+            <div className="space-y-2">
+              <Label htmlFor="tokenUrl">{tApp('admin.fields.tokenUrl')}</Label>
+              <Input
+                id="tokenUrl"
+                placeholder="https://oauth2.googleapis.com/token"
+                value={formData.tokenUrl}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, tokenUrl: e.target.value }))
+                }
+              />
+            </div>
+
+            {/* Revoke URL */}
+            <div className="space-y-2">
+              <Label htmlFor="revokeUrl">{tApp('admin.fields.revokeUrl')}</Label>
+              <Input
+                id="revokeUrl"
+                placeholder="https://oauth2.googleapis.com/revoke (optional)"
+                value={formData.revokeUrl}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, revokeUrl: e.target.value }))
+                }
+              />
+            </div>
+
+            {/* Scopes */}
+            <div className="space-y-2">
+              <Label htmlFor="scopes">{tApp('admin.fields.scopes')}</Label>
+              <Textarea
+                id="scopes"
+                placeholder="Files.Read.All, Sites.Read.All, Mail.Read"
+                value={formData.scopes}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, scopes: e.target.value }))
+                }
+                rows={2}
+              />
+              <p className="text-xs text-muted-foreground">
+                Comma-separated list of OAuth scopes to request from the provider.
+              </p>
+            </div>
 
             {/* Icon Key & Sort Order */}
             <div className="grid gap-4 sm:grid-cols-2">
@@ -801,16 +709,28 @@ export function ConnectedAppsAdminPage() {
               </div>
             </div>
 
-            {/* Enabled toggle */}
-            <div className="flex items-center gap-2">
-              <Switch
-                id="enabled"
-                checked={formData.enabled}
-                onCheckedChange={(checked) =>
-                  setFormData((prev) => ({ ...prev, enabled: checked }))
-                }
-              />
-              <Label htmlFor="enabled">{tApp('admin.fields.enabled')}</Label>
+            {/* PKCE Enabled & Enabled toggles */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:gap-8">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="pkceEnabled"
+                  checked={formData.pkceEnabled}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({ ...prev, pkceEnabled: checked }))
+                  }
+                />
+                <Label htmlFor="pkceEnabled">{tApp('admin.fields.pkceEnabled')}</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="enabled"
+                  checked={formData.enabled}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({ ...prev, enabled: checked }))
+                  }
+                />
+                <Label htmlFor="enabled">{tApp('admin.fields.enabled')}</Label>
+              </div>
             </div>
           </div>
 

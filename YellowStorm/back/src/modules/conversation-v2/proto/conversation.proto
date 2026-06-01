@@ -20,7 +20,15 @@ message PauseSessionResponse  {}
 message ResumeSessionRequest  { string user_id = 1; string session_id = 2; }
 message ResumeSessionResponse {}
 
-message CreateSessionRequest  { string user_id = 1; }
+// workspace_paths: optional list of Ceph object-key prefixes in the form
+// "{workspaceOwnerUserId}/{workspaceStoragePrefix}" — one entry per workspace
+// the user attached via the frontend selector. The backend validates ownership
+// / share access on the workspaceId portion, looks up the workspace owner
+// and immutable storage prefix, then builds the path before forwarding. The
+// AI service uses these as List-prefix bases when scanning the workspace's
+// documents. Note: path roots under the workspace OWNER, not the current
+// user — collaborator uploads share the same prefix as the owner's files.
+message CreateSessionRequest  { string user_id = 1; repeated string workspace_paths = 2; }
 message CreateSessionResponse { string session_id = 1; }
 
 message GetSessionRequest  { string user_id = 1; string session_id = 2; }
@@ -41,6 +49,7 @@ message ChatRequest {
   string message    = 3;
   optional string event_id = 4;
   optional int64  timestamp = 5;
+  string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
 }
 
 message Event {

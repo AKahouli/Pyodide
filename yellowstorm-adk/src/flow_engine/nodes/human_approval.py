@@ -42,7 +42,10 @@ async def run_human_approval(
 
     logger.info("[human_approval] Requesting approval", node_id=node_id, iteration=iteration)
 
-    writer = get_stream_writer()
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda _: None
     writer({
         "type": "NodeStarted",
         "node_id": node_id,

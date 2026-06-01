@@ -39,7 +39,10 @@ async def run_router(
 
     logger.info("[router] Running router node", node_id=node_id, iteration=iteration, labels=output_labels)
 
-    writer = get_stream_writer()
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda _: None
     writer({
         "type": "NodeStarted",
         "node_id": node_id,

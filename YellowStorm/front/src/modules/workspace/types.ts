@@ -132,6 +132,8 @@ export interface WorkspaceFile {
   uploadedAt: string | null;
   folderId: string | null;
   assignmentSource: AssignmentSource;
+  /** Ceph object key — populated by backend listings post-Ceph migration. */
+  path?: string;
 }
 
 export type ClassifierRuleScope = 'global' | 'local';

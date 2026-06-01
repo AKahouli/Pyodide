@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import { BotIcon } from 'lucide-react';
 import { Streamdown } from 'streamdown';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { openFileViewerFromUrl } from '@/modules/file-viewer';
+import { openFileViewerFromUrl, getMimeTypeFromFilename } from '@/modules/file-viewer';
+import { conversationV2Api } from '../api';
+import { useConversationV2Store } from '../store';
 import type { AgentEvent, FileInfo } from '../types';
 import { TypewriterStreamdown } from './TypewriterStreamdown';
 
@@ -55,18 +59,53 @@ export function MessageBubble({ event, readOnly, hideAssistantHeader, animate }:
           ))}
         </div>
       )}
+
+      {event.modelId && (
+        <div className='mt-1 flex items-center gap-2 text-xs'>
+          <span className='rounded-md border border-border px-1.5 py-0.5 opacity-60'>
+            {event.modelId}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
 function AttachmentChip({ file, readOnly }: { file: FileInfo; readOnly?: boolean }) {
+  const [loading, setLoading] = useState(false);
+  const closeRightPanel = useConversationV2Store((s) => s.closeRightPanel);
+
+  const handleClick = async () => {
+    if (readOnly || loading) return;
+    setLoading(true);
+    try {
+      const { url } = await conversationV2Api.getFileSignedUrl(file.path);
+      // Prefer filename-derived MIME — the AI service often leaves content_type
+      // empty or sets `application/octet-stream`, which falls through to the
+      // UnsupportedRenderer even for .txt/.md/.json the viewer can clearly handle.
+      const mimeType =
+        getMimeTypeFromFilename(file.name) ?? file.content_type ?? 'application/octet-stream';
+      // Mutually exclusive with the tool-detail right panel; both occupy the
+      // right side and would collide otherwise.
+      closeRightPanel();
+      openFileViewerFromUrl(url, file.name, mimeType, { displayMode: 'sidebar' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast.error('Failed to open file', { description: message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <button
       type='button'
-      onClick={readOnly ? undefined : () => openFileViewerFromUrl(file.url, file.name, file.content_type)}
+      onClick={readOnly ? undefined : handleClick}
+      disabled={loading}
       className={cn(
         'inline-flex items-center rounded-md border border-border bg-background/60 px-2 py-1 text-xs',
         readOnly ? 'cursor-default' : 'hover:bg-accent',
+        loading && 'opacity-60',
       )}
     >
       {file.name}

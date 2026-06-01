@@ -40,6 +40,53 @@ export class WorkspaceShareService {
   }
 
   /**
+   * Throw if the user lacks access to any of the provided workspaceIds.
+   * Access = ownership OR an active share. Used by callers that accept a list
+   * of workspaceIds from the client (e.g. v2 session creation) and need to
+   * guard against IDs the user doesn't actually have access to.
+   */
+  async assertUserHasAccess(userId: string, workspaceIds: string[]): Promise<void> {
+    if (workspaceIds.length === 0) return;
+
+    const invalid = workspaceIds.filter((id) => !Types.ObjectId.isValid(id));
+    if (invalid.length > 0) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_NOT_FOUND,
+        `Invalid workspace ID format: ${invalid.join(', ')}`,
+      );
+    }
+
+    const objectIds = workspaceIds.map((id) => new Types.ObjectId(id));
+    const userObjectId = new Types.ObjectId(userId);
+
+    const [owned, shared] = await Promise.all([
+      this.workspaceModel
+        .find({ _id: { $in: objectIds }, createdBy: userObjectId })
+        .select('_id')
+        .lean()
+        .exec(),
+      this.shareModel
+        .find({ workspaceId: { $in: objectIds }, sharedWithUserId: userObjectId })
+        .select('workspaceId')
+        .lean()
+        .exec(),
+    ]);
+
+    const accessibleIds = new Set<string>([
+      ...owned.map((w) => w._id.toString()),
+      ...shared.map((s) => s.workspaceId.toString()),
+    ]);
+
+    const missing = workspaceIds.filter((id) => !accessibleIds.has(id));
+    if (missing.length > 0) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        `You do not have access to workspace(s): ${missing.join(', ')}`,
+      );
+    }
+  }
+
+  /**
    * Share workspace with one or more users by email
    */
   async share(
@@ -307,7 +354,7 @@ export class WorkspaceShareService {
           {
             path: 'workspaceId',
             select:
-              'name alias description documentCount usedStorage allocatedStorage createdAt updatedAt',
+              'name alias storagePrefix description documentCount usedStorage allocatedStorage createdAt updatedAt',
           },
           {
             path: 'sharedBy',
@@ -332,6 +379,7 @@ export class WorkspaceShareService {
         id: ws._id.toString(),
         name: ws.name,
         alias: ws.alias,
+        storagePrefix: ws.storagePrefix,
         description: ws.description,
         owner: {
           id: owner._id.toString(),

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeExecution, makeExecutionSummary, makePlaybook, makeTask } from './test-utils';
-import { usePlaybookStore } from './store';
+import { __setDeltaAutosaveAvailableForTests, usePlaybookStore } from './store';
+import { initialPlaybookUiState, usePlaybookUiStore } from './uiStore';
 
 const apiMock = vi.hoisted(() => ({
   getPlaybooks: vi.fn(),
@@ -8,12 +9,14 @@ const apiMock = vi.hoisted(() => ({
   createPlaybook: vi.fn(),
   generatePlaybook: vi.fn(),
   updatePlaybook: vi.fn(),
+  patchFlowDelta: vi.fn(),
   deletePlaybook: vi.fn(),
   clonePlaybook: vi.fn(),
   executePlaybook: vi.fn(),
   cancelFlowExecution: vi.fn(),
   resumeFlowApproval: vi.fn(),
   rerunPlaybookStep: vi.fn(),
+  runPlaybookFromStep: vi.fn(),
   resumePlaybookFromStep: vi.fn(),
   deleteExecution: vi.fn(),
   deleteAllExecutions: vi.fn(),
@@ -28,6 +31,7 @@ const apiMock = vi.hoisted(() => ({
   clearPlaybookTriggerSchedule: vi.fn(),
   getPlaybookRepeatability: vi.fn(),
   runAdvisorEvaluation: vi.fn(),
+  getFlow: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -54,11 +58,19 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
 describe('playbook store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.updatePlaybook.mockReset();
+    apiMock.patchFlowDelta.mockReset();
+    parseApiErrorMock.mockReset();
+    parseApiErrorMock.mockImplementation(() => ({ message: 'parseApiError message' }));
     usePlaybookStore.getState().reset();
+    usePlaybookUiStore.setState(initialPlaybookUiState);
+    __setDeltaAutosaveAvailableForTests(false);
   });
 
   afterEach(() => {
     usePlaybookStore.getState().reset();
+    usePlaybookUiStore.setState(initialPlaybookUiState);
+    __setDeltaAutosaveAvailableForTests(false);
   });
 
   it('fetches playbooks and applies default pagination query', async () => {
@@ -73,6 +85,280 @@ describe('playbook store', () => {
     expect(apiMock.getPlaybooks).toHaveBeenCalledWith({ page: 1, limit: 20, search: 'ops' });
     expect(state.playbooks).toHaveLength(1);
     expect(state.playbooksLoading).toBe(false);
+  });
+
+  it('skips no-op saves when the serialized payload hash matches the baseline', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Stable' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+  });
+
+  it('coalesces autosaves while a save is already in flight', async () => {
+    let resolveSave: ((value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void) | undefined;
+    apiMock.updatePlaybook.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSave = resolve as (value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void;
+    }));
+    apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
+      id: 'p1',
+      name: 'Queued save',
+      updatedAt: '2026-05-29T20:30:00.000Z',
+    }));
+
+    const playbook = makePlaybook({ id: 'p1', name: 'Queued save' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    const firstSave = usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook
+        ? { ...state.currentPlaybook, description: 'Changed after first save started' }
+        : state.currentPlaybook,
+      dirtyVersion: 2,
+      isDirty: true,
+    }));
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(usePlaybookStore.getState().pendingAutosaveAfterCurrent).toBe(true);
+    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', updatedAt: '2026-05-29T20:29:00.000Z' }));
+    await firstSave;
+    await Promise.resolve();
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to full save when delta patch is disabled by the backend', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({ id: 'p1', name: 'Delta fallback' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 'ERR_1006',
+            message: 'Playbook delta patch is disabled.',
+            statusCode: 400,
+          },
+        },
+      },
+      config: {
+        url: '/api/v1/playbooks/p1/delta',
+      },
+    });
+    parseApiErrorMock.mockImplementation(((error: unknown) => {
+      const rawError = error as {
+        response?: { data?: { error?: { code?: string; message?: string; statusCode?: number } }; status?: number };
+      };
+      return {
+        code: rawError.response?.data?.error?.code ?? 'ERR_0000',
+        message: rawError.response?.data?.error?.message ?? 'parseApiError message',
+        statusCode: rawError.response?.data?.error?.statusCode ?? rawError.response?.status ?? 500,
+        requiresReAuth: false,
+        raw: error,
+      };
+    }) as any);
+    apiMock.updatePlaybook.mockResolvedValueOnce({
+      ...playbook,
+      updatedAt: '2026-05-30T00:30:00.000Z',
+    });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: {
+        ...playbook,
+        description: 'Changed locally',
+      },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledTimes(1);
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe('2026-05-30T00:30:00.000Z');
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it('builds delta control edges from current canvas edges', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Source' }),
+        makeTask({ id: 't2', title: 'Target' }),
+      ],
+      edges: [],
+      controlEdges: [],
+    });
+    const editedPlaybook = {
+      ...playbook,
+      edges: [
+        {
+          id: 'edge-1',
+          sourceId: 't1',
+          targetId: 't2',
+          sourceOutputPortId: 'default',
+          targetInputPortId: 'default',
+        },
+      ],
+    };
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z' });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: editedPlaybook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledWith('p1', expect.objectContaining({
+      patch: expect.objectContaining({
+        controlEdges: [
+          expect.objectContaining({
+            id: 'edge-1',
+            source: 't1',
+            target: 't2',
+          }),
+        ],
+      }),
+    }));
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+  });
+
+  it('keeps autosave dirty when the backend rejects an invalid delta', async () => {
+    __setDeltaAutosaveAvailableForTests(true);
+    const playbook = makePlaybook({ id: 'p1', name: 'Rejected delta' });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.patchFlowDelta.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 'ERR_2522',
+            message: 'Duplicate node id: undefined; Duplicate node id: undefined',
+            statusCode: 400,
+          },
+        },
+      },
+      config: {
+        url: '/api/v1/playbooks/p1/delta',
+      },
+    });
+    parseApiErrorMock.mockImplementation(((error: unknown) => {
+      const rawError = error as {
+        response?: { data?: { error?: { code?: string; message?: string; statusCode?: number } }; status?: number };
+      };
+      return {
+        code: rawError.response?.data?.error?.code ?? 'ERR_0000',
+        message: rawError.response?.data?.error?.message ?? 'parseApiError message',
+        statusCode: rawError.response?.data?.error?.statusCode ?? rawError.response?.status ?? 500,
+        requiresReAuth: false,
+        raw: error,
+      };
+    }) as any);
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: {
+        ...playbook,
+        description: 'Changed locally',
+      },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.patchFlowDelta).toHaveBeenCalledTimes(1);
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe(playbook.updatedAt);
+    expect(usePlaybookStore.getState().isDirty).toBe(true);
+    expect(usePlaybookStore.getState().autosaveBackoffUntil).toEqual(expect.any(Number));
+  });
+
+  it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {
+    const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
+    const enrichedFlow = {
+      ...makePlaybook({ id: 'flow-1' }),
+      activeReplays: {
+        'task-1': {
+          id: 'replay-1',
+          validationVersion: 1,
+          isStale: false,
+          staleReasons: [],
+          preserveOutputFormat: false,
+          outputFormatGuide: null,
+          formatGuideStatus: null,
+          label: 'Baseline',
+          latestOverallScore: 92,
+        },
+      },
+    } as any;
+    apiMock.getFlow
+      .mockResolvedValueOnce(baseFlow)
+      .mockResolvedValueOnce(enrichedFlow);
+
+    await usePlaybookStore.getState().fetchFlow('flow-1');
+
+    expect(apiMock.getFlow).toHaveBeenNthCalledWith(1, 'flow-1', { view: 'base' });
+    expect(apiMock.getFlow).toHaveBeenNthCalledWith(2, 'flow-1', { view: 'enriched' });
+    await Promise.resolve();
+
+    expect(usePlaybookStore.getState().lastSavedRequestBodyByPlaybookId['flow-1']).toMatchObject({
+      name: baseFlow.name,
+      description: baseFlow.description,
+    });
+    expect((usePlaybookStore.getState().currentPlaybook as any)?.activeReplays).toEqual(enrichedFlow.activeReplays);
+    expect(usePlaybookStore.getState().currentPlaybookLoading).toBe(false);
+  });
+
+  it('fetchFlow ignores late enriched data when the user already opened another flow', async () => {
+    const baseFlow = { ...makePlaybook({ id: 'flow-1' }), activeReplays: {} } as any;
+    let resolveEnriched: ((value: typeof baseFlow) => void) | undefined;
+    apiMock.getFlow
+      .mockResolvedValueOnce(baseFlow)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveEnriched = resolve as (value: typeof baseFlow) => void;
+      }));
+
+    await usePlaybookStore.getState().fetchFlow('flow-1');
+    usePlaybookStore.setState({ currentPlaybook: makePlaybook({ id: 'flow-2', name: 'Next flow' }) });
+    resolveEnriched?.({
+      ...makePlaybook({ id: 'flow-1' }),
+      activeReplays: {
+        'task-1': { id: 'replay-1' },
+      },
+    } as any);
+    await Promise.resolve();
+
+    expect(usePlaybookStore.getState().currentPlaybook?.id).toBe('flow-2');
+    expect((usePlaybookStore.getState().currentPlaybook as any)?.activeReplays).not.toEqual({
+      'task-1': { id: 'replay-1' },
+    });
   });
 
   it('generates playbook and stores layouted current playbook', async () => {
@@ -318,6 +604,168 @@ describe('playbook store', () => {
     expect(exec.taskResults.find((tr) => tr.taskId === 't3')?.output).toBe('result-3');
   });
 
+  it('creates an optimistic replay execution when running from a step', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Step 3', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't2', targetId: 't3', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't2', target: 't3', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Step 1', agentName: '', order: 1, status: 'completed', output: 'result-1', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Step 2', agentName: '', order: 2, status: 'completed', output: 'result-2', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Step 3', agentName: '', order: 3, status: 'completed', output: 'result-3', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't2');
+
+    const state = usePlaybookStore.getState();
+    expect(apiMock.runPlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2', iteration: undefined });
+    expect(state.currentExecution?.id).toBe('e2');
+    expect(state.currentExecution?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.output).toBe('result-1');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.output).toBeNull();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.status).toBe('pending');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.output).toBeNull();
+  });
+
+  it('preserves graph upstream results when replay target is not first by execution order', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'target-result', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'downstream-result', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'upstream-result', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't1');
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't3')?.output).toBe('upstream-result');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.status).toBe('running');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't1')?.output).toBeNull();
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.status).toBe('pending');
+    expect(state.currentExecution?.taskResults.find((tr) => tr.taskId === 't2')?.output).toBeNull();
+  });
+
+  it('preserves optimistic replay task results when execution_start arrives without singleStepTaskId', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'target-result', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'downstream-result', error: null, durationMs: 200, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'upstream-result', error: null, durationMs: 300, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+
+    apiMock.runPlaybookFromStep.mockResolvedValueOnce({ executionId: 'e2' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2', playbookId: 'p1', status: 'running', taskResults: [] }));
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: completedExecution,
+      executionCache: { e1: completedExecution },
+    });
+
+    await usePlaybookStore.getState().runFromStep('p1', 'e1', 't1');
+
+    usePlaybookStore.getState().onExecutionStart({
+      executionId: 'e2',
+      playbookId: 'p1',
+      executionNumber: 2,
+      status: 'running',
+      taskResults: [],
+    });
+
+    const replayExecution = usePlaybookStore.getState().executionCache.e2;
+    expect(replayExecution.singleStepTaskId).toBe('t1');
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'upstream-result',
+    });
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'running',
+      output: null,
+    });
+    expect(replayExecution.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'pending',
+      output: null,
+    });
+  });
+
   it('refreshes execution details after completion so terminal task states win', async () => {
     const execution = makeExecution({
       id: 'e1',
@@ -404,6 +852,143 @@ describe('playbook store', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(usePlaybookStore.getState().currentExecution?.status).toBe('completed');
     expect(usePlaybookStore.getState().currentExecution?.taskResults[0].status).toBe('completed');
+  });
+
+  it('rehydrates replay upstream results from replay source during fetchExecution', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const sourceExecution = makeExecution({
+      id: 'source-e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'source-target', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'source-downstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'source-upstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+    const replayExecution = makeExecution({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'running',
+      singleStepTaskId: 't1',
+      replaySource: { executionId: 'source-e1', taskId: 't1', iteration: 0 },
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'running', output: null, error: null, durationMs: null, startedAt: '2025-01-01T00:00:04.000Z', completedAt: null },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'pending', output: null, error: null, durationMs: null, startedAt: null, completedAt: null },
+      ],
+    });
+
+    apiMock.getExecution.mockResolvedValueOnce(replayExecution);
+    apiMock.getExecution.mockResolvedValueOnce(sourceExecution);
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionCache: {}, currentExecution: null });
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'replay-e2');
+
+    const refreshed = usePlaybookStore.getState().executionCache['replay-e2'];
+    expect(refreshed.replaySource).toEqual({ executionId: 'source-e1', taskId: 't1', iteration: 0 });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'source-upstream',
+    });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'running',
+      output: null,
+    });
+    expect(refreshed.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'pending',
+      output: null,
+    });
+  });
+
+  it('hydrates replay upstream results into cache during fetchExecutions', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Target', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Downstream', executionOrder: 2 }),
+        makeTask({ id: 't3', title: 'Upstream', executionOrder: 3 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't3', targetId: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+        { id: 'e2', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in' },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 't3', target: 't1', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+        { id: 'e2', kind: 'sequential', source: 't1', target: 't2', sourceOutputPortId: 'default', targetInputPortId: 'in', priority: 0 },
+      ],
+    });
+    const sourceExecution = makeExecution({
+      id: 'source-e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'source-target', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:00.000Z', completedAt: '2025-01-01T00:00:01.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'source-downstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:01.000Z', completedAt: '2025-01-01T00:00:02.000Z' },
+        { taskId: 't3', nodeTitle: 'Upstream', agentName: '', order: 3, status: 'completed', output: 'source-upstream', error: null, durationMs: 100, startedAt: '2025-01-01T00:00:02.000Z', completedAt: '2025-01-01T00:00:03.000Z' },
+      ],
+    });
+    const replaySummary = makeExecutionSummary({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'completed',
+    });
+    const replayExecution = makeExecution({
+      id: 'replay-e2',
+      playbookId: 'p1',
+      status: 'completed',
+      singleStepTaskId: 't1',
+      replaySource: { executionId: 'source-e1', taskId: 't1', iteration: 0 },
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Target', agentName: '', order: 1, status: 'completed', output: 'rerun-target', error: null, durationMs: 10, startedAt: '2025-01-01T00:00:04.000Z', completedAt: '2025-01-01T00:00:05.000Z' },
+        { taskId: 't2', nodeTitle: 'Downstream', agentName: '', order: 2, status: 'completed', output: 'rerun-downstream', error: null, durationMs: 10, startedAt: '2025-01-01T00:00:05.000Z', completedAt: '2025-01-01T00:00:06.000Z' },
+      ],
+    });
+
+    apiMock.getExecutions.mockResolvedValueOnce({ executions: [replaySummary] });
+    apiMock.getExecution.mockResolvedValueOnce(replayExecution);
+    apiMock.getExecution.mockResolvedValueOnce(sourceExecution);
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: null,
+      executionCache: {},
+      executionHistory: [],
+      executionHistoryByPlaybook: {},
+    });
+
+    await usePlaybookStore.getState().fetchExecutions('p1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const hydrated = usePlaybookStore.getState().executionCache['replay-e2'];
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't3')).toMatchObject({
+      status: 'completed',
+      output: 'source-upstream',
+    });
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't1')).toMatchObject({
+      status: 'completed',
+      output: 'rerun-target',
+    });
+    expect(hydrated.taskResults.find((tr) => tr.taskId === 't2')).toMatchObject({
+      status: 'completed',
+      output: 'rerun-downstream',
+    });
   });
 
   it('stores generate retry payload when generation fails', async () => {
@@ -735,6 +1320,9 @@ describe('playbook store', () => {
       type: 'approval_request',
       message: 'Approve?',
       threadId: 'th-1',
+      feedbackScopeDefault: 'future_workflow_runs',
+      memoryCandidate: true,
+      downstreamNodeIds: ['task-2'],
     });
 
     const state = usePlaybookStore.getState();
@@ -744,7 +1332,22 @@ describe('playbook store', () => {
     expect(state.executionCache.e1.waitingForHumanInput).toBe(true);
     expect(state.executionCache.e1.currentInterruptId).toBeNull();
     expect(state.executionCache.e1.currentInterruptTaskId).toBe('task-1');
-    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({ taskId: 'task-1', status: 'pending' });
+    expect(state.executionCache.e1.pendingInterrupts).toHaveLength(1);
+    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({
+      taskId: 'task-1',
+      status: 'pending',
+      feedbackScopeDefault: 'future_workflow_runs',
+      memoryCandidate: true,
+      downstreamNodeIds: ['task-2'],
+    });
+    expect(state.executionCache.e1.taskResults[0].components?.[0]).toMatchObject({
+      type: 'humanFeedback',
+      data: {
+        feedbackScopeDefault: 'future_workflow_runs',
+        memoryCandidate: true,
+        downstreamNodeIds: ['task-2'],
+      },
+    });
   });
 
   it('does not downgrade a completed step back to running on late step updates', () => {
@@ -1004,6 +1607,343 @@ describe('playbook store', () => {
     expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
   });
 
+  it('keeps queued interrupts pending after answering the active interrupt', async () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [
+        {
+          type: 'clarification',
+          taskId: 'task-1',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          threadId: 'th-1',
+          interruptId: 'interrupt-1',
+        },
+        {
+          type: 'approval_request',
+          taskId: 'task-2',
+          taskTitle: 'Task 2',
+          message: 'Approve?',
+          threadId: 'th-1',
+          interruptId: 'interrupt-2',
+        },
+      ],
+      hitlHistory: [{
+        interruptId: 'interrupt-1', taskId: 'task-1', type: 'clarification', taskTitle: 'Task 1', message: 'Need input', taskDescription: '', result: '', round: 1, payloadJson: '', resumableActions: ['reply'], status: 'pending', responseAction: null, responseMessage: null, responseApproved: null, responseReason: null, responseFeedback: null, respondedBy: null, respondedAt: null, createdAt: '2025-01-01T00:00:00.000Z',
+      }],
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-1' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.status).toBe('interrupted');
+    expect(updated.waitingForHumanInput).toBe(true);
+    expect(updated.interruptPayload).toMatchObject({ interruptId: 'interrupt-2', taskId: 'task-2' });
+    expect(updated.currentInterruptId).toBe('interrupt-2');
+    expect(updated.currentInterruptTaskId).toBe('task-2');
+    expect(updated.pendingInterrupts).toHaveLength(1);
+  });
+
+  it('preserves queued interrupt state when fetchExecution merges API data', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [
+        {
+          type: 'clarification',
+          taskId: 'task-1',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          threadId: 'th-1',
+          interruptId: 'interrupt-1',
+        },
+        {
+          type: 'approval_request',
+          taskId: 'task-2',
+          taskTitle: 'Task 2',
+          message: 'Approve?',
+          threadId: 'th-1',
+          interruptId: 'interrupt-2',
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      waitingForHumanInput: false,
+      interruptPayload: null,
+      pendingInterrupts: [],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.pendingInterrupts).toHaveLength(2);
+    expect(updated.currentInterruptId).toBe('interrupt-1');
+    expect(updated.currentInterruptTaskId).toBe('task-1');
+    expect(updated.waitingForHumanInput).toBe(true);
+  });
+
+  it('preserves HITL history when fetchExecution merges API data', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      hitlHistory: [
+        {
+          interruptId: 'interrupt-1',
+          taskId: 'task-1',
+          type: 'clarification',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          taskDescription: '',
+          result: '',
+          round: 0,
+          payloadJson: '',
+          resumableActions: ['reply'],
+          status: 'answered',
+          responseAction: 'reply',
+          responseMessage: 'Use draft',
+          responseApproved: null,
+          responseReason: null,
+          responseFeedback: null,
+          respondedBy: 'User',
+          respondedAt: '2025-01-01T00:00:01.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          blockerRuleId: null,
+          blockerKind: null,
+          reasonCode: null,
+          riskLevel: 'low',
+          downstreamNodeIds: ['task-2'],
+          feedbackScopeDefault: 'downstream_run',
+          memoryCandidate: false,
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      waitingForHumanInput: false,
+      hitlHistory: [],
+      pendingInterrupts: [],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.hitlHistory).toHaveLength(1);
+    expect(updated.hitlHistory?.[0].responseMessage).toBe('Use draft');
+  });
+
+  it('fetchExecution promotes incoming interrupt payload when cached execution has not captured it yet', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: false,
+      interruptPayload: null,
+      pendingInterrupts: [],
+      currentInterruptId: null,
+      currentInterruptTaskId: null,
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'pending_approval',
+      waitingForHumanInput: true,
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [{
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      }],
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.waitingForHumanInput).toBe(true);
+    expect(updated.interruptPayload).toMatchObject({ interruptId: 'interrupt-1', taskId: 'task-1' });
+    expect(updated.pendingInterrupts).toHaveLength(1);
+    expect(updated.currentInterruptId).toBe('interrupt-1');
+    expect(updated.currentInterruptTaskId).toBe('task-1');
+  });
+
+  it('preserves HITL history when fetchExecutions merges a sparse active summary', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      hitlHistory: [
+        {
+          interruptId: 'interrupt-1',
+          taskId: 'task-1',
+          type: 'approval_request',
+          taskTitle: 'Task 1',
+          message: 'Approve this',
+          taskDescription: '',
+          result: '',
+          round: 0,
+          payloadJson: '',
+          resumableActions: ['approve', 'reject'],
+          status: 'pending',
+          responseAction: null,
+          responseMessage: null,
+          responseApproved: null,
+          responseReason: null,
+          responseFeedback: null,
+          respondedBy: null,
+          respondedAt: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          blockerRuleId: null,
+          blockerKind: null,
+          reasonCode: null,
+          riskLevel: 'medium',
+          downstreamNodeIds: [],
+          feedbackScopeDefault: 'future_workflow_runs',
+          memoryCandidate: true,
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionCache: { e1: cached },
+    });
+    apiMock.getExecutions.mockResolvedValueOnce({
+      executions: [
+        {
+          ...makeExecutionSummary({ id: 'e1', playbookId: 'p1', status: 'running' }),
+          executionNumber: 1,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+
+    await usePlaybookStore.getState().fetchExecutions('p1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.hitlHistory).toHaveLength(1);
+    expect(updated.hitlHistory?.[0].status).toBe('pending');
+  });
+
+  it('routes interrupted step resumes through resume-from-step', async () => {
+    const execution = makeExecution({
+      id: 'e2',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-2',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'review_request',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Review output',
+        threadId: 'th-2',
+        interruptId: 'interrupt-2',
+      },
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'interrupted',
+        iteration: 3,
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-2' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e2: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e2',
+      taskId: 'task-1',
+      interruptId: 'interrupt-2',
+      action: 'approve',
+      approved: true,
+    });
+
+    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e2', {
+      taskId: 'task-1',
+      action: 'approve',
+      interruptId: 'interrupt-2',
+      iteration: 3,
+      message: undefined,
+      approved: true,
+      reason: undefined,
+      feedback: undefined,
+    });
+    expect(apiMock.resumeFlowApproval).not.toHaveBeenCalled();
+  });
+
   it('stopExecution uses flow cancellation route', async () => {
     apiMock.cancelFlowExecution.mockResolvedValueOnce(undefined);
 
@@ -1147,6 +2087,8 @@ describe('playbook store', () => {
     });
     const state = usePlaybookStore.getState();
     expect(state.executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().pageMode).toBe('run');
     expect(state.currentExecution).toMatchObject({
       executionMode: 'inherit',
       stepExecutionModes: { 'task-2': 'replay_flex' },
@@ -1177,6 +2119,7 @@ describe('playbook store', () => {
   it('onInterrupt auto-opens panel', () => {
     const execution = makeExecution({ id: 'e1', playbookId: 'p1', taskResults: [{ ...makeExecution().taskResults[0], taskId: 'task-1', components: [] }] });
     usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
       executionCache: { e1: execution },
       currentExecution: execution,
       executionHistory: [makeExecutionSummary({ id: 'e1', playbookId: 'p1' })],
@@ -1191,6 +2134,78 @@ describe('playbook store', () => {
       threadId: 'th-1',
     });
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
+    expect(usePlaybookUiStore.getState().designerOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().copilotMode).toBe('interrupt');
+  });
+
+  it('onInterrupt opens copilot and fetches details when the execution is not cached yet', async () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionPanelOpen: false,
+      designerOpen: false,
+      copilotMode: 'design',
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+    }));
+
+    usePlaybookStore.getState().onInterrupt({
+      executionId: 'e1',
+      taskId: 'task-1',
+      type: 'clarification',
+      message: 'Need input',
+      threadId: 'th-1',
+      interruptId: 'task-1:clarification:1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.designerOpen).toBe(true);
+    expect(state.copilotMode).toBe('interrupt');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().designerOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().copilotMode).toBe('interrupt');
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e1');
+  });
+
+  it('onInterrupt promotes the interrupted execution when an older run is current', () => {
+    const olderExecution = makeExecution({ id: 'old-run', playbookId: 'p1' });
+    const interruptedExecution = makeExecution({
+      id: 'new-run',
+      playbookId: 'p1',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 'task-1', components: [] }],
+    });
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionCache: { 'old-run': olderExecution, 'new-run': interruptedExecution },
+      currentExecution: olderExecution,
+      executionPanelOpen: false,
+    });
+
+    usePlaybookStore.getState().onInterrupt({
+      executionId: 'new-run',
+      taskId: 'task-1',
+      type: 'clarification',
+      message: 'Need input',
+      threadId: 'new-run',
+      interruptId: 'task-1:clarification:1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.id).toBe('new-run');
+    expect(state.currentExecution?.waitingForHumanInput).toBe(true);
+    expect(state.designerOpen).toBe(true);
+    expect(state.copilotMode).toBe('interrupt');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('keeps the execution panel closed while selecting a node in design mode', () => {

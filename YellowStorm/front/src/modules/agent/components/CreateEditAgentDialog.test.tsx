@@ -116,6 +116,12 @@ vi.mock('./EvaluationTab', () => ({
   EvaluationTab: () => <div>evaluation-tab</div>,
 }));
 
+vi.mock('./AgentTelegramIntegrationSection', () => ({
+  AgentTelegramIntegrationSection: ({ agentId }: { agentId: string | null }) => (
+    <div data-testid="telegram-section">telegram-section-{String(agentId)}</div>
+  ),
+}));
+
 vi.mock('@/lib/form-utils', () => ({
   scrollToFirstError: vi.fn(),
 }));

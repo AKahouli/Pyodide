@@ -141,6 +141,17 @@ def _build_execution_clarification_guidance(
     )
 
 
+def _build_limit_reached_description(task_description: str) -> str:
+    # Force the final pass to complete with the best available context instead of looping forever.
+    return (
+        f"{task_description}\n\n"
+        "Clarification from system: The clarification round limit was reached. "
+        "Proceed with the available information, choose broad reasonable defaults for any "
+        "remaining unknowns, and produce the best possible final result now. "
+        "Do not ask another clarification question."
+    )
+
+
 def _store_clarification_context(
     state: ExecutionState,
     task_id: str,
@@ -544,6 +555,7 @@ def _extract_artifacts_from_components(
 
         if comp_type == "artifact":
             file_path = str(data.get("file_path") or data.get("filePath") or "").strip()
+            object_key = str(data.get("object_key") or data.get("objectKey") or "").strip()
             filename = str(data.get("filename", "")).strip()
             mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
@@ -584,15 +596,16 @@ def _extract_artifacts_from_components(
                 artifact_kind = port_kind
             else:
                 artifact_kind = explicit_kind or port_kind or fallback_kind
-            artifacts.append(
-                {
-                    "port_id": port_id,
-                    "artifact_kind": artifact_kind,
-                    "url": file_path,
-                    "filename": filename,
-                    "mime_type": mime_type,
-                }
-            )
+            artifact = {
+                "port_id": port_id,
+                "artifact_kind": artifact_kind,
+                "url": file_path,
+                "filename": filename,
+                "mime_type": mime_type,
+            }
+            if object_key:
+                artifact["object_key"] = object_key
+            artifacts.append(artifact)
 
         elif comp_type == "text":
             text_content = str(data.get("content", "")).strip()
@@ -1389,14 +1402,19 @@ class DynamicGraphBuilder:
                     if clarification_limit == 0:
                         clarification_resolved = True
                     if not clarification_resolved:
-                        return {
-                            "completed_task_ids": [task_id],
-                            "results": {
-                                task_id: {"error": "Clarification limit exceeded"}
-                            },
-                            "error": "Clarification limit exceeded",
-                            "status": "failed",
+                        task_description = _build_limit_reached_description(
+                            task_for_execution["description"]
+                        )
+                        task_for_execution = {
+                            **task_for_execution,
+                            "description": task_description,
                         }
+                        _store_clarification_context(
+                            state,
+                            task_id,
+                            clarification_transcript,
+                            task_description,
+                        )
 
                 # === STEP 2: interrupt_before (approval) ===
                 if task_config.get("interrupt_before", False):
@@ -2032,6 +2050,23 @@ class DynamicGraphBuilder:
                                 {"role": "user", "content": user_reply}
                             )
                             task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                            task_for_execution = {
+                                **task_for_execution,
+                                "description": task_description,
+                            }
+                            _store_clarification_context(
+                                state,
+                                task_id,
+                                clarification_transcript,
+                                task_description,
+                            )
+                            user_prompt = _build_user_prompt(task_for_execution)
+                            user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
+                            continue
+                        if follow_up_question and clarification_limit > 0:
+                            task_description = _build_limit_reached_description(
+                                task_for_execution["description"]
+                            )
                             task_for_execution = {
                                 **task_for_execution,
                                 "description": task_description,

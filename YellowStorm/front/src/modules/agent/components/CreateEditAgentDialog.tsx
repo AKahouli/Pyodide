@@ -36,6 +36,7 @@ import {
   type UserAgentFormValues,
 } from "./AgentFormSchema";
 import { EvaluationTab } from "./EvaluationTab";
+import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -494,6 +495,8 @@ export function CreateEditAgentDialog({
                         emptyText={t('createEdit.fields.noConnectorsFound')}
                       />
                     </div>
+
+                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
                   {/* Evaluation Tab */}

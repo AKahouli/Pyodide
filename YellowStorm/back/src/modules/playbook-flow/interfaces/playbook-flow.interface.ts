@@ -18,6 +18,8 @@ export interface IFlowResponse {
   schemaVersion: number;
   name: string;
   description?: string;
+  executionStatus?: 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'cancelled' | null;
+  lastExecutionAt?: Date | null;
   triggerConfig?: FlowTriggerConfig;
   settings: FlowSettings;
   nodes: FlowNode[];

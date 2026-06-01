@@ -11,6 +11,7 @@ def _port_schema_entry(port: dict[str, Any]) -> dict[str, Any]:
     kind = str(port.get("type") or "text")
     entry: dict[str, Any] = {
         "output_port_id": port_id,
+        "output_port_label": str(port.get("label") or ""),
         "artifact_kind": kind,
     }
     if kind == "document":
@@ -30,6 +31,10 @@ def build_step_prompt(
     iteration: int = 0,
     trigger_context: dict[str, Any] | None = None,
     require_structured_output: bool = False,
+    hitl_policy: dict[str, Any] | None = None,
+    hitl_blockers: list[dict[str, Any]] | None = None,
+    human_context: list[dict[str, Any]] | None = None,
+    hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
         "Task Title:",
@@ -55,8 +60,32 @@ def build_step_prompt(
     if output_contract:
         lines.extend([
             "",
-            "Output Contract:",
+            "Below are the Output Contract:",
             json.dumps(output_contract, indent=2, default=str),
+        ])
+    if hitl_policy or hitl_blockers or human_context or hitl_memory:
+        lines.extend([
+            "",
+            "Smart HITL policy:",
+            json.dumps(hitl_policy or {}, indent=2, default=str),
+            "",
+            "Active blocker rules:",
+            json.dumps(hitl_blockers or [], indent=2, default=str),
+            "",
+            "Human guidance from earlier workflow steps:",
+            json.dumps(human_context or [], indent=2, default=str),
+            "",
+            "Reusable HITL memory:",
+            json.dumps(hitl_memory or [], indent=2, default=str),
+            "",
+            "Smart HITL instruction:",
+            (
+                "If a blocker applies, do not guess and do not continue blindly. "
+                "Request the appropriate HITL action using the runtime HITL mechanism. "
+                "If the blocker is missing data or ambiguity, ask one concise clarification. "
+                "If the blocker is a destructive or external side effect, request approval before executing it. "
+                "Apply earlier human guidance when relevant; if it conflicts with current instructions, pause for clarification."
+            ),
         ])
     lines.extend([
         "",
@@ -83,17 +112,19 @@ def build_step_prompt(
             json.dumps(response_schema, indent=2, default=str),
             "`display_text` is the final human-readable answer.",
             "Each item in `outputs` must target one declared output port.",
+            "Do not put reasoning steps inside `outputs`; reasoning steps belong only in top-level `reasoning_trace`.",
             "For document outputs, use `filename` and `filepath` (not `content`).",
             "For text/code outputs, use `content` for the string payload.",
-            "For data outputs, use `content` for the structured JSON payload.",
+            "Must always generate markdown For text outputs ; Whenever the response includes numerical data, categories, comparisons, or structured lists, format the output as a Markdown table to maximize readability.",
+            "For data outputs, use `content` for the structured JSON payload.; generate just the JSON noextra text.",
             "`reasoning_trace` is an array of objects describing your reasoning steps.",
-            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional), it should respect strictly this JSON format : [{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]'
+            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'
         ])
     else:
         lines.extend([
         "",
         "Reasoning Trace:",
-        "After your final answer, **MUST ALWAYS append** a reasoning trace block on a new line using this exact format,  it should respect strictly the following JSON format :",       
+        "After your final answer, **MUST ALWAYS append** a separate reasoning trace JSON block on a new line using this exact format:",
         "Example:",
         "---PUBLIC_REASONING_TRACE_JSON---",
         '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',

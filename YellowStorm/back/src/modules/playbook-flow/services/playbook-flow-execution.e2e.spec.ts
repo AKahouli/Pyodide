@@ -152,6 +152,7 @@ async function createE2EService(
   };
   const streamEvents = {
     emitExecutionComplete: jest.fn(),
+    emitExecutionCancelled: jest.fn(),
     emitExecutionStart: jest.fn(),
     emitRouterDecision: jest.fn(),
     emitQueuePositionUpdate: jest.fn(),
@@ -161,7 +162,6 @@ async function createE2EService(
     emitInterrupt: jest.fn(),
     cacheOwner: jest.fn(),
     emitExecutionQueued: jest.fn(),
-    emitExecutionCancelled: jest.fn(),
   };
   const replayReportService = { findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null) };
   const outputContractService = new PlaybookFlowOutputContractService();
@@ -438,6 +438,64 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     );
     expect(ctx.streamEvents.emitInterrupt).toHaveBeenCalledWith(
       'exec-e2e', 'approval-1', 'Approve this?', 0, 'exec-e2e',
+      { interruptType: 'approval_request', resumableActions: ['approve', 'reject'] },
+    );
+  });
+
+  it('persists clarification metadata when NodeSuspended is received', async () => {
+    const ctx = await createE2EService([
+      {
+        event_type: 'NodeSuspended',
+        node_id: 'task-1',
+        iteration: 1,
+        payload: {
+          type: 'clarification',
+          message: 'Which country should I analyze?',
+          interrupt_id: 'task-1:clarification:1',
+          task_title: 'GDP Analysis',
+          task_description: 'Analyze GDP for a country and year',
+          result: '',
+          conversation_json: '[]',
+          resumable_actions: ['reply', 'skip'],
+          blocker_rule_id: 'rule-1',
+          blocker_kind: 'missing_required_input',
+          reason_code: 'missing_required_input',
+          risk_level: 'medium',
+          confidence: 1,
+          downstream_node_ids: ['task-2'],
+          feedback_scope_default: 'downstream_run',
+        },
+      },
+    ]);
+
+    await ctx.service.start('flow-1', 'owner-1', {});
+    await ctx.triggerStreamEvents();
+    await flushPromises();
+
+    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'exec-e2e' }),
+      expect.objectContaining({
+        status: 'pending_approval',
+        pendingApproval: expect.objectContaining({
+          nodeId: 'task-1',
+          iteration: 1,
+          prompt: 'Which country should I analyze?',
+          interruptType: 'clarification',
+          interruptId: 'task-1:clarification:1',
+          taskTitle: 'GDP Analysis',
+          taskDescription: 'Analyze GDP for a country and year',
+          payloadJson: '[]',
+          resumableActions: ['reply', 'skip'],
+          blockerRuleId: 'rule-1',
+          blockerKind: 'missing_required_input',
+          reasonCode: 'missing_required_input',
+          riskLevel: 'medium',
+          confidence: 1,
+          downstreamNodeIds: ['task-2'],
+          feedbackScopeDefault: 'downstream_run',
+          interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
+        }),
+      }),
     );
   });
 
@@ -536,6 +594,65 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     expect(execDoc.save).not.toHaveBeenCalled();
   });
 
+  it('resumeFromStep clears pendingApproval only after gRPC ResumeFromStep succeeds', async () => {
+    const execDoc = {
+      id: 'exec-step-1',
+      _id: 'exec-step-1',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: { nodeId: 'task-1', iteration: 2, prompt: 'Approve?' },
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-1', status: 'running' }),
+    };
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+    };
+    const mockResumeFromStep = jest.fn((_req, cb) => cb(null, { resumed: true }));
+
+    const ctx = await createE2EService(undefined, { executionModel });
+    (ctx.service as any).playbookFlowClient.ResumeFromStep = mockResumeFromStep;
+
+    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', { taskId: 'task-1', action: 'approve' });
+
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-step-1', status: 'pending_approval' },
+      { status: 'running', pendingApproval: null },
+    );
+    expect(mockResumeFromStep).toHaveBeenCalled();
+    const grpcArgs = mockResumeFromStep.mock.calls[0];
+    expect(grpcArgs[0]).toMatchObject({
+      execution_id: 'exec-step-1',
+      node_id: 'task-1',
+      iteration: 2,
+      interrupt_id: '',
+      action: 'approve',
+    });
+    expect(result.status).toBe('running');
+  });
+
+  it('resumeFromStep rejects when the pending step does not match', async () => {
+    const execDoc = {
+      id: 'exec-step-2',
+      _id: 'exec-step-2',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: { nodeId: 'task-1', iteration: 0, prompt: 'Approve?' },
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-2', status: 'pending_approval' }),
+    };
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+    };
+
+    const ctx = await createE2EService(undefined, { executionModel });
+
+    await expect(
+      ctx.service.resumeFromStep('exec-step-2', 'owner-1', { taskId: 'task-2', action: 'approve' }),
+    ).rejects.toThrow('different step interrupt');
+  });
+
   it('throws if resuming an execution that is not pending_approval', async () => {
     const execDoc = {
       id: 'exec-nope',
@@ -564,6 +681,8 @@ describe('E2E: Cancel', () => {
       _id: 'exec-run-1',
       ownerId: 'owner-1',
       status: 'running',
+      pendingApproval: { nodeId: 'step-1', interruptId: 'int-1', prompt: 'Clarify?' },
+      hitlEvents: [{ interruptId: 'int-1', status: 'pending' }],
       save: jest.fn().mockResolvedValue(undefined),
       toJSON: jest.fn().mockReturnValue({ id: 'exec-run-1', status: 'cancelled' }),
     };
@@ -584,6 +703,12 @@ describe('E2E: Cancel', () => {
     const result = await ctx.service.cancel('exec-run-1', 'owner-1');
 
     expect(execDoc.status).toBe('cancelled');
+    expect(execDoc.pendingApproval).toBeNull();
+    expect(execDoc.hitlEvents[0]).toEqual(expect.objectContaining({
+      interruptId: 'int-1',
+      status: 'cancelled',
+      respondedAt: expect.any(Date),
+    }));
     expect(execDoc.endedAt).toBeInstanceOf(Date);
     expect(execDoc.save).toHaveBeenCalled();
     expect(mockCancel).toHaveBeenCalledWith(

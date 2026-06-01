@@ -5,6 +5,27 @@ import pytest
 from src.grpc_server.chatbot_servicer import _put_progress_event, ChatbotServicer
 
 
+def test_dict_to_stream_chunk_artifact_uses_object_key_fallback() -> None:
+    servicer = ChatbotServicer(agent_team_service=None)
+
+    chunk = servicer._dict_to_stream_chunk(
+        {
+            "action": "add",
+            "component": {
+                "id": "component-1",
+                "type": "artifact",
+                "data": {
+                    "filename": "report.xlsx",
+                    "object_key": "user/session/report.xlsx",
+                },
+            },
+            "metadata": {"message_id": "message-1"},
+        }
+    )
+
+    assert chunk.component.artifact.file_path == "user/session/report.xlsx"
+
+
 @pytest.mark.asyncio
 async def test_put_progress_event_keeps_queue_bounded() -> None:
     queue: asyncio.Queue = asyncio.Queue(maxsize=1)

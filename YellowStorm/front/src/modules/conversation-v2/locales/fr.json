@@ -11,7 +11,12 @@
   },
   "composer": {
     "placeholder": "Tapez un message…",
-    "send": "Envoyer"
+    "send": "Envoyer",
+    "modelSelector": {
+      "unset": "Modèle par défaut",
+      "search": "Rechercher des modèles…",
+      "empty": "Aucun modèle trouvé."
+    }
   },
   "conversation": {
     "emptyTitle": "Envoyez un message pour démarrer",
@@ -53,5 +58,76 @@
     "completed": "Tâche terminée",
     "collapse": "Réduire le plan"
   },
-  "controls": { "stop": "Arrêter", "pause": "Pause", "resume": "Reprendre" }
+  "controls": { "stop": "Arrêter", "pause": "Pause", "resume": "Reprendre" },
+  "files": {
+    "title": "Fichiers de cette conversation",
+    "button": "Fichiers",
+    "unavailable": "Aucun espace de travail attaché à cette session.",
+    "loading": "Chargement des fichiers…",
+    "empty": "Aucun fichier pour l'instant.",
+    "view": {
+      "list": "Vue liste",
+      "grid": "Vue grille"
+    }
+  },
+  "header": {
+    "back": "Retour",
+    "tooltips": {
+      "workspaces": "Gérer les workspaces",
+      "files": "Fichiers"
+    },
+    "actions": {
+      "rename": "Renommer",
+      "delete": "Supprimer",
+      "more": "Autres actions"
+    }
+  },
+  "dialogs": {
+    "rename": {
+      "title": "Renommer la conversation",
+      "placeholder": "Titre de la conversation",
+      "saving": "Enregistrement..."
+    },
+    "delete": {
+      "title": "Supprimer la conversation ?",
+      "description": "Cela supprimera définitivement cette conversation.",
+      "descriptionWithName": {
+        "before": "Cela supprimera définitivement ",
+        "after": "."
+      },
+      "warning": "Cette action est irréversible.",
+      "deleting": "Suppression..."
+    }
+  },
+  "workspace": {
+    "sheet": {
+      "title": "Workspaces",
+      "description": "Workspaces attachés à cette conversation.",
+      "loadingWorkspaces": "Chargement des workspaces...",
+      "noSelection": "Aucun workspace attaché à cette conversation.",
+      "noDocuments": "Aucun document trouvé dans les workspaces attachés.",
+      "documentsLabel": "Documents",
+      "selectedCount": "{{count}} workspace attaché",
+      "selectedCount_plural": "{{count}} workspaces attachés",
+      "table": {
+        "name": "Nom",
+        "size": "Taille",
+        "type": "Type",
+        "workspace": "Workspace"
+      },
+      "paginationLabel": "Page {{page}} sur {{total}}"
+    }
+  },
+  "toasts": {
+    "rename": {
+      "error": "Impossible de renommer la conversation"
+    },
+    "delete": {
+      "error": "Impossible de supprimer la conversation"
+    },
+    "workspaces": {
+      "loadListError": "Impossible de charger les workspaces",
+      "loadDocumentsError": "Impossible de charger les documents"
+    }
+  }
 }

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   usePlaybookStore,
@@ -13,11 +15,12 @@ import {
   useDesignerOpen,
   useCopilotMode,
   useCurrentExecution,
+  useLatestExecutionForPlaybook,
   useSelectedStep,
 } from '../store';
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
-import type { HumanFeedbackData, InterruptType } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, InterruptType } from '../types';
 
 interface Props {
   playbookId: string | undefined;
@@ -25,7 +28,11 @@ interface Props {
 
 interface InterruptEntry extends HumanFeedbackData {
   id: string;
+  createdAt?: string;
+  respondedAt?: string | null;
 }
+
+const PROCEED_WITH_AVAILABLE_INFORMATION = 'Proceed with available information';
 
 function getInterruptTitle(
   type: InterruptType | string,
@@ -53,6 +60,59 @@ function getInterruptResponseDetail(entry: InterruptEntry, primaryText: string) 
   return detail;
 }
 
+function getRiskLabel(riskLevel: string, t: (key: 'interrupt.risk.low' | 'interrupt.risk.medium' | 'interrupt.risk.high' | 'interrupt.risk.critical') => string) {
+  if (riskLevel === 'low') return t('interrupt.risk.low');
+  if (riskLevel === 'high') return t('interrupt.risk.high');
+  if (riskLevel === 'critical') return t('interrupt.risk.critical');
+  return t('interrupt.risk.medium');
+}
+
+function historyEntryToInterruptEntry(entry: HitlHistoryEntry): InterruptEntry {
+  return {
+    id: entry.interruptId || `${entry.taskId}-${entry.round}`,
+    interruptType: entry.type,
+    message: entry.message,
+    status: entry.status,
+    humanResponse: entry.responseAction || undefined,
+    action: entry.responseAction || undefined,
+    replyMessage: entry.responseMessage || undefined,
+    interruptId: entry.interruptId,
+    round: entry.round,
+    payloadJson: entry.payloadJson,
+    resumableActions: entry.resumableActions,
+    taskDescription: entry.taskDescription,
+    result: entry.result,
+    approved: entry.responseApproved ?? undefined,
+    reason: entry.responseReason || undefined,
+    feedback: entry.responseFeedback || undefined,
+    scope: entry.responseScope ?? entry.feedbackScopeDefault,
+    remember: entry.responseRemember ?? undefined,
+    blockerRuleId: entry.blockerRuleId,
+    blockerKind: entry.blockerKind,
+    reasonCode: entry.reasonCode,
+    riskLevel: entry.riskLevel,
+    downstreamNodeIds: entry.downstreamNodeIds,
+    feedbackScopeDefault: entry.feedbackScopeDefault,
+    memoryCandidate: entry.memoryCandidate,
+    createdAt: entry.createdAt,
+    respondedAt: entry.respondedAt,
+  };
+}
+
+function formatMessageTime(value: string | null | undefined) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function hasHumanAnswer(entry: InterruptEntry) {
+  return entry.status === 'answered' && Boolean(getRawHumanAnswer(entry));
+}
+
+function getRawHumanAnswer(entry: InterruptEntry) {
+  return entry.replyMessage || entry.feedback || entry.reason || entry.humanResponse || '';
+}
+
 export function PlaybookDesignerPanel({ playbookId }: Props) {
   const { t } = useModuleTranslation('playbook');
 
@@ -63,16 +123,31 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const isDesigning = useIsDesigning();
   const isDirty = useIsDirty();
   const rawCurrentExecution = useCurrentExecution();
-  const currentExecution = rawCurrentExecution?.playbookId === playbookId ? rawCurrentExecution : null;
+  const latestExecution = useLatestExecutionForPlaybook(playbookId);
+  const currentPlaybookExecution = rawCurrentExecution?.playbookId === playbookId ? rawCurrentExecution : null;
+  const latestExecutionHasInput = latestExecution?.waitingForHumanInput === true
+    || latestExecution?.status === 'interrupted'
+    || latestExecution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const currentExecutionHasInput = currentPlaybookExecution?.waitingForHumanInput === true
+    || currentPlaybookExecution?.status === 'interrupted'
+    || currentPlaybookExecution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const currentExecution = latestExecutionHasInput
+    ? latestExecution
+    : currentExecutionHasInput
+      ? currentPlaybookExecution
+      : currentPlaybookExecution ?? latestExecution;
   const selectedStepId = useSelectedStep();
 
   const fetchDesignMessages = usePlaybookStore((s) => s.fetchDesignMessages);
   const designPlaybook = usePlaybookStore((s) => s.designPlaybook);
   const revertToSnapshot = usePlaybookStore((s) => s.revertToSnapshot);
   const resumeExecution = usePlaybookStore((s) => s.resumeExecution);
+  const disableHitlBlocker = usePlaybookStore((s) => s.disableHitlBlocker);
   const setDesignerOpen = usePlaybookStore((s) => s.setDesignerOpen);
   const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+  const stopExecution = usePlaybookStore((s) => s.stopExecution);
+  const isStopping = usePlaybookStore((s) => s.isStopping);
 
   const { saveNow } = useAutosave();
 
@@ -80,10 +155,18 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const [response, setResponse] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [isSubmittingInterrupt, setIsSubmittingInterrupt] = useState(false);
+  const [isDisablingBlocker, setIsDisablingBlocker] = useState(false);
+  const [feedbackScope, setFeedbackScope] = useState<HitlFeedbackScope>('downstream_run');
+  const [rememberFeedback, setRememberFeedback] = useState(false);
   const [showRejectReason, setShowRejectReason] = useState(false);
+  const [localInterruptThread, setLocalInterruptThread] = useState<{
+    executionId: string;
+    entries: InterruptEntry[];
+  } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollCount = useRef(0);
+  const interruptComposerRef = useRef<HTMLTextAreaElement>(null);
 
   const interruptedTask = currentExecution?.taskResults.find(
     (taskResult) => taskResult.taskId === (currentExecution.interruptPayload?.taskId || currentExecution.currentInterruptTaskId || selectedStepId),
@@ -117,9 +200,18 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         resumableActions: pendingHistoryEntry.resumableActions,
         taskDescription: pendingHistoryEntry.taskDescription,
         result: pendingHistoryEntry.result,
+        blockerRuleId: pendingHistoryEntry.blockerRuleId,
+        blockerKind: pendingHistoryEntry.blockerKind,
+        reasonCode: pendingHistoryEntry.reasonCode,
+        riskLevel: pendingHistoryEntry.riskLevel,
+        downstreamNodeIds: pendingHistoryEntry.downstreamNodeIds,
       }
     : null);
-  const activeInterruptEntry = interruptEntries.find((entry) => entry.status === 'pending')
+  const currentInterruptTaskId = interruptPayload?.taskId || currentExecution?.currentInterruptTaskId || selectedStepId;
+  const historyInterruptEntries = (currentExecution?.hitlHistory || [])
+    .filter((entry) => !currentInterruptTaskId || entry.taskId === currentInterruptTaskId)
+    .map(historyEntryToInterruptEntry);
+  const activeInterruptEntry: InterruptEntry | null = interruptEntries.find((entry) => entry.status === 'pending')
     || (interruptPayload
       ? {
           id: `${interruptPayload.taskId}-active`,
@@ -129,16 +221,47 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
           interruptId: interruptPayload.interruptId || '',
           taskDescription: interruptPayload.taskDescription || '',
           result: interruptPayload.result || '',
+          blockerRuleId: interruptPayload.blockerRuleId,
+          blockerKind: interruptPayload.blockerKind,
+          reasonCode: interruptPayload.reasonCode,
+          riskLevel: interruptPayload.riskLevel,
+          downstreamNodeIds: interruptPayload.downstreamNodeIds,
+          scope: interruptPayload.feedbackScopeDefault,
+          approved: undefined,
+          humanResponse: undefined,
         }
       : null);
 
-  const interruptThread = interruptEntries.length > 0
-    ? interruptEntries
-    : activeInterruptEntry
-      ? [activeInterruptEntry]
-      : [];
+  const hasActiveEntryInHistory = activeInterruptEntry
+    ? historyInterruptEntries.some((entry) => entry.interruptId === activeInterruptEntry.interruptId)
+    : false;
+  const computedInterruptThread = historyInterruptEntries.length > 0
+    ? [
+        ...historyInterruptEntries,
+        ...(activeInterruptEntry && !hasActiveEntryInHistory ? [activeInterruptEntry] : []),
+      ]
+    : interruptEntries.length > 0
+      ? interruptEntries
+      : activeInterruptEntry
+        ? [activeInterruptEntry]
+        : [];
+  const rememberedThread = localInterruptThread;
+  const localThreadEntries = rememberedThread && rememberedThread.executionId === currentExecution?.id
+    ? rememberedThread.entries
+    : [];
+  const interruptThread = computedInterruptThread.length > 0
+    ? computedInterruptThread
+    : localThreadEntries;
+  const pendingInterrupts = currentExecution?.pendingInterrupts || [];
+  const queuedInterrupts = pendingInterrupts.filter((entry) => (
+    entry.interruptId !== activeInterruptEntry?.interruptId
+  ));
+  // Actual pending human input must win over stale UI mode so the sidebar opens on live interrupts without a refresh.
+  const effectiveCopilotMode = (activeInterruptEntry || interruptThread.length > 0 || currentExecution?.waitingForHumanInput)
+    ? 'interrupt'
+    : copilotMode;
 
-  const scrollCount = copilotMode === 'design' ? messages.length + (isDesigning ? 1 : 0) : interruptThread.length;
+  const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (isDesigning ? 1 : 0) : interruptThread.length;
 
   useEffect(() => {
     if (designerOpen && copilotMode === 'design' && playbookId) {
@@ -159,6 +282,27 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     }
     selectStep(interruptPayload.taskId);
   }, [designerOpen, copilotMode, interruptPayload?.taskId, selectStep]);
+
+  useEffect(() => {
+    if (!activeInterruptEntry) return;
+    const isSensitiveApproval = activeInterruptEntry.interruptType === 'approval_request'
+      && (activeInterruptEntry.riskLevel === 'high' || activeInterruptEntry.riskLevel === 'critical');
+    setFeedbackScope(activeInterruptEntry.scope ?? (isSensitiveApproval ? 'step_only' : 'downstream_run'));
+    setRememberFeedback(false);
+  }, [activeInterruptEntry?.interruptId, activeInterruptEntry?.interruptType, activeInterruptEntry?.riskLevel, activeInterruptEntry?.scope]);
+
+  useEffect(() => {
+    if (!designerOpen || copilotMode !== 'interrupt') return;
+    if (!activeInterruptEntry || activeInterruptEntry.interruptType === 'approval_request') return;
+    const frame = window.requestAnimationFrame(() => {
+      const composer = interruptComposerRef.current;
+      if (typeof composer?.scrollIntoView === 'function') {
+        composer.scrollIntoView({ block: 'nearest' });
+      }
+      composer?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeInterruptEntry?.interruptId, activeInterruptEntry?.interruptType, copilotMode, designerOpen]);
 
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -193,6 +337,26 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
 
     setIsSubmittingInterrupt(true);
     try {
+      const responseMessage = extra?.message || extra?.feedback || extra?.reason || '';
+      const answeredEntry: InterruptEntry = {
+        ...activeInterruptEntry,
+        status: 'answered',
+        action,
+        humanResponse: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action,
+        replyMessage: responseMessage,
+        approved: action === 'approve' ? true : action === 'reject' ? false : activeInterruptEntry.approved,
+        reason: extra?.reason || activeInterruptEntry.reason,
+        feedback: extra?.feedback || activeInterruptEntry.feedback,
+        scope: feedbackScope,
+        remember: rememberFeedback,
+        respondedAt: new Date().toISOString(),
+      };
+      setLocalInterruptThread({
+        executionId: currentExecution.id,
+        entries: (interruptThread.length > 0 ? interruptThread : [activeInterruptEntry]).map((entry) => (
+          entry.interruptId === activeInterruptEntry.interruptId ? answeredEntry : entry
+        )),
+      });
       await resumeExecution(playbookId, {
         executionId: currentExecution.id,
         taskId: interruptPayload?.taskId || interruptedTask?.taskId || '',
@@ -202,16 +366,31 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         approved: action === 'approve' ? true : action === 'reject' ? false : undefined,
         reason: extra?.reason,
         feedback: extra?.feedback,
+        scope: feedbackScope,
+        remember: rememberFeedback,
       });
       setResponse('');
       setRejectReason('');
+      setRememberFeedback(false);
       setShowRejectReason(false);
     } catch {
       // handled in store
     } finally {
       setIsSubmittingInterrupt(false);
     }
-  }, [playbookId, currentExecution, activeInterruptEntry, interruptedTask?.taskId, resumeExecution]);
+  }, [playbookId, currentExecution, activeInterruptEntry, interruptPayload?.taskId, interruptPayload?.interruptId, interruptedTask?.taskId, interruptThread, resumeExecution, feedbackScope, rememberFeedback]);
+
+  const handleDisableBlocker = useCallback(async () => {
+    if (!currentExecution || !activeInterruptEntry?.interruptId) return;
+    setIsDisablingBlocker(true);
+    try {
+      await disableHitlBlocker(currentExecution.id, activeInterruptEntry.interruptId);
+    } catch {
+      // handled in store
+    } finally {
+      setIsDisablingBlocker(false);
+    }
+  }, [activeInterruptEntry?.interruptId, currentExecution, disableHitlBlocker]);
 
   const handleInterruptResponseKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) {
@@ -229,8 +408,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     );
   }, [activeInterruptEntry, handleInterruptSubmit, isSubmittingInterrupt, response]);
 
-  const panelTitle = copilotMode === 'interrupt'
-    ? t('copilot.interruptTitle')
+  const panelTitle = effectiveCopilotMode === 'interrupt'
+    ? getInterruptTitle(activeInterruptEntry?.interruptType ?? interruptPayload?.type ?? 'clarification', t)
     : t('designer.title');
   const pendingInterruptTaskTitle = interruptedTask?.nodeTitle || interruptPayload?.taskTitle || t('copilot.pendingTaskFallback');
 
@@ -242,17 +421,31 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">{panelTitle}</h3>
-          {copilotMode === 'interrupt' && (
+          {effectiveCopilotMode === 'interrupt' && (
             <p className="text-xs text-muted-foreground truncate">{pendingInterruptTaskTitle}</p>
           )}
         </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)}>
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {effectiveCopilotMode === 'interrupt' && playbookId && currentExecution && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-destructive hover:text-destructive"
+              disabled={isStopping}
+              onClick={() => void stopExecution(playbookId, currentExecution.id)}
+              title={t('execution.stop')}
+            >
+              <Square className="h-4 w-4" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-        {copilotMode === 'design' ? (
+        {effectiveCopilotMode === 'design' ? (
           <>
             {messages.length === 0 && !messagesLoading && (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-4">
@@ -353,6 +546,17 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               </div>
             )}
 
+            {activeInterruptEntry && pendingInterrupts.length > 1 && (
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+                <div className="font-medium">{t('interrupt.queueTitle', { count: pendingInterrupts.length })}</div>
+                {queuedInterrupts.length > 0 && (
+                  <div className="mt-1 text-muted-foreground">
+                    {t('interrupt.queuePending', { count: queuedInterrupts.length })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {interruptThread.map((entry) => {
               const isApproval = entry.interruptType === 'approval_request';
               const isReview = entry.interruptType === 'review_request';
@@ -360,25 +564,12 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               const agentText = entry.result || entry.message;
               const responseText = getInterruptResponseText(entry, t);
               const responseDetail = getInterruptResponseDetail(entry, responseText);
-              const isPending = entry.status === 'pending';
 
               return (
-                <div key={entry.id} className="space-y-2">
+                <div key={entry.id} className="space-y-3">
                   <div className="flex justify-start">
-                    <div className="max-w-[90%] space-y-2 px-1">
-                      {isPending && (
-                        <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
-                          <div className="font-semibold">{t('interrupt.pendingBannerTitle')}</div>
-                          <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">
-                            {isApproval
-                              ? t('interrupt.pendingApprovalHint')
-                              : isReview
-                                ? t('interrupt.pendingReviewHint')
-                                : t('interrupt.pendingClarificationHint')}
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                    <div className="max-w-[88%] rounded-2xl rounded-tl-sm border bg-muted/50 px-3 py-2 shadow-sm">
+                      <div className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
                         {isApproval ? (
                           <ShieldCheck className="h-3.5 w-3.5" />
                         ) : isReview ? (
@@ -386,31 +577,51 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                         ) : (
                           <MessageSquare className="h-3.5 w-3.5" />
                         )}
-                        <span>{getInterruptTitle(entry.interruptType, t)}</span>
+                        <span>{t('interrupt.agent')}</span>
+                        <span className="text-muted-foreground/60">{formatMessageTime(entry.createdAt)}</span>
                       </div>
                       <p className="text-sm whitespace-pre-wrap">{agentText}</p>
                       {entry.taskDescription && (
-                        <div className="rounded-md border bg-background px-3 py-2">
+                        <div className="mt-2 rounded-md border bg-background/70 px-3 py-2">
                           <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
                             {t('interrupt.taskDescription')}
                           </p>
                           <p className="text-xs whitespace-pre-wrap">{entry.taskDescription}</p>
                         </div>
                       )}
+                      {(entry.reasonCode || entry.blockerKind || entry.riskLevel || (entry.downstreamNodeIds?.length ?? 0) > 0) && (
+                        <div className="rounded-md border bg-background px-3 py-2 text-xs">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                            {t('interrupt.whyPaused')}
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {entry.reasonCode && <Badge variant="secondary">{entry.reasonCode}</Badge>}
+                            {entry.blockerKind && <Badge variant="outline">{entry.blockerKind}</Badge>}
+                            {entry.riskLevel && <Badge variant="outline">{getRiskLabel(String(entry.riskLevel), t)}</Badge>}
+                          </div>
+                          {(entry.downstreamNodeIds?.length ?? 0) > 0 && (
+                            <p className="mt-2 text-muted-foreground">
+                              {t('interrupt.downstreamImpact', { count: entry.downstreamNodeIds?.length ?? 0 })}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {entry.status === 'answered' && (
+                  {hasHumanAnswer(entry) && (
                     <div className="flex justify-end">
-                      <div className="bg-primary text-primary-foreground rounded-lg rounded-tr-sm px-3 py-2 max-w-[85%] space-y-1">
-                        <div className="flex items-center gap-1.5 text-xs">
+                      <div className="max-w-[88%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground shadow-sm">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] opacity-80">
                           {isApproval || isReview ? (
                             wasApproved ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />
                           ) : (
                             <MessageSquare className="h-3.5 w-3.5" />
                           )}
-                          <span>{responseText}</span>
+                          <span>{t('interrupt.you')}</span>
+                          <span>{formatMessageTime(entry.respondedAt)}</span>
                         </div>
+                        <p className="text-sm whitespace-pre-wrap">{responseText}</p>
                         {responseDetail && <p className="text-xs opacity-90 whitespace-pre-wrap">{responseDetail}</p>}
                       </div>
                     </div>
@@ -422,7 +633,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         )}
       </div>
 
-      {copilotMode === 'design' ? (
+      {effectiveCopilotMode === 'design' ? (
         <form className="border-t px-3 py-3 flex gap-2 shrink-0" onSubmit={handleSubmitDesign}>
           <Input
             value={query}
@@ -437,18 +648,53 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         </form>
       ) : activeInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">
+          <div className="space-y-2 rounded-lg border bg-muted/30 px-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">{t('interrupt.scopeLabel')}</label>
+              <Select value={feedbackScope} onValueChange={(value) => setFeedbackScope(value as HitlFeedbackScope)}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="step_only">{t('interrupt.scope.step_only')}</SelectItem>
+                  <SelectItem value="downstream_run">{t('interrupt.scope.downstream_run')}</SelectItem>
+                  <SelectItem value="entire_run">{t('interrupt.scope.entire_run')}</SelectItem>
+                  <SelectItem value="future_node_runs">{t('interrupt.scope.future_node_runs')}</SelectItem>
+                  <SelectItem value="future_workflow_runs">{t('interrupt.scope.future_workflow_runs')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-xs">
+              <Checkbox
+                checked={rememberFeedback}
+                onCheckedChange={(checked) => setRememberFeedback(checked === true)}
+              />
+              <span>{t('interrupt.rememberFeedback')}</span>
+            </label>
+            {activeInterruptEntry.blockerRuleId && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                disabled={isDisablingBlocker}
+                onClick={() => void handleDisableBlocker()}
+              >
+                {t('interrupt.disableBlocker')}
+              </Button>
+            )}
+          </div>
           {activeInterruptEntry.interruptType === 'approval_request' ? (
             <>
               <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">{t('interrupt.pendingBannerTitle')}</span>
+                  <span className="font-semibold">{t('interrupt.approvalActionHint')}</span>
                   {interruptIterationCount > 1 && (
                     <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-200">
                       {t('interrupt.iterationContext', { current: interruptIterationIndex + 1, total: interruptIterationCount })}
                     </Badge>
                   )}
                 </div>
-                <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">{t('interrupt.approvalActionHint')}</div>
               </div>
               {showRejectReason && (
                 <Textarea
@@ -488,14 +734,14 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
           ) : (
             <>
               <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
-                <div className="font-semibold">{t('interrupt.pendingBannerTitle')}</div>
-                <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">
+                <div className="font-semibold">
                   {activeInterruptEntry.interruptType === 'review_request'
                     ? t('interrupt.reviewActionHint')
                     : t('interrupt.clarificationActionHint')}
                 </div>
               </div>
               <Textarea
+                ref={interruptComposerRef}
                 value={response}
                 onChange={(e) => setResponse(e.target.value)}
                 placeholder={t('interrupt.responsePlaceholder')}
@@ -512,6 +758,19 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                   >
                     <XCircle className="h-4 w-4 mr-1" />
                     {t('interrupt.submit')}
+                  </Button>
+                )}
+                {activeInterruptEntry.interruptType === 'clarification' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleInterruptSubmit('reply', {
+                      message: PROCEED_WITH_AVAILABLE_INFORMATION,
+                      feedback: PROCEED_WITH_AVAILABLE_INFORMATION,
+                    })}
+                    disabled={isSubmittingInterrupt}
+                  >
+                    {t('interrupt.proceedWithoutMore')}
                   </Button>
                 )}
                 <Button
@@ -535,6 +794,16 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               </div>
             </>
           )}
+        </div>
+      ) : interruptThread.length > 0 ? (
+        <div className="border-t px-3 py-3 shrink-0">
+          <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 font-medium text-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {t('interrupt.threadIdleTitle')}
+            </div>
+            <p className="mt-1">{t('interrupt.threadIdleHint')}</p>
+          </div>
         </div>
       ) : null}
     </div>

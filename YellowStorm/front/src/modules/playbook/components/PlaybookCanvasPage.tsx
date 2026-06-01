@@ -54,6 +54,7 @@ import {
   useCanRedo,
   useIntentSuggestionHistory,
 } from '../store';
+import { usePlaybookUiStore } from '../uiStore';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
@@ -75,6 +76,7 @@ import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNod
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
+import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
@@ -96,7 +98,7 @@ import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../
 import type { AdvisorIntentApplyRequest, PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport, TaskInputPort, TaskOutputPort } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import { PlaybookFlowSettingsDrawer } from './PlaybookFlowSettingsDrawer';
@@ -430,6 +432,8 @@ function PlaybookCanvasInner() {
   const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
+  const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
+  const runFromStep = usePlaybookStore((s) => s.runFromStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
@@ -452,7 +456,7 @@ function PlaybookCanvasInner() {
   const intentBarRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
-  const previousWaitingForHumanInputRef = useRef(false);
+  const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
 
   const handleToggleTriggerEnabled = useCallback(
@@ -587,14 +591,25 @@ function PlaybookCanvasInner() {
     if (id && !isGeneratingRoute) {
       // Reset execution state when switching playbooks, but preserve panel preference
       const panelPref = (() => { try { return localStorage.getItem('ys_playbook_exec_panel') === '1'; } catch { return false; } })();
+      const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
+      usePlaybookUiStore.setState({
+        selectedStepId: null,
+        selectedIterationIndex: 0,
+        executionPanelOpen: panelPref,
+        workspaceExplorerOpen: workspaceExplorerPref,
+        connectorSidebarOpen: false,
+        nodeEditorOpen: false,
+        pageMode: 'design',
+      });
       usePlaybookStore.setState({
         currentExecution: null,
         selectedStepId: null,
         executionPanelOpen: panelPref,
+        workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
         pageMode: 'design',
       });
-      setExecutionPanelCollapsed(true);
+      setExecutionPanelCollapsed(!panelPref);
       setIntentBarCollapsed(false);
       setToolbarCollapsed(true);
       setDataBindingsVisible(false);
@@ -848,6 +863,7 @@ function PlaybookCanvasInner() {
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
   const prevIsDesigning = useRef(isDesigning);
+  const pendingInterruptFetchRef = useRef<string | null>(null);
   useEffect(() => {
     const visibleStatus = getVisibleExecutionStatus(currentExecution?.playbookId === id ? currentExecution : execution);
     if (visibleStatus === 'completed' || visibleStatus === 'failed') {
@@ -1583,9 +1599,59 @@ function PlaybookCanvasInner() {
   );
 
   const canResumeFromStep = useCallback(
-    (_nodeId: string) => false,
-    [],
+    (nodeId: string) => {
+      if (!currentExecution || currentExecution.playbookId !== id || !currentExecution.waitingForHumanInput) {
+        return false;
+      }
+      if (currentExecution.currentInterruptTaskId !== nodeId) {
+        return false;
+      }
+      const interrupt = currentExecution.interruptPayload;
+      if (!interrupt || interrupt.taskId !== nodeId) {
+        return false;
+      }
+      const resumableActions = interrupt.resumableActions || [];
+      const isApprovalLike = interrupt.type === 'approval_request' || interrupt.type === 'human_approval';
+      return resumableActions.includes('approve') || (resumableActions.length === 0 && isApprovalLike);
+    },
+    [currentExecution, id],
   );
+
+  const canRunFromStep = useCallback(
+    (nodeId: string) => {
+      if (!currentExecution || currentExecution.playbookId !== id) return false;
+      if (currentExecution.status !== 'completed') return false;
+      if (hasActiveExecution) return false;
+      const taskResult = currentExecution.taskResults.find(
+        (tr) => tr.taskId === nodeId && tr.status === 'completed',
+      );
+      if (!taskResult) return false;
+      const node = playbook?.tasks.find((t) => t.id === nodeId);
+      if (!node) return false;
+      if ((node as any).containerConfig?.parentIteratorId) return false;
+      return true;
+    },
+    [currentExecution, id, hasActiveExecution, playbook],
+  );
+
+  const handleRunFromStep = useCallback((nodeId: string) => {
+    if (!currentExecution || currentExecution.playbookId !== id) return;
+    void runFromStep(id, currentExecution.id, nodeId);
+  }, [currentExecution, id, runFromStep]);
+
+  const handleResumeFromStep = useCallback((nodeId: string) => {
+    if (!currentExecution || currentExecution.playbookId !== id) {
+      return;
+    }
+    const interruptedTask = currentExecution.taskResults.find(
+      (taskResult) => taskResult.taskId === nodeId && taskResult.status === 'interrupted',
+    );
+    void resumeFromStep(id, currentExecution.id, nodeId, {
+      action: 'approve',
+      interruptId: currentExecution.interruptPayload?.interruptId || undefined,
+      iteration: interruptedTask?.iteration,
+    });
+  }, [currentExecution, id, resumeFromStep]);
 
   const activeExecutionForEditor = (currentExecution?.playbookId === id ? currentExecution : null) || execution || null;
   const lastSnapshotRef = useRef<{ key: string; task: PlaybookTask | null }>({ key: '', task: null });
@@ -1652,12 +1718,14 @@ function PlaybookCanvasInner() {
       onDelete: removeNode,
       onToggleEnabled: handleToggleEnabled,
       onExecuteStep: handleExecuteStep,
-      onResumeFromStep: () => undefined,
+      onResumeFromStep: handleResumeFromStep,
+      onRunFromStep: handleRunFromStep,
       onSkipStep: () => undefined,
       onSaveBaseline: handleSaveBaseline,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
       isExecuting,
       canResumeFromStep,
+      canRunFromStep,
       canSkipStep,
       canSaveBaseline,
       onCopySelection: () => { void copySelection(); },
@@ -1672,12 +1740,15 @@ function PlaybookCanvasInner() {
       removeNode,
       handleToggleEnabled,
       handleExecuteStep,
+      handleResumeFromStep,
+      handleRunFromStep,
       handleSaveBaseline,
       hasActiveExecution,
       isSaving,
       isDirty,
       isExecuting,
       canResumeFromStep,
+      canRunFromStep,
       canSkipStep,
       canSaveBaseline,
       copySelection,
@@ -3049,7 +3120,39 @@ function PlaybookCanvasInner() {
     if (newOpen) setEditorOpen(false);
   }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen]);
 
-  const waitingForHumanInput = currentExecution?.playbookId === id && currentExecution?.waitingForHumanInput === true;
+  const currentPlaybookExecution = currentExecution?.playbookId === id ? currentExecution : null;
+  const executionHasHumanInput = execution?.waitingForHumanInput === true
+    || execution?.status === 'interrupted'
+    || execution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const currentExecutionHasHumanInput = currentPlaybookExecution?.waitingForHumanInput === true
+    || currentPlaybookExecution?.status === 'interrupted'
+    || currentPlaybookExecution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const executionWithHumanInput = executionHasHumanInput
+    ? execution
+    : currentExecutionHasHumanInput
+      ? currentPlaybookExecution
+      : currentPlaybookExecution ?? execution;
+  const waitingForHumanInput = executionWithHumanInput?.waitingForHumanInput === true;
+  const interruptedTaskId = executionWithHumanInput?.taskResults.find((taskResult) => taskResult.status === 'interrupted')?.taskId;
+  const shouldOpenHumanInput = waitingForHumanInput || executionWithHumanInput?.status === 'interrupted';
+  const humanInputKey = shouldOpenHumanInput
+    ? `${executionWithHumanInput?.id ?? ''}:${executionWithHumanInput?.currentInterruptId ?? executionWithHumanInput?.interruptPayload?.interruptId ?? interruptedTaskId ?? 'interrupted'}`
+    : null;
+
+  useEffect(() => {
+    if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
+      return;
+    }
+    if (pendingInterruptFetchRef.current === executionForCanvas.id) {
+      return;
+    }
+    pendingInterruptFetchRef.current = executionForCanvas.id;
+    void fetchExecution(id, executionForCanvas.id).finally(() => {
+      if (pendingInterruptFetchRef.current === executionForCanvas.id) {
+        pendingInterruptFetchRef.current = null;
+      }
+    });
+  }, [executionForCanvas, fetchExecution, id]);
 
   const handleIntentBarClick = useCallback(() => {
     setWorkspaceExplorerOpen(false);
@@ -3072,16 +3175,16 @@ function PlaybookCanvasInner() {
   }, []);
 
   useEffect(() => {
-    const wasWaitingForHumanInput = previousWaitingForHumanInputRef.current;
-    previousWaitingForHumanInputRef.current = Boolean(waitingForHumanInput);
+    const previousHumanInputKey = previousHumanInputKeyRef.current;
+    previousHumanInputKeyRef.current = humanInputKey;
 
-    if (!waitingForHumanInput || wasWaitingForHumanInput) {
+    if (!humanInputKey || previousHumanInputKey === humanInputKey) {
       return;
     }
 
     setDesignerOpen(true);
     setCopilotMode('interrupt');
-  }, [setCopilotMode, setDesignerOpen, waitingForHumanInput]);
+  }, [humanInputKey, setCopilotMode, setDesignerOpen]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
@@ -3357,6 +3460,7 @@ function PlaybookCanvasInner() {
       )}
       {id && (
         <PlaybookFlowSettingsDrawer
+          playbookId={id}
           open={flowSettingsOpen}
           onOpenChange={setFlowSettingsOpen}
           settings={playbook.settings || { recursionLimit: 25, maxParallelism: 4 }}
@@ -3444,8 +3548,9 @@ function PlaybookCanvasInner() {
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
                 >
-                  <Controls />
+                  <Controls position="bottom-left" />
                 </Canvas>
+                {intentLoading ? <PlaybookIntentGhostNode /> : null}
                 <PlaybookIntentBar
                   ref={intentBarRef}
                   selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
@@ -3501,9 +3606,7 @@ function PlaybookCanvasInner() {
                   onPasteClipboard={() => { void pasteClipboard(); }}
                   hasSelection={nodes.some((n) => n.selected && n.id !== '__trigger__')}
                   waitingForHumanInput={Boolean(waitingForHumanInput)}
-                  interruptType={currentExecution?.playbookId === id
-                    ? ((currentExecution?.interruptPayload?.type ?? null) as InterruptType | null)
-                    : null}
+                  interruptType={(executionWithHumanInput?.interruptPayload?.type ?? null) as InterruptType | null}
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}

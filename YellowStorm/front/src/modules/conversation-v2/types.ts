@@ -4,10 +4,16 @@ export type ConversationV2EventType =
 export interface BaseEvent {
   event_id: string;
   timestamp: number;
+  sequence?: number;          // present on every persisted event; absent on optimistic client-side user echo
 }
 
 export type AgentEvent =
-  | ({ type: 'message' } & BaseEvent & { role: 'user' | 'assistant'; content: string; attachments?: FileInfo[] })
+  | ({ type: 'message' } & BaseEvent & {
+      role: 'user' | 'assistant';
+      content: string;
+      attachments?: FileInfo[];
+      modelId?: string | null;
+    })
   | ({ type: 'tool' } & BaseEvent & { tool_call_id: string; name: string; status: string; function: string; args: Record<string, unknown>; content?: ToolContent })
   | ({ type: 'step' } & BaseEvent & { id: string; status: string; description: string })
   | ({ type: 'plan' } & BaseEvent & { steps: Array<{ id: string; status: string; description: string }> })
@@ -28,7 +34,12 @@ export interface FileInfo {
   id: string;
   name: string;
   content_type: string;
-  url: string;
+  /**
+   * Ceph object key — `{ownerUserId}/{storagePrefix}/{filename}`. Not directly
+   * fetchable; exchange via `conversationV2Api.getFileSignedUrl(path)` for a
+   * short-lived presigned read URL before opening the file viewer.
+   */
+  path: string;
 }
 
 export interface SessionPayload {
@@ -37,6 +48,7 @@ export interface SessionPayload {
   status: string;
   isShared: boolean;
   events: AgentEvent[];
+  workspaceIds?: string[];
 }
 
 export type ConversationV2SessionStatus =
@@ -48,6 +60,7 @@ export interface ConversationV2PointerSummary {
   status: ConversationV2SessionStatus;
   lastEventAt: string;
   isShared: boolean;
+  workspaceIds: string[];
 }
 
 export interface ListSessionsResponse {

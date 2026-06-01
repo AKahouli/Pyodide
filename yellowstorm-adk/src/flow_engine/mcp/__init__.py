@@ -111,10 +111,7 @@ def _normalize_search_result_blocks(
             or ""
         ).strip()
         page_number = block.get("page_number")
-        if isinstance(page_number, int):
-            page = str(page_number + 1)
-        else:
-            page = str(page_number or "").strip()
+        page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
         workspace_id = str(block.get("brain_id") or block.get("workspace_id") or "").strip()
         source = str(
             _display_source_name(
@@ -137,6 +134,96 @@ def _normalize_search_result_blocks(
                 "page": page,
                 "page_content": content,
                 "workspace_id": workspace_id,
+                "reference": "",
+            }
+        )
+
+    return citation_sources
+
+
+def _normalize_blocks_list(
+    blocks: Any,
+    source_label: str,
+    external_id: str = "",
+    workspace_id: str = "",
+) -> List[Dict[str, str]]:
+    """Convert a blocks array from MCP into text citation source entries."""
+    if not isinstance(blocks, list):
+        return []
+
+    citation_sources: List[Dict[str, str]] = []
+    seen = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        content = str(block.get("content") or "").strip()
+        if not content:
+            continue
+        if block.get("block_type") in ("image", "figure", "chart"):
+            continue
+        page_number = block.get("page_number")
+        page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
+        block_external_id = str(block.get("external_id") or external_id).strip()
+        block_workspace_id = str(block.get("brain_id") or block.get("workspace_id") or workspace_id).strip()
+        source = str(_display_source_name(block.get("source") or source_label)).strip()
+
+        signature = (source, block_external_id, page, content)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        citation_sources.append(
+            {
+                "type": "text",
+                "source": source,
+                "external_id": block_external_id,
+                "page": page,
+                "page_content": content,
+                "workspace_id": block_workspace_id,
+                "reference": "",
+            }
+        )
+
+    return citation_sources
+
+
+def _normalize_image_list(
+    images: Any,
+    source_label: str,
+    external_id: str = "",
+    workspace_id: str = "",
+) -> List[Dict[str, str]]:
+    """Convert an images array from MCP into image citation source entries."""
+    if not isinstance(images, list):
+        return []
+
+    citation_sources: List[Dict[str, str]] = []
+    seen = set()
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        path = str(img.get("path") or img.get("data") or img.get("url") or "").strip()
+        if not path:
+            continue
+        page_number = img.get("page_number") or img.get("page")
+        page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
+        file_name = str(img.get("file_name") or img.get("filename") or source_label).strip()
+        img_external_id = str(img.get("external_id") or external_id).strip()
+        img_workspace_id = str(img.get("brain_id") or img.get("workspace_id") or workspace_id).strip()
+
+        signature = (path, img_external_id, page)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        citation_sources.append(
+            {
+                "type": "image",
+                "path": path,
+                "page": page,
+                "file_name": file_name,
+                "external_id": img_external_id,
+                "workspace_id": img_workspace_id,
+                "height": str(img.get("height") or "").strip(),
+                "width": str(img.get("width") or "").strip(),
                 "reference": "",
             }
         )
@@ -220,6 +307,30 @@ def _normalize_mcp_response(
         )
         if block_citation_sources:
             response["citation_sources"] = block_citation_sources
+
+    if "citation_sources" not in response and isinstance(response.get("blocks"), list):
+        blocks_citation_sources = _normalize_blocks_list(
+            response.get("blocks"),
+            source_label=str(response.get("source") or action_key or ""),
+            external_id=str(response.get("external_id") or ""),
+            workspace_id=str(response.get("brain_id") or ""),
+        )
+        if blocks_citation_sources:
+            response["citation_sources"] = blocks_citation_sources
+
+    if isinstance(response.get("images"), list):
+        image_citation_sources = _normalize_image_list(
+            response.get("images"),
+            source_label=str(response.get("source") or action_key or ""),
+            external_id=str(response.get("external_id") or ""),
+            workspace_id=str(response.get("brain_id") or ""),
+        )
+        if image_citation_sources:
+            existing = response.get("citation_sources")
+            if isinstance(existing, list):
+                response["citation_sources"] = existing + image_citation_sources
+            else:
+                response["citation_sources"] = image_citation_sources
 
     if normalized_sources:
         response["sources"] = normalized_sources

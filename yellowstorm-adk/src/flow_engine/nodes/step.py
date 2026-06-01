@@ -31,8 +31,13 @@ from src.flow_engine.nodes.step_hitl_handlers import (
     handle_interrupt_after,
     handle_interrupt_before,
 )
+from src.flow_engine.nodes.step_hitl_blockers import (
+    evaluate_hitl_blocker,
+    handle_smart_hitl_blocker,
+)
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
 from src.flow_engine.nodes.step_tools import (
+    ToolHitlApprovalContext,
     build_agent_config,
     parse_connector_bindings,
     run_step_with_tools,
@@ -91,6 +96,10 @@ def _build_prompt(
     output_contract: dict[str, Any] | None = None,
     iteration: int = 0,
     trigger_context: dict[str, Any] | None = None,
+    hitl_policy: dict[str, Any] | None = None,
+    hitl_blockers: list[dict[str, Any]] | None = None,
+    human_context: list[dict[str, Any]] | None = None,
+    hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
     return build_step_prompt(
         label=label,
@@ -101,6 +110,10 @@ def _build_prompt(
         iteration=iteration,
         trigger_context=trigger_context,
         require_structured_output=requires_structured_response(output_contract),
+        hitl_policy=hitl_policy,
+        hitl_blockers=hitl_blockers,
+        human_context=human_context,
+        hitl_memory=hitl_memory,
     )
 
 
@@ -124,15 +137,63 @@ def _apply_hitl_result(
     iteration: int,
     writer: Any,
     node_description: str,
-) -> tuple[dict[str, Any] | None, str]:
+) -> tuple[dict[str, Any] | None, str, list[dict[str, Any]]]:
     if hitl.skipped:
         writer({"type": "NodeSkipped", "node_id": node_id, "iteration": iteration, "payload": {}})
-        return _skip_result(node_id, iteration), node_description
+        return _skip_result(node_id, iteration), node_description, hitl.human_context
     if hitl.failed:
         writer({"type": "NodeFailed", "node_id": node_id, "iteration": iteration, "payload": {"error": hitl.error_msg}})
-        return _fail_result(node_id, iteration, hitl.error_msg), node_description
+        return _fail_result(node_id, iteration, hitl.error_msg), node_description, hitl.human_context
     desc = hitl.updated_description if hitl.updated_description else node_description
-    return None, desc
+    return None, desc, hitl.human_context
+
+
+def _with_human_context(result: dict[str, Any], human_context: list[dict[str, Any]]) -> dict[str, Any]:
+    if human_context:
+        return {**result, "human_context": human_context}
+    return result
+
+
+def _as_record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_record_list(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _next_clarification_round(node_id: str, *contexts: list[dict[str, Any]]) -> int:
+    count = 0
+    for context in contexts:
+        count += sum(
+            1
+            for entry in context
+            if entry.get("node_id") == node_id and entry.get("interrupt_type") == "clarification"
+        )
+    return count + 1
+
+
+def _resolve_hitl_policy(metadata: dict[str, Any], state: ExecutionState) -> dict[str, Any]:
+    # Node metadata overrides the workflow-level policy carried in graph state.
+    policy = _as_record(state.get("hitl_policy"))
+    node_policy = metadata.get("hitl_policy") or metadata.get("hitlPolicy")
+    if isinstance(node_policy, dict):
+        policy = {**policy, **node_policy}
+    return policy
+
+
+def _resolve_hitl_blockers(metadata: dict[str, Any], state: ExecutionState, node_id: str) -> list[dict[str, Any]]:
+    blockers = _as_record_list(state.get("hitl_blockers"))
+    metadata_blockers = metadata.get("hitl_blockers") or metadata.get("hitlBlockers")
+    blockers.extend(_as_record_list(metadata_blockers))
+    return [
+        blocker for blocker in blockers
+        if blocker.get("enabled", True)
+        and (
+            blocker.get("scope") == "workflow"
+            or str(blocker.get("nodeId") or blocker.get("node_id") or "") == node_id
+        )
+    ]
 
 
 async def run_step(
@@ -181,7 +242,10 @@ async def run_step(
         node_model_id=node_config.get("model_id"),
     )
 
-    writer = get_stream_writer()
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda _: None
     writer({
         "type": "NodeStarted",
         "node_id": node_id,
@@ -189,8 +253,10 @@ async def run_step(
         "payload": {"label": label},
     })
 
-    hitl_active = needs_hitl(metadata)
     input_context = node_inputs if node_inputs is not None else state.get("inputs", {})
+    hitl_policy = _resolve_hitl_policy(metadata, state)
+    hitl_blockers = _resolve_hitl_blockers(metadata, state, node_id)
+    hitl_active = needs_hitl(metadata) and hitl_policy.get("mode") != "off"
 
     checkpoint = state.get("hitl_checkpoint")
     has_checkpoint = isinstance(checkpoint, dict) and checkpoint.get("node_id") == node_id and checkpoint.get("phase") == "post_exec"
@@ -200,21 +266,46 @@ async def run_step(
         if checkpoint.get("updated_description"):
             node_description = checkpoint["updated_description"]
 
+    new_human_context: list[dict[str, Any]] = []
+    suppress_follow_up_clarification = bool(
+        checkpoint.get("suppress_follow_up_clarification", False)
+    ) if has_checkpoint else False
+    if not has_checkpoint:
+        blocker_decision = evaluate_hitl_blocker(
+            node_config,
+            input_context if isinstance(input_context, dict) else {},
+            hitl_policy,
+            hitl_blockers,
+        )
+        hitl = handle_smart_hitl_blocker(
+            blocker_decision, node_id, label, node_description, iteration, writer, hitl_policy,
+        )
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
+        suppress_follow_up_clarification = (
+            suppress_follow_up_clarification
+            or hitl.suppress_follow_up_clarification
+        )
+        if early:
+            return _with_human_context(early, new_human_context)
+
     if hitl_active and not has_checkpoint:
         hitl = await handle_clarification_before(
             node_id, label, node_description, metadata, model_id, writer,
             user_query=str(input_context) if isinstance(input_context, dict) else "",
         )
-        early, node_description = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
         if early:
-            return early
+            return _with_human_context(early, new_human_context)
 
         hitl = await handle_interrupt_before(
             node_id, label, node_description, metadata, writer,
         )
-        early, node_description = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
         if early:
-            return early
+            return _with_human_context(early, new_human_context)
 
     should_execute = not has_checkpoint or checkpoint_needs_reexec
 
@@ -224,7 +315,7 @@ async def run_step(
                 node_id, node_config, state, metadata, input_context,
                 node_description, output_contract, model_id, system_prompt,
                 structured_output, agent_config, connector_bindings,
-                iteration, label, writer,
+                iteration, label, writer, hitl_policy, hitl_blockers,
             )
         except Exception as exc:
             logger.error("[step] LLM call failed", node_id=node_id, error=str(exc))
@@ -240,14 +331,15 @@ async def run_step(
             }
 
         if hitl_active:
-            return {"hitl_checkpoint": {
+            return _with_human_context({"hitl_checkpoint": {
                 "node_id": node_id,
                 "llm_output": full_output,
                 "components": components,
                 "updated_description": node_description,
                 "needs_reexec": False,
+                "suppress_follow_up_clarification": suppress_follow_up_clarification,
                 "phase": "post_exec",
-            }}
+            }}, new_human_context)
 
     else:
         full_output = checkpoint.get("llm_output", "")
@@ -258,38 +350,52 @@ async def run_step(
         output_contract, full_output, components, node_id, iteration, trace_collector,
     )
 
-    if hitl_active:
+    if hitl_active and not suppress_follow_up_clarification:
+        clarification_round = _next_clarification_round(
+            node_id,
+            _as_record_list(state.get("human_context")),
+            new_human_context,
+        )
         hitl = await handle_clarification_after(
             node_id, label, node_description, metadata, full_output, writer,
+            round_number=clarification_round,
         )
-        early, node_description = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
+        suppress_follow_up_clarification = (
+            suppress_follow_up_clarification
+            or hitl.suppress_follow_up_clarification
+        )
         if early:
-            return early
+            return _with_human_context(early, new_human_context)
         if hitl.needs_reexec:
-            return {"hitl_checkpoint": {
+            return _with_human_context({"hitl_checkpoint": {
                 "node_id": node_id,
                 "llm_output": full_output,
                 "components": components,
                 "updated_description": node_description,
                 "needs_reexec": True,
+                "suppress_follow_up_clarification": suppress_follow_up_clarification,
                 "phase": "post_exec",
-            }}
+            }}, new_human_context)
 
+    if hitl_active:
         hitl = await handle_interrupt_after(
             node_id, label, node_description, metadata, full_output, writer,
         )
-        early, node_description = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
         if early:
-            return early
+            return _with_human_context(early, new_human_context)
         if hitl.needs_reexec:
-            return {"hitl_checkpoint": {
+            return _with_human_context({"hitl_checkpoint": {
                 "node_id": node_id,
                 "llm_output": full_output,
                 "components": components,
                 "updated_description": node_description,
                 "needs_reexec": True,
                 "phase": "post_exec",
-            }}
+            }}, new_human_context)
 
     writer({
         "type": "NodeCompleted",
@@ -298,11 +404,11 @@ async def run_step(
         "payload": result_payload,
     })
 
-    return {
+    return _with_human_context({
         "task_outputs": {(node_id, iteration): result_payload},
         "iterations": {node_id: iteration + 1},
         "hitl_checkpoint": None,
-    }
+    }, new_human_context)
 
 
 async def _execute_step(
@@ -321,6 +427,8 @@ async def _execute_step(
     iteration: int,
     label: str,
     writer: Any,
+    hitl_policy: dict[str, Any],
+    hitl_blockers: list[dict[str, Any]],
 ) -> str:
     trigger_context = state.get("inputs", {})
     prompt_input_context = build_prompt_input_context(
@@ -343,6 +451,10 @@ async def _execute_step(
         output_contract=output_contract if isinstance(output_contract, dict) else None,
         iteration=iteration,
         trigger_context=trigger_context if isinstance(trigger_context, dict) else None,
+        hitl_policy=hitl_policy,
+        hitl_blockers=hitl_blockers,
+        human_context=_as_record_list(state.get("human_context")),
+        hitl_memory=_as_record_list(state.get("hitl_memory")),
     )
     sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)
     if sandbox_prompt_note:
@@ -379,6 +491,18 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
     )
     components: list[dict[str, Any]] = []
+    should_stream_tokens = (
+        not structured_output
+        and str(agent_config.get("type") or "").strip().lower() != "visualizer"
+    )
+    on_progress = None
+    if should_stream_tokens:
+        on_progress = lambda token: writer({
+            "type": "NodeToken",
+            "node_id": node_id,
+            "iteration": iteration,
+            "token": token,
+        })
 
     if tools:
         logger.info(
@@ -392,15 +516,18 @@ async def _execute_step(
             system_prompt=system_prompt,
             user_msg=user_msg,
             tools=tools,
-            on_progress=lambda token: writer({
-                "type": "NodeToken",
-                "node_id": node_id,
-                "iteration": iteration,
-                "token": token,
-            }),
+            on_progress=on_progress,
             trace_collector=trace_collector,
+            hitl_approval=ToolHitlApprovalContext(
+                hitl_policy=hitl_policy,
+                hitl_blockers=hitl_blockers,
+                node_id=node_id,
+                label=label,
+                iteration=iteration,
+                writer=writer,
+            ),
         )
-        if full_output and not structured_output:
+        if full_output and should_stream_tokens:
             writer({
                 "type": "NodeToken",
                 "node_id": node_id,
@@ -427,7 +554,7 @@ async def _execute_step(
             token = delta.content or ""
             if token:
                 full_output += token
-                if not structured_output:
+                if should_stream_tokens:
                     writer({
                         "type": "NodeToken",
                         "node_id": node_id,
@@ -436,7 +563,7 @@ async def _execute_step(
                     })
 
             if (
-                not structured_output
+                should_stream_tokens
                 and hasattr(delta, "model_extra")
                 and delta.model_extra
                 and "tool_calls" in (delta.model_extra or {})

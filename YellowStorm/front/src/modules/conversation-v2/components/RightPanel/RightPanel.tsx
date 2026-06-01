@@ -19,7 +19,8 @@ export function RightPanel() {
       })),
     );
 
-  if (mode === 'closed' || !selectedToolCallId) return null;
+  if (mode === 'closed') return null;
+  if (!selectedToolCallId) return null;
 
   const realTime = selectedToolCallId === liveToolCallId;
   const showJumpToLive = streaming && !!liveToolCallId && !realTime;

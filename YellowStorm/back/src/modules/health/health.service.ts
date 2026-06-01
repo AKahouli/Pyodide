@@ -197,23 +197,21 @@ export class HealthService {
     const startTime = Date.now();
 
     try {
-      const containerClient = this.documentConnection.getContainerClient();
-      if (!containerClient) {
+      const ok = await this.documentConnection.verifyConnection();
+      if (!ok) {
+        const healthStatus = this.documentConnection.getHealthStatus();
         return {
           status: 'down',
           responseTime: Date.now() - startTime,
-          message: 'Azure Blob Storage not configured',
+          message: healthStatus.error || 'Ceph S3 storage not available',
           lastChecked: new Date().toISOString(),
         };
       }
 
-      // Actual round-trip to Azure Blob Storage
-      await containerClient.getProperties();
-
       return {
         status: 'up',
         responseTime: Date.now() - startTime,
-        message: 'Azure Blob Storage connected',
+        message: 'Ceph S3 storage connected',
         lastChecked: new Date().toISOString(),
       };
     } catch {
@@ -222,8 +220,8 @@ export class HealthService {
         status: 'down',
         responseTime: Date.now() - startTime,
         message: healthStatus.isReconnecting
-          ? `Azure Blob Storage reconnecting (attempt ${healthStatus.reconnectAttempts})`
-          : healthStatus.error || 'Azure Blob Storage connection failed',
+          ? `Ceph S3 reconnecting (attempt ${healthStatus.reconnectAttempts})`
+          : healthStatus.error || 'Ceph S3 connection failed',
         lastChecked: new Date().toISOString(),
       };
     }

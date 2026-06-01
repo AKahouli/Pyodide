@@ -119,7 +119,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
    */
   async indexDocument(request: IndexDocumentRequest): Promise<IndexDocumentResponse> {
     this.logger.log('Calling indexing API', {
-      endpoint: `${this.apiUrl}/vectorstores/indexDocumentFromAzureDatalake`,
+      endpoint: `${this.apiUrl}/vectorstores/indexDocumentFromCephStore`,
       documentId: request.documentId,
       workspaceId: request.workspaceId,
       filename: request.filename,
@@ -133,9 +133,15 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
           external_id: request.documentId,
           brain_id: request.workspaceId,
           source: request.blobUrl,
+          user_id: request.user_id,
         },
         brain_id: request.workspaceId,
         external_id: request.documentId,
+        // Required by indexDocumentFromCephStore — locates the object via
+        // (workspace_name, file_name). filepath/source are kept for
+        // back-compat / logging.
+        workspace_name: request.workspaceName,
+        file_name: request.fileName,
         filepath: request.path,
         source: request.blobUrl,
         chunk_size: request.chunkSize,
@@ -149,7 +155,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
         brain_tag: [''],
       };
       const response = await this.httpClient.post(
-        '/vectorstores/indexDocumentFromAzureDatalake',
+        '/vectorstores/indexDocumentFromCephStore',
         requestBody,
       );
 
@@ -207,20 +213,27 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
   }
 
   /**
-   * Delete index from the indexing API
+   * Delete index from the indexing API. The upstream endpoint now locates the
+   * vectorstore entry by (workspace_name, file_path, file_name) rather than
+   * (brain_id, external_id) — same identifying triple used at index time, so
+   * a document and its index can never get out of sync via a stale id.
    */
   async deleteIndex(request: DeleteIndexRequest): Promise<DeleteIndexResponse> {
     this.logger.log('Calling delete index API', {
       endpoint: `${this.apiUrl}/vectorstores/vectorIds/V2`,
       documentId: request.documentId,
       workspaceId: request.workspaceId,
+      workspaceName: request.workspaceName,
+      filePath: request.filePath,
+      fileName: request.fileName,
     });
 
     const makeRequest = async (): Promise<void> => {
       await this.httpClient.delete('/vectorstores/vectorIds/V2', {
         data: {
-          brain_id: request.workspaceId,
-          external_id: request.documentId,
+          workspace_name: request.workspaceName,
+          file_path: request.filePath,
+          file_name: request.fileName,
         },
       });
     };

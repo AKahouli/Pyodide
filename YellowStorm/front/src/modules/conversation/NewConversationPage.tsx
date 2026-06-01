@@ -1,20 +1,34 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { BotIcon, MessageSquareIcon } from 'lucide-react';
+import { BotIcon, CheckIcon, MessageSquareIcon } from 'lucide-react';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import {
   PromptInput,
   PromptInputBody,
+  PromptInputButton,
   PromptInputFooter,
   PromptInputProvider,
   PromptInputSubmit,
   PromptInputTextarea,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input';
+import {
+  ModelSelector,
+  ModelSelectorContent,
+  ModelSelectorEmpty,
+  ModelSelectorGroup,
+  ModelSelectorInput,
+  ModelSelectorItem,
+  ModelSelectorList,
+  ModelSelectorLogo,
+  ModelSelectorName,
+  ModelSelectorTrigger,
+} from '@/components/ai-elements/model-selector';
 import { cn } from '@/lib/utils';
+import { useUsage } from '@/modules/usage/UsageContext';
 import {
   useConversationStore,
   useInputDisabled,
@@ -24,11 +38,13 @@ import {
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
 import { GroupChatButton } from './components/GroupChatButton';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
+import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
+import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
+import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
@@ -96,13 +112,32 @@ export function NewConversationPage() {
     [removeFile],
   );
 
-  const handleAgentSubmit = async (message: PromptInputMessage) => {
+  const handleAgentSubmit = async (
+    message: PromptInputMessage,
+    workspaceIds: string[],
+    modelId: string | null,
+  ) => {
     const text = message.text?.trim() ?? '';
     if (!text) return;
     setIsSending(true);
     try {
-      const { sessionId } = await conversationV2Api.createSession();
-      navigate(`/conversation-v2/${sessionId}`, { state: { initialMessage: text } });
+      const { sessionId } = await conversationV2Api.createSession(workspaceIds);
+
+      // Persist + resolve the picked model BEFORE navigation, so:
+      //   1. The session page's hydrateSelectedModelForSession finds it in
+      //      localStorage and the composer reflects the right model.
+      //   2. The initial-message send doesn't have to wait for the models
+      //      cache to load — we already have the LiteLLM identifier here.
+      let litellmModel: string | undefined;
+      if (modelId) {
+        writeSelectedModelForSession(sessionId, modelId);
+        const model = useModelsStore.getState().models.find((m) => m.id === modelId);
+        litellmModel = model?.litellmModel || undefined;
+      }
+
+      navigate(`/conversation-v2/${sessionId}`, {
+        state: { initialMessage: text, model: litellmModel },
+      });
     } catch {
       toast.error(t('toasts.conversation.createError'));
     } finally {
@@ -252,15 +287,46 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
 }
 
 interface AgentInputProps {
-  onSubmit: (message: PromptInputMessage) => void;
+  onSubmit: (message: PromptInputMessage, workspaceIds: string[], modelId: string | null) => void;
   disabled: boolean;
 }
 
 function AgentInput({ onSubmit, disabled }: AgentInputProps) {
   const { t } = useModuleTranslation('conversation');
+  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
+
+  const models = useModels();
+  const chefs = useChefs();
+  const defaultModel = useDefaultModel();
+  // New conversations always start at the admin default — the user can
+  // override before submitting. We keep modelId null when it matches the
+  // default so we don't write a stale snapshot if the admin rotates the
+  // default later.
+  const [pickedModelId, setPickedModelId] = useState<string | null>(null);
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+
+  useEffect(() => {
+    // Idempotent: 5-min cache in the models store, no-ops if already loaded.
+    void useModelsStore.getState().fetchModels().catch(() => undefined);
+  }, []);
+
+  const activeModel = (pickedModelId && models.find((m) => m.id === pickedModelId)) || defaultModel || null;
+
+  const handleSubmit = (message: PromptInputMessage) => {
+    // Persist the actual model id we want to remember — either the user's
+    // explicit pick or the current admin default. handleAgentSubmit needs a
+    // concrete id to look up the LiteLLM identifier.
+    onSubmit(message, selectedWorkspaceIds, activeModel?.id ?? null);
+  };
+
+  const handlePickModel = (modelId: string) => {
+    setPickedModelId(modelId);
+    setModelSelectorOpen(false);
+  };
+
   return (
     <PromptInputProvider>
-      <PromptInput onSubmit={onSubmit}>
+      <PromptInput onSubmit={handleSubmit}>
         <PromptInputBody>
           <PromptInputTextarea
             placeholder={t('newConversation.agentPlaceholder')}
@@ -268,6 +334,48 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           />
         </PromptInputBody>
         <PromptInputFooter>
+          <WorkspaceSelect
+            selectedIds={selectedWorkspaceIds}
+            onChange={setSelectedWorkspaceIds}
+            disabled={disabled}
+          />
+          {models.length > 0 && (
+            <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
+              <ModelSelectorTrigger asChild>
+                <PromptInputButton type='button' disabled={disabled}>
+                  {activeModel?.chefSlug && <ModelSelectorLogo provider={activeModel.chefSlug} />}
+                  <ModelSelectorName>
+                    {activeModel?.name ?? t('newConversation.modelSelector.unset')}
+                  </ModelSelectorName>
+                </PromptInputButton>
+              </ModelSelectorTrigger>
+              <ModelSelectorContent>
+                <ModelSelectorInput placeholder={t('newConversation.modelSelector.search')} />
+                <ModelSelectorList>
+                  <ModelSelectorEmpty>{t('newConversation.modelSelector.empty')}</ModelSelectorEmpty>
+                  {chefs.map((chef) => (
+                    <ModelSelectorGroup heading={chef.name} key={chef.slug}>
+                      {models
+                        .filter((m) => m.chefSlug === chef.slug)
+                        .map((m) => (
+                          <ModelSelectorItem
+                            key={m.id}
+                            value={`${m.name} ${m.chef}`}
+                            onSelect={() => handlePickModel(m.id)}
+                          >
+                            <ModelSelectorLogo provider={m.chefSlug} />
+                            <ModelSelectorName>{m.name}</ModelSelectorName>
+                            {activeModel?.id === m.id && (
+                              <CheckIcon className='ml-auto size-4 text-muted-foreground' />
+                            )}
+                          </ModelSelectorItem>
+                        ))}
+                    </ModelSelectorGroup>
+                  ))}
+                </ModelSelectorList>
+              </ModelSelectorContent>
+            </ModelSelector>
+          )}
           <div className='flex-1' />
           <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
         </PromptInputFooter>

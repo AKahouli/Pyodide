@@ -3,7 +3,7 @@
  * Zustand store for playbook management
  */
 
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/notifications';
@@ -53,12 +53,36 @@ import type {
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
   PlaybookDefinitionExport,
+  UpdateFlowData,
+  InterruptPayload,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
 import { handleApiError, parseApiError } from '@/lib/api-error';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
+import { playbookFeatures } from './features';
+import { usePlaybookUiStore } from './uiStore';
+import { playbookQueryClient } from './query/queryClient';
+import { playbookKeys } from './query/queryKeys';
+import {
+  cancelExecutionMutation,
+  clonePlaybookMutation,
+  createPlaybookMutation,
+  deletePlaybookMutation,
+  designFlowMutation,
+  patchFlowDeltaMutation,
+  resumeApprovalMutation,
+  resumeFromStepMutation,
+  startExecutionMutation,
+  updateFlowOutputFormatTemplateMutation,
+  updateOutputFormatTemplateMutation,
+  updatePlaybookMutation,
+  upsertTriggerMailMutation,
+  upsertTriggerScheduleMutation,
+  validateFlowReplayMutation,
+  validateReplayMutation,
+} from './query/mutationActions';
 
 function tPlaybook(key: string, fallback: string, options?: Record<string, unknown>) {
   if (i18nInstance.isInitialized) {
@@ -74,6 +98,38 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
   return fallback;
 }
 
+function buildInterruptPayload(data: PlaybookInterruptEvent): InterruptPayload {
+  return {
+    type: data.type,
+    taskId: data.taskId,
+    taskTitle: '',
+    message: data.message,
+    threadId: data.threadId,
+    interruptId: data.interruptId || '',
+    round: data.round || 0,
+    payloadJson: data.payloadJson || '',
+    resumableActions: data.resumableActions || [],
+    taskDescription: data.taskDescription || '',
+    result: data.result || '',
+    blockerRuleId: data.blockerRuleId,
+    blockerKind: data.blockerKind,
+    reasonCode: data.reasonCode,
+    riskLevel: data.riskLevel,
+    downstreamNodeIds: data.downstreamNodeIds,
+    feedbackScopeDefault: data.feedbackScopeDefault,
+  };
+}
+
+function removePendingInterrupt(
+  pendingInterrupts: InterruptPayload[] | undefined,
+  taskId: string,
+  interruptId?: string,
+): InterruptPayload[] {
+  return (pendingInterrupts || []).filter((entry) => (
+    interruptId ? entry.interruptId !== interruptId : entry.taskId !== taskId
+  ));
+}
+
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
 const INTENT_HISTORY_KEY = 'ys_playbook_intent_history';
@@ -87,6 +143,34 @@ function persistPanelOpen(open: boolean) {
 
 function persistWorkspaceExplorerOpen(open: boolean) {
   try { localStorage.setItem(WORKSPACE_EXPLORER_KEY, open ? '1' : '0'); } catch { /* noop */ }
+}
+
+function syncUiStoreForRun(taskId?: string | null) {
+  usePlaybookUiStore.setState((state) => ({
+    ...state,
+    executionPanelOpen: true,
+    workspaceExplorerOpen: false,
+    connectorSidebarOpen: false,
+    nodeEditorOpen: false,
+    pageMode: 'run',
+    ...(taskId !== undefined ? { selectedStepId: taskId } : {}),
+  }));
+  persistPanelOpen(true);
+}
+
+function syncUiStoreForInterrupt(taskId: string) {
+  usePlaybookUiStore.setState((state) => ({
+    ...state,
+    selectedStepId: taskId,
+    designerOpen: true,
+    copilotMode: 'interrupt',
+    executionPanelOpen: true,
+    workspaceExplorerOpen: false,
+    connectorSidebarOpen: false,
+    nodeEditorOpen: false,
+    pageMode: 'run',
+  }));
+  persistPanelOpen(true);
 }
 
 function isValidHistoryEntry(entry: unknown): entry is IntentSuggestionHistoryEntry {
@@ -142,6 +226,12 @@ const initialState: PlaybookState = {
   isSaving: false,
   saveRequestId: 0,
   savingDirtyVersion: null,
+  lastSavedPayloadHashByPlaybookId: {},
+  lastSavedRequestBodyByPlaybookId: {},
+  lastAutosaveDurationMs: null,
+  pendingAutosaveAfterCurrent: false,
+  autosaveBackoffUntil: null,
+  lastSaveReason: null,
   currentExecution: null,
   currentExecutionLoading: false,
   executionCache: {},
@@ -217,7 +307,6 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
       .then(() => {
         const execution = usePlaybookStore.getState().executionCache[executionId];
         const hasPendingEvaluations = execution?.taskResults?.some((task) => task.judgeStatus === 'evaluating') ?? false;
-        console.debug('[judge DEBUG] scheduleJudgeRefresh attempt', attempt, '/', JUDGE_REFRESH_MAX_ATTEMPTS, 'hasPending=', hasPendingEvaluations, 'taskStatuses=', execution?.taskResults?.map(t => ({ taskId: t.taskId, judgeStatus: t.judgeStatus, iteration: t.iteration })));
 
         if (!hasPendingEvaluations || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
           clearJudgeRefreshTimer(executionId);
@@ -239,6 +328,353 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
 }
 const MAX_EXECUTION_CACHE = 20;
 const MAX_UNDO_HISTORY = 100;
+const enablePlaybookDevtools =
+  import.meta.env.DEV && import.meta.env.VITE_PLAYBOOK_DEVTOOLS_ENABLED === 'true';
+const enablePlaybookDeltaAutosave = import.meta.env.VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED === 'true';
+let deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+
+export function __setDeltaAutosaveAvailableForTests(value: boolean): void {
+  deltaAutosaveAvailableInSession = value;
+}
+
+function fetchPlaybookList(query: PlaybookQueryParams) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getPlaybooks(query);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.list(query),
+    queryFn: () => api.getPlaybooks(query),
+  });
+}
+
+function fetchFlowList(query?: PlaybookQueryParams) {
+  const stableQuery = query ?? {};
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlows(query);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowList(stableQuery),
+    queryFn: () => api.getFlows(query),
+  });
+}
+
+function fetchLegacyPlaybookDetail(id: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getPlaybook(id);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.legacyDetail(id),
+    queryFn: () => api.getPlaybook(id),
+  });
+}
+
+function fetchPlaybookDetail(id: string, view: 'base' | 'enriched') {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlow(id, { view });
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.detail(id, view),
+    queryFn: () => api.getFlow(id, { view }),
+  });
+}
+
+function fetchDesignMessageList(playbookId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getDesignMessages(playbookId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.designMessages(playbookId),
+    queryFn: () => api.getDesignMessages(playbookId),
+  });
+}
+
+function fetchPlaybookExecutionHistory(playbookId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getExecutions(playbookId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.executions(playbookId),
+    queryFn: () => api.getExecutions(playbookId),
+  });
+}
+
+function fetchPlaybookExecutionDetail(playbookId: string, executionId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getExecution(playbookId, executionId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.execution(executionId),
+    queryFn: () => api.getExecution(playbookId, executionId),
+  });
+}
+
+function fetchEvaluationExecutionList(playbookId: string, taskId?: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getEvaluationExecutions(playbookId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.evaluationExecutions(playbookId, taskId),
+    queryFn: () => api.getEvaluationExecutions(playbookId, taskId),
+  });
+}
+
+function fetchEvaluationBaselineDetail(playbookId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getEvaluationBaseline(playbookId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.evaluationBaseline(playbookId, taskId),
+    queryFn: () => api.getEvaluationBaseline(playbookId, taskId),
+  });
+}
+
+function fetchFlowEvaluationExecutionList(flowId: string, taskId?: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowEvaluationExecutions(flowId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowEvaluationExecutions(flowId, taskId),
+    queryFn: () => api.getFlowEvaluationExecutions(flowId, taskId),
+  });
+}
+
+function fetchFlowEvaluationBaselineDetail(flowId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowEvaluationBaseline(flowId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowEvaluationBaseline(flowId, taskId),
+    queryFn: () => api.getFlowEvaluationBaseline(flowId, taskId),
+  });
+}
+
+function fetchAdvisorRemediationList(playbookId: string, executionId: string, taskId?: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.fetchAdvisorRemediations(playbookId, executionId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.advisorRemediations(playbookId, executionId, taskId),
+    queryFn: () => api.fetchAdvisorRemediations(playbookId, executionId, taskId),
+  });
+}
+
+function fetchFlowTriggerList(flowId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowTriggers(flowId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowTriggers(flowId),
+    queryFn: () => api.getFlowTriggers(flowId),
+  });
+}
+
+function fetchFlowExecutionHistory(flowId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowExecutions(flowId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.executions(flowId),
+    queryFn: () => api.getFlowExecutions(flowId),
+  });
+}
+
+function fetchFlowExecutionDetail(executionId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowExecutionDetail(executionId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.execution(executionId),
+    queryFn: () => api.getFlowExecutionDetail(executionId),
+  });
+}
+
+function fetchPlaybookNodeTemplates() {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getPlaybookNodeTemplates();
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.nodeTemplates(),
+    queryFn: api.getPlaybookNodeTemplates,
+  });
+}
+
+function fetchFlowNodeTemplateList() {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowNodeTemplates();
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.templates(),
+    queryFn: api.getFlowNodeTemplates,
+  });
+}
+
+function fetchFlowNodeKindList() {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowNodeKinds();
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowNodeKinds(),
+    queryFn: api.getFlowNodeKinds,
+  });
+}
+
+function fetchTaskReplayList(playbookId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getTaskReplays(playbookId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.replays(playbookId, taskId),
+    queryFn: () => api.getTaskReplays(playbookId, taskId),
+  });
+}
+
+function fetchFlowTaskReplayList(flowId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowTaskReplays(flowId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowReplays(flowId, taskId),
+    queryFn: () => api.getFlowTaskReplays(flowId, taskId),
+  });
+}
+
+function fetchPlaybookRepeatability(playbookId: string, limit: number, offset: number) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getPlaybookRepeatability(playbookId, limit, offset);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.repeatability(playbookId, limit, offset),
+    queryFn: () => api.getPlaybookRepeatability(playbookId, limit, offset),
+  });
+}
+
+function fetchFlowRepeatabilitySummary(flowId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowRepeatability(flowId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowRepeatability(flowId),
+    queryFn: () => api.getFlowRepeatability(flowId),
+  });
+}
+
+function fetchFlowTaskRepeatabilitySummary(flowId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowTaskRepeatability(flowId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowTaskRepeatability(flowId, taskId),
+    queryFn: () => api.getFlowTaskRepeatability(flowId, taskId),
+  });
+}
+
+function fetchOutputFormatTemplateDetail(playbookId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getOutputFormatTemplate(playbookId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.outputFormatTemplate(playbookId, taskId),
+    queryFn: () => api.getOutputFormatTemplate(playbookId, taskId),
+  });
+}
+
+function fetchFlowOutputFormatTemplateDetail(flowId: string, taskId: string) {
+  if (!playbookFeatures.queryEnabled) {
+    return api.getFlowOutputFormatTemplate(flowId, taskId);
+  }
+
+  return playbookQueryClient.fetchQuery({
+    queryKey: playbookKeys.flowOutputFormatTemplate(flowId, taskId),
+    queryFn: () => api.getFlowOutputFormatTemplate(flowId, taskId),
+  });
+}
+
+function invalidateTaskReplayReads(playbookId: string, taskId: string): void {
+  void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.replays(playbookId, taskId) });
+}
+
+function invalidateFlowTaskReplayReads(flowId: string, taskId: string): void {
+  void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.flowReplays(flowId, taskId) });
+}
+
+function invalidateOutputFormatTemplateRead(playbookId: string, taskId: string): void {
+  void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.outputFormatTemplate(playbookId, taskId) });
+}
+
+function invalidateFlowOutputFormatTemplateRead(flowId: string, taskId: string): void {
+  void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.flowOutputFormatTemplate(flowId, taskId) });
+}
+
+function logPlaybookPerfMetric(
+  metric: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): void {
+  console.info(`[playbook_perf] ${metric}`, fields);
+}
+
+function getAutosaveRetryDelayMs(backoffUntil: number | null): number {
+  if (!backoffUntil) {
+    return 2000;
+  }
+  return Math.min(Math.max(backoffUntil - Date.now(), 2000) * 2, 15000);
+}
+
+function isDisabledDeltaPatchError(error: unknown): boolean {
+  const apiError = parseApiError(error);
+  const rawError = apiError.raw as {
+    config?: { url?: string };
+    response?: { data?: { error?: { message?: string } } };
+  } | undefined;
+
+  return apiError.code === 'ERR_1006'
+    && apiError.statusCode === 400
+    && rawError?.config?.url?.endsWith('/delta') === true
+    && rawError?.response?.data?.error?.message === 'Playbook delta patch is disabled.';
+}
+
+function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: string; clientMutationId?: string }) {
+  return {
+    name: playbook.name,
+    description: playbook.description,
+    designSettings: playbook.designSettings,
+    tasks: playbook.tasks,
+    edges: playbook.edges,
+    dataBindings: playbook.dataBindings,
+    settings: playbook.settings,
+    workspaces: playbook.workspaces,
+    reflectionEnabled: playbook.reflectionEnabled,
+    advisorScoringMode: playbook.advisorScoringMode,
+    advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
+    advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+    advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
+    expectedUpdatedAt: options?.expectedUpdatedAt,
+    clientMutationId: options?.clientMutationId,
+  };
+}
 
 function getPreferredSelectedStepId(
   taskResults: Array<{ taskId: string; status: string; order?: number | null }>,
@@ -564,6 +1000,36 @@ function mergeRicherIteratorData(
   };
 }
 
+function mergeHitlHistory(
+  cached: PlaybookExecution['hitlHistory'],
+  incoming: PlaybookExecution['hitlHistory'],
+): PlaybookExecution['hitlHistory'] {
+  const cachedHistory = cached || [];
+  const incomingHistory = incoming || [];
+  if (cachedHistory.length === 0) {
+    return incomingHistory;
+  }
+  if (incomingHistory.length === 0) {
+    return cachedHistory;
+  }
+
+  const incomingByInterruptId = new Map(
+    incomingHistory.map((entry) => [entry.interruptId, entry]),
+  );
+  const mergedByIncomingOrder = incomingHistory.map((incomingEntry) => {
+    const cachedEntry = cachedHistory.find((entry) => entry.interruptId === incomingEntry.interruptId);
+    if (!cachedEntry) {
+      return incomingEntry;
+    }
+    return cachedEntry.status === 'answered' || incomingEntry.status === 'pending' ? cachedEntry : incomingEntry;
+  });
+
+  const missingCached = cachedHistory.filter(
+    (entry) => !incomingByInterruptId.has(entry.interruptId),
+  );
+  return [...mergedByIncomingOrder, ...missingCached];
+}
+
 function shouldKeepCachedTaskResult(
   cachedTaskResult: PlaybookExecution['taskResults'][number],
   incomingTaskResult: PlaybookExecution['taskResults'][number],
@@ -708,11 +1174,172 @@ function buildExecutionTaskResultsFromTasks(
   } as PlaybookExecution['taskResults'][number]));
 }
 
+function buildReplayTaskIdSet(playbook: Playbook, targetTaskId: string): Set<string> {
+  const taskIds = new Set(playbook.tasks.map((task) => task.id));
+  const adjacency = new Map<string, string[]>();
+
+  for (const controlEdge of playbook.controlEdges || []) {
+    if (!taskIds.has(controlEdge.source) || !taskIds.has(controlEdge.target)) {
+      continue;
+    }
+    const next = adjacency.get(controlEdge.source) || [];
+    next.push(controlEdge.target);
+    adjacency.set(controlEdge.source, next);
+  }
+
+  if (adjacency.size === 0) {
+    for (const edge of playbook.edges) {
+      if (!taskIds.has(edge.sourceId) || !taskIds.has(edge.targetId)) {
+        continue;
+      }
+      const next = adjacency.get(edge.sourceId) || [];
+      next.push(edge.targetId);
+      adjacency.set(edge.sourceId, next);
+    }
+  }
+
+  const replayTaskIds = new Set<string>([targetTaskId]);
+  const stack = [...(adjacency.get(targetTaskId) || [])];
+  while (stack.length > 0) {
+    const taskId = stack.pop();
+    if (!taskId || replayTaskIds.has(taskId)) {
+      continue;
+    }
+    replayTaskIds.add(taskId);
+    stack.push(...(adjacency.get(taskId) || []));
+  }
+
+  return replayTaskIds;
+}
+
+function buildReplayTaskResultsFromSource(
+  sourceExecution: PlaybookExecution,
+  playbook: Playbook,
+  targetTaskId: string,
+): PlaybookExecution['taskResults'] {
+  const sortedTasks = [...playbook.tasks].sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0));
+  const replayTaskIds = buildReplayTaskIdSet(playbook, targetTaskId);
+  if (!replayTaskIds.has(targetTaskId)) {
+    return buildExecutionTaskResultsFromTasks(playbook.tasks, { runningTaskId: targetTaskId });
+  }
+
+  const latestResultByTaskId = new Map<string, PlaybookExecution['taskResults'][number]>();
+  for (const taskResult of sourceExecution.taskResults) {
+    latestResultByTaskId.set(taskResult.taskId, taskResult);
+  }
+
+  return sortedTasks.map((task, index) => {
+    const previous = latestResultByTaskId.get(task.id);
+    if (!replayTaskIds.has(task.id) && previous) {
+      return previous;
+    }
+    if (task.id === targetTaskId) {
+      return previous
+        ? {
+            ...clearTaskResultStaleState(previous),
+            status: 'running' as const,
+            output: null,
+            error: null,
+            durationMs: null,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            components: [],
+            toolTrace: [],
+            llmPromptTrace: [],
+            artifacts: [],
+            semanticMatch: null,
+            judgeStatus: 'idle' as const,
+            judgeResult: null,
+            judgeError: null,
+          }
+        : buildExecutionTaskResultsFromTasks(playbook.tasks, { runningTaskId: targetTaskId })[index];
+    }
+    return {
+      taskId: task.id,
+      nodeTitle: task.title || '',
+      agentName: previous?.agentName || '',
+      order: task.executionOrder ?? index,
+      status: 'pending',
+      output: null,
+      error: null,
+      durationMs: null,
+      startedAt: null,
+      completedAt: null,
+      isStale: false,
+      staleReason: null,
+      invalidatedByTaskId: null,
+      semanticMatch: null,
+      judgeStatus: 'idle' as const,
+      judgeResult: null,
+      judgeError: null,
+      judgeHistory: [],
+      evaluationHistory: [],
+      stepExecutions: [],
+      iteratorIterations: [],
+    } as PlaybookExecution['taskResults'][number];
+  });
+}
+
+function mergeReplayTaskResults(
+  replayExecution: PlaybookExecution,
+  sourceExecution: PlaybookExecution,
+  playbook: Playbook,
+): PlaybookExecution['taskResults'] {
+  const replaySource = replayExecution.replaySource;
+  if (!replaySource?.taskId) {
+    return replayExecution.taskResults;
+  }
+
+  const hydratedTaskResults = buildReplayTaskResultsFromSource(sourceExecution, playbook, replaySource.taskId);
+  const replayResultMap = new Map(replayExecution.taskResults.map((taskResult) => [getTaskResultCacheKey(taskResult), taskResult]));
+
+  return hydratedTaskResults.map((taskResult) => replayResultMap.get(getTaskResultCacheKey(taskResult)) ?? taskResult);
+}
+
+async function hydrateReplayExecutionFromSource(
+  replayExecution: PlaybookExecution,
+  playbookId: string,
+  playbook: Playbook | null,
+  executionCache: Record<string, PlaybookExecution>,
+): Promise<PlaybookExecution> {
+  const replaySource = replayExecution.replaySource;
+  if (!replaySource?.executionId || !replaySource.taskId) {
+    return replayExecution;
+  }
+
+  let resolvedPlaybook = playbook;
+  if (!resolvedPlaybook) {
+    try {
+      resolvedPlaybook = await fetchLegacyPlaybookDetail(playbookId);
+    } catch {
+      resolvedPlaybook = null;
+    }
+  }
+  if (!resolvedPlaybook) {
+    return replayExecution;
+  }
+
+  let sourceExecution: PlaybookExecution | null = executionCache[replaySource.executionId] ?? null;
+  if (!sourceExecution) {
+    try {
+      sourceExecution = await fetchPlaybookExecutionDetail(playbookId, replaySource.executionId);
+    } catch {
+      sourceExecution = null;
+    }
+  }
+  if (!sourceExecution) {
+    return replayExecution;
+  }
+
+  return {
+    ...replayExecution,
+    taskResults: mergeReplayTaskResults(replayExecution, sourceExecution, resolvedPlaybook),
+  };
+}
+
 // ===== Store Implementation =====
 
-export const usePlaybookStore = create<PlaybookStore>()(
-  devtools(
-    (set, get) => ({
+const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       ...initialState,
 
       // ===== CRUD =====
@@ -722,7 +1349,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const mergedQuery: PlaybookQueryParams = { page: 1, limit: 20, ...query };
         set({ playbooksLoading: true, error: null, playbooksQuery: mergedQuery });
         try {
-          const result = await api.getPlaybooks(mergedQuery);
+          const result = await fetchPlaybookList(mergedQuery);
           set({ playbooks: result.playbooks, playbooksPagination: result.pagination, playbooksLoading: false });
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchFailed', 'Failed to fetch playbooks');
@@ -737,7 +1364,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ playbooksLoading: true });
         try {
           const nextPage = playbooksPagination.page + 1;
-          const result = await api.getPlaybooks({ ...playbooksQuery, page: nextPage, limit: playbooksPagination.limit });
+          const result = await fetchPlaybookList({ ...playbooksQuery, page: nextPage, limit: playbooksPagination.limit });
           set((state) => ({
             playbooks: [...state.playbooks, ...result.playbooks],
             playbooksPagination: result.pagination,
@@ -757,8 +1384,26 @@ export const usePlaybookStore = create<PlaybookStore>()(
             perPlaybookUndoHistory[currentPlaybook.id] = { undoStack, redoStack };
           }
           const restored = perPlaybookUndoHistory[id] ?? { undoStack: [], redoStack: [] };
-          const playbook = await api.getPlaybook(id);
-          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: restored.undoStack, redoStack: restored.redoStack, perPlaybookUndoHistory, canvasSyncVersion: 0 });
+          const playbook = await fetchLegacyPlaybookDetail(id);
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(playbook)) as UpdateFlowData;
+          const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(playbook));
+          set((state) => ({
+            currentPlaybook: playbook,
+            currentPlaybookLoading: false,
+            isDirty: false,
+            undoStack: restored.undoStack,
+            redoStack: restored.redoStack,
+            perPlaybookUndoHistory,
+            canvasSyncVersion: 0,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [playbook.id]: baselineTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [playbook.id]: baselineRequestBody,
+            },
+          }));
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchOneFailed', 'Failed to fetch playbook');
           set({ currentPlaybookLoading: false, error: msg });
@@ -766,7 +1411,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       createPlaybook: async (data) => {
-        const playbook = await api.createPlaybook(data);
+        const playbook = playbookFeatures.queryMutationsEnabled
+          ? await createPlaybookMutation(data)
+          : await api.createPlaybook(data);
         const summary: PlaybookSummary = {
           id: playbook.id,
           name: playbook.name,
@@ -792,7 +1439,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], perPlaybookUndoHistory: pbHistory, canvasSyncVersion: 0 });
         try {
           const result = await api.generatePlaybook(data);
-          const playbook = await api.getPlaybook(result.id);
+          const playbook = await fetchLegacyPlaybookDetail(result.id);
           const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
           const layoutedPlaybook = { ...playbook, tasks: layoutedTasks };
           set({ currentPlaybook: layoutedPlaybook, isGenerating: false, isDirty: true });
@@ -810,13 +1457,59 @@ export const usePlaybookStore = create<PlaybookStore>()(
       updatePlaybook: async (id, data) => {
         const requestId = get().saveRequestId + 1;
         const saveStartDirtyVersion = get().dirtyVersion;
+        const saveStartedAt = performance.now();
+        const requestBody = api.buildPlaybookUpdateRequestBody(data) as UpdateFlowData;
+        const payloadTelemetry = api.getPlaybookUpdateTelemetry(data);
+        const previousRequestBody = get().lastSavedRequestBodyByPlaybookId[id];
+        const expectedUpdatedAt = data.expectedUpdatedAt ?? get().currentPlaybook?.updatedAt;
+        const deltaPatch = deltaAutosaveAvailableInSession && previousRequestBody && expectedUpdatedAt
+          ? api.buildPlaybookDeltaPatch(previousRequestBody, requestBody, {
+            expectedUpdatedAt,
+            payloadHash: payloadTelemetry.payloadHash,
+            basePayloadHash: get().lastSavedPayloadHashByPlaybookId[id],
+            clientMutationId: data.clientMutationId,
+          })
+          : null;
+        let effectiveSaveMode: 'delta' | 'full' = deltaPatch ? 'delta' : 'full';
         set({
           isSaving: true,
           saveRequestId: requestId,
           savingDirtyVersion: saveStartDirtyVersion,
         });
         try {
-          const playbook = await api.updatePlaybook(id, data);
+          let playbook: Playbook;
+          if (deltaPatch) {
+            try {
+              const saveDelta = playbookFeatures.queryMutationsEnabled
+                ? patchFlowDeltaMutation({ id, data: deltaPatch })
+                : api.patchFlowDelta(id, deltaPatch);
+              playbook = await saveDelta.then(async (result) => {
+                const current = get().currentPlaybook;
+                if (!current || current.id !== id) {
+                  throw new Error('Playbook state changed during delta save.');
+                }
+                return {
+                  ...current,
+                  updatedAt: result.updatedAt,
+                };
+              });
+            } catch (err) {
+              if (!isDisabledDeltaPatchError(err)) {
+                throw err;
+              }
+              // Only the explicit feature-disabled response is safe to replay as a full save.
+              // Validation failures mean the backend rejected this graph shape.
+              deltaAutosaveAvailableInSession = false;
+              effectiveSaveMode = 'full';
+              playbook = playbookFeatures.queryMutationsEnabled
+                ? await updatePlaybookMutation({ id, data })
+                : await api.updatePlaybook(id, data);
+            }
+          } else {
+            playbook = playbookFeatures.queryMutationsEnabled
+              ? await updatePlaybookMutation({ id, data })
+              : await api.updatePlaybook(id, data);
+          }
           const existing = get().playbooks.find((p) => p.id === id);
           const summary: PlaybookSummary = {
             id: playbook.id,
@@ -833,6 +1526,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestState = get();
           const isLatestSaveRequest = latestState.saveRequestId === requestId;
           const hasNewerLocalChanges = latestState.dirtyVersion !== saveStartDirtyVersion;
+          const saveDurationMs = Math.round(performance.now() - saveStartedAt);
 
           set((state) => ({
             playbooks: state.playbooks.map((p) => (p.id === id ? summary : p)),
@@ -840,9 +1534,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ? state.currentPlaybook
               : {
                 ...playbook,
-                tasks: state.currentPlaybook.tasks,
-                edges: state.currentPlaybook.edges,
-                dataBindings: state.currentPlaybook.dataBindings,
+                name: hasNewerLocalChanges
+                  ? state.currentPlaybook.name
+                  : playbook.name,
+                description: hasNewerLocalChanges
+                  ? state.currentPlaybook.description
+                  : playbook.description,
+                designSettings: hasNewerLocalChanges
+                  ? state.currentPlaybook.designSettings
+                  : playbook.designSettings,
+                settings: hasNewerLocalChanges
+                  ? state.currentPlaybook.settings
+                  : playbook.settings,
+                workspaces: hasNewerLocalChanges
+                  ? state.currentPlaybook.workspaces
+                  : playbook.workspaces,
+                tasks: hasNewerLocalChanges
+                  ? state.currentPlaybook.tasks
+                  : playbook.tasks,
+                edges: hasNewerLocalChanges
+                  ? state.currentPlaybook.edges
+                  : playbook.edges,
+                dataBindings: hasNewerLocalChanges
+                  ? state.currentPlaybook.dataBindings
+                  : playbook.dataBindings,
                 reflectionEnabled: hasNewerLocalChanges
                   ? state.currentPlaybook.reflectionEnabled
                   : playbook.reflectionEnabled,
@@ -862,11 +1577,43 @@ export const usePlaybookStore = create<PlaybookStore>()(
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
             savingDirtyVersion: isLatestSaveRequest ? null : state.savingDirtyVersion,
+            pendingAutosaveAfterCurrent: isLatestSaveRequest ? false : state.pendingAutosaveAfterCurrent,
+            autosaveBackoffUntil: latestState.lastSaveReason === 'autosave'
+              ? null
+              : state.autosaveBackoffUntil,
+            lastAutosaveDurationMs: latestState.lastSaveReason === 'autosave' ? saveDurationMs : state.lastAutosaveDurationMs,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [id]: payloadTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [id]: requestBody,
+            },
           }));
+          logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
+            mode: effectiveSaveMode,
+            playbookId: id,
+            payloadBytes: effectiveSaveMode === 'delta'
+              ? api.measureSerializedBytes(deltaPatch)
+              : payloadTelemetry.payloadBytes,
+            reason: latestState.lastSaveReason,
+          });
+          if (isLatestSaveRequest && latestState.pendingAutosaveAfterCurrent && hasNewerLocalChanges) {
+            void Promise.resolve().then(() => get().saveCurrentPlaybook({ reason: 'autosave' }));
+          }
         } catch (err) {
           const latestState = get();
           if (latestState.saveRequestId === requestId) {
-            set({ isSaving: false, savingDirtyVersion: null });
+            const autosaveFailed = latestState.lastSaveReason === 'autosave';
+            const nextBackoffMs = autosaveFailed ? getAutosaveRetryDelayMs(latestState.autosaveBackoffUntil) : null;
+            set({
+              isSaving: false,
+              savingDirtyVersion: null,
+              autosaveBackoffUntil: autosaveFailed && nextBackoffMs
+                ? Date.now() + nextBackoffMs
+                : latestState.autosaveBackoffUntil,
+            });
           }
           if (
             err &&
@@ -889,6 +1636,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
             toast.error(tPlaybook('store.errors.duplicateName', 'A playbook with this name already exists. Renamed to "{{name}}".', { name: dedupedName }));
             return;
           }
+          if (
+            latestState.lastSaveReason === 'autosave'
+            && err
+            && typeof err === 'object'
+            && 'statusCode' in err
+            && ((err as { statusCode?: number }).statusCode === 429 || (err as { statusCode?: number }).statusCode === 503)
+          ) {
+            toast.warning(tPlaybook('store.toasts.autosaveRetrying', 'Autosave is backing off and will retry shortly'));
+            return;
+          }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
           toast.error(msg);
         }
@@ -898,7 +1655,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const previous = get().playbooks;
         set((state) => ({ playbooks: state.playbooks.filter((p) => p.id !== id) }));
         try {
-          await api.deletePlaybook(id);
+          if (playbookFeatures.queryMutationsEnabled) {
+            await deletePlaybookMutation(id);
+          } else {
+            await api.deletePlaybook(id);
+          }
           toast.success(tPlaybook('store.toasts.deleted', 'Playbook deleted'));
         } catch {
           set({ playbooks: previous });
@@ -907,7 +1668,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       clonePlaybook: async (id) => {
-        const cloned = await api.clonePlaybook(id);
+        const cloned = playbookFeatures.queryMutationsEnabled
+          ? await clonePlaybookMutation(id)
+          : await api.clonePlaybook(id);
         const summary: PlaybookSummary = {
           id: cloned.id,
           name: cloned.name,
@@ -1063,7 +1826,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ triggerSaving: true, triggerError: null });
         try {
           await api.syncPlaybookTriggerMailSubscription(playbookId, data);
-          const refreshed = await api.getPlaybook(playbookId);
+          const refreshed = await fetchLegacyPlaybookDetail(playbookId);
           const scheduleEnabled = refreshed.executionSchedule?.enabled === true;
           set((state) => ({
             triggerSaving: false,
@@ -1178,29 +1941,40 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       setDirty: (dirty: boolean) => set({ isDirty: dirty }),
+      setPendingAutosaveAfterCurrent: (pending) => set({ pendingAutosaveAfterCurrent: pending }),
 
       saveCurrentPlaybook: async (options) => {
         const { currentPlaybook, isSaving } = get();
-        if (isSaving) return;
+        if (isSaving) {
+          if (options?.reason === 'autosave') {
+            set({ pendingAutosaveAfterCurrent: true });
+          }
+          return;
+        }
         if (!currentPlaybook) return;
-        await get().updatePlaybook(currentPlaybook.id, {
-          name: currentPlaybook.name,
-          description: currentPlaybook.description,
-          designSettings: currentPlaybook.designSettings,
-          tasks: currentPlaybook.tasks,
-          edges: currentPlaybook.edges,
-          controlEdges: currentPlaybook.controlEdges,
-          dataBindings: currentPlaybook.dataBindings,
-          settings: currentPlaybook.settings,
-          workspaces: currentPlaybook.workspaces,
-          reflectionEnabled: currentPlaybook.reflectionEnabled,
-          advisorScoringMode: currentPlaybook.advisorScoringMode,
-          advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
-          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
-          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
-          expectedUpdatedAt: options?.expectedUpdatedAt,
-          clientMutationId: options?.clientMutationId,
+        const savePayload = buildSavePayload(currentPlaybook, options);
+        const payloadTelemetry = api.getPlaybookUpdateTelemetry(savePayload);
+        const lastSavedPayloadHash = get().lastSavedPayloadHashByPlaybookId[currentPlaybook.id];
+        const shouldSkipSave = lastSavedPayloadHash === payloadTelemetry.payloadHash;
+
+        logPlaybookPerfMetric('playbook_autosave_skipped_hash_match', {
+          playbookId: currentPlaybook.id,
+          skipped: shouldSkipSave,
+          reason: options?.reason ?? 'manual',
         });
+
+        if (shouldSkipSave) {
+          set({
+            isDirty: false,
+            savingDirtyVersion: null,
+            pendingAutosaveAfterCurrent: false,
+            lastSaveReason: options?.reason ?? 'manual',
+          });
+          return;
+        }
+
+        set({ lastSaveReason: options?.reason ?? 'manual' });
+        await get().updatePlaybook(currentPlaybook.id, savePayload);
       },
 
       // ===== Execution =====
@@ -1213,6 +1987,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           error: null,
         }));
         try {
+          const currentPlaybook = get().currentPlaybook?.id === id ? get().currentPlaybook : null;
+          const optimisticSelectedTaskId = data?.singleStepTaskId
+            || [...(currentPlaybook?.tasks || [])].sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0))[0]?.id
+            || null;
           const result = await api.executePlaybook(id, data);
           set((state) => {
             if (state.currentPlaybook?.id !== id) {
@@ -1261,6 +2039,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               taskResults,
               threadId: null,
               interruptPayload: null,
+              pendingInterrupts: [],
               waitingForHumanInput: false,
               currentInterruptId: null,
               currentInterruptTaskId: null,
@@ -1287,6 +2066,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               pageMode: 'run',
             };
           });
+          syncUiStoreForRun(optimisticSelectedTaskId);
           return result.executionId;
         } catch (err) {
           set((state) => ({
@@ -1300,16 +2080,46 @@ export const usePlaybookStore = create<PlaybookStore>()(
       stopExecution: async (playbookId, executionId) => {
         set({ isStopping: true });
         try {
-          await api.cancelFlowExecution(executionId);
+          if (playbookFeatures.queryMutationsEnabled) {
+            await cancelExecutionMutation(executionId);
+          } else {
+            await api.cancelFlowExecution(executionId);
+          }
           set({ isStopping: false });
         } catch (err) {
           set({ isStopping: false });
           const apiError = parseApiError(err);
           if (apiError.code === 'ERR_1006') {
-            const cached = get().executionCache[executionId];
-            if (cached?.playbookId) {
-              void get().fetchExecution(cached.playbookId, executionId);
-            }
+            set((state) => {
+              const executionCache = { ...state.executionCache };
+              const cached = executionCache[executionId];
+              if (cached) {
+                executionCache[executionId] = {
+                  ...cached,
+                  status: 'completed',
+                  waitingForHumanInput: false,
+                  interruptPayload: null,
+                  pendingInterrupts: [],
+                  taskResults: cached.taskResults.map((tr) =>
+                    tr.status === 'running' || tr.status === 'interrupted'
+                      ? { ...tr, status: 'completed' as const }
+                      : tr,
+                  ),
+                };
+              }
+              const executingPlaybookIds = state.executingPlaybookIds.filter((pid) => pid !== playbookId);
+              const currentExecution =
+                state.currentExecution?.id === executionId
+                  ? executionCache[executionId] ?? state.currentExecution
+                  : state.currentExecution;
+              return {
+                executionCache,
+                currentExecution,
+                executingPlaybookIds,
+                copilotMode: 'design' as const,
+                waitingForHumanInput: false,
+              };
+            });
             return;
           }
           handleApiError(err);
@@ -1409,11 +2219,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
             : state.currentPlaybook,
         }));
         try {
-          const replay = await api.validateTaskReplay(playbookId, taskId, {
+          const replayPayload = {
             executionId,
             preserveOutputFormat: options?.preserveOutputFormat || false,
             ...(options?.replayConfig ? { replayConfig: options.replayConfig } : {}),
-          });
+          };
+          const replay = playbookFeatures.queryMutationsEnabled
+            ? await validateReplayMutation({ playbookId, taskId, data: replayPayload })
+            : await api.validateTaskReplay(playbookId, taskId, replayPayload);
+          invalidateTaskReplayReads(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1485,7 +2299,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchTaskReplays: async (playbookId, taskId) => {
         try {
-          return await api.getTaskReplays(playbookId, taskId);
+          return await fetchTaskReplayList(playbookId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -1495,6 +2309,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       activateTaskReplay: async (playbookId, taskId, replayId) => {
         try {
           const replay = await api.activateTaskReplay(playbookId, taskId, replayId);
+          invalidateTaskReplayReads(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1535,6 +2350,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteTaskReplay: async (playbookId, taskId, replayId) => {
         try {
           const result = await api.deleteTaskReplay(playbookId, taskId, replayId);
+          invalidateTaskReplayReads(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1575,6 +2391,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       renameTaskReplay: async (playbookId, taskId, replayId, label) => {
         try {
           const replay = await api.updateTaskReplayLabel(playbookId, taskId, replayId, label);
+          invalidateTaskReplayReads(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1597,7 +2414,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchEvaluationExecutions: async (playbookId, taskId) => {
         try {
-          const executions = await api.getEvaluationExecutions(playbookId, taskId);
+          const executions = await fetchEvaluationExecutionList(playbookId, taskId);
           if (taskId) {
             set((state) => ({
               evaluationExecutionsByTask: {
@@ -1615,7 +2432,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchEvaluationBaseline: async (playbookId, taskId) => {
         try {
-          const baseline = await api.getEvaluationBaseline(playbookId, taskId);
+          const baseline = await fetchEvaluationBaselineDetail(playbookId, taskId);
           set((state) => ({
             evaluationBaselinesByTask: {
               ...state.evaluationBaselinesByTask,
@@ -1719,7 +2536,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchRepeatability: async (playbookId, limit = 5, offset = 0) => {
         set({ repeatabilityLoading: true });
         try {
-          const result = await api.getPlaybookRepeatability(playbookId, limit, offset);
+          const result = await fetchPlaybookRepeatability(playbookId, limit, offset);
           set({ repeatability: result, repeatabilityLoading: false });
           return result;
         } catch (err) {
@@ -1736,6 +2553,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       updateTaskReplayFormatGuide: async (playbookId, taskId, replayId, data) => {
         try {
           const replay = await api.updateTaskReplayFormatGuide(playbookId, taskId, replayId, data);
+          invalidateTaskReplayReads(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1793,6 +2611,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
         try {
           const template = await api.grabOutputFormatTemplate(playbookId, taskId, data);
+          invalidateOutputFormatTemplateRead(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1839,7 +2658,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchOutputFormatTemplate: async (playbookId, taskId) => {
         try {
-          return await api.getOutputFormatTemplate(playbookId, taskId);
+          return await fetchOutputFormatTemplateDetail(playbookId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -1848,7 +2667,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       refreshOutputFormatStatus: async (playbookId, taskId) => {
         try {
-          const template = await api.getOutputFormatTemplate(playbookId, taskId);
+          const template = await fetchOutputFormatTemplateDetail(playbookId, taskId);
           if (!template) return;
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
@@ -1877,7 +2696,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       updateOutputFormatTemplate: async (playbookId, taskId, data) => {
         try {
-          const template = await api.updateOutputFormatTemplate(playbookId, taskId, data);
+          const template = playbookFeatures.queryMutationsEnabled
+            ? await updateOutputFormatTemplateMutation({ playbookId, taskId, data })
+            : await api.updateOutputFormatTemplate(playbookId, taskId, data);
+          invalidateOutputFormatTemplateRead(playbookId, taskId);
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
@@ -1909,6 +2731,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteOutputFormatTemplate: async (playbookId, taskId) => {
         try {
           const result = await api.deleteOutputFormatTemplate(playbookId, taskId);
+          invalidateOutputFormatTemplateRead(playbookId, taskId);
           if (result.removed) {
             set((state) => ({
               currentPlaybook: state.currentPlaybook?.id === playbookId
@@ -2023,7 +2846,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       fetchAdvisorRemediations: async (playbookId, executionId, taskId) => {
-        return api.fetchAdvisorRemediations(playbookId, executionId, taskId);
+        return fetchAdvisorRemediationList(playbookId, executionId, taskId);
       },
 
       reapplyOptimization: async (playbookId, executionId, taskId, historyIndex, direction) => {
@@ -2060,6 +2883,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
         const message = data.message || data.feedback || data.reason || '';
         const interruptId = data.interruptId || undefined;
+        const currentExecution = get().currentExecution;
+        const interruptedTask = currentExecution?.taskResults.find(
+          (taskResult) => taskResult.taskId === data.taskId && taskResult.status === 'interrupted',
+        ) || null;
         // Optimistically mark the humanFeedback component as answered
         set((state) => {
           if (!state.currentExecution) return state;
@@ -2081,6 +2908,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
                     approved: data.approved,
                     reason: data.reason || '',
                     feedback: data.feedback || '',
+                    scope: data.scope,
+                    remember: data.remember,
                     humanResponse: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action,
                   },
                 };
@@ -2098,20 +2927,29 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   status: 'answered' as const,
                   responseAction: action,
                   responseMessage: message || null,
-                  responseApproved: data.approved ?? null,
-                  responseReason: data.reason || null,
-                  responseFeedback: data.feedback || null,
-                }
+                responseApproved: data.approved ?? null,
+                responseReason: data.reason || null,
+                responseFeedback: data.feedback || null,
+                responseScope: data.scope ?? null,
+                responseRemember: data.remember ?? null,
+              }
               : entry
           ));
+          const pendingInterrupts = removePendingInterrupt(
+            state.currentExecution.pendingInterrupts,
+            data.taskId,
+            interruptId,
+          );
+          const nextInterrupt = pendingInterrupts[0] ?? null;
           const updatedExec: PlaybookExecution = {
             ...state.currentExecution,
             taskResults,
-            status: 'running',
-            interruptPayload: null,
-            waitingForHumanInput: false,
-            currentInterruptId: null,
-            currentInterruptTaskId: null,
+            status: nextInterrupt ? 'interrupted' : 'running',
+            interruptPayload: nextInterrupt,
+            pendingInterrupts,
+            waitingForHumanInput: pendingInterrupts.length > 0,
+            currentInterruptId: nextInterrupt?.interruptId || null,
+            currentInterruptTaskId: nextInterrupt?.taskId || null,
             hitlHistory,
             updatedAt: new Date().toISOString(),
           };
@@ -2124,18 +2962,41 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.resumeFlowApproval(
-            data.executionId,
-            action,
-            {
+          if (interruptedTask) {
+            const resumeData = {
+              taskId: data.taskId,
+              action,
+              interruptId,
+              iteration: interruptedTask.iteration,
+              message: data.message,
+              approved: data.approved,
+              reason: data.reason,
+              feedback: data.feedback,
+              scope: data.scope,
+              remember: data.remember,
+            };
+            if (playbookFeatures.queryMutationsEnabled) {
+              await resumeFromStepMutation({ playbookId: id, executionId: data.executionId, data: resumeData });
+            } else {
+              await api.resumePlaybookFromStep(id, data.executionId, resumeData);
+            }
+          } else {
+            const resumePayload = {
               taskId: data.taskId,
               interruptId,
               message: data.message,
               approved: data.approved,
               reason: data.reason,
               feedback: data.feedback,
-            },
-          );
+              scope: data.scope,
+              remember: data.remember,
+            };
+            if (playbookFeatures.queryMutationsEnabled) {
+              await resumeApprovalMutation({ executionId: data.executionId, decision: action, payload: resumePayload });
+            } else {
+              await api.resumeFlowApproval(data.executionId, action, resumePayload);
+            }
+          }
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -2161,12 +3022,138 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
+      resumeFromStep: async (playbookId, executionId, taskId, options = {}) => {
         try {
-          await api.resumePlaybookFromStep(playbookId, executionId, {
+          const resumeData = {
             taskId,
-            streaming,
+            streaming: options.streaming ?? false,
+            action: options.action,
+            interruptId: options.interruptId,
+            iteration: options.iteration,
+            message: options.message,
+            approved: options.approved,
+            reason: options.reason,
+            feedback: options.feedback,
+            scope: options.scope,
+            remember: options.remember,
+            payload: options.payload,
+          };
+          if (playbookFeatures.queryMutationsEnabled) {
+            await resumeFromStepMutation({ playbookId, executionId, data: resumeData });
+          } else {
+            await api.resumePlaybookFromStep(playbookId, executionId, resumeData);
+          }
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      disableHitlBlocker: async (executionId, interruptId) => {
+        try {
+          await api.disableHitlBlocker(executionId, interruptId);
+          toast.success(tPlaybook('interrupt.blockerDisabled', 'This blocker is disabled for future runs.'));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      runFromStep: async (playbookId, sourceExecutionId, taskId, iteration) => {
+        try {
+          const result = await api.runPlaybookFromStep(playbookId, sourceExecutionId, {
+            taskId,
+            iteration,
           });
+          set((state) => {
+            const currentPlaybook = state.currentPlaybook?.id === playbookId ? state.currentPlaybook : null;
+            const sourceExecution = state.currentExecution?.id === sourceExecutionId
+              ? state.currentExecution
+              : state.executionCache[sourceExecutionId] ?? null;
+
+            const optimisticTaskResults = currentPlaybook && sourceExecution
+              ? buildReplayTaskResultsFromSource(sourceExecution, currentPlaybook, taskId)
+              : currentPlaybook
+                ? buildExecutionTaskResultsFromTasks(currentPlaybook.tasks, { runningTaskId: taskId })
+                : [];
+
+            const now = new Date().toISOString();
+            const newExecution: PlaybookExecution = {
+              id: result.executionId,
+              playbookId,
+              executedBy: sourceExecution?.executedBy || '',
+              executionNumber: (state.executionHistoryByPlaybook[playbookId]?.[0]?.executionNumber || state.executionHistory[0]?.executionNumber || 0) + 1,
+              status: 'running',
+              executionMode: sourceExecution?.executionMode || 'live',
+              stepExecutionModes: sourceExecution?.stepExecutionModes ?? {},
+              executionTrigger: 'manual',
+              reflectionEnabled: sourceExecution?.reflectionEnabled !== false,
+              advisorScoringMode: sourceExecution?.advisorScoringMode ?? currentPlaybook?.advisorScoringMode ?? 'llm',
+              advisorAutopilotEnabled: sourceExecution?.advisorAutopilotEnabled === true,
+              advisorAutopilotTargetScore: sourceExecution?.advisorAutopilotTargetScore ?? 90,
+              advisorAutopilotMaxTurns: sourceExecution?.advisorAutopilotMaxTurns ?? 4,
+              advisorAutopilotStatus: 'idle',
+              advisorAutopilotTaskId: null,
+              advisorAutopilotAttemptCount: 0,
+              advisorAutopilotLastError: null,
+              judgeSummaryStatus: 'idle',
+              judgeSummary: null,
+              replaySourceByTask: null,
+              replayPlanningByTask: null,
+              taskResults: optimisticTaskResults,
+              threadId: null,
+              interruptPayload: null,
+              pendingInterrupts: [],
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
+              hitlHistory: [],
+              error: null,
+              durationMs: null,
+              startedAt: now,
+              completedAt: null,
+              singleStepTaskId: taskId,
+              playbookSnapshot: null,
+              totalInputTokens: 0,
+              totalOutputTokens: 0,
+              totalTokens: 0,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            const newSummary: PlaybookExecutionSummary = {
+              id: result.executionId,
+              playbookId,
+              executedBy: sourceExecution?.executedBy || '',
+              executionNumber: newExecution.executionNumber,
+              status: 'running',
+              executionTrigger: 'manual',
+              error: null,
+              durationMs: null,
+              startedAt: now,
+              completedAt: null,
+              singleStepTaskId: taskId,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            return {
+              executingPlaybookIds: state.executingPlaybookIds.includes(playbookId)
+                ? state.executingPlaybookIds
+                : [...state.executingPlaybookIds, playbookId],
+              currentExecution: state.currentPlaybook?.id === playbookId ? newExecution : state.currentExecution,
+              executionCache: evictCache({ ...state.executionCache, [result.executionId]: newExecution }),
+              executionHistory: [newSummary, ...state.executionHistory].slice(0, MAX_EXECUTION_HISTORY),
+              executionHistoryByPlaybook: {
+                ...state.executionHistoryByPlaybook,
+                [playbookId]: [newSummary, ...(state.executionHistoryByPlaybook[playbookId] || [])].slice(0, MAX_EXECUTION_HISTORY),
+              },
+              selectedStepId: state.currentPlaybook?.id === playbookId ? taskId : state.selectedStepId,
+              executionPanelOpen: state.currentPlaybook?.id === playbookId ? true : state.executionPanelOpen,
+              pageMode: state.currentPlaybook?.id === playbookId ? 'run' : state.pageMode,
+            };
+          });
+          void get().fetchExecution(playbookId, result.executionId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -2179,13 +3166,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const incomingTaskResults = data.taskResults ?? [];
         set((state) => {
           let taskResults = incomingTaskResults;
-          if (data.singleStepTaskId) {
-            const previous = state.currentExecution?.playbookId === data.playbookId
-              ? state.currentExecution
-              : state.executionCache[state.currentExecution?.id ?? ''] ?? null;
+          const previous = state.executionCache[data.executionId]
+            ?? (state.currentExecution?.id === data.executionId ? state.currentExecution : null);
+          const replayTargetTaskId = data.singleStepTaskId ?? previous?.singleStepTaskId ?? null;
+          const shouldPreserveOptimisticReplay = incomingTaskResults.length === 0 && !!previous?.singleStepTaskId;
+          if (replayTargetTaskId && (data.singleStepTaskId || shouldPreserveOptimisticReplay)) {
             if (previous && previous.taskResults.length > 0) {
               taskResults = previous.taskResults.map((tr) =>
-                tr.taskId === data.singleStepTaskId
+                tr.taskId === replayTargetTaskId
                   ? { ...clearTaskResultStaleState(tr), status: 'running' as const, output: null, error: null, durationMs: null, startedAt: new Date().toISOString(), completedAt: null }
                   : tr,
               );
@@ -2216,6 +3204,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             taskResults,
             threadId: null,
             interruptPayload: null,
+            pendingInterrupts: [],
             waitingForHumanInput: false,
             currentInterruptId: null,
             currentInterruptTaskId: null,
@@ -2224,7 +3213,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             durationMs: null,
             startedAt: new Date().toISOString(),
             completedAt: null,
-            singleStepTaskId: data.singleStepTaskId ?? null,
+            singleStepTaskId: replayTargetTaskId,
             playbookSnapshot: null,
             totalInputTokens: 0,
             totalOutputTokens: 0,
@@ -2243,7 +3232,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             durationMs: null,
             startedAt: new Date().toISOString(),
             completedAt: null,
-            singleStepTaskId: data.singleStepTaskId ?? null,
+            singleStepTaskId: replayTargetTaskId,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
@@ -2251,6 +3240,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
           const shouldSetCurrent = state.currentPlaybook?.id === data.playbookId;
           const executionCache = evictCache({ ...state.executionCache, [data.executionId]: newExecution });
+          if (shouldSetCurrent) {
+            syncUiStoreForRun(firstStep?.taskId ?? null);
+          }
           return {
             executingPlaybookIds: state.executingPlaybookIds.includes(data.playbookId)
               ? state.executingPlaybookIds
@@ -2607,16 +3599,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => {
-        console.debug('[judge DEBUG] onStepJudgeStarted', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) { console.debug('[judge DEBUG] onStepJudgeStarted: no cached execution'); return state; }
+          if (!cached) return state;
 
-          let matched = false;
           const taskResults = cached.taskResults.map((tr) => {
             const isMatch = tr.taskId === data.taskId
               && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
-            if (isMatch) matched = true;
             return isMatch
               ? {
                   ...tr,
@@ -2627,7 +3616,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 }
               : tr;
           });
-          console.debug('[judge DEBUG] onStepJudgeStarted: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2638,16 +3626,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => {
-        console.debug('[judge DEBUG] onStepJudgeUpdated', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration, judgeStatus: data.judgeStatus });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) { console.debug('[judge DEBUG] onStepJudgeUpdated: no cached execution'); return state; }
+          if (!cached) return state;
 
-          let matched = false;
           const taskResults = cached.taskResults.map((tr) => {
             const isMatch = tr.taskId === data.taskId
               && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
-            if (isMatch) matched = true;
             return isMatch
               ? {
                   ...tr,
@@ -2659,7 +3644,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 }
               : tr;
           });
-          console.debug('[judge DEBUG] onStepJudgeUpdated: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2892,6 +3876,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
       onInterrupt: (data: PlaybookInterruptEvent) => {
         const cached = get().executionCache[data.executionId];
         const playbookId = cached?.playbookId || get().currentPlaybook?.id;
+        if (cached || (playbookId && get().currentPlaybook?.id === playbookId)) {
+          syncUiStoreForInterrupt(data.taskId);
+        }
+        if (playbookId) {
+          // Interrupt SSE payloads can be thinner than the persisted pendingApproval state.
+          // Always backfill the latest execution detail so the sidebar has the full interrupt payload.
+          setTimeout(() => void get().fetchExecution(playbookId, data.executionId), 0);
+        }
         const viewAction = playbookId
           ? {
             label: tPlaybook('store.toasts.viewExecution', 'View'),
@@ -2916,7 +3908,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const cachedExec = state.executionCache[data.executionId];
           if (!cachedExec) {
-            return { executionHistory, executingPlaybookIds };
+            return {
+              executionHistory,
+              executingPlaybookIds,
+              selectedStepId: data.taskId,
+              copilotMode: 'interrupt',
+              designerOpen: true,
+              executionPanelOpen: true,
+              workspaceExplorerOpen: false,
+              connectorSidebarOpen: false,
+              nodeEditorOpen: false,
+            };
           }
 
           // Add humanFeedback component to the interrupted task's components
@@ -2938,6 +3940,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 resumableActions: data.resumableActions || [],
                 taskDescription: data.taskDescription || '',
                 result: data.result || '',
+                blockerRuleId: data.blockerRuleId,
+                blockerKind: data.blockerKind,
+                reasonCode: data.reasonCode,
+                riskLevel: data.riskLevel,
+                downstreamNodeIds: data.downstreamNodeIds,
+                feedbackScopeDefault: data.feedbackScopeDefault,
+                memoryCandidate: data.memoryCandidate,
+                scope: data.feedbackScopeDefault,
               },
             };
             return {
@@ -2947,13 +3957,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
             };
           });
 
+          const interruptPayload = buildInterruptPayload(data);
+          const pendingInterrupts = [
+            ...(cachedExec.pendingInterrupts || []).filter((entry) => (
+              entry.interruptId !== interruptPayload.interruptId
+            )),
+            interruptPayload,
+          ];
+          const activeInterrupt = cachedExec.interruptPayload && cachedExec.waitingForHumanInput
+            ? cachedExec.interruptPayload
+            : pendingInterrupts[0];
           const updatedExec: PlaybookExecution = {
             ...cachedExec,
             taskResults,
             status: 'interrupted',
             waitingForHumanInput: true,
-            currentInterruptId: data.interruptId || null,
-            currentInterruptTaskId: data.taskId,
+            currentInterruptId: activeInterrupt?.interruptId || null,
+            currentInterruptTaskId: activeInterrupt?.taskId || null,
+            pendingInterrupts,
             hitlHistory: [
               ...(cachedExec.hitlHistory || []).filter((entry) => !(entry.status === 'pending' && entry.interruptId === (data.interruptId || ''))),
               {
@@ -2976,26 +3997,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 respondedBy: null,
                 respondedAt: null,
                 createdAt: new Date().toISOString(),
+                blockerRuleId: data.blockerRuleId,
+                blockerKind: data.blockerKind,
+                reasonCode: data.reasonCode,
+                riskLevel: data.riskLevel,
+                downstreamNodeIds: data.downstreamNodeIds,
+                feedbackScopeDefault: data.feedbackScopeDefault,
+                memoryCandidate: data.memoryCandidate,
               },
             ],
-            interruptPayload: {
-              type: data.type,
-              taskId: data.taskId,
-              taskTitle: '',
-              message: data.message,
-              threadId: data.threadId,
-              interruptId: data.interruptId || '',
-              round: data.round || 0,
-              payloadJson: data.payloadJson || '',
-              resumableActions: data.resumableActions || [],
-              taskDescription: data.taskDescription || '',
-              result: data.result || '',
-            },
+            interruptPayload: activeInterrupt,
             updatedAt: new Date().toISOString(),
           };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
-          const currentExecution =
-            state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          const shouldSetCurrentExecution =
+            !state.currentExecution
+            || state.currentExecution.id === data.executionId
+            || state.currentPlaybook?.id === updatedExec.playbookId;
+          const currentExecution = shouldSetCurrentExecution ? updatedExec : state.currentExecution;
 
           return {
             executionCache,
@@ -3070,7 +4089,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 ...incoming,
                 taskResults: mergedTaskResults,
                 status: mergedStatus,
-                interruptPayload: cached.interruptPayload || incoming.interruptPayload,
+                interruptPayload: isActiveExecutionStatus(mergedStatus) ? cached.interruptPayload || incoming.interruptPayload : null,
+                hitlHistory: isActiveExecutionStatus(mergedStatus)
+                  ? mergeHitlHistory(cached.hitlHistory || [], incoming.hitlHistory || [])
+                  : [],
+                pendingInterrupts: isActiveExecutionStatus(mergedStatus)
+                  ? ((cached.pendingInterrupts && cached.pendingInterrupts.length > 0) ? cached.pendingInterrupts : incoming.pendingInterrupts)
+                  : [],
+                currentInterruptId: isActiveExecutionStatus(mergedStatus) ? cached.currentInterruptId ?? incoming.currentInterruptId : null,
+                currentInterruptTaskId: isActiveExecutionStatus(mergedStatus) ? cached.currentInterruptTaskId ?? incoming.currentInterruptTaskId : null,
+                waitingForHumanInput: isActiveExecutionStatus(mergedStatus) ? Boolean(cached.waitingForHumanInput || incoming.waitingForHumanInput) : false,
               };
             } else {
               // No cached version — use incoming as-is
@@ -3109,7 +4137,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchExecutions: async (playbookId) => {
         set({ executionsLoading: true });
         try {
-          const result = await api.getExecutions(playbookId);
+          const result = await fetchPlaybookExecutionHistory(playbookId);
           const executions = result.executions.slice(0, MAX_EXECUTION_HISTORY);
           set((state) => ({
             executionHistory: executions,
@@ -3124,11 +4152,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           // so the canvas can show step statuses from previous runs.
           const latest = executions[0];
           if (latest && !get().executionCache[latest.id]) {
-            api.getExecution(playbookId, latest.id).then((execution) => {
-              set((state) => ({
-                executionCache: evictCache({ ...state.executionCache, [execution.id]: execution }),
-              }));
-            }).catch(() => { /* non-critical */ });
+            void get().fetchExecution(playbookId, latest.id).catch(() => { /* non-critical */ });
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Failed to fetch executions';
@@ -3147,7 +4171,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
           selectedStepId: state.currentPlaybook?.id === playbookId && cached ? state.selectedStepId : state.selectedStepId,
         }));
         try {
-          const apiExecution = await api.getExecution(playbookId, execId);
+          let apiExecution = await fetchPlaybookExecutionDetail(playbookId, execId);
+          apiExecution = await hydrateReplayExecutionFromSource(
+            apiExecution,
+            playbookId,
+            get().currentPlaybook?.id === playbookId ? get().currentPlaybook : null,
+            get().executionCache,
+          );
           const summary = get().executionHistoryByPlaybook[playbookId]?.find((execution) => execution.id === execId)
             ?? get().executionHistory.find((execution) => execution.id === execId);
           const normalizedExecution = summary
@@ -3164,8 +4194,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestCached = get().executionCache[execId];
           let merged = normalizedExecution;
           if (latestCached) {
-            const cachedBefore = latestCached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
-            const apiBefore = normalizedExecution.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
             const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
             const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
               const cachedTr = cachedResultMap.get(getTaskResultCacheKey(apiTr));
@@ -3177,8 +4205,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               return apiTr;
             });
-            const mergedAfter = mergedTaskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
-            console.debug('[judge DEBUG] fetchExecution merge', { execId, cachedBefore, apiBefore, mergedAfter });
             // Also include any task results from cache that are not in the API response
             for (const [taskResultKey, cachedTr] of cachedResultMap) {
               if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
@@ -3194,7 +4220,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ...normalizedExecution,
               taskResults: mergedTaskResults,
               status: mergedStatus,
-              interruptPayload: latestCached.interruptPayload || normalizedExecution.interruptPayload,
+              singleStepTaskId: latestCached.singleStepTaskId ?? normalizedExecution.singleStepTaskId ?? null,
+              interruptPayload: isActiveExecutionStatus(mergedStatus) ? latestCached.interruptPayload || normalizedExecution.interruptPayload : null,
+              hitlHistory: isActiveExecutionStatus(mergedStatus)
+                ? mergeHitlHistory(latestCached.hitlHistory || [], normalizedExecution.hitlHistory || [])
+                : [],
+              pendingInterrupts: isActiveExecutionStatus(mergedStatus)
+                ? ((latestCached.pendingInterrupts && latestCached.pendingInterrupts.length > 0)
+                  ? latestCached.pendingInterrupts
+                  : normalizedExecution.pendingInterrupts)
+                : [],
+              currentInterruptId: isActiveExecutionStatus(mergedStatus) ? latestCached.currentInterruptId ?? normalizedExecution.currentInterruptId : null,
+              currentInterruptTaskId: isActiveExecutionStatus(mergedStatus) ? latestCached.currentInterruptTaskId ?? normalizedExecution.currentInterruptTaskId : null,
+              waitingForHumanInput: isActiveExecutionStatus(mergedStatus)
+                ? Boolean(latestCached.waitingForHumanInput || normalizedExecution.waitingForHumanInput)
+                : false,
             };
           }
 
@@ -3221,17 +4261,23 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      selectStep: (taskId, iterationIndex) => set({ selectedStepId: taskId, selectedIterationIndex: iterationIndex ?? 0 }),
+      selectStep: (taskId, iterationIndex) => {
+        usePlaybookUiStore.getState().selectStep(taskId, iterationIndex);
+        set({ selectedStepId: taskId, selectedIterationIndex: iterationIndex ?? 0 });
+      },
 
       setPageMode: (mode: PlaybookPageMode) =>
-        set({ pageMode: mode }),
+        {
+          usePlaybookUiStore.getState().setPageMode(mode);
+          set({ pageMode: mode });
+        },
 
       // ===== Designer =====
 
       fetchDesignMessages: async (playbookId) => {
         set({ designMessagesLoading: true });
         try {
-          const messages = await api.getDesignMessages(playbookId);
+          const messages = await fetchDesignMessageList(playbookId);
           set({ designMessages: messages, designMessagesLoading: false });
         } catch {
           set({ designMessagesLoading: false });
@@ -3290,11 +4336,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      setDesignerOpen: (open) => set((state) => ({ designerOpen: open, copilotMode: open ? state.copilotMode : 'design' })),
+      setDesignerOpen: (open) => {
+        usePlaybookUiStore.getState().setDesignerOpen(open);
+        set((state) => ({ designerOpen: open, copilotMode: open ? state.copilotMode : 'design' }));
+      },
 
-      setCopilotMode: (mode) => set({ copilotMode: mode }),
+      setCopilotMode: (mode) => {
+        usePlaybookUiStore.getState().setCopilotMode(mode);
+        set({ copilotMode: mode });
+      },
 
       setExecutionPanelOpen: (open) => {
+        usePlaybookUiStore.getState().setExecutionPanelOpen(open);
         if (open) {
           set({ executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, nodeEditorOpen: false });
         } else {
@@ -3304,10 +4357,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       setExecutionDetailTab: (tab) => {
+        usePlaybookUiStore.getState().setExecutionDetailTab(tab);
         set({ executionDetailTab: tab });
       },
 
       openExecutionDetailTab: (tab, taskId) => {
+        usePlaybookUiStore.getState().openExecutionDetailTab(tab, taskId);
         const updates: Partial<PlaybookState> = {
           executionDetailTab: tab,
           executionPanelOpen: true,
@@ -3327,6 +4382,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const cached = get().executionCache[executionId];
         if (cached) {
           const selectedStepId = getPreferredSelectedStepId(cached.taskResults, get().selectedStepId);
+          usePlaybookUiStore.getState().openExecutionDetailTab('results', selectedStepId ?? undefined);
           set({
             currentExecution: cached,
             executionPanelOpen: true,
@@ -3339,6 +4395,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
         } else {
           const playbookId = get().currentPlaybook?.id;
           if (!playbookId) return;
+          usePlaybookUiStore.getState().setExecutionPanelOpen(true);
+          usePlaybookUiStore.getState().setPageMode('run');
           set({
             executionPanelOpen: true,
             workspaceExplorerOpen: false,
@@ -3353,6 +4411,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Workspace Explorer =====
 
       setWorkspaceExplorerOpen: (open) => {
+        usePlaybookUiStore.getState().setWorkspaceExplorerOpen(open);
         if (open) {
           set({ workspaceExplorerOpen: true, connectorSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
         } else {
@@ -3537,6 +4596,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Connector Sidebar =====
 
       setConnectorSidebarOpen: (open) => {
+        usePlaybookUiStore.getState().setConnectorSidebarOpen(open);
         if (open) {
           set({ connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
         } else {
@@ -3547,6 +4607,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Node Editor =====
 
       setNodeEditorOpen: (open) => {
+        usePlaybookUiStore.getState().setNodeEditorOpen(open);
         if (open) {
           set({ nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false });
         } else {
@@ -3662,7 +4723,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
         set({ nodeTemplatesLoading: true });
         try {
-          const data = await api.getPlaybookNodeTemplates();
+          const data = await fetchPlaybookNodeTemplates();
           const items = Array.isArray(data.items) ? data.items : [];
 
           set({
@@ -3708,6 +4769,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       invalidateNodeTemplates: () => {
         set({ nodeTemplatesLoadedAt: 0 });
+        void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.nodeTemplates() });
       },
 
       // ===== Flow Node Templates (Phase 4) =====
@@ -3719,7 +4781,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
         set({ flowNodeTemplatesLoading: true });
         try {
-          const data = await api.getFlowNodeTemplates();
+          const data = await fetchFlowNodeTemplateList();
           const items = Array.isArray(data.items) ? data.items : [];
           set({
             flowNodeTemplates: items.map((item) => ({
@@ -3752,7 +4814,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlowNodeKinds: async () => {
         set({ flowNodeKindsLoading: true });
         try {
-          const data = await api.getFlowNodeKinds();
+          const data = await fetchFlowNodeKindList();
           set({
             flowNodeKinds: Array.isArray(data.kinds) ? data.kinds : [],
             flowNodeKindsLoading: false,
@@ -3765,6 +4827,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       invalidateFlowNodeTemplates: () => {
         set({ flowNodeTemplatesLoadedAt: 0 });
+        void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.templates() });
       },
 
       generateIdempotencyKey: (flowId: string) => {
@@ -3784,7 +4847,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowEvaluationExecutions: async (flowId: string, taskId?: string) => {
         try {
-          return await api.getFlowEvaluationExecutions(flowId, taskId);
+          return await fetchFlowEvaluationExecutionList(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -3793,7 +4856,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowEvaluationBaseline: async (flowId: string, taskId: string) => {
         try {
-          const baseline = await api.getFlowEvaluationBaseline(flowId, taskId);
+          const baseline = await fetchFlowEvaluationBaselineDetail(flowId, taskId);
           set((state) => ({
             evaluationBaselinesByTask: {
               ...state.evaluationBaselinesByTask,
@@ -3857,7 +4920,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlowRepeatability: async (flowId: string) => {
         set({ repeatabilityLoading: true });
         try {
-          const result = await api.getFlowRepeatability(flowId);
+          const result = await fetchFlowRepeatabilitySummary(flowId);
           set({ repeatability: result, repeatabilityLoading: false });
           return result;
         } catch (err) {
@@ -3869,7 +4932,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowTaskRepeatability: async (flowId: string, taskId: string) => {
         try {
-          return await api.getFlowTaskRepeatability(flowId, taskId);
+          return await fetchFlowTaskRepeatabilitySummary(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -3878,7 +4941,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowTriggers: async (flowId: string) => {
         try {
-          return await api.getFlowTriggers(flowId);
+          return await fetchFlowTriggerList(flowId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -3887,7 +4950,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       upsertFlowTriggerSchedule: async (flowId: string, data: Record<string, unknown>) => {
         try {
-          return await api.upsertFlowTriggerSchedule(flowId, data);
+          return playbookFeatures.queryMutationsEnabled
+            ? await upsertTriggerScheduleMutation({ flowId, data })
+            : await api.upsertFlowTriggerSchedule(flowId, data);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -3896,7 +4961,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       upsertFlowTriggerMail: async (flowId: string, data: Record<string, unknown>) => {
         try {
-          return await api.upsertFlowTriggerMail(flowId, data);
+          return playbookFeatures.queryMutationsEnabled
+            ? await upsertTriggerMailMutation({ flowId, data })
+            : await api.upsertFlowTriggerMail(flowId, data);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -3916,8 +4983,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlow: async (id: string) => {
         set({ currentPlaybookLoading: true });
         try {
-          const flow = await api.getFlow(id);
-          set({ currentPlaybook: flow as any, currentPlaybookLoading: false, error: null });
+          const flow = await fetchPlaybookDetail(id, 'base');
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(flow as any)) as UpdateFlowData;
+          const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(flow as any));
+          set((state) => ({
+            currentPlaybook: flow as any,
+            currentPlaybookLoading: false,
+            error: null,
+            isDirty: false,
+            lastSavedPayloadHashByPlaybookId: {
+              ...state.lastSavedPayloadHashByPlaybookId,
+              [(flow as any).id]: baselineTelemetry.payloadHash,
+            },
+            lastSavedRequestBodyByPlaybookId: {
+              ...state.lastSavedRequestBodyByPlaybookId,
+              [(flow as any).id]: baselineRequestBody,
+            },
+          }));
+          void fetchPlaybookDetail(id, 'enriched')
+            .then((enrichedFlow) => {
+              set((state) => ({
+                currentPlaybook: state.currentPlaybook?.id === id
+                  ? {
+                    ...state.currentPlaybook,
+                    activeReplays: (enrichedFlow as any).activeReplays ?? {},
+                  } as any
+                  : state.currentPlaybook,
+              }));
+            })
+            .catch(() => undefined);
           return flow;
         } catch (err) {
           set({ currentPlaybookLoading: false });
@@ -3929,7 +5023,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlows: async (query?: PlaybookQueryParams) => {
         set({ playbooksLoading: true });
         try {
-          const result = await api.getFlows(query);
+          const result = await fetchFlowList(query);
           set({
             playbooks: result.flows as any,
             playbooksPagination: result.pagination,
@@ -3998,7 +5092,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             executingPlaybookIds: [...state.executingPlaybookIds, flowId],
           }));
-          const result = await api.startFlowExecution(flowId, inputContext, idempotencyKey);
+          const result = playbookFeatures.queryMutationsEnabled
+            ? await startExecutionMutation({ flowId, inputContext, idempotencyKey })
+            : await api.startFlowExecution(flowId, inputContext, idempotencyKey);
           return result;
         } catch (err) {
           set((state) => ({
@@ -4012,7 +5108,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlowExecutions: async (flowId: string) => {
         set({ executionsLoading: true });
         try {
-          const result = await api.getFlowExecutions(flowId);
+          const result = await fetchFlowExecutionHistory(flowId);
           set((state) => ({
             executionHistory: result.executions,
             executionHistoryByPlaybook: {
@@ -4032,7 +5128,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchFlowExecution: async (executionId: string) => {
         set({ currentExecutionLoading: true });
         try {
-          const execution = await api.getFlowExecutionDetail(executionId);
+          const execution = await fetchFlowExecutionDetail(executionId);
           set((state) => ({
             currentExecution: execution,
             currentExecutionLoading: false,
@@ -4048,7 +5144,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       cancelFlowExecutionAction: async (executionId: string) => {
         try {
-          await api.cancelFlowExecution(executionId);
+          if (playbookFeatures.queryMutationsEnabled) {
+            await cancelExecutionMutation(executionId);
+          } else {
+            await api.cancelFlowExecution(executionId);
+          }
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4057,7 +5157,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       validateFlowTaskReplay: async (flowId: string, taskId: string, data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean }) => {
         try {
-          return await api.validateFlowTaskReplay(flowId, taskId, data);
+          const replay = playbookFeatures.queryMutationsEnabled
+            ? await validateFlowReplayMutation({ flowId, taskId, data })
+            : await api.validateFlowTaskReplay(flowId, taskId, data);
+          invalidateFlowTaskReplayReads(flowId, taskId);
+          return replay;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4066,7 +5170,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowTaskReplays: async (flowId: string, taskId: string) => {
         try {
-          return await api.getFlowTaskReplays(flowId, taskId);
+          return await fetchFlowTaskReplayList(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4075,7 +5179,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       activateFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
         try {
-          return await api.activateFlowTaskReplay(flowId, taskId, replayId);
+          const replay = await api.activateFlowTaskReplay(flowId, taskId, replayId);
+          invalidateFlowTaskReplayReads(flowId, taskId);
+          return replay;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4084,7 +5190,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       updateFlowTaskReplayFormatGuide: async (flowId: string, taskId: string, replayId: string, data: { preserveOutputFormat?: boolean; outputFormatGuide?: string }) => {
         try {
-          return await api.updateFlowTaskReplayFormatGuide(flowId, taskId, replayId, data);
+          const replay = await api.updateFlowTaskReplayFormatGuide(flowId, taskId, replayId, data);
+          invalidateFlowTaskReplayReads(flowId, taskId);
+          return replay;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4093,7 +5201,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       renameFlowTaskReplay: async (flowId: string, taskId: string, replayId: string, label: string) => {
         try {
-          return await api.renameFlowTaskReplay(flowId, taskId, replayId, label);
+          const replay = await api.renameFlowTaskReplay(flowId, taskId, replayId, label);
+          invalidateFlowTaskReplayReads(flowId, taskId);
+          return replay;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4103,6 +5213,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
         try {
           await api.deleteFlowTaskReplay(flowId, taskId, replayId);
+          invalidateFlowTaskReplayReads(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4111,7 +5222,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       grabFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { executionId: string }) => {
         try {
-          return await api.grabFlowOutputFormatTemplate(flowId, taskId, data);
+          const template = await api.grabFlowOutputFormatTemplate(flowId, taskId, data);
+          invalidateFlowOutputFormatTemplateRead(flowId, taskId);
+          return template;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4120,7 +5233,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
         try {
-          return await api.getFlowOutputFormatTemplate(flowId, taskId);
+          return await fetchFlowOutputFormatTemplateDetail(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4129,7 +5242,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       updateFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { formatGuide?: string; preserveOutputFormat?: boolean }) => {
         try {
-          return await api.updateFlowOutputFormatTemplate(flowId, taskId, data);
+          const template = playbookFeatures.queryMutationsEnabled
+            ? await updateFlowOutputFormatTemplateMutation({ flowId, taskId, data })
+            : await api.updateFlowOutputFormatTemplate(flowId, taskId, data);
+          invalidateFlowOutputFormatTemplateRead(flowId, taskId);
+          return template;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4139,6 +5256,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
         try {
           await api.deleteFlowOutputFormatTemplate(flowId, taskId);
+          invalidateFlowOutputFormatTemplateRead(flowId, taskId);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4156,7 +5274,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       designFlow: async (id: string, data: { query: string }) => {
         try {
-          return await api.designFlow(id, data);
+          return playbookFeatures.queryMutationsEnabled
+            ? await designFlowMutation({ flowId: id, data })
+            : await api.designFlow(id, data);
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -4201,10 +5321,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       // ===== Cleanup =====
 
-      reset: () => set(initialState),
-    }),
-    { name: 'playbook-store' },
-  ),
+      reset: () => {
+        deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+        usePlaybookUiStore.getState().reset();
+        set(initialState);
+      },
+    });
+
+export const usePlaybookStore = create<PlaybookStore>()(
+  (enablePlaybookDevtools
+    ? devtools(createPlaybookStore, { name: 'playbook-store' })
+    : createPlaybookStore) as StateCreator<PlaybookStore>,
 );
 
 // ===== Selector Hooks =====
@@ -4266,7 +5393,7 @@ export const useIsGenerating = () => usePlaybookStore((s) => s.isGenerating);
 
 export const useIsSaving = () => usePlaybookStore((s) => s.isSaving);
 
-export const useSelectedStep = () => usePlaybookStore((s) => s.selectedStepId);
+export { useSelectedStep } from './uiStore';
 
 export const usePlaybookError = () => usePlaybookStore((s) => s.error);
 
@@ -4279,13 +5406,13 @@ export const useIsDesigning = () => usePlaybookStore((s) => s.isDesigning);
 
 export const useIsStopping = () => usePlaybookStore((s) => s.isStopping);
 
-export const useDesignerOpen = () => usePlaybookStore((s) => s.designerOpen);
+export { useDesignerOpen } from './uiStore';
 
-export const useCopilotMode = () => usePlaybookStore((s) => s.copilotMode);
+export { useCopilotMode } from './uiStore';
 
-export const useExecutionPanelOpen = () => usePlaybookStore((s) => s.executionPanelOpen);
+export { useExecutionPanelOpen } from './uiStore';
 
-export const usePageMode = () => usePlaybookStore((s) => s.pageMode);
+export { usePageMode } from './uiStore';
 
 export const useHasActiveExecution = (playbookId: string | undefined) =>
   usePlaybookStore((s) => {
@@ -4300,7 +5427,7 @@ export const useHasActiveExecution = (playbookId: string | undefined) =>
     );
   });
 
-export const useWorkspaceExplorerOpen = () => usePlaybookStore((s) => s.workspaceExplorerOpen);
+export { useWorkspaceExplorerOpen } from './uiStore';
 
 export const useCanUndo = () => usePlaybookStore((s) => s.undoStack.length > 0);
 export const useCanRedo = () => usePlaybookStore((s) => s.redoStack.length > 0);

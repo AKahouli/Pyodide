@@ -1,13 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
+import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
-import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
-import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   NotFoundException,
@@ -17,27 +17,17 @@ import {
 } from '../../exceptions/exceptions/http.exceptions';
 import { PlaybookFlowQueryDto } from '../dto/playbook-flow-query.dto';
 import { IFlowResponse, IFlowListResponse } from '../interfaces/playbook-flow.interface';
+import { FlowAccessService } from '../domain/flow-access.service';
+import { FlowResponseAssemblerService } from '../domain/flow-response-assembler.service';
+import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.service';
+import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
+import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
+import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
+import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 
 @Injectable()
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
-
-  private normalizeWorkspaces(workspaces?: string[]): string[] {
-    return workspaces
-      ?.map((workspaceId) => workspaceId.trim())
-      .filter((workspaceId) => workspaceId.length > 0)
-      .slice(0, 1)
-      ?? [];
-  }
-
-  private ensureWorkspaceSelection(workspaces: string[]): void {
-    if (workspaces.length === 0) {
-      throw new BadRequestException(
-        ErrorCode.BAD_REQUEST,
-        'Select a default playbook workspace before saving this playbook.',
-      );
-    }
-  }
 
   private async resolveUniqueName(ownerId: string, baseName: string): Promise<string> {
     const existing = await this.flowModel.exists({ ownerId, name: baseName });
@@ -70,17 +60,34 @@ export class PlaybookFlowService {
     @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly validatorService: PlaybookFlowValidatorService,
-    private readonly replayService: PlaybookFlowReplayService,
-    private readonly replayReportService: PlaybookFlowReplayReportService,
+    private readonly accessService: FlowAccessService,
+    private readonly responseAssembler: FlowResponseAssemblerService,
+    private readonly workspacePolicy: FlowWorkspacePolicyService,
+    private readonly graphSanitizer: FlowGraphSanitizerService,
+    private readonly deltaPatchService: FlowDeltaPatchService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private buildDefaultHitlPolicy(): Record<string, unknown> {
+    if (this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) {
+      return { ...DEFAULT_HITL_POLICY };
+    }
+    return { ...DEFAULT_HITL_POLICY, mode: 'manual', disabledReason: 'Smart HITL defaults are disabled by configuration.' };
+  }
+
+  private buildDefaultHitlBlockers(): Array<Record<string, unknown>> {
+    if (!this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) return [];
+    const now = new Date();
+    return DEFAULT_HITL_BLOCKERS.map((blocker) => ({ ...blocker, createdAt: now, updatedAt: now }));
+  }
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
     const nodes = dto.nodes || [];
     const controlEdges = dto.controlEdges || [];
     const dataBindings = dto.dataBindings || [];
-    const workspaces = this.normalizeWorkspaces(dto.workspaces);
+    const workspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces);
 
-    this.ensureWorkspaceSelection(workspaces);
+    this.workspacePolicy.ensureWorkspaceSelection(workspaces);
 
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
@@ -93,6 +100,8 @@ export class PlaybookFlowService {
       description: dto.description,
       triggerConfig: dto.triggerConfig,
       settings: dto.settings || { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: dto.hitlPolicy ?? this.buildDefaultHitlPolicy(),
+      hitlBlockers: dto.hitlBlockers ?? this.buildDefaultHitlBlockers(),
       nodes,
       controlEdges,
       dataBindings,
@@ -137,10 +146,53 @@ export class PlaybookFlowService {
       .limit(limit)
       .lean();
 
+    const flowIds = items.map((item) => String((item as unknown as Record<string, unknown>)._id));
+    const latestExecutions = flowIds.length === 0
+      ? []
+      : await this.executionModel.aggregate<{
+        flowId: string;
+        status: 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'cancelled';
+        createdAt?: Date;
+        startedAt?: Date;
+        endedAt?: Date;
+      }>([
+        { $match: { ownerId, flowId: { $in: flowIds } } },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: '$flowId',
+            status: { $first: '$status' },
+            createdAt: { $first: '$createdAt' },
+            startedAt: { $first: '$startedAt' },
+            endedAt: { $first: '$endedAt' },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            flowId: '$_id',
+            status: 1,
+            createdAt: 1,
+            startedAt: 1,
+            endedAt: 1,
+          },
+        },
+      ]);
+
+    const latestExecutionByFlowId = new Map(
+      latestExecutions.map((execution) => [execution.flowId, execution]),
+    );
+
     return {
       items: items.map((item) => ({
         ...item,
         id: (item as unknown as Record<string, unknown>)._id as string,
+        executionStatus: latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.status ?? null,
+        lastExecutionAt:
+          latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.endedAt
+          ?? latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.startedAt
+          ?? latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.createdAt
+          ?? null,
         activeReplays: {},
       })) as unknown as IFlowResponse[],
       pagination: {
@@ -152,76 +204,44 @@ export class PlaybookFlowService {
     };
   }
 
-  async findOne(flowId: string, ownerId: string): Promise<IFlowResponse> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    const flow = await this.flowModel.findById(flowId);
-    if (!flow) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    if (String(flow.ownerId) !== String(ownerId)) {
-      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
-    }
+  async findOneBase(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    const startedAt = Date.now();
+    const flow = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const raw = this.responseAssembler.toBaseFlowResponse(flow);
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_find_one_duration_ms view=base flowId=${flowId} durationMs=${durationMs}`);
+    return raw;
+  }
 
-    const raw = flow.toJSON() as unknown as IFlowResponse;
+  async findOneEnriched(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    const startedAt = Date.now();
+    const flow = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const raw = await this.responseAssembler.toEnrichedFlowResponse(flowId, flow);
 
-    const taskIds = (raw.nodes ?? []).map((node) => node.id);
-    const activeReplays = await this.replayService.getActiveReplays(flowId, taskIds);
-
-    raw.activeReplays = {};
-    for (const replay of activeReplays) {
-      raw.activeReplays[replay.taskId] = {
-        id: String(replay._id),
-        validationVersion: replay.validationVersion,
-        isStale: replay.isStale ?? false,
-        staleReasons: replay.staleReasons ?? [],
-        preserveOutputFormat: replay.preserveOutputFormat ?? false,
-        outputFormatGuide: replay.outputFormatGuide ?? null,
-        formatGuideStatus: replay.formatGuideStatus ?? null,
-        label: replay.label ?? null,
-        latestOverallScore: null,
-      };
-    }
-
-    const replayIds = activeReplays.map((r) => String(r._id));
-    const scoreMap = await this.replayReportService.findLatestScoresForReplays(replayIds);
-    for (const replay of activeReplays) {
-      const entry = raw.activeReplays[replay.taskId];
-      if (entry) {
-        entry.latestOverallScore = scoreMap.get(String(replay._id)) ?? null;
-      }
-    }
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_find_one_duration_ms view=enriched flowId=${flowId} durationMs=${durationMs}`);
 
     return raw;
   }
 
+  async findOne(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    return this.findOneEnriched(flowId, ownerId);
+  }
+
+  async findOneForExecutionStart(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    return this.findOneBase(flowId, ownerId);
+  }
+
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    const existing = await this.flowModel.findById(flowId);
-    if (!existing) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    if (String(existing.ownerId) !== String(ownerId)) {
-      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
-    }
+    const startedAt = Date.now();
+    const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
 
     if (dto.expectedUpdatedAt !== undefined) {
-      const expectedUpdatedAt = Date.parse(dto.expectedUpdatedAt);
-      const existingUpdatedAt = (existing as { updatedAt?: Date }).updatedAt;
-      if (Number.isNaN(expectedUpdatedAt)) {
-        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid expectedUpdatedAt');
-      }
-
-      // Suggestion-generated saves should fail loudly when another tab or user already changed the playbook.
-      if (existingUpdatedAt instanceof Date && existingUpdatedAt.getTime() !== expectedUpdatedAt) {
-        throw new ConflictException(
-          ErrorCode.CONFLICT,
-          'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
-        );
-      }
+      this.accessService.ensureExpectedUpdatedAt(
+        (existing as { updatedAt?: Date }).updatedAt,
+        dto.expectedUpdatedAt,
+        'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+      );
     }
 
     if (dto.clientMutationId) {
@@ -232,6 +252,8 @@ export class PlaybookFlowService {
     if (dto.description !== undefined) existing.description = dto.description;
     if (dto.triggerConfig !== undefined) existing.triggerConfig = dto.triggerConfig as any;
     if (dto.settings !== undefined) existing.settings = dto.settings as any;
+    if (dto.hitlPolicy !== undefined) existing.hitlPolicy = dto.hitlPolicy as any;
+    if (dto.hitlBlockers !== undefined) existing.hitlBlockers = dto.hitlBlockers as any[];
     if (dto.nodes !== undefined) existing.nodes = dto.nodes as any[];
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
@@ -240,64 +262,19 @@ export class PlaybookFlowService {
     if (dto.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
     if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
     if (dto.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
-    const normalizedWorkspaces = this.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
+    const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
     if (dto.workspaces !== undefined || existing.workspaces.length > 1) {
-      this.ensureWorkspaceSelection(normalizedWorkspaces);
+      this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
     }
     existing.workspaces = normalizedWorkspaces;
 
-    const effectiveNodeIds = new Set(existing.nodes.map((n: any) => n.id));
-
-    const edgeCountBefore = existing.controlEdges.length;
-    existing.controlEdges = existing.controlEdges.filter((e: any) => {
-      const valid = effectiveNodeIds.has(e.source) && effectiveNodeIds.has(e.target);
-      if (!valid) {
-        this.logger.warn(`Removing orphaned edge ${e.id}: source=${e.source} target=${e.target}`);
-      }
-      return valid;
+    const sanitizedGraph = this.graphSanitizer.sanitize({
+      nodes: existing.nodes as any,
+      controlEdges: existing.controlEdges as any,
+      dataBindings: existing.dataBindings as any,
     });
-    if (existing.controlEdges.length < edgeCountBefore) {
-      this.logger.warn(`Removed ${edgeCountBefore - existing.controlEdges.length} orphaned edge(s)`);
-    }
-
-    const bindingCountBefore = existing.dataBindings.length;
-    existing.dataBindings = existing.dataBindings.filter((b: any) => {
-      const valid = effectiveNodeIds.has(b.targetNode)
-        && (b.sourceNode ? effectiveNodeIds.has(b.sourceNode) : true);
-      if (!valid) {
-        this.logger.warn(`Removing orphaned data binding ${b.id}: targetNode=${b.targetNode} sourceNode=${b.sourceNode}`);
-      }
-      return valid;
-    });
-    if (existing.dataBindings.length < bindingCountBefore) {
-      this.logger.warn(`Removed ${bindingCountBefore - existing.dataBindings.length} orphaned data binding(s)`);
-    }
-
-    const nodesById = new Map((existing.nodes as any[]).map((n: any) => [n.id, n]));
-    const portCountBefore = existing.dataBindings.length;
-    existing.dataBindings = existing.dataBindings.filter((b: any) => {
-      const targetNode = nodesById.get(b.targetNode);
-      if (!targetNode) return true;
-      const targetPortExists = targetNode.input?.ports?.some((p: any) => p.id === b.targetPort);
-      if (!targetPortExists) {
-        this.logger.warn(`Removing stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
-        return false;
-      }
-      if (b.sourceKind === 'node-output' && b.sourceNode) {
-        const sourceNode = nodesById.get(b.sourceNode);
-        if (sourceNode) {
-          const sourcePortExists = sourceNode.output?.ports?.some((p: any) => p.id === b.sourcePort);
-          if (!sourcePortExists) {
-            this.logger.warn(`Removing stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
-            return false;
-          }
-        }
-      }
-      return true;
-    });
-    if (existing.dataBindings.length < portCountBefore) {
-      this.logger.warn(`Removed ${portCountBefore - existing.dataBindings.length} stale port binding(s)`);
-    }
+    existing.controlEdges = sanitizedGraph.controlEdges as any;
+    existing.dataBindings = sanitizedGraph.dataBindings as any;
 
     this.validatorService.validate(
       existing.nodes as any,
@@ -317,13 +294,105 @@ export class PlaybookFlowService {
     });
     const raw = saved.toJSON() as unknown as IFlowResponse;
     raw.activeReplays = {};
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_save_duration_ms mode=full flowId=${flowId} durationMs=${durationMs}`);
     return raw;
   }
 
+  async applyDeltaPatch(flowId: string, ownerId: string, dto: PatchPlaybookFlowDeltaDto): Promise<{
+    id: string;
+    updatedAt: string;
+    payloadHash?: string;
+    applied: true;
+    patchSummary: {
+      scalarFields: number;
+      nodesUpserted: number;
+      nodesDeleted: number;
+      edgeChanges: number;
+      dataBindingChanges: number;
+      positionUpdates: number;
+    };
+  }> {
+    const startedAt = Date.now();
+    const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+
+    this.accessService.ensureExpectedUpdatedAt(
+      (existing as { updatedAt?: Date }).updatedAt,
+      dto.expectedUpdatedAt,
+      'Playbook changed since this autosave started.',
+    );
+
+    if (dto.clientMutationId) {
+      this.logger.debug(`Saving playbook delta mutation ${dto.clientMutationId} for flow ${flowId}`);
+    }
+
+    const patchedGraph = this.deltaPatchService.buildPatchedGraph(existing, dto);
+
+    this.validatorService.validate(
+      patchedGraph.nodes as any,
+      patchedGraph.controlEdges as any,
+      patchedGraph.dataBindings as any,
+      { allowDraftRouters: true },
+    );
+
+    const fields = dto.patch.fields;
+    if (fields) {
+      if (fields.name !== undefined) existing.name = fields.name;
+      if (fields.description !== undefined) existing.description = fields.description;
+      if (fields.designSettings !== undefined) existing.designSettings = fields.designSettings as any;
+      if (fields.settings !== undefined) existing.settings = fields.settings as any;
+      if (fields.reflectionEnabled !== undefined) existing.reflectionEnabled = fields.reflectionEnabled;
+      if (fields.advisorScoringMode !== undefined) existing.advisorScoringMode = fields.advisorScoringMode;
+      if (fields.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = fields.advisorAutopilotEnabled;
+      if (fields.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = fields.advisorAutopilotTargetScore ?? undefined;
+      if (fields.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = fields.advisorAutopilotMaxTurns ?? undefined;
+      if (fields.workspaces !== undefined) existing.workspaces = patchedGraph.normalizedWorkspaces;
+    }
+
+    const nodeUpserts = dto.patch.nodes?.upserts ?? [];
+    const nodeDeleteIds = dto.patch.nodes?.deleteIds ?? [];
+    const positionUpdates = dto.patch.nodes?.positionUpdates ?? [];
+    if (nodeUpserts.length > 0 || nodeDeleteIds.length > 0 || positionUpdates.length > 0) {
+      existing.nodes = patchedGraph.nodes as any;
+    }
+    if (dto.patch.controlEdges !== undefined || nodeUpserts.length > 0 || nodeDeleteIds.length > 0) {
+      existing.controlEdges = patchedGraph.controlEdges as any;
+    }
+    if (dto.patch.dataBindings !== undefined || nodeUpserts.length > 0 || nodeDeleteIds.length > 0) {
+      existing.dataBindings = patchedGraph.dataBindings as any;
+    }
+
+    const saved = await existing.save().catch((err: any) => {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${existing.name}" already exists.`,
+        );
+      }
+      throw err;
+    });
+
+    const durationMs = Date.now() - startedAt;
+    this.logger.log(`playbook_save_duration_ms mode=delta flowId=${flowId} durationMs=${durationMs}`);
+
+    return {
+      id: String(saved._id),
+      updatedAt: ((saved as { updatedAt?: Date }).updatedAt ?? new Date()).toISOString(),
+      ...(dto.payloadHash ? { payloadHash: dto.payloadHash } : {}),
+      applied: true,
+      patchSummary: {
+        scalarFields: patchedGraph.scalarFieldCount,
+        nodesUpserted: patchedGraph.nodesUpserted,
+        nodesDeleted: patchedGraph.nodesDeleted,
+        edgeChanges: patchedGraph.edgeChanges,
+        dataBindingChanges: patchedGraph.dataBindingChanges,
+        positionUpdates: patchedGraph.positionUpdates,
+      },
+    };
+  }
+
   async findById(flowId: string): Promise<FlowDocument> {
-    const flow = await this.flowModel.findById(flowId);
-    if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    return flow;
+    return this.accessService.findById(flowId);
   }
 
   async createWithNodesAndEdges(
@@ -331,9 +400,9 @@ export class PlaybookFlowService {
     nodes: any[], controlEdges: any[], dataBindings: any[],
     workspaces: string[] = [],
   ): Promise<IFlowResponse> {
-    const normalizedWorkspaces = this.normalizeWorkspaces(workspaces);
+    const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(workspaces);
 
-    this.ensureWorkspaceSelection(normalizedWorkspaces);
+    this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
 
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
@@ -341,6 +410,8 @@ export class PlaybookFlowService {
       ownerId, schemaVersion: 1, name, description,
       nodes, controlEdges, dataBindings, workspaces: normalizedWorkspaces,
       settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: this.buildDefaultHitlPolicy(),
+      hitlBlockers: this.buildDefaultHitlBlockers(),
     });
     try {
       const saved = await flow.save();
@@ -367,30 +438,16 @@ export class PlaybookFlowService {
       if (update.nodes) existing.nodes = update.nodes;
       if (update.controlEdges) existing.controlEdges = update.controlEdges;
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
-      existing.workspaces = this.normalizeWorkspaces(existing.workspaces);
-      this.ensureWorkspaceSelection(existing.workspaces);
+      existing.workspaces = this.workspacePolicy.normalizeWorkspaces(existing.workspaces);
+      this.workspacePolicy.ensureWorkspaceSelection(existing.workspaces);
 
-      const nodesById = new Map((existing.nodes as any[]).map((n: any) => [n.id, n]));
-      existing.dataBindings = (existing.dataBindings as any[]).filter((b: any) => {
-        const targetNode = nodesById.get(b.targetNode);
-        if (!targetNode) return true;
-        const targetPortExists = targetNode.input?.ports?.some((p: any) => p.id === b.targetPort);
-        if (!targetPortExists) {
-          this.logger.warn(`Removing stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
-          return false;
-        }
-        if (b.sourceKind === 'node-output' && b.sourceNode) {
-          const sourceNode = nodesById.get(b.sourceNode);
-          if (sourceNode) {
-            const sourcePortExists = sourceNode.output?.ports?.some((p: any) => p.id === b.sourcePort);
-            if (!sourcePortExists) {
-              this.logger.warn(`Removing stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
-              return false;
-            }
-          }
-        }
-        return true;
+      const sanitizedGraph = this.graphSanitizer.sanitize({
+        nodes: existing.nodes as any,
+        controlEdges: existing.controlEdges as any,
+        dataBindings: existing.dataBindings as any,
       });
+      existing.controlEdges = sanitizedGraph.controlEdges as any;
+      existing.dataBindings = sanitizedGraph.dataBindings as any;
 
       this.validatorService.validate(
         existing.nodes as any,
@@ -407,33 +464,15 @@ export class PlaybookFlowService {
   }
 
   async remove(flowId: string, ownerId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    const flow = await this.flowModel.findById(flowId);
-    if (!flow) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    if (String(flow.ownerId) !== String(ownerId)) {
-      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
-    }
+    await this.accessService.findOwnedFlow(flowId, ownerId);
     await this.flowModel.findByIdAndDelete(flowId);
   }
 
   async clone(flowId: string, ownerId: string, nameSuffix?: string): Promise<IFlowResponse> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    const existing = await this.flowModel.findById(flowId);
-    if (!existing) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-    if (String(existing.ownerId) !== String(ownerId)) {
-      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
-    }
+    const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
 
     const cloneName = nameSuffix ? `${existing.name} ${nameSuffix}` : `${existing.name} (copy)`;
-    const normalizedWorkspaces = this.normalizeWorkspaces(existing.workspaces);
+    const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(existing.workspaces);
 
     const flow = new this.flowModel({
       ownerId,
@@ -441,6 +480,8 @@ export class PlaybookFlowService {
       name: cloneName,
       description: existing.description,
       triggerConfig: existing.triggerConfig,
+      hitlPolicy: existing.hitlPolicy ?? this.buildDefaultHitlPolicy(),
+      hitlBlockers: existing.hitlBlockers ?? this.buildDefaultHitlBlockers(),
       settings: existing.settings,
       nodes: existing.nodes,
       controlEdges: existing.controlEdges,

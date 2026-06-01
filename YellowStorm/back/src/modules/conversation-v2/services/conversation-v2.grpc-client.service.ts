@@ -3,8 +3,11 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
@@ -32,7 +35,7 @@ interface RawProtoEvent {
   message?: {
     role: 'user' | 'assistant';
     content: string;
-    attachments?: Array<{ id: string; name: string; content_type: string; url: string }>;
+    attachments?: Array<{ id: string; name: string; content_type: string; path: string }>;
   };
   tool?: {
     tool_call_id: string;
@@ -68,7 +71,11 @@ export class ConversationV2GrpcClientService
   private lastError: string | null = null;
   private lastCheckedAt?: Date;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(forwardRef(() => WorkspaceService))
+    private readonly workspaceService: WorkspaceService,
+  ) {}
 
   onModuleInit(): void {
     const protoPath = this.resolveProtoPath();
@@ -174,10 +181,15 @@ export class ConversationV2GrpcClientService
     return { deadline: Date.now() + ms };
   }
 
-  async createSession(userId: string): Promise<string> {
+  async createSession(userId: string, workspaceIds: string[] = []): Promise<string> {
+    // Translate workspaceIds → `{ownerUserId}/{storagePrefix}` paths. Note the
+    // path root is the workspace OWNER, not the current user, so a session that
+    // attaches a shared workspace points the AI service at the owner's prefix
+    // where all the workspace's documents live.
+    const workspacePaths = await this.workspaceService.getStoragePathsByIds(workspaceIds);
     return new Promise((resolve, reject) => {
       this.client.CreateSession(
-        { user_id: userId },
+        { user_id: userId, workspace_paths: workspacePaths },
         new grpc.Metadata(),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string }) => {
@@ -274,13 +286,19 @@ export class ConversationV2GrpcClientService
     userId: string,
     sessionId: string,
     message: string,
+    model?: string,
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
-      const call = this.client.Chat({
+      // The proto's `model` field is `optional` — only include it on the wire
+      // when the caller actually picked one, so the AI service falls back to
+      // its own default for unset selections.
+      const request: Record<string, unknown> = {
         user_id: userId,
         session_id: sessionId,
         message,
-      });
+      };
+      if (model) request.model = model;
+      const call = this.client.Chat(request);
       call.on('data', (raw: RawProtoEvent) => {
         try {
           const event = this.normaliseEvent(raw);

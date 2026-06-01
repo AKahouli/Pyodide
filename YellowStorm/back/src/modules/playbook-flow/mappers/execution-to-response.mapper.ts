@@ -19,6 +19,7 @@ export function executionToResponse(execution: FlowExecution): IFlowExecutionRes
     pendingApproval: execution.pendingApproval ?? null,
     queuePosition: execution.queuePosition,
     threadId: execution.threadId,
+    replaySource: (execution as any).replaySource ?? undefined,
     createdAt: (execution as any).createdAt || new Date(),
     updatedAt: (execution as any).updatedAt || new Date(),
   };

@@ -115,6 +115,14 @@ vi.mock('./PlaybookDataFlowSection', () => ({
   ),
 }));
 
+vi.mock('./HitlPolicySummaryCard', () => ({
+  HitlPolicySummaryCard: () => <div>hitl.policy.title</div>,
+}));
+
+vi.mock('./HitlBlockerCenter', () => ({
+  HitlBlockerCenter: () => <div>hitl.blockers.title</div>,
+}));
+
 vi.mock('lucide-react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('lucide-react')>();
   return {

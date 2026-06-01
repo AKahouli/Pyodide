@@ -13,7 +13,10 @@
 
 import { useEffect } from 'react';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
+import { playbookFeatures } from '../features';
 import { usePlaybookStore } from '../store';
+import { dispatchPlaybookStreamEvent } from '../stream/queryEventDispatcher';
+import type { PlaybookStreamEvent } from '../stream/eventTypes';
 import type {
   PlaybookIteratorChildStepUpdateEvent,
   PlaybookStepUpdateEvent,
@@ -80,8 +83,31 @@ const SSE_EVENT_TYPES = [
   'playbook_execution_complete',
   'playbook_execution_error',
   'playbook_interrupt',
+  'playbook_hitl_interrupt_created',
+  'playbook_hitl_interrupt_updated',
+  'playbook_hitl_interrupt_resolved',
+  'playbook_hitl_memory_suggested',
+  'playbook_hitl_memory_saved',
+  'playbook_hitl_blocker_disabled',
+  'playbook_hitl_policy_updated',
+  'playbook_replay_hitl_summary_updated',
   'playbook_shared',
 ] as const;
+
+const ZUSTAND_PROJECTION_EVENT_TYPES = new Set<string>([
+  'playbook_connected',
+  'playbook_execution_start',
+  'playbook_step_start',
+  'playbook_step_update',
+  'playbook_step_complete',
+  'playbook_iterator_child_step_start',
+  'playbook_iterator_child_step_update',
+  'playbook_iterator_child_step_complete',
+  'playbook_execution_complete',
+  'playbook_execution_error',
+  'playbook_interrupt',
+  'playbook_hitl_interrupt_created',
+]);
 
 // ===== Timer helpers =====
 
@@ -178,17 +204,41 @@ function handleSsePayload(raw: string) {
 
     const eventType = type || '';
     const eventData = data || parsed;
-    const store = usePlaybookStore.getState();
 
     if (eventType !== 'playbook_step_update' && eventType !== 'playbook_iterator_child_step_update') {
       flushPendingStepUpdates();
     }
 
+    if (playbookFeatures.querySseEnabled) {
+      dispatchPlaybookStreamEvent({ type: eventType, data: eventData } as PlaybookStreamEvent);
+    }
+
+    if (eventType === 'playbook_heartbeat') {
+      resetSseHeartbeat();
+      return;
+    }
+
+    const shouldUpdateZustandProjection =
+      !playbookFeatures.querySseEnabled
+      || playbookFeatures.querySseMirrorZustandEnabled
+      || ZUSTAND_PROJECTION_EVENT_TYPES.has(eventType);
+
+    if (shouldUpdateZustandProjection) {
+      handleStoreEvent(eventType, eventData);
+    }
+  } catch (err) {
+    console.warn('[PlaybookSSE] Failed to parse event', err);
+  }
+}
+
+function handleStoreEvent(eventType: string, eventData: unknown) {
+    const store = usePlaybookStore.getState();
+
     switch (eventType) {
       case 'playbook_connected':
         reconnectAttempts = 0;
         // Backend includes activeExecutions in the connected event — hydrate immediately
-        if (Array.isArray(eventData.activeExecutions)) {
+        if (typeof eventData === 'object' && eventData && 'activeExecutions' in eventData && Array.isArray(eventData.activeExecutions)) {
           store.hydrateActiveExecutions(eventData.activeExecutions);
         }
         break;
@@ -196,63 +246,61 @@ function handleSsePayload(raw: string) {
         resetSseHeartbeat();
         break;
       case 'playbook_execution_start':
-        store.onExecutionStart(eventData);
+        store.onExecutionStart(eventData as Parameters<typeof store.onExecutionStart>[0]);
         break;
       case 'playbook_step_start':
-        store.onStepStart(eventData);
+        store.onStepStart(eventData as Parameters<typeof store.onStepStart>[0]);
         break;
       case 'playbook_step_update':
-        queueStepUpdate(eventData);
+        queueStepUpdate(eventData as Parameters<typeof store.onStepUpdate>[0]);
         break;
       case 'playbook_step_complete':
-        store.onStepComplete(eventData);
+        store.onStepComplete(eventData as Parameters<typeof store.onStepComplete>[0]);
         break;
       case 'playbook_iterator_child_step_start':
-        store.onIteratorChildStepStart(eventData);
+        store.onIteratorChildStepStart(eventData as Parameters<typeof store.onIteratorChildStepStart>[0]);
         break;
       case 'playbook_iterator_child_step_update':
-        queueIteratorChildStepUpdate(eventData);
+        queueIteratorChildStepUpdate(eventData as Parameters<typeof store.onIteratorChildStepUpdate>[0]);
         break;
       case 'playbook_iterator_child_step_complete':
-        store.onIteratorChildStepComplete(eventData);
+        store.onIteratorChildStepComplete(eventData as Parameters<typeof store.onIteratorChildStepComplete>[0]);
         break;
       case 'playbook_step_judge_started':
-        store.onStepJudgeStarted(eventData);
+        store.onStepJudgeStarted(eventData as Parameters<typeof store.onStepJudgeStarted>[0]);
         break;
       case 'playbook_step_judge_updated':
-        store.onStepJudgeUpdated(eventData);
+        store.onStepJudgeUpdated(eventData as Parameters<typeof store.onStepJudgeUpdated>[0]);
         break;
       case 'playbook_step_evaluation_updated':
-        store.onStepEvaluationUpdated(eventData);
+        store.onStepEvaluationUpdated(eventData as Parameters<typeof store.onStepEvaluationUpdated>[0]);
         break;
       case 'playbook_judge_summary_updated':
-        store.onJudgeSummaryUpdated(eventData);
+        store.onJudgeSummaryUpdated(eventData as Parameters<typeof store.onJudgeSummaryUpdated>[0]);
         break;
       case 'playbook_advisor_autopilot_updated':
-        store.onAdvisorAutopilotUpdated(eventData);
+        store.onAdvisorAutopilotUpdated(eventData as Parameters<typeof store.onAdvisorAutopilotUpdated>[0]);
         break;
       case 'playbook_replay_format_guide_updated':
-        store.onReplayFormatGuideUpdated(eventData);
+        store.onReplayFormatGuideUpdated(eventData as Parameters<typeof store.onReplayFormatGuideUpdated>[0]);
         break;
       case 'playbook_output_format_template_updated':
-        store.onOutputFormatTemplateUpdated(eventData);
+        store.onOutputFormatTemplateUpdated(eventData as Parameters<typeof store.onOutputFormatTemplateUpdated>[0]);
         break;
       case 'playbook_execution_complete':
-        store.onExecutionComplete(eventData);
+        store.onExecutionComplete(eventData as Parameters<typeof store.onExecutionComplete>[0]);
         break;
       case 'playbook_execution_error':
-        store.onExecutionComplete(eventData);
+        store.onExecutionComplete(eventData as Parameters<typeof store.onExecutionComplete>[0]);
         break;
       case 'playbook_interrupt':
-        store.onInterrupt(eventData);
+      case 'playbook_hitl_interrupt_created':
+        store.onInterrupt(eventData as Parameters<typeof store.onInterrupt>[0]);
         break;
       case 'playbook_shared':
         store.fetchPlaybooks();
         break;
     }
-  } catch (err) {
-    console.warn('[PlaybookSSE] Failed to parse event', err);
-  }
 }
 
 // ===== SSE heartbeat (leader only — monitors EventSource health) =====

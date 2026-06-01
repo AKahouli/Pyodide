@@ -40,9 +40,11 @@ export class WorkspaceInitializerService {
     }
 
     // Create new personal workspace
+    const personalAlias = this.generatePersonalAlias(userId);
     const workspace = await this.workspaceModel.create({
       name: PERSONAL_WORKSPACE_NAME,
-      alias: this.generatePersonalAlias(userId),
+      alias: personalAlias,
+      storagePrefix: personalAlias,
       description: PERSONAL_WORKSPACE_DESCRIPTION,
       createdBy: new Types.ObjectId(userId),
       documentCount: 0,
@@ -97,6 +99,7 @@ export class WorkspaceInitializerService {
       id: workspace._id.toString(),
       name: workspace.name,
       alias: workspace.alias,
+      storagePrefix: workspace.storagePrefix,
       description: workspace.description,
       createdBy: workspace.createdBy.toString(),
       settings: workspace.settings?.toString(),

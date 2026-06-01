@@ -20,6 +20,8 @@ export interface IClassifierFileResponse {
   uploadedAt: string | null;
   folderId: string | null;
   assignmentSource: 'manual' | 'playbook' | null;
+  /** Ceph object key — surfaced so the file viewer can sign it directly. */
+  path?: string;
 }
 
 export type ClassificationRunStatusValue =

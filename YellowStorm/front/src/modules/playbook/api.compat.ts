@@ -221,13 +221,35 @@ export function normalizeTriggerFields(raw: any): Pick<Playbook, 'triggers' | 'e
   };
 }
 
+function isFlowNodeArray(value: unknown): value is FlowNode[] {
+  return Array.isArray(value) && value.some((item) => {
+    const node = item as Partial<FlowNode> | null;
+    return Boolean(node?.id && node.kind && !('title' in node));
+  });
+}
+
+function normalizePlaybookTasks(raw: any, activeReplays: Record<string, any>): PlaybookTask[] {
+  if (isFlowNodeArray(raw.tasks)) {
+    const flowTasks = raw.tasks as FlowNode[];
+    return flowTasks.map((node: FlowNode, index: number) =>
+      mapFlowNodeToPlaybookTask(node, index, activeReplays),
+    );
+  }
+  if (Array.isArray(raw.tasks)) {
+    return raw.tasks;
+  }
+  return raw.nodes?.map((node: FlowNode, index: number) =>
+    mapFlowNodeToPlaybookTask(node, index, activeReplays),
+  ) ?? [];
+}
+
 export function normalizePlaybook(raw: any): Playbook {
   const triggerFields = normalizeTriggerFields(raw);
   const activeReplays: Record<string, any> = raw.activeReplays ?? {};
 
   return {
     ...raw,
-    tasks: raw.tasks ?? raw.nodes?.map((node: FlowNode, index: number) => mapFlowNodeToPlaybookTask(node, index, activeReplays)) ?? [],
+    tasks: normalizePlaybookTasks(raw, activeReplays),
     edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
     triggers: triggerFields.triggers,
     executionSchedule: triggerFields.executionSchedule,

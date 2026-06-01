@@ -43,21 +43,6 @@ export class ConnectedAppOAuthService {
   async buildAuthorizationUrl(userId: string, appKey: string): Promise<string> {
     const appConfig = await this.definitionService.findByKey(appKey);
 
-    if (appConfig.authType !== 'oauth2') {
-      throw new BadRequestException(
-        ErrorCode.BAD_REQUEST,
-        `Connected app '${appKey}' is not configured for OAuth 2.0`,
-      );
-    }
-
-    // Validate required OAuth fields
-    if (!appConfig.authorizationUrl || !appConfig.tokenUrl || !appConfig.clientId || !appConfig.clientSecret) {
-      throw new BadRequestException(
-        ErrorCode.BAD_REQUEST,
-        `Connected app '${appKey}' is missing required OAuth configuration`,
-      );
-    }
-
     const state = crypto.randomBytes(32).toString('hex');
 
     let codeVerifier: string | undefined;
@@ -101,14 +86,12 @@ export class ConnectedAppOAuthService {
       params.set('code_challenge_method', 'S256');
     }
 
-    let authUrl = appConfig.authorizationUrl;
+    let authUrl = appConfig.tenantId
+      ? appConfig.authorizationUrl.replace('{tenant}', appConfig.tenantId)
+      : appConfig.authorizationUrl;
     // Remove any existing query parameters from the authorization URL
     const urlObj = new URL(authUrl);
     authUrl = `${urlObj.origin}${urlObj.pathname}`;
-
-    if (appConfig.tenantId) {
-      authUrl = authUrl.replace('{tenant}', appConfig.tenantId);
-    }
 
     return `${authUrl}?${params.toString()}`;
   }
@@ -139,23 +122,6 @@ export class ConnectedAppOAuthService {
     }
 
     const appConfig = await this.definitionService.findByKey(appKey);
-
-    // Validate that this is an OAuth type app
-    if (appConfig.authType !== 'oauth2') {
-      throw new BadRequestException(
-        ErrorCode.BAD_REQUEST,
-        `Connected app '${appKey}' is not configured for OAuth 2.0`,
-      );
-    }
-
-    // Validate required OAuth fields
-    if (!appConfig.tokenUrl || !appConfig.clientId || !appConfig.clientSecret) {
-      throw new BadRequestException(
-        ErrorCode.BAD_REQUEST,
-        `Connected app '${appKey}' is missing required OAuth configuration`,
-      );
-    }
-
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
     const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/connected-apps/${appKey}/callback`;
 

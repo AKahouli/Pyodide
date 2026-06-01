@@ -44,6 +44,13 @@ export interface SharedWorkspaceResponse {
   id: string;
   name: string;
   alias: string;
+  /**
+   * Immutable Ceph object-key segment, mirrored from the underlying workspace.
+   * Collaborator uploads write under `{owner.id}/{storagePrefix}/...`, same as
+   * the owner's own uploads — so this field surfaces the storage path token
+   * for shared workspaces too.
+   */
+  storagePrefix: string;
   description?: string;
   owner: SharedWorkspaceOwnerInfo;
   permission: WorkspacePermission;

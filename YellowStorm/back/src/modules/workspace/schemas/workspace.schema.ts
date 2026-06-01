@@ -14,6 +14,13 @@ export class Workspace extends Document {
   @Prop({ required: true, trim: true, lowercase: true, maxlength: 100 })
   alias!: string;
 
+  // Immutable Ceph object-key segment. Set from the initial alias at creation
+  // time and never changes — renames update `name` + `alias` but never this.
+  // Documents already stored under `{ownerUserId}/{storagePrefix}/` stay reachable
+  // forever; the alias is free to drift for display/URL purposes.
+  @Prop({ required: true, trim: true, lowercase: true, maxlength: 100, immutable: true })
+  storagePrefix!: string;
+
   @Prop({ trim: true, maxlength: 500 })
   description?: string;
 
@@ -53,6 +60,9 @@ export const WorkspaceSchema = SchemaFactory.createForClass(Workspace);
 // Compound indexes
 WorkspaceSchema.index({ createdBy: 1, name: 1 }, { unique: true });
 WorkspaceSchema.index({ createdBy: 1, alias: 1 }, { unique: true });
+// Defense-in-depth: prevents two workspaces under the same owner from
+// colliding in Ceph even if alias-vs-prefix ever drift apart.
+WorkspaceSchema.index({ createdBy: 1, storagePrefix: 1 }, { unique: true });
 WorkspaceSchema.index({ createdBy: 1, createdAt: -1 });
 WorkspaceSchema.index({ alias: 1 });
 

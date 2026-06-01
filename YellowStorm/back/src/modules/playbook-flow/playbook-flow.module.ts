@@ -26,12 +26,15 @@ import { FlowNodeTemplate, FlowNodeTemplateSchema } from './schemas/playbook-flo
 import { FlowPromptTemplate, FlowPromptTemplateSchema } from './schemas/playbook-flow-prompt-template.schema';
 import { FlowOutputFormat, FlowOutputFormatSchema } from './schemas/playbook-flow-output-format.schema';
 import { FlowDesignMessage, FlowDesignMessageSchema } from './schemas/playbook-flow-design-message.schema';
+import { FlowDesignOperation, FlowDesignOperationSchema } from './schemas/playbook-flow-design-operation.schema';
 import { FlowValidatedReplay, FlowValidatedReplaySchema } from './schemas/playbook-flow-validated-replay.schema';
 import { FlowReplayRunReport, FlowReplayRunReportSchema } from './schemas/playbook-flow-replay-run-report.schema';
 import { FlowEvaluationBaseline, FlowEvaluationBaselineSchema } from './schemas/playbook-flow-evaluation-baseline.schema';
 import { FlowEvaluationExecution, FlowEvaluationExecutionSchema } from './schemas/playbook-flow-evaluation-execution.schema';
 import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbook-flow-mail-event-ledger.schema';
 import { FlowIdempotencyRecord, FlowIdempotencyRecordSchema } from './schemas/playbook-flow-idempotency-record.schema';
+import { FlowExecutionLease, FlowExecutionLeaseSchema } from './schemas/playbook-flow-execution-lease.schema';
+import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hitl-memory.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -46,6 +49,7 @@ import { PlaybookFlowExecutionAdvisorController } from './controllers/playbook-f
 import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream.controller';
 import { PlaybookFlowPromptTemplateController } from './controllers/playbook-flow-prompt-template.controller';
 import { PlaybookFlowSettingsController } from './controllers/playbook-flow-settings.controller';
+import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
@@ -65,6 +69,7 @@ import { PlaybookFlowSettingsService } from './services/playbook-flow-settings.s
 import { PlaybookFlowContextService } from './services/playbook-flow-context.service';
 import { PlaybookFlowOutputFormatService } from './services/playbook-flow-output-format.service';
 import { PlaybookFlowDesignService } from './services/playbook-flow-design.service';
+import { PlaybookFlowDesignOperationService } from './services/playbook-flow-design-operation.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
 import { PlaybookFlowAdvisorModelService } from './services/advisor/playbook-flow-advisor-model.service';
 import { PlaybookFlowExecutionAdvisorService } from './services/advisor/playbook-flow-execution-advisor.service';
@@ -82,6 +87,8 @@ import { PlaybookFlowMailTriggerHandoffService } from './services/playbook-flow-
 import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-flow-mail-subscription-renewal.service';
 import { PlaybookFlowStreamGatewayService } from './services/playbook-flow-stream-gateway.service';
 import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream-events.service';
+import { PlaybookFlowExecutionLeaseService } from './services/playbook-flow-execution-lease.service';
+import { PlaybookFlowTokenBufferService } from './services/playbook-flow-token-buffer.service';
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
@@ -96,8 +103,27 @@ import { PlaybookFlowReplayReportService } from './services/playbook-flow-replay
 import { PlaybookFlowReplayDriftService } from './services/playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './services/playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './services/playbook-flow-output-contract.service';
+import { PlaybookFlowHitlService } from './services/playbook-flow-hitl.service';
+import { PlaybookFlowHitlBlockerService } from './services/playbook-flow-hitl-blocker.service';
+import { PlaybookFlowHitlContextService } from './services/playbook-flow-hitl-context.service';
+import { PlaybookFlowHitlMemoryService } from './services/playbook-flow-hitl-memory.service';
+import { PlaybookFlowHitlPromptService } from './services/playbook-flow-hitl-prompt.service';
 import { PlaybookFlowReplaySemanticJudgeService } from './services/playbook-flow-replay-semantic-judge.service';
 import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-flow-replay-post-run-evaluation.service';
+import { FlowAccessService } from './domain/flow-access.service';
+import { FlowResponseAssemblerService } from './domain/flow-response-assembler.service';
+import { FlowWorkspacePolicyService } from './domain/flow-workspace-policy.service';
+import { FlowGraphSanitizerService } from './domain/flow-graph-sanitizer.service';
+import { FlowDeltaPatchService } from './domain/flow-delta-patch.service';
+import { PlaybookFlowRuntimeClientService } from './execution/grpc/playbook-flow-runtime-client.service';
+import { PlaybookExecutionDispatcherService } from './execution/runtime/playbook-execution-dispatcher.service';
+import { PlaybookExecutionEventHandlerService } from './execution/runtime/playbook-execution-event-handler.service';
+import { PlaybookExecutionNodeEventHandlerService } from './execution/runtime/playbook-execution-node-event-handler.service';
+import { PlaybookExecutionReplayRuntimeService } from './execution/runtime/playbook-execution-replay-runtime.service';
+import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/playbook-execution-stream-finalizer.service';
+import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
+import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
+import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
 
 @Module({
   imports: [
@@ -111,12 +137,15 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-
       { name: FlowPromptTemplate.name, schema: FlowPromptTemplateSchema },
       { name: FlowOutputFormat.name, schema: FlowOutputFormatSchema },
       { name: FlowDesignMessage.name, schema: FlowDesignMessageSchema },
+      { name: FlowDesignOperation.name, schema: FlowDesignOperationSchema },
       { name: FlowValidatedReplay.name, schema: FlowValidatedReplaySchema },
       { name: FlowReplayRunReport.name, schema: FlowReplayRunReportSchema },
       { name: FlowEvaluationBaseline.name, schema: FlowEvaluationBaselineSchema },
       { name: FlowEvaluationExecution.name, schema: FlowEvaluationExecutionSchema },
       { name: FlowMailEventLedger.name, schema: FlowMailEventLedgerSchema },
       { name: FlowIdempotencyRecord.name, schema: FlowIdempotencyRecordSchema },
+      { name: FlowExecutionLease.name, schema: FlowExecutionLeaseSchema },
+      { name: FlowHitlMemory.name, schema: FlowHitlMemorySchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -144,9 +173,24 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-
     PlaybookFlowStreamController,
     PlaybookFlowPromptTemplateController,
     PlaybookFlowSettingsController,
+    PlaybookFlowHitlController,
   ],
   providers: [
     PlaybookFlowService,
+    FlowAccessService,
+    FlowResponseAssemblerService,
+    FlowWorkspacePolicyService,
+    FlowGraphSanitizerService,
+    FlowDeltaPatchService,
+    PlaybookFlowRuntimeClientService,
+    PlaybookExecutionDispatcherService,
+    PlaybookExecutionEventHandlerService,
+    PlaybookExecutionNodeEventHandlerService,
+    PlaybookExecutionReplayRuntimeService,
+    PlaybookExecutionStreamFinalizerService,
+    PlaybookDesignRequestBuilderService,
+    PlaybookDesignResultApplierService,
+    PlaybookDesignSummaryService,
     PlaybookFlowValidatorService,
     PlaybookFlowBuilderService,
     PlaybookFlowExecutionService,
@@ -160,6 +204,7 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-
     PlaybookFlowContextService,
     PlaybookFlowOutputFormatService,
     PlaybookFlowDesignService,
+    PlaybookFlowDesignOperationService,
     PlaybookFlowAdvisorService,
     PlaybookFlowAdvisorModelService,
     PlaybookFlowHeuristicAdvisorEvaluatorService,
@@ -181,6 +226,8 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-
     PlaybookFlowMailSubscriptionRenewalService,
     PlaybookFlowStreamGatewayService,
     PlaybookFlowStreamEventsService,
+    PlaybookFlowExecutionLeaseService,
+    PlaybookFlowTokenBufferService,
     PlaybookFlowIntentService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
@@ -195,11 +242,21 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-
     PlaybookFlowReplayDriftService,
     PlaybookFlowReplayPlanService,
     PlaybookFlowOutputContractService,
+    PlaybookFlowHitlService,
+    PlaybookFlowHitlBlockerService,
+    PlaybookFlowHitlContextService,
+    PlaybookFlowHitlMemoryService,
+    PlaybookFlowHitlPromptService,
     PlaybookFlowReplaySemanticJudgeService,
     PlaybookFlowReplayPostRunEvaluationService,
   ],
   exports: [
     PlaybookFlowService,
+    FlowAccessService,
+    FlowResponseAssemblerService,
+    FlowWorkspacePolicyService,
+    FlowGraphSanitizerService,
+    FlowDeltaPatchService,
     PlaybookFlowExecutionService,
     PlaybookFlowBuilderService,
     PlaybookFlowValidatorService,

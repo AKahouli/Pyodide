@@ -351,21 +351,46 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
 };
 
 // Single inline citation badge rendered at a marker position within text
+// Resolve a citation to a signed URL via the path-signer endpoint and open it.
+// Image citations carry `path`; text citations carry the path in `source` (the
+// proto comment calling it a filename is misleading — it's the object key).
+async function openCitationSource(
+  c: CitationData,
+  displayMode: ReturnType<typeof useFileViewerDisplayMode>,
+  defaultLabel: string,
+): Promise<void> {
+  const { openFileViewerFromUrl, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
+
+  const objectKey = (c.sourceType === 'image' ? c.path : c.source) || '';
+  if (!objectKey) return;
+
+  // Display name = the proto-provided filename when present; otherwise the
+  // basename of the object key. Falls back to the i18n default label so the
+  // viewer tab always has *some* title.
+  const displayName =
+    (c.sourceType === 'image' ? c.source : '') ||
+    objectKey.split('/').pop() ||
+    defaultLabel;
+  const mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
+  const numbers = c.page?.match(/\d+/g);
+  const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
+
+  const { getArtifactDownloadUrl } = await import('@/modules/conversation/api');
+  const { downloadUrl } = await getArtifactDownloadUrl(objectKey, displayName);
+  openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
+    displayMode,
+    page,
+    highlightText: c.pageContent || undefined,
+  });
+}
+
 const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
   const handleClick = useCallback(async () => {
     try {
-      const { openFileViewer, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
-      const mimeType = getMimeTypeFromFilename(c.source) ?? 'application/octet-stream';
-      const numbers = c.page?.match(/\d+/g);
-      const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
-      await openFileViewer(c.workspaceId, c.externalId, c.source || tCommon('ai.citations.defaultSource'), mimeType, {
-        page,
-        highlightText: c.pageContent || undefined,
-        displayMode: fileViewerDisplayMode,
-      });
+      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
     } catch (error) {
       console.error('Failed to open citation source:', error);
       toast.error(tCommon('ai.errors.openFileTitle'), {
@@ -400,20 +425,7 @@ const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
 
   const handleCitationClick = async (c: CitationData) => {
     try {
-      const { openFileViewer, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
-
-      const mimeType = getMimeTypeFromFilename(c.source) ?? 'application/octet-stream';
-
-      // Extract page number from page string
-      // e.g. "report.pdf - page 5" → 5, or "5" → 5
-      const numbers = c.page?.match(/\d+/g);
-      const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
-
-      await openFileViewer(c.workspaceId, c.externalId, c.source || tCommon('ai.citations.defaultSource'), mimeType, {
-        page,
-        highlightText: c.pageContent || undefined,
-        displayMode: fileViewerDisplayMode,
-      });
+      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
     } catch (error) {
       console.error('Failed to open citation source:', error);
       toast.error(tCommon('ai.errors.openFileTitle'), {
@@ -847,25 +859,29 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
   const { t: tCommon } = useModuleTranslation('common');
   // Auto-open during streaming or for the last AI message
   const shouldAutoOpen = useShouldAutoOpenPreview();
-  const [isOpen, setIsOpen] = useState(shouldAutoOpen);
+  const [isOpen, setIsOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the blob URL in a ref to ensure proper cleanup
   const blobUrlRef = useRef<string | null>(null);
 
-  // Generate blob URL only when open and content is available
-  // This avoids creating blob URLs that might get cleaned up before use
   const blobUrl = useMemo(() => {
-    // Revoke previous blob URL if it exists
     if (blobUrlRef.current) {
       URL.revokeObjectURL(blobUrlRef.current);
       blobUrlRef.current = null;
     }
 
-    // Only create blob URL when preview is open and we have content
     if (!isOpen || !content) return null;
 
-    const blob = new Blob([content], { type: 'text/html' });
+    const hasOwnScheme = /color-scheme/i.test(content);
+    const previewHtml = hasOwnScheme
+      ? content
+      : content.replace(
+          /<head([^>]*)>/i,
+          '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
+        );
+
+    const blob = new Blob([previewHtml], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     blobUrlRef.current = url;
     return url;
@@ -913,7 +929,7 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
 
   // Full preview when open
   return (
-    <WebPreview ref={containerRef} className={cn('my-2', isFullscreen ? 'h-screen' : 'h-[400px]')} defaultUrl={blobUrl || ''}>
+    <WebPreview ref={containerRef} className={cn('my-2', isFullscreen ? 'h-screen' : 'h-[600px]')} defaultUrl={blobUrl || ''}>
       <WebPreviewNavigation>
         <span className='flex-1 truncate px-2 text-sm text-muted-foreground'>{tCommon('ai.preview.title')}</span>
         <TooltipProvider>
