@@ -10,6 +10,7 @@ import {
   mapTraceMetadata,
   mapUsage,
 } from './playbook-flow-observability.mapper';
+import { normalizePlaybookComponents } from './playbook-flow-citation.mapper';
 import { PlaybookFlowPublicReasoningParserService } from './playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './playbook-flow-trace-redaction.service';
 
@@ -58,9 +59,13 @@ export class PlaybookFlowObservabilityService {
     const artifacts = Array.isArray(payload.artifacts)
       ? payload.artifacts as Array<Record<string, unknown>>
       : undefined;
-    const components = Array.isArray(payload.components)
+    const rawComponents = Array.isArray(payload.components)
       ? payload.components as Array<Record<string, unknown>>
       : undefined;
+    const components = normalizePlaybookComponents(
+      rawComponents,
+      payload.citation_sources ?? payload.citationSources,
+    );
     const outputs = payload.outputs && typeof payload.outputs === 'object'
       ? payload.outputs as Record<string, unknown>
       : undefined;

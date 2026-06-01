@@ -20,6 +20,37 @@ describe('conversation utils', () => {
     }
   });
 
+  it('attaches unparented bracketed playbook citations to matching text', () => {
+    const parts = mapComponentsToContentParts([
+      { type: 'text', data: { content: 'Risque financier majeur [2].' } } as never,
+      {
+        type: 'citation',
+        data: {
+          text_source: {
+            source: 'user-1/codeinterpreter/contract.docx',
+            file_name: 'contract.docx',
+            page: '2',
+            content: 'Clause de penalites',
+            workspace_name: 'codeinterpreter',
+            reference: '[2]',
+          },
+        },
+      } as never,
+    ]);
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.type).toBe('text');
+    if (parts[0]?.type === 'text') {
+      expect(parts[0].citations?.[0]).toMatchObject({
+        source: 'user-1/codeinterpreter/contract.docx',
+        page: '2',
+        pageContent: 'Clause de penalites',
+        workspaceId: 'codeinterpreter',
+        reference: '[2]',
+      });
+    }
+  });
+
   it('converts components to markdown', () => {
     const markdown = componentsToMarkdown([
       { type: 'text', data: { content: 'Hi' } },

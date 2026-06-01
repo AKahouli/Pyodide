@@ -175,7 +175,7 @@ class ToolResultCollector:
             source = _component_to_connector_citation_source(component)
             if not source:
                 continue
-            reference = str(source.get("reference") or "").strip()
+            reference = _format_reference_marker(source.get("reference", ""))
             if not reference:
                 continue
 
@@ -195,6 +195,18 @@ def _parse_reference_number(reference: str) -> Optional[int]:
     if not match:
         return None
     return int(match.group(0))
+
+
+def _normalize_reference_token(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _format_reference_marker(value: Any) -> str:
+    reference = _normalize_reference_token(value)
+    return f"[{reference}]" if reference else ""
 
 
 def _component_to_connector_citation_source(
@@ -234,7 +246,7 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
     if not text or not references:
         return text
 
-    refs = ", ".join(f"[{ref}]" for ref in references)
+    refs = ", ".join(_format_reference_marker(ref) for ref in references)
     return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
 
 
@@ -322,7 +334,7 @@ def _collect_connector_response_components(
         reference = collector._connector_source_signatures.get(signature)
         is_new_source = reference is None
         if reference is None:
-            reference = collector.next_connector_reference()
+            reference = _format_reference_marker(collector.next_connector_reference())
             collector._connector_source_signatures[signature] = reference
             ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
             logger.warning(
@@ -1048,6 +1060,7 @@ def _create_search_tools(
         for src in new_text:
             obj = src.get("object", {})
             content = obj.get("content", {})
+            reference = _format_reference_marker(src.get("reference", ""))
             collector.add_component(
                 "citation",
                 {
@@ -1059,7 +1072,7 @@ def _create_search_tools(
                         "page": str(content.get("page", "")),
                         "page_content": content.get("page_content", ""),
                         "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
-                        "reference": src.get("reference", ""),
+                        "reference": reference,
                     },
                 },
             )
@@ -1067,6 +1080,7 @@ def _create_search_tools(
         for src in new_image:
             obj = src.get("object", {})
             content = obj.get("content", {})
+            reference = _format_reference_marker(src.get("reference", ""))
             collector.add_component(
                 "citation",
                 {
@@ -1080,7 +1094,7 @@ def _create_search_tools(
                         "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
                         "height": str(content.get("height", "")),
                         "width": str(content.get("width", "")),
-                        "reference": src.get("reference", ""),
+                        "reference": reference,
                     },
                 },
             )
@@ -1553,9 +1567,18 @@ def _format_search_result(result: Dict[str, Any]) -> str:
     if sources_text:
         for i, source in enumerate(sources_text, 1):
             if isinstance(source, dict):
-                text = source.get("text", source.get("content", str(source)))
+                text = source.get(
+                    "text",
+                    source.get("content", source.get("page_content", str(source))),
+                )
                 filename = source.get("filename", source.get("source", ""))
-                header = f"[Source {i}: {filename}]" if filename else f"[Source {i}]"
+                reference = str(source.get("source_reference") or "").strip()
+                citation = f" | Citation: {reference}" if reference else ""
+                header = (
+                    f"[Source {i}: {filename}{citation}]"
+                    if filename
+                    else f"[Source {i}{citation}]"
+                )
                 parts.append(f"{header}\n{text}")
             else:
                 parts.append(f"[Source {i}]\n{source}")

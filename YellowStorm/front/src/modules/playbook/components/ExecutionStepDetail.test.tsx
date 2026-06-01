@@ -9,6 +9,15 @@ const navigateMock = vi.hoisted(() => vi.fn());
 const replayReportsApi = vi.hoisted(() => ({
   getReplayReports: vi.fn().mockResolvedValue([]),
 }));
+const mapComponentsToContentPartsMock = vi.hoisted(() => vi.fn((items: any[]) => items.map((item) => {
+  if (item?.type === 'text') {
+    return {
+      type: 'text',
+      content: item?.data?.content ?? item?.data?.text ?? '',
+    };
+  }
+  return item;
+})));
 const storeState = vi.hoisted(() => ({
   currentPlaybook: null as any,
   deleteExecution: vi.fn(),
@@ -63,15 +72,7 @@ vi.mock('./PlaybookStatusBadge', () => ({
 }));
 
 vi.mock('@/modules/conversation/utils', () => ({
-  mapComponentsToContentParts: (items: any[]) => items.map((item) => {
-    if (item?.type === 'text') {
-      return {
-        type: 'text',
-        content: item?.data?.content ?? item?.data?.text ?? '',
-      };
-    }
-    return item;
-  }),
+  mapComponentsToContentParts: mapComponentsToContentPartsMock,
 }));
 
 vi.mock('@/components/ui/tabs', () => ({
@@ -1223,6 +1224,35 @@ describe('ExecutionStepDetail', () => {
     };
     render(<ExecutionStepDetail step={withComponents} />);
     expect(screen.getByText('hello')).toBeInTheDocument();
+  });
+
+  it('passes result text and citations through the same message content mapping', () => {
+    mapComponentsToContentPartsMock.mockClear();
+    const withCitation: TaskResult = {
+      ...baseStep,
+      output: 'Priorite moyenne [2].',
+      components: [{
+        type: 'citation',
+        data: {
+          source: 'user-1/codeinterpreter/contract.docx',
+          reference: '[2]',
+        },
+      }],
+    };
+
+    render(<ExecutionStepDetail step={withCitation} />);
+
+    expect(mapComponentsToContentPartsMock).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'playbook-final-text-t1',
+        type: 'text',
+        data: { content: 'Priorite moyenne [2].' },
+      }),
+      expect.objectContaining({
+        type: 'citation',
+        data: expect.objectContaining({ reference: '[2]' }),
+      }),
+    ]));
   });
 
   it('renders tool trace when present', async () => {

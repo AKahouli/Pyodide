@@ -15,6 +15,7 @@ from src.flow_engine.tools.langchain_factory import (
     _create_code_interpreter_tool,
     _create_connector_mcp_tools,
     _select_generated_artifact_output_port,
+    _format_search_result,
 )
 from src.smart_rag.tools.utilities.code_interpreter_payload import (
     build_code_interpreter_payload_context,
@@ -50,7 +51,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
     components = collector.get_and_clear()
 
     assert "Use citation [1]" in updated["text"]
-    assert updated["citation_sources"][0]["reference"] == "1"
+    assert updated["citation_sources"][0]["reference"] == "[1]"
     assert components == [
         {
             "type": "sources",
@@ -74,11 +75,29 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
-                    "reference": "1",
+                    "reference": "[1]",
                 },
             },
         },
     ]
+
+
+def test_format_search_result_includes_search_tool_citation_reference() -> None:
+    result = {
+        "sources_text": [
+            {
+                "page_content": "Quarterly revenue increased by 18%.",
+                "filename": "Q1-report.txt",
+                "source_reference": "[1]",
+            }
+        ],
+        "sources_image": [],
+    }
+
+    formatted = _format_search_result(result)
+
+    assert "[Source 1: Q1-report.txt | Citation: [1]]" in formatted
+    assert "Quarterly revenue increased by 18%." in formatted
 
 
 def test_select_generated_artifact_output_port_falls_back_to_single_file_port() -> None:
@@ -667,8 +686,8 @@ def test_collect_connector_response_components_reuses_connector_references() -> 
     second = _collect_connector_response_components(collector, response)
     second_components = collector.get_and_clear()
 
-    assert first["citation_sources"][0]["reference"] == "1"
-    assert second["citation_sources"][0]["reference"] == "1"
+    assert first["citation_sources"][0]["reference"] == "[1]"
+    assert second["citation_sources"][0]["reference"] == "[1]"
     assert len(first_components) == 1
     assert second_components == []
 
@@ -731,9 +750,9 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
         },
     )
 
-    assert reused["citation_sources"][0]["reference"] == "5"
+    assert reused["citation_sources"][0]["reference"] == "[5]"
     assert reused_components == []
-    assert fresh["citation_sources"][0]["reference"] == "6"
+    assert fresh["citation_sources"][0]["reference"] == "[6]"
 
 
 def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -800,7 +819,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
-                    "reference": "1",
+                    "reference": "[1]",
                 },
             },
         }

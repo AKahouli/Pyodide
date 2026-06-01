@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
+import { badgeVariants } from '@/components/ui/badge';
 import { Carousel, type CarouselApi, CarouselContent, CarouselItem } from '@/components/ui/carousel';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
@@ -19,7 +19,7 @@ export type InlineCitationCardProps = ComponentProps<typeof HoverCard>;
 
 export const InlineCitationCard = (props: InlineCitationCardProps) => <HoverCard closeDelay={0} openDelay={0} {...props} />;
 
-export type InlineCitationCardTriggerProps = ComponentProps<typeof Badge> & {
+export type InlineCitationCardTriggerProps = ComponentProps<'span'> & {
   sources: string[];
 };
 
@@ -33,7 +33,7 @@ function getSourceLabel(source: string): string {
 
 export const InlineCitationCardTrigger = ({ sources, className, ...props }: InlineCitationCardTriggerProps) => (
   <HoverCardTrigger asChild>
-    <Badge className={cn('ml-1 rounded-full', className)} variant='secondary' {...props}>
+    <span className={cn(badgeVariants({ variant: 'secondary' }), 'ml-1 rounded-full', className)} {...props}>
       {sources[0] ? (
         <>
           {getSourceLabel(sources[0])} {sources.length > 1 && `+${sources.length - 1}`}
@@ -41,7 +41,7 @@ export const InlineCitationCardTrigger = ({ sources, className, ...props }: Inli
       ) : (
         'unknown'
       )}
-    </Badge>
+    </span>
   </HoverCardTrigger>
 );
 

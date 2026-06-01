@@ -295,6 +295,14 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
 const remarkPlugins = [remarkGfm];
 const rehypeCitationPlugins = [rehypeCitationMarkers];
 
+function normalizeCitationReference(reference?: string): string | undefined {
+  return reference?.trim().replace(/^\[|\]$/g, '').trim() || undefined;
+}
+
+function getCitationTriggerLabel(citation: CitationData, fallback: string): string {
+  return normalizeCitationReference(citation.reference) || citation.source || fallback;
+}
+
 // Text Part with Markdown support
 const TextPartRenderer = ({ content, showCursor, citations }: { content: string; showCursor?: boolean; citations?: CitationData[] }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
@@ -308,7 +316,7 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
     const trailing: CitationData[] = [];
     for (const c of citations) {
       // Normalize reference to bare digit (e.g. "[1]" → "1") to match rehypeCitationMarkers output
-      const ref = c.reference?.replace(/^\[|\]$/g, '');
+      const ref = normalizeCitationReference(c.reference);
       if (ref && content.includes(`[${ref}]`)) {
         map.set(ref, c);
       } else {
@@ -402,7 +410,7 @@ const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
   return (
     <InlineCitation>
       <InlineCitationCard>
-        <InlineCitationCardTrigger sources={[c.reference || c.source || tCommon('ai.citations.defaultSource')]} className='cursor-pointer' onClick={handleClick} />
+        <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={handleClick} />
         <InlineCitationCardBody>
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
@@ -439,7 +447,7 @@ const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
-            <InlineCitationCardTrigger sources={[c.reference || c.source || tCommon('ai.citations.defaultSource')]} className='cursor-pointer' onClick={() => handleCitationClick(c)} />
+            <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={() => handleCitationClick(c)} />
             <InlineCitationCardBody>
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
