@@ -36,7 +36,7 @@ export class WorkspaceInternalController {
 
     const workspaces = await this.workspaceModel
       .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
-      .select('_id name')
+      .select('_id name storagePrefix')
       .lean()
       .exec();
 
