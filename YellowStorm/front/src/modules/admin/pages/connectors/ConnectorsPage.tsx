@@ -3,12 +3,9 @@ import { AlertCircle, Cable, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Z
 import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -18,7 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getConnectors, createConnector, updateConnector, deleteConnector, inspectMcp, importFromMcp } from '../../api';
 import type { ConnectorResponse, McpToolDefinition, McpInspectResult, ConnectorActionResponse } from '../../types';
 import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
@@ -206,93 +202,107 @@ export function ConnectorsPage() {
         <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-center gap-3'>
-            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Cable className='h-5 w-5' /></div>
-            <div>
-              <CardTitle>Connector Catalog</CardTitle>
-              <CardDescription>{total} connectors available</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className='rounded-md border'>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className='hidden md:table-cell'>Description</TableHead>
-                  <TableHead className='hidden lg:table-cell'>Auth</TableHead>
-                  <TableHead className='hidden lg:table-cell'>Actions</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className='text-right'>Operations</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {connectors.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className='h-24 text-center'>{search ? 'No connectors match your search.' : 'No connectors yet.'}</TableCell></TableRow>
-                ) : connectors.map((conn) => {
-                  const iconTextColor = conn.iconColor === 'dark' ? 'text-black' : 'text-white';
-                  const initial = conn.name?.trim().charAt(0).toUpperCase() || '?';
-                  return (
-                  <TableRow key={conn.id} className={!conn.isActive ? 'opacity-50' : undefined}>
-                    <TableCell>
-                      <div className='flex items-center gap-3'>
-                        <div
-                          className='flex h-8 w-8 shrink-0 items-center justify-center rounded-md'
-                          style={{ backgroundColor: conn.color || 'transparent' }}
-                        >
-                          {conn.icon ? (
-                            <IconDisplay icon={conn.icon} size={18} iconColor={conn.iconColor} />
-                          ) : (
-                            <span className={`text-xs font-bold ${iconTextColor}`}>{initial}</span>
-                          )}
-                        </div>
-                        <div>
-                          <div className='font-medium'>{conn.name}</div>
-                          <div className='text-xs text-muted-foreground'>{conn.slug}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className='hidden md:table-cell max-w-[320px] truncate'>{conn.description}</TableCell>
-                    <TableCell className='hidden lg:table-cell'>
-                      <Badge variant='outline' className='text-xs'>{conn.authType}</Badge>
-                    </TableCell>
-                    <TableCell className='hidden lg:table-cell'>
-                      <Badge variant='secondary' className='text-xs'>{conn.actions.filter((a) => a.isEnabled).length}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Switch checked={conn.isActive} onCheckedChange={async (checked) => {
-                        try {
-                          const updated = await updateConnector(conn.id, { isActive: checked });
-                          setConnectors((prev) => prev.map((item) => item.id === updated.id ? updated : item));
-                        } catch (err) {
-                          toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });
-                        }
-                      }} />
-                    </TableCell>
-                    <TableCell className='text-right'>
-                      <div className='flex justify-end gap-2'>
-                        <Button variant='ghost' size='icon' onClick={() => { setEditingConnector(conn); setShowDialog(true); }}><Pencil className='h-4 w-4' /></Button>
-                        <Button variant='ghost' size='icon' className='text-destructive' onClick={() => setDeletingConnector(conn)}><Trash2 className='h-4 w-4' /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-          {totalPages > 1 ? (
-            <div className='flex items-center justify-end gap-2 pt-4'>
-              <Button variant='outline' size='sm' disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); fetchConnectors(search, next); }}>Previous</Button>
-              <span className='text-sm text-muted-foreground'>Page {page} of {totalPages}</span>
-              <Button variant='outline' size='sm' disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); fetchConnectors(search, next); }}>Next</Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      <div className='flex items-center gap-3'>
+        <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Cable className='h-5 w-5' /></div>
+        <div>
+          <h2 className='font-semibold'>Connector Catalog</h2>
+          <p className='text-sm text-muted-foreground'>{total} connectors available</p>
+        </div>
+      </div>
+
+      {connectors.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          {search ? 'No connectors match your search.' : 'No connectors yet.'}
+        </div>
+      ) : (
+        <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+          {connectors.map((conn) => {
+            const iconTextColor = conn.iconColor === 'dark' ? 'text-black' : 'text-white';
+            const initial = conn.name?.trim().charAt(0).toUpperCase() || '?';
+            return (
+              <div
+                key={conn.id}
+                role='button'
+                tabIndex={0}
+                onClick={() => { setEditingConnector(conn); setShowDialog(true); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setEditingConnector(conn);
+                    setShowDialog(true);
+                  }
+                }}
+                className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!conn.isActive ? 'opacity-60' : ''}`}
+              >
+                <button
+                  type='button'
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const updated = await updateConnector(conn.id, { isActive: !conn.isActive });
+                      setConnectors((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+                    } catch (err) {
+                      toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });
+                    }
+                  }}
+                  className='absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+                  aria-label={conn.isActive ? 'Deactivate connector' : 'Activate connector'}
+                  aria-pressed={conn.isActive}
+                  title={conn.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
+                >
+                  <span className={`h-2.5 w-2.5 rounded-full transition-colors ${conn.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
+                </button>
+
+                <div className='absolute top-2 right-9 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    className='h-7 w-7'
+                    onClick={(e) => { e.stopPropagation(); setEditingConnector(conn); setShowDialog(true); }}
+                    aria-label='Edit connector'
+                  >
+                    <Pencil className='h-3.5 w-3.5' />
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    className='h-7 w-7 text-destructive'
+                    onClick={(e) => { e.stopPropagation(); setDeletingConnector(conn); }}
+                    aria-label='Delete connector'
+                  >
+                    <Trash2 className='h-3.5 w-3.5' />
+                  </Button>
+                </div>
+
+                <div className='flex items-start gap-3 pr-12'>
+                  <div
+                    className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
+                    style={{ backgroundColor: conn.color || 'transparent' }}
+                  >
+                    {conn.icon ? (
+                      <IconDisplay icon={conn.icon} size={22} iconColor={conn.iconColor} />
+                    ) : (
+                      <span className={`text-sm font-bold ${iconTextColor}`}>{initial}</span>
+                    )}
+                  </div>
+                  <div className='min-w-0 flex-1'>
+                    <div className='font-semibold truncate'>{conn.name}</div>
+                    <p className='text-sm text-muted-foreground line-clamp-2'>{conn.description}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {totalPages > 1 ? (
+        <div className='flex items-center justify-end gap-2 pt-4'>
+          <Button variant='outline' size='sm' disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); fetchConnectors(search, next); }}>Previous</Button>
+          <span className='text-sm text-muted-foreground'>Page {page} of {totalPages}</span>
+          <Button variant='outline' size='sm' disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); fetchConnectors(search, next); }}>Next</Button>
+        </div>
+      ) : null}
 
       <CreateEditConnectorDialog open={showDialog} onOpenChange={setShowDialog} connector={editingConnector} onSave={handleSave} />
 
