@@ -78,6 +78,9 @@ import type {
   ConnectorQueryParams,
   McpInspectResult,
   ConnectorOAuthStatusResponse,
+  ConnectorCategoryResponse,
+  CreateConnectorCategoryRequest,
+  UpdateConnectorCategoryRequest,
 } from './types';
 
 // Helper to build query string
@@ -750,6 +753,40 @@ export async function updateConnector(id: string, data: UpdateConnectorRequest):
 
 export async function deleteConnector(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
+}
+
+// Connector Categories API
+
+export async function getConnectorCategories(): Promise<ConnectorCategoryResponse[]> {
+  const response = await apiClient.get<ApiResponse<ConnectorCategoryResponse[]>>(
+    API_ENDPOINTS.adminConnectorCategories.list,
+  );
+  return response.data.data;
+}
+
+export async function createConnectorCategory(
+  data: CreateConnectorCategoryRequest,
+): Promise<ConnectorCategoryResponse> {
+  const response = await apiClient.post<ApiResponse<ConnectorCategoryResponse>>(
+    API_ENDPOINTS.adminConnectorCategories.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateConnectorCategory(
+  id: string,
+  data: UpdateConnectorCategoryRequest,
+): Promise<ConnectorCategoryResponse> {
+  const response = await apiClient.patch<ApiResponse<ConnectorCategoryResponse>>(
+    API_ENDPOINTS.adminConnectorCategories.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteConnectorCategory(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminConnectorCategories.byId(id));
 }
 
 export async function inspectMcp(

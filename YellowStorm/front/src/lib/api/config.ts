@@ -196,6 +196,10 @@ export const API_ENDPOINTS = {
     oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
     oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
   },
+  adminConnectorCategories: {
+    list: '/admin/connector-categories',
+    byId: (id: string) => `/admin/connector-categories/${id}`,
+  },
   connectors: {
     list: '/connectors',
     byId: (id: string) => `/connectors/${id}`,

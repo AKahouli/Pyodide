@@ -118,6 +118,11 @@ export class CreateConnectorDto {
   @IsEnum(['light', 'dark'])
   iconColor?: 'light' | 'dark';
 
+  @ApiPropertyOptional({ description: 'Optional connector category ID' })
+  @IsOptional()
+  @IsString()
+  categoryId?: string | null;
+
   @ApiPropertyOptional({ enum: ConnectorAuthType, description: 'Authentication type' })
   @IsOptional()
   @IsString()

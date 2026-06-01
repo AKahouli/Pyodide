@@ -1369,6 +1369,7 @@ export interface ConnectorResponse {
   icon: string;
   color: string;
   iconColor: 'light' | 'dark';
+  categoryId: string | null;
   authType: string;
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
@@ -1403,6 +1404,7 @@ export interface CreateConnectorRequest {
   icon?: string;
   color?: string;
   iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
   authType?: string;
   authConfigSchema?: Record<string, unknown>;
   authSourceType?: string;
@@ -1446,6 +1448,25 @@ export interface McpInspectResult {
   serverName: string;
   tools: McpToolDefinition[];
   error?: string;
+}
+
+export interface ConnectorCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateConnectorCategoryRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateConnectorCategoryRequest {
+  name?: string;
+  description?: string;
 }
 
 export interface ConnectorOAuthStatusResponse {

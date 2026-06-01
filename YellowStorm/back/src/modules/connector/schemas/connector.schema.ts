@@ -112,6 +112,9 @@ export class Connector extends Document {
   @Prop({ default: 'light', enum: ['light', 'dark'] })
   iconColor!: 'light' | 'dark';
 
+  @Prop({ type: Types.ObjectId, ref: 'ConnectorCategory', default: null, index: true })
+  categoryId?: Types.ObjectId | null;
+
   @Prop({ required: true, enum: ConnectorAuthType, default: ConnectorAuthType.NONE })
   authType!: ConnectorAuthType;
 

@@ -244,6 +244,8 @@ export enum ErrorCode {
   CONNECTOR_NOT_FOUND = 'ERR_3100',
   CONNECTOR_ALREADY_EXISTS = 'ERR_3101',
   CONNECTOR_CREDENTIAL_NOT_FOUND = 'ERR_3110',
+  CONNECTOR_CATEGORY_NOT_FOUND = 'ERR_3120',
+  CONNECTOR_CATEGORY_ALREADY_EXISTS = 'ERR_3121',
 
   // Telegram integration errors (3200-3299)
   TELEGRAM_INTEGRATION_NOT_FOUND = 'ERR_3200',
@@ -488,6 +490,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
   [ErrorCode.CONNECTOR_CREDENTIAL_NOT_FOUND]: 'Connector credential not found.',
+  [ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND]: 'Connector category not found.',
+  [ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS]: 'A connector category with this name already exists.',
   [ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND]: 'Telegram integration not found for this agent.',
   [ErrorCode.TELEGRAM_TOKEN_INVALID]: 'Telegram bot token is invalid.',
   [ErrorCode.TELEGRAM_WEBHOOK_UNAUTHORIZED]: 'Telegram webhook secret validation failed.',

@@ -52,6 +52,7 @@ export class ConnectorService {
       icon: dto.icon ?? '',
       color: dto.color ?? '',
       iconColor: dto.iconColor ?? 'light',
+      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
       authType: dto.authType ?? 'none',
       authConfigSchema: dto.authConfigSchema ?? {},
       authSourceType: dto.authSourceType ?? 'credential',
@@ -165,6 +166,9 @@ export class ConnectorService {
     }
     if (dto.dynamicHeaders) {
       (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
+    }
+    if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
+      (updateData as Record<string, unknown>).categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
     }
 
     const updated = await this.connectorModel
@@ -529,6 +533,7 @@ export class ConnectorService {
       icon: doc.icon,
       color: doc.color,
       iconColor: doc.iconColor ?? 'light',
+      categoryId: doc.categoryId ? doc.categoryId.toString() : null,
       authType: doc.authType,
       authConfigSchema: doc.authConfigSchema ?? {},
       authSourceType: doc.authSourceType ?? 'credential',

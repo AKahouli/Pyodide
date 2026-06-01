@@ -22,6 +22,7 @@ import {
 import type {
   ConnectorResponse,
   ConnectorActionResponse,
+  ConnectorCategoryResponse,
   ConnectorDynamicHeader,
   ConnectorDynamicHeaderSource,
   SkillResponse,
@@ -38,6 +39,7 @@ import {
   authorizeConnectorAppOAuth,
   disconnectConnectorAppOAuth,
   getConnectorAppOAuthStatus,
+  getConnectorCategories,
   getSkills,
   inspectMcp,
 } from '../../api';
@@ -201,6 +203,7 @@ export function CreateEditConnectorDialog({
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<ConnectorCategoryResponse[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<Record<string, boolean>>({});
   const [oauthConnecting, setOauthConnecting] = useState(false);
@@ -229,6 +232,9 @@ export function CreateEditConnectorDialog({
       getSkills({ isActive: true, limit: 1000 })
         .then((result) => setAvailableSkills(result.data || []))
         .catch(() => setAvailableSkills([]));
+      getConnectorCategories()
+        .then((data) => setAvailableCategories(data))
+        .catch(() => setAvailableCategories([]));
       getAdminConnectedApps()
         .then((apps) => {
           const enabledApps = apps.filter((app) => app.enabled);
@@ -254,6 +260,7 @@ export function CreateEditConnectorDialog({
           icon: connector.icon || '',
           color: connector.color || '',
           iconColor: connector.iconColor || 'light',
+          categoryId: connector.categoryId || '',
           authType: connector.authType || 'none',
           authSourceType: connector.authSourceType || 'credential',
           connectedAppKey: connector.connectedAppKey || '',
@@ -556,6 +563,26 @@ export function CreateEditConnectorDialog({
           <div>
             <Label>{t('connectors.form.fields.description.label')}</Label>
             <Textarea placeholder={t('connectors.form.fields.description.placeholder')} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
+          </div>
+
+          <div>
+            <Label>Category</Label>
+            <Select
+              value={form.categoryId || '__none__'}
+              onValueChange={(value) => setForm({ ...form, categoryId: value === '__none__' ? '' : value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder='Select a category' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='__none__'>No category</SelectItem>
+                {availableCategories.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className='grid grid-cols-2 gap-4'>
