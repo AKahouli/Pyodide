@@ -42,7 +42,7 @@ export class WorkspaceInternalController {
 
     const result: Record<string, string> = {};
     for (const ws of workspaces) {
-      result[ws._id.toString()] = ws.name;
+      result[ws._id.toString()] = ws.storagePrefix;
     }
     return result;
   }
