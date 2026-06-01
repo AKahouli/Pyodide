@@ -189,6 +189,10 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/skills/${id}`,
     import: '/admin/skills/import',
   },
+  adminSkillCategories: {
+    list: '/admin/skill-categories',
+    byId: (id: string) => `/admin/skill-categories/${id}`,
+  },
   adminConnectors: {
     list: '/admin/connectors',
     byId: (id: string) => `/admin/connectors/${id}`,

@@ -71,8 +71,11 @@ import type {
   ToolQueryParams,
   SkillListResponse,
   SkillResponse,
+  SkillCategoryResponse,
   CreateSkillRequest,
   UpdateSkillRequest,
+  CreateSkillCategoryRequest,
+  UpdateSkillCategoryRequest,
   SkillQueryParams,
   ConnectorListResponse,
   ConnectorResponse,
@@ -748,6 +751,40 @@ export async function importSkill(file: File): Promise<SkillResponse> {
     },
   );
   return response.data.data;
+}
+
+// Skill Categories API
+
+export async function getSkillCategories(): Promise<SkillCategoryResponse[]> {
+  const response = await apiClient.get<ApiResponse<SkillCategoryResponse[]>>(
+    API_ENDPOINTS.adminSkillCategories.list,
+  );
+  return response.data.data;
+}
+
+export async function createSkillCategory(
+  data: CreateSkillCategoryRequest,
+): Promise<SkillCategoryResponse> {
+  const response = await apiClient.post<ApiResponse<SkillCategoryResponse>>(
+    API_ENDPOINTS.adminSkillCategories.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateSkillCategory(
+  id: string,
+  data: UpdateSkillCategoryRequest,
+): Promise<SkillCategoryResponse> {
+  const response = await apiClient.patch<ApiResponse<SkillCategoryResponse>>(
+    API_ENDPOINTS.adminSkillCategories.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteSkillCategory(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminSkillCategories.byId(id));
 }
 
 // Connectors API
