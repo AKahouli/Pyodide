@@ -4,7 +4,7 @@ import { playbookQueryClient } from '@/modules/playbook/query/queryClient';
 import { playbookKeys } from '@/modules/playbook/query/queryKeys';
 import { playbookFeatures } from '@/modules/playbook/features';
 import { dispatchExecutionLifecycleStreamEvent } from '@/modules/playbook/machines/execution/executionLifecycleEvents';
-import type { Playbook, PlaybookExecution, PlaybookExecutionSummary } from '@/modules/playbook/types';
+import type { HitlBlockerRule, HitlMemory, HitlPolicy, Playbook, PlaybookExecution, PlaybookExecutionSummary } from '@/modules/playbook/types';
 import type { PlaybookStreamEvent } from './eventTypes';
 import {
   mergeExecutionQueued,
@@ -16,6 +16,8 @@ import {
 import {
   mergeAdvisorAutopilotUpdated,
   mergeExecutionCompleted,
+  mergeHitlInterruptResolved,
+  mergeHitlInterruptUpdated,
   mergeInterrupt,
   mergeIteratorChildCompleted,
   mergeIteratorChildStarted,
@@ -114,9 +116,34 @@ export function dispatchPlaybookStreamEvent(event: PlaybookStreamEvent, options:
       invalidateExecutionHistory(queryClient, event.data.executionId);
       return;
     case 'playbook_interrupt':
+    case 'playbook_hitl_interrupt_created':
       updateExecution(queryClient, event.data.executionId, (previous) => mergeInterrupt(previous, event.data));
       return;
+    case 'playbook_hitl_interrupt_updated':
+      updateHitlInterrupt(queryClient, event.data);
+      return;
+    case 'playbook_hitl_interrupt_resolved':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeHitlInterruptResolved(previous, event.data));
+      return;
+    case 'playbook_hitl_policy_updated':
+      invalidateHitlPolicy(queryClient, event.data);
+      return;
+    case 'playbook_hitl_blocker_disabled':
+      patchDisabledHitlBlocker(queryClient, event.data);
+      return;
+    case 'playbook_hitl_memory_suggested':
+    case 'playbook_hitl_memory_saved':
+      invalidateHitlMemories(queryClient, event.data);
+      return;
+    case 'playbook_replay_hitl_summary_updated':
+      invalidateReplayReports(queryClient, event.data);
+      return;
   }
+}
+
+function updateHitlInterrupt(queryClient: QueryClient, data: Record<string, unknown>) {
+  if (typeof data.executionId !== 'string') return;
+  updateExecution(queryClient, data.executionId, (previous) => mergeHitlInterruptUpdated(previous, data));
 }
 
 function updateExecution(
@@ -186,6 +213,65 @@ function updatePlaybookTask(
       };
     });
   }
+}
+
+function getHitlFlowId(queryClient: QueryClient, data: Record<string, unknown>) {
+  if (typeof data.flowId === 'string') return data.flowId;
+  if (typeof data.playbookId === 'string') return data.playbookId;
+  if (typeof data.executionId !== 'string') return undefined;
+  return queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution(data.executionId))?.playbookId;
+}
+
+function invalidateHitlPolicy(queryClient: QueryClient, data: Record<string, unknown>) {
+  const flowId = getHitlFlowId(queryClient, data);
+  if (!flowId) return;
+
+  const nodeId = typeof data.nodeId === 'string' ? data.nodeId : undefined;
+  if (isHitlPolicy(data.policy)) {
+    queryClient.setQueryData(playbookKeys.hitlPolicy(flowId, nodeId), data.policy);
+  }
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.hitlPolicy(flowId, nodeId) });
+}
+
+function patchDisabledHitlBlocker(queryClient: QueryClient, data: Record<string, unknown>) {
+  const flowId = getHitlFlowId(queryClient, data);
+  if (!flowId) return;
+
+  queryClient.setQueryData<HitlBlockerRule[]>(playbookKeys.hitlBlockers(flowId), (previous) => (
+    previous?.map((blocker) => blocker.id === data.blockerId ? { ...blocker, enabled: false } : blocker)
+  ));
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.hitlBlockers(flowId) });
+}
+
+function invalidateHitlMemories(queryClient: QueryClient, data: Record<string, unknown>) {
+  const flowId = getHitlFlowId(queryClient, data);
+  if (!flowId) return;
+
+  const memory = data.memory;
+  if (isHitlMemory(memory)) {
+    queryClient.setQueryData<HitlMemory[]>(playbookKeys.hitlMemories(flowId), (previous = []) => [
+      memory,
+      ...previous.filter((item) => item.id !== memory.id),
+    ]);
+  }
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.hitlMemories(flowId) });
+}
+
+function invalidateReplayReports(queryClient: QueryClient, data: Record<string, unknown>) {
+  const flowId = getHitlFlowId(queryClient, data);
+  const taskId = typeof data.taskId === 'string' ? data.taskId : undefined;
+  if (!flowId || !taskId) return;
+
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.flowReplays(flowId, taskId) });
+  void queryClient.invalidateQueries({ queryKey: playbookKeys.detail(flowId, 'enriched') });
+}
+
+function isHitlPolicy(value: unknown): value is HitlPolicy {
+  return typeof value === 'object' && value !== null && 'mode' in value && 'sensitivity' in value;
+}
+
+function isHitlMemory(value: unknown): value is HitlMemory {
+  return typeof value === 'object' && value !== null && 'id' in value && 'flowId' in value;
 }
 
 function isActiveExecutionStatus(status: string | null | undefined) {

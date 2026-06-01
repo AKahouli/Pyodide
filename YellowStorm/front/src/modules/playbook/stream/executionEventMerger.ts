@@ -141,6 +141,7 @@ export function mergeExecutionStarted(previous: PlaybookExecution | undefined, d
     taskResults,
     threadId: previous?.threadId ?? null,
     interruptPayload: null,
+    pendingInterrupts: [],
     waitingForHumanInput: false,
     currentInterruptId: null,
     currentInterruptTaskId: null,
@@ -237,4 +238,3 @@ export function mergeStepCompleted(previous: PlaybookExecution | undefined, data
     updatedAt: now(),
   };
 }
-

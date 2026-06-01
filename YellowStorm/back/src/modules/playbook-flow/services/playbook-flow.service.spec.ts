@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 
 import { PlaybookFlowService } from './playbook-flow.service';
 import { Flow } from '../schemas/playbook-flow.schema';
@@ -45,6 +46,7 @@ describe('PlaybookFlowService', () => {
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
         { provide: PlaybookFlowReplayService, useValue: replayService },
         { provide: PlaybookFlowReplayReportService, useValue: replayReportService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
       ],
     }).compile();
 
@@ -99,6 +101,7 @@ describe('PlaybookFlowService', () => {
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
         { provide: PlaybookFlowReplayService, useValue: replayService },
         { provide: PlaybookFlowReplayReportService, useValue: replayReportService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
       ],
     }).compile();
 
@@ -169,6 +172,7 @@ describe('PlaybookFlowService', () => {
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
         { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
         { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
       ],
     }).compile();
 
@@ -229,6 +233,7 @@ describe('PlaybookFlowService', () => {
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
         { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
         { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
       ],
     }).compile();
 
@@ -306,6 +311,7 @@ describe('PlaybookFlowService', () => {
         { provide: PlaybookFlowValidatorService, useValue: validatorService },
         { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
         { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
       ],
     }).compile();
 
@@ -391,5 +397,105 @@ describe('PlaybookFlowService', () => {
       dataBindingChanges: 1,
       positionUpdates: 0,
     });
+  });
+
+  it('createWithNodesAndEdges seeds smart HITL defaults by default', async () => {
+    const executionModel = {} as any;
+    const flowModel = Object.assign(
+      jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+        const doc = {
+          ...payload,
+          toJSON: jest.fn().mockReturnValue({ id: 'flow-new', ...(payload as Record<string, unknown>) }),
+          save: jest.fn().mockResolvedValue(undefined),
+        };
+        doc.save = jest.fn().mockResolvedValue(doc);
+        return doc;
+      }),
+      {
+        findById: jest.fn(),
+      },
+    );
+
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      { validate: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      { normalizeWorkspaces: (workspaces: string[]) => workspaces, ensureWorkspaceSelection: () => undefined } as any,
+      { sanitize: jest.fn((graph) => graph) } as any,
+      { buildPatchedGraph: jest.fn() } as any,
+      { get: jest.fn().mockReturnValue(true) } as any,
+    );
+
+    await service.createWithNodesAndEdges('user-1', 'Base', '', [], [], [], []);
+
+    const created = (flowModel as jest.Mock).mock.calls[0][0];
+    expect(created.hitlPolicy).toMatchObject({ mode: 'auto', sensitivity: 'balanced' });
+    expect(Array.isArray(created.hitlBlockers)).toBe(true);
+    expect(created.hitlBlockers.length).toBeGreaterThan(0);
+  });
+
+  it('clone copies existing HITL policy and blockers for compatibility', async () => {
+    const existing = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      schemaVersion: 1,
+      name: 'Original',
+      description: 'desc',
+      triggerConfig: { kind: 'manual' },
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: { mode: 'manual' },
+      hitlBlockers: [{ id: 'custom' }],
+      nodes: [{ id: 'task-1' }],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: [],
+      designSettings: { canvas: {} },
+      isFavorite: false,
+      reflectionEnabled: false,
+      advisorScoringMode: 'llm',
+      advisorAutopilotEnabled: false,
+      advisorAutopilotTargetScore: undefined,
+      advisorAutopilotMaxTurns: undefined,
+      toJSON: jest.fn().mockReturnValue({
+        id: 'flow-1',
+        ownerId: 'user-1',
+        name: 'Original',
+      }),
+    };
+    const flowModel = Object.assign(
+      jest.fn().mockImplementation((payload: Record<string, unknown>) => ({
+        ...payload,
+        save: jest.fn().mockImplementation(function save(this: { toJSON: () => unknown }) {
+          return Promise.resolve(this);
+        }),
+        toJSON: jest.fn().mockReturnValue({ id: 'flow-clone', ...(payload as Record<string, unknown>) }),
+      })),
+      {
+        findById: jest.fn(),
+      },
+    );
+
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      { validate: jest.fn() } as any,
+      { findOwnedFlow: jest.fn().mockResolvedValue(existing) } as any,
+      {} as any,
+      {
+        normalizeWorkspaces: (workspaces: string[]) => workspaces,
+        ensureWorkspaceSelection: () => undefined,
+      } as any,
+      { sanitize: jest.fn((graph) => graph) } as any,
+      { buildPatchedGraph: jest.fn() } as any,
+      { get: jest.fn().mockReturnValue(true) } as any,
+    );
+
+    await service.clone('flow-1', 'user-1');
+
+    const created = (flowModel as jest.Mock).mock.calls[0][0];
+    expect(created.hitlPolicy).toEqual(existing.hitlPolicy);
+    expect(created.hitlBlockers).toEqual(existing.hitlBlockers);
   });
 });

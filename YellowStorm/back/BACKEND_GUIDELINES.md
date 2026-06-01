@@ -14,7 +14,7 @@
 | Auth | `@nestjs/passport` + `passport-jwt` + `@nestjs/jwt`, bcrypt |
 | Docs | `@nestjs/swagger` (gated in non-prod) |
 | Scheduling | `@nestjs/schedule` |
-| Health | `@nestjs/terminus` |
+| Health | Custom (not `@nestjs/terminus` — see §19) |
 | gRPC | `@grpc/grpc-js` + `@grpc/proto-loader` (client to Python ADK) |
 | Realtime | SSE via RxJS `Observable<MessageEvent>`; socket.io available |
 | Storage | `@azure/storage-blob` (SAS URLs) |
@@ -53,12 +53,20 @@ import authConfig from '@config/auth.config';
 src/modules/<name>/
 ├── <name>.module.ts            # @Module: imports, controllers, providers, exports
 ├── controllers/                # *.controller.ts + colocated *.spec.ts
-├── services/                   # *.service.ts + *.spec.ts
+├── services/                   # *.service.ts + *.spec.ts (sub-directories for domains)
 ├── dto/                        # class-validator DTOs (request + query)
 ├── schemas/                    # Mongoose @Schema/@Prop
 ├── guards/                     # CanActivate implementations
 ├── decorators/                 # Param / metadata decorators
-├── proto/                      # gRPC .proto (conversation only, for now)
+├── domain/                     # Policy, access, sanitisation, response assembly — optional
+├── design/                     # Async design operations — optional (playbook-flow)
+├── execution/                  # gRPC client + runtime services — optional (playbook-flow)
+│   ├── grpc/                   # gRPC client, Struct mappers
+│   └── runtime/                # Dispatchers, event handlers, stream finalizers
+├── proto/                      # gRPC .proto files
+├── interfaces/                 # TypeScript interfaces for internal contracts
+├── mappers/                    # DTO ↔ domain mappers
+├── utils/                      # Module-specific utilities
 └── constants/                  # Static maps / enums
 ```
 
@@ -73,7 +81,8 @@ src/modules/<name>/
 
 Global config applied once — **do not** re-apply per-controller:
 - `helmet()` with CSP (default-src `'self'`, style-src inline, img-src `'self' data: https:`).
-- `compression()` (threshold 1 KB), `cookieParser()`, CORS (origins from `CORS_ORIGIN`, `credentials: true`).
+- `compression()` is **disabled** (commented out) — it buffers SSE responses. Do not re-enable without verifying all SSE streams.
+- `cookieParser()`, CORS (origins from `CORS_ORIGIN`, `credentials: true`).
 - URI versioning `/v1/`, global prefix `api` → `/api/v1/<resource>`.
 - Global `ValidationPipe` (see §6), `SwaggerModule.setup('docs', ...)` in non-prod only.
 - Graceful shutdown on `SIGTERM`, `SIGINT`, `uncaughtException`, `unhandledRejection`.
@@ -91,6 +100,12 @@ constructor(@Inject(authConfig.KEY) private readonly auth: ConfigType<typeof aut
 Or `ConfigService` for one-off values. **Never** read `process.env` directly in services.
 
 All env vars go through Joi validation in `src/config/config.schema.ts`. The app refuses to boot with missing required vars. Production requires `JWT_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`, storage + email secrets.
+
+**Existing config namespaces:** `app`, `auth`, `jwt`, `database`, `email`, `storage`, `logging`, `health`, `notifications`, `workspace`, `indexing`, `conversation`, `conversation-v2`, `litellm`, `playbook-flow`, `telegram`, `microsoft`.
+
+The **playbook-flow** config (`src/config/playbook-flow.config.ts`) is the most extensive: gRPC URLs, execution limits, token buffer, execution lease, delta patch, async design, and concurrency controls. Any new env var in this domain must be added to both the config file and `config.schema.ts` — missing entries cause silent fallback to defaults.
+
+All config keys read in services must be declared in the corresponding `<name>.config.ts`. If you find a service reading a key that is not in the config file (e.g. `playbook-flow.maxSseConnections`), add it — do not rely on fallback defaults.
 
 ---
 
@@ -134,11 +149,28 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 |-------|---------|
 | `ERR_1000` | Internal error |
 | `ERR_1001` | Validation error |
-| `ERR_1002`–`ERR_1008` | Generic HTTP (404, 401, 403, 409, 400, 429, 503) |
+| `ERR_1002`–`ERR_1009` | Generic HTTP (404, 401, 403, 409, 400, 429, 503, 410) |
 | `ERR_1100`–`ERR_11xx` | Auth |
 | `ERR_1200`–`ERR_12xx` | User |
 | `ERR_1300`–`ERR_13xx` | Agent |
 | `ERR_1400`–`ERR_14xx` | Chat / conversation |
+| `ERR_1500`–`ERR_15xx` | External service |
+| `ERR_1600`–`ERR_16xx` | System |
+| `ERR_1700`–`ERR_17xx` | Usage / plan |
+| `ERR_1800`–`ERR_18xx` | Notification |
+| `ERR_1900`–`ERR_19xx` | Workspace |
+| `ERR_2000`–`ERR_20xx` | Models |
+| `ERR_2100`–`ERR_21xx` | Authorization / RBAC |
+| `ERR_2200`–`ERR_22xx` | Tool / skill |
+| `ERR_2300`–`ERR_24xx` | Agent type / custom agent |
+| `ERR_2500`–`ERR_25xx` | **Playbook** |
+| `ERR_2600`–`ERR_26xx` | Auth provider |
+| `ERR_2700`–`ERR_27xx` | Project |
+| `ERR_2800`–`ERR_28xx` | Classifier |
+| `ERR_2900`–`ERR_29xx` | Chat completion |
+| `ERR_3000`–`ERR_30xx` | Connected app |
+| `ERR_3100`–`ERR_31xx` | Connector |
+| `ERR_3200`–`ERR_32xx` | Telegram |
 
 Adding a code: pick the right range, add to enum, add EN+FR messages in frontend `errors.json`.
 
@@ -182,13 +214,23 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 
 ## 10. gRPC & Microservices
 
-**Proto files** in `src/modules/<module>/proto/`. Any `.proto` change must be mirrored in `yellowstorm-adk/grpc/proto/`.
+**Proto files** in `src/modules/<module>/proto/`. Currently three proto files:
 
-Backend acts as **gRPC client**. Clients built in services (e.g. `StreamService`) via `OnModuleInit` using `@grpc/grpc-js` + `@grpc/proto-loader`.
+| Module | File | Service | RPCs |
+|--------|------|---------|------|
+| `conversation` | `chatbot.proto` | Messages only | — (shared types) |
+| `conversation-v2` | `conversation.proto` | `ConversationV2` | 7 RPCs |
+| `playbook-flow` | `playbook-flow.proto` | `PlaybookFlowRuntime` | 5 RPCs |
 
-**Post-build:** `package.json`'s `postbuild` copies `.proto` files to `dist/`. Extend when adding new proto files.
+Any `.proto` change must be mirrored in `yellowstorm-adk/grpc/proto/`.
+
+**Post-build:** `package.json`'s `postbuild` copies `.proto` files to `dist/`. When adding a new proto file, add it to the `postbuild` script. Currently copies: `chatbot.proto`, `playbook-flow.proto`. If adding a new proto, add it here too.
+
+**Backend acts as gRPC client** for all three. Clients are built in services (e.g. `PlaybookFlowRuntimeClientService`, `ConversationV2ClientService`) via `OnModuleInit` using `@grpc/grpc-js` + `@grpc/proto-loader`.
 
 **Streams:** Map gRPC stream events to RxJS `Observable`/`Subject`. Always handle `error`, `end`, disconnect. Translate gRPC codes to domain error codes — never leak raw gRPC codes to frontend.
+
+**`google.protobuf.Struct`:** `@grpc/proto-loader` does NOT auto-convert plain JS objects to Struct wire format. Always wrap with the module's `toGrpcStruct()` before assigning to a Struct-typed field. Current Struct fields: `task_metadata`, `evaluation_config`, `trigger_context`, `agent_params`. A missed wrap causes a silent empty field on the Python side with no log or error.
 
 ---
 
@@ -237,15 +279,23 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 
 ## 15. Real-time & SSE
 
-Two primary streams: `GET /api/v1/conversations/stream` and `GET /api/v1/notifications/stream`.
+Four SSE stream endpoints exist. Each uses a different serving pattern:
+
+| Stream | Endpoint | Auth | Implementation |
+|--------|----------|------|----------------|
+| Conversation | `GET /api/v1/conversations/stream` | `StreamAuth` decorator | `@Sse()`, RxJS `Observable` |
+| Notifications | `GET /api/v1/notifications/stream` | `SseAuth` decorator | `@Sse()`, heartbeat via `interval()` |
+| Playbook flow | `GET /api/v1/playbooks/stream` | `PlaybookFlowStreamAuthGuard` (query token) | `@Sse()`, `@Public()`, per-user connection tracking |
+| Conversation v2 | `GET /api/v1/conversation-v2/stream/:sessionId` | Query token | Manual SSE (no `@Sse()`), flush via warmup padding, Nagle disable, heartbeat stream |
 
 **Rules:**
-- SSE auth via dedicated guard (`SseAuthGuard` / `StreamAuth` decorator), not `JwtAuthGuard` (browsers can't set `Authorization` on `EventSource`).
+- SSE auth via dedicated guard, not `JwtAuthGuard` (browsers can't set `Authorization` on `EventSource`).
 - Always clean up on `req.on('close')`.
 - Cap per-user connections (frontend issues `TOO_MANY_TABS` on eviction).
-- Emit typed events; keep schema in sync with frontend `stream.ts`.
+- Emit typed events; keep schema in sync with frontend.
 - On token refresh, frontend calls `reconnectWithNewToken()` — expect short-lived reconnects.
 - Do not open WebSocket gateways without agreeing on event schema with the frontend team.
+- `compression()` middleware is incompatible with SSE (buffering breaks streaming). It is disabled in `main.ts` — do not re-enable without verifying all SSE endpoints.
 
 ---
 
@@ -286,6 +336,8 @@ SAS-based direct browser upload via `DocumentService` (`src/modules/document/`):
 | `GET /api/v1/health/stats?minutes=60` | Aggregated stats |
 
 Add a health indicator for each new external dependency.
+
+**Note:** The health module uses a **custom implementation** (not `@nestjs/terminus`, despite the dependency being in `package.json`). It performs direct checks on memory, event loop, database, storage, email, LiteLLM, and gRPC connections. History is persisted in MongoDB for observability (`HealthHistory` schema). Do not migrate to Terminus without a documented rationale — the custom path provides richer per-check history and stats.
 
 ---
 
@@ -342,7 +394,7 @@ Changes crossing the boundary require paired updates:
 | New SSE event type | `stream.ts` / notifications service |
 | Cookie attrs change | CORS + `credentials` + `sameSite` must match |
 | Versioning / prefix change | `VITE_API_URL` / `env.sh` |
-| New `.proto` field | `yellowstorm-adk/grpc/proto/` + backend `postbuild` |
+| New `.proto` field or file | `yellowstorm-adk/grpc/proto/` mirror + `postbuild` copy in `package.json` |
 
 **Frozen contracts:** response envelope, error envelope, and pagination shape. Do not alter silently.
 
@@ -359,6 +411,8 @@ For persisted editable fields, treat schema, DTO, response serializer/interface,
 - [ ] Mongoose schema: `timestamps`, indexes, `toJSON` transform (`_id` → `id`).
 - [ ] Tests colocated as `*.spec.ts`; `npm test` passes.
 - [ ] Proto changes mirrored in ADK, `postbuild` copies, contract validated.
+- [ ] Proto files: all three (chatbot.proto, conversation.proto, playbook-flow.proto) copied in `postbuild` — add new ones.
+- [ ] `google.protobuf.Struct` fields wrapped with `toGrpcStruct()` — never assign a plain JS object.
 - [ ] Frontend contract items synced per §23.
 - [ ] Persisted editable fields are present in schema, DTO, serializer/interface, and frontend type/editor payload.
 - [ ] No `console.log`; structured logs via `LoggerService`.
@@ -383,3 +437,8 @@ For persisted editable fields, treat schema, DTO, response serializer/interface,
 - Adding an env var without adding it to `config.schema.ts` Joi validation.
 - Adding custom response/error envelope shapes "just for this endpoint".
 - Breaking API/proto contracts without updating frontend + ADK in the same change set.
+- Bare `catch {}` or `catch (e) { /* ignore */ }` — always log or re-throw.
+- Relying on fallback defaults for config keys not declared in `<name>.config.ts` or `config.schema.ts`.
+- Adding a new proto file without adding it to `package.json`'s `postbuild` copy step.
+- Adding a `google.protobuf.Struct` field without wrapping the value in `toGrpcStruct()`. The silent wire drop is invisible on the Python side.
+- Using `@nestjs/terminus` without verifying it matches the custom health history pattern.

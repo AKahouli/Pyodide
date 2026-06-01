@@ -456,7 +456,7 @@ function PlaybookCanvasInner() {
   const intentBarRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
-  const previousWaitingForHumanInputRef = useRef(false);
+  const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
 
   const handleToggleTriggerEnabled = useCallback(
@@ -863,6 +863,7 @@ function PlaybookCanvasInner() {
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
   const prevIsDesigning = useRef(isDesigning);
+  const pendingInterruptFetchRef = useRef<string | null>(null);
   useEffect(() => {
     const visibleStatus = getVisibleExecutionStatus(currentExecution?.playbookId === id ? currentExecution : execution);
     if (visibleStatus === 'completed' || visibleStatus === 'failed') {
@@ -3119,7 +3120,39 @@ function PlaybookCanvasInner() {
     if (newOpen) setEditorOpen(false);
   }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen]);
 
-  const waitingForHumanInput = currentExecution?.playbookId === id && currentExecution?.waitingForHumanInput === true;
+  const currentPlaybookExecution = currentExecution?.playbookId === id ? currentExecution : null;
+  const executionHasHumanInput = execution?.waitingForHumanInput === true
+    || execution?.status === 'interrupted'
+    || execution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const currentExecutionHasHumanInput = currentPlaybookExecution?.waitingForHumanInput === true
+    || currentPlaybookExecution?.status === 'interrupted'
+    || currentPlaybookExecution?.taskResults.some((taskResult) => taskResult.status === 'interrupted') === true;
+  const executionWithHumanInput = executionHasHumanInput
+    ? execution
+    : currentExecutionHasHumanInput
+      ? currentPlaybookExecution
+      : currentPlaybookExecution ?? execution;
+  const waitingForHumanInput = executionWithHumanInput?.waitingForHumanInput === true;
+  const interruptedTaskId = executionWithHumanInput?.taskResults.find((taskResult) => taskResult.status === 'interrupted')?.taskId;
+  const shouldOpenHumanInput = waitingForHumanInput || executionWithHumanInput?.status === 'interrupted';
+  const humanInputKey = shouldOpenHumanInput
+    ? `${executionWithHumanInput?.id ?? ''}:${executionWithHumanInput?.currentInterruptId ?? executionWithHumanInput?.interruptPayload?.interruptId ?? interruptedTaskId ?? 'interrupted'}`
+    : null;
+
+  useEffect(() => {
+    if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
+      return;
+    }
+    if (pendingInterruptFetchRef.current === executionForCanvas.id) {
+      return;
+    }
+    pendingInterruptFetchRef.current = executionForCanvas.id;
+    void fetchExecution(id, executionForCanvas.id).finally(() => {
+      if (pendingInterruptFetchRef.current === executionForCanvas.id) {
+        pendingInterruptFetchRef.current = null;
+      }
+    });
+  }, [executionForCanvas, fetchExecution, id]);
 
   const handleIntentBarClick = useCallback(() => {
     setWorkspaceExplorerOpen(false);
@@ -3142,16 +3175,16 @@ function PlaybookCanvasInner() {
   }, []);
 
   useEffect(() => {
-    const wasWaitingForHumanInput = previousWaitingForHumanInputRef.current;
-    previousWaitingForHumanInputRef.current = Boolean(waitingForHumanInput);
+    const previousHumanInputKey = previousHumanInputKeyRef.current;
+    previousHumanInputKeyRef.current = humanInputKey;
 
-    if (!waitingForHumanInput || wasWaitingForHumanInput) {
+    if (!humanInputKey || previousHumanInputKey === humanInputKey) {
       return;
     }
 
     setDesignerOpen(true);
     setCopilotMode('interrupt');
-  }, [setCopilotMode, setDesignerOpen, waitingForHumanInput]);
+  }, [humanInputKey, setCopilotMode, setDesignerOpen]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
@@ -3427,6 +3460,7 @@ function PlaybookCanvasInner() {
       )}
       {id && (
         <PlaybookFlowSettingsDrawer
+          playbookId={id}
           open={flowSettingsOpen}
           onOpenChange={setFlowSettingsOpen}
           settings={playbook.settings || { recursionLimit: 25, maxParallelism: 4 }}
@@ -3572,9 +3606,7 @@ function PlaybookCanvasInner() {
                   onPasteClipboard={() => { void pasteClipboard(); }}
                   hasSelection={nodes.some((n) => n.selected && n.id !== '__trigger__')}
                   waitingForHumanInput={Boolean(waitingForHumanInput)}
-                  interruptType={currentExecution?.playbookId === id
-                    ? ((currentExecution?.interruptPayload?.type ?? null) as InterruptType | null)
-                    : null}
+                  interruptType={(executionWithHumanInput?.interruptPayload?.type ?? null) as InterruptType | null}
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}

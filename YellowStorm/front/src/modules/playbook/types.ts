@@ -101,6 +101,113 @@ export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'const
 export type DataBindingIterationRef = 'current' | 'previous';
 export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
 export type AdvisorScoringMode = 'llm' | 'heuristic';
+export type HitlMode = 'auto' | 'manual' | 'off';
+export type HitlSensitivity = 'minimal' | 'balanced' | 'strict';
+export type HitlFeedbackScope =
+  | 'step_only'
+  | 'downstream_run'
+  | 'entire_run'
+  | 'future_node_runs'
+  | 'future_workflow_runs';
+export type HitlBlockerKind =
+  | 'missing_required_input'
+  | 'missing_document'
+  | 'ambiguous_instruction'
+  | 'destructive_action'
+  | 'external_send'
+  | 'workspace_write'
+  | 'sensitive_domain'
+  | 'low_confidence'
+  | 'cost_or_runtime_risk'
+  | 'explicit_user_instruction'
+  | 'custom';
+export type HitlBlockerAction = 'clarify' | 'approve' | 'review' | 'stop';
+export type HitlRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type HitlBlockerMatcherType =
+  | 'deterministic'
+  | 'tool_action'
+  | 'input_binding'
+  | 'llm_judge'
+  | 'custom_expression';
+
+export interface HitlPolicy {
+  mode: HitlMode;
+  sensitivity: HitlSensitivity;
+  clarificationEnabled: boolean;
+  approvalEnabled: boolean;
+  reviewEnabled: boolean;
+  propagateFeedbackDefault: boolean;
+  defaultFeedbackScope: HitlFeedbackScope;
+  inheritedFromWorkflow?: boolean;
+  disabledReason?: string | null;
+}
+
+export interface HitlBlockerRule {
+  id: string;
+  scope: 'workflow' | 'node';
+  nodeId?: string | null;
+  enabled: boolean;
+  kind: HitlBlockerKind;
+  label: string;
+  description: string;
+  action: HitlBlockerAction;
+  riskLevel: HitlRiskLevel;
+  sensitivity: HitlSensitivity;
+  matcherType: HitlBlockerMatcherType;
+  matcherConfig: Record<string, unknown>;
+  promptTemplate?: string | null;
+  appliesToToolNames?: string[];
+  appliesToConnectorActions?: string[];
+  createdBy: 'system' | 'user' | 'assistant';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HitlMemory {
+  id: string;
+  ownerId: string;
+  flowId: string;
+  nodeId?: string | null;
+  memoryType: 'semantic' | 'episodic' | 'procedural' | 'approval_policy';
+  source: 'hitl_feedback' | 'blocker_rule' | 'replay_validation' | 'manual';
+  title: string;
+  content: string;
+  normalizedInstruction: string;
+  appliesTo: 'node' | 'workflow' | 'agent' | 'workspace';
+  status: 'active' | 'draft' | 'archived';
+  sensitivity: 'normal' | 'sensitive';
+  createdFromExecutionId?: string;
+  createdFromInterruptId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HitlEventLog {
+  id: string;
+  nodeId: string;
+  iteration: number;
+  interruptId: string;
+  type: InterruptType | string;
+  blockerRuleId?: string | null;
+  blockerKind?: HitlBlockerKind | string | null;
+  reasonCode: string;
+  riskLevel: HitlRiskLevel;
+  prompt: string;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'answered' | 'expired' | 'cancelled';
+  response?: {
+    action: string;
+    message?: string | null;
+    approved?: boolean | null;
+    reason?: string | null;
+    feedback?: string | null;
+    scope?: HitlFeedbackScope;
+    remember?: boolean;
+  } | null;
+  downstreamNodeIds: string[];
+  createdAt: string;
+  respondedAt?: string | null;
+}
 
 export type IteratorMode = 'item' | 'batch';
 export type IteratorErrorStrategy = 'stop' | 'continue';
@@ -256,6 +363,7 @@ export interface PlaybookTask {
   humanApprovalConfig?: HumanApprovalConfig | null;
   retryPolicy?: RetryPolicy | null;
   modelId?: string | null;
+  hitlPolicy?: HitlPolicy | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
@@ -336,7 +444,17 @@ export interface EffectivePlaybookDesignSettings {
   approvalSuggestionMode: 'auto' | 'manual';
 }
 
-export type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
+export type PlaybookIntentOperationType =
+  | 'create_node'
+  | 'insert_before'
+  | 'insert_after'
+  | 'update_node'
+  | 'delete_node'
+  | 'update_hitl_policy'
+  | 'create_blocker_rule'
+  | 'update_blocker_rule'
+  | 'delete_blocker_rule'
+  | 'create_hitl_memory';
 
 export type PlaybookIntentSuggestionKind = 'single_change' | 'workflow_plan';
 
@@ -1105,6 +1223,7 @@ export interface PlaybookExecution {
   }>;
   threadId: string | null;
   interruptPayload: InterruptPayload | null;
+  pendingInterrupts?: InterruptPayload[];
   waitingForHumanInput?: boolean;
   currentInterruptId?: string | null;
   currentInterruptTaskId?: string | null;
@@ -1184,6 +1303,20 @@ export interface ReplaySignalStatus {
   reason?: string | null;
 }
 
+export interface ReplayHitlSummary {
+  baselineHitlCount: number;
+  runtimeHitlCount: number;
+  reusedMemoryCount: number;
+  newClarificationCount: number;
+  approvalReaskedCount: number;
+  hitlContextDrift: boolean;
+  findings: Array<{
+    severity: 'info' | 'warning' | 'fail';
+    message: string;
+    nodeId: string;
+  }>;
+}
+
 export interface ReplayRunReport {
   id: string;
   executionId: string;
@@ -1232,6 +1365,7 @@ export interface ReplayRunReport {
   semanticStatus?: ReplaySignalStatus;
   contextSubstitutionStatus?: ReplaySignalStatus;
   postRunEvaluation?: ReplayPostRunEvaluation | null;
+  hitlSummary?: ReplayHitlSummary | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1284,6 +1418,22 @@ export interface ReplayAcceptedExample {
   outputPreview?: string | null;
 }
 
+export interface ReplayHitlMemorySnapshot {
+  interruptId: string;
+  nodeId: string;
+  iteration: number;
+  type: 'clarification' | 'approval_request' | 'review_request';
+  blockerKind?: string | null;
+  reasonCode: string;
+  prompt: string;
+  responseAction: string;
+  responseMessage?: string | null;
+  responseScope: HitlFeedbackScope;
+  downstreamNodeIds: string[];
+  reusableInReplay: boolean;
+  contextFingerprint: string;
+}
+
 export interface ValidatedTaskReplay {
   id: string;
   playbookId: string;
@@ -1322,6 +1472,7 @@ export interface ValidatedTaskReplay {
   toolTraceTemplate?: ReplayToolTraceTemplateItem[];
   driftPolicy?: ReplayDriftPolicy | null;
   acceptedExamples?: ReplayAcceptedExample[];
+  hitlMemorySnapshots?: ReplayHitlMemorySnapshot[];
   referenceUsage?: {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -1393,6 +1544,15 @@ export interface InterruptPayload {
   resumableActions?: string[];
   taskDescription?: string;
   result?: string;
+  blockerRuleId?: string | null;
+  blockerKind?: HitlBlockerKind | string | null;
+  reasonCode?: string | null;
+  riskLevel?: HitlRiskLevel | string | null;
+  confidence?: number | null;
+  downstreamNodeIds?: string[];
+  feedbackScopeDefault?: HitlFeedbackScope;
+  suggestedChoices?: string[];
+  memoryCandidate?: boolean;
 }
 
 export interface HumanFeedbackData {
@@ -1411,6 +1571,15 @@ export interface HumanFeedbackData {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+  scope?: HitlFeedbackScope;
+  remember?: boolean;
+  blockerRuleId?: string | null;
+  blockerKind?: HitlBlockerKind | string | null;
+  reasonCode?: string | null;
+  riskLevel?: HitlRiskLevel | string | null;
+  downstreamNodeIds?: string[];
+  feedbackScopeDefault?: HitlFeedbackScope;
+  memoryCandidate?: boolean;
 }
 
 export interface HitlHistoryEntry {
@@ -1430,6 +1599,15 @@ export interface HitlHistoryEntry {
   responseApproved: boolean | null;
   responseReason: string | null;
   responseFeedback: string | null;
+  responseScope?: HitlFeedbackScope | null;
+  responseRemember?: boolean | null;
+  blockerRuleId?: string | null;
+  blockerKind?: HitlBlockerKind | string | null;
+  reasonCode?: string | null;
+  riskLevel?: HitlRiskLevel | string | null;
+  downstreamNodeIds?: string[];
+  feedbackScopeDefault?: HitlFeedbackScope;
+  memoryCandidate?: boolean;
   respondedBy: string | null;
   respondedAt: string | null;
   createdAt: string;
@@ -1630,6 +1808,13 @@ export interface PlaybookInterruptEvent {
   resumableActions?: string[];
   taskDescription?: string;
   result?: string;
+  blockerRuleId?: string;
+  blockerKind?: string;
+  reasonCode?: string;
+  riskLevel?: string;
+  downstreamNodeIds?: string[];
+  feedbackScopeDefault?: HitlFeedbackScope;
+  memoryCandidate?: boolean;
 }
 
 // ===== DTOs =====
@@ -1776,6 +1961,13 @@ export interface ResumePlaybookData {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+  scope?: HitlFeedbackScope;
+  remember?: boolean;
+  blockerRuleId?: string | null;
+  blockerKind?: HitlBlockerKind | string | null;
+  reasonCode?: string | null;
+  riskLevel?: HitlRiskLevel | string | null;
+  downstreamNodeIds?: string[];
 }
 
 export interface RerunStepData {
@@ -1801,6 +1993,8 @@ export interface ResumeFromStepData {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+  scope?: HitlFeedbackScope;
+  remember?: boolean;
   payload?: Record<string, unknown>;
 }
 
@@ -1980,9 +2174,12 @@ export interface PlaybookActions {
       approved?: boolean;
       reason?: string;
       feedback?: string;
+      scope?: HitlFeedbackScope;
+      remember?: boolean;
       payload?: Record<string, unknown>;
     },
   ) => Promise<void>;
+  disableHitlBlocker: (executionId: string, interruptId: string) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
   stopExecution: (playbookId: string, executionId: string) => Promise<void>;
   deleteExecution: (playbookId: string, executionId: string) => Promise<void>;
@@ -2265,6 +2462,7 @@ export interface FlowNode {
   iteratorConfig?: FlowIteratorConfig;
   humanApprovalConfig?: HumanApprovalConfig;
   retryPolicy?: RetryPolicy;
+  hitlPolicy?: HitlPolicy;
   modelId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -2319,6 +2517,8 @@ export interface Flow {
   description?: string;
   triggerConfig?: FlowTriggerConfig;
   settings: FlowSettings;
+  hitlPolicy?: HitlPolicy;
+  hitlBlockers?: HitlBlockerRule[];
   nodes: FlowNode[];
   controlEdges: ControlEdge[];
   dataBindings: DataBinding[];
@@ -2350,6 +2550,8 @@ export interface CreateFlowData {
   description?: string;
   triggerConfig?: FlowTriggerConfig;
   settings?: Partial<FlowSettings>;
+  hitlPolicy?: HitlPolicy;
+  hitlBlockers?: HitlBlockerRule[];
   nodes?: FlowNode[];
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
@@ -2360,6 +2562,8 @@ export interface UpdateFlowData {
   description?: string;
   triggerConfig?: FlowTriggerConfig;
   settings?: Partial<FlowSettings>;
+  hitlPolicy?: HitlPolicy;
+  hitlBlockers?: HitlBlockerRule[];
   nodes?: FlowNode[];
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];

@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { playbookKeys } from '@/modules/playbook/query/queryKeys';
-import type { Playbook, PlaybookExecution } from '@/modules/playbook/types';
+import type { HitlBlockerRule, HitlMemory, HitlPolicy, Playbook, PlaybookExecution } from '@/modules/playbook/types';
 import { dispatchPlaybookStreamEvent } from './queryEventDispatcher';
 
 function makeClient() {
@@ -138,6 +138,104 @@ describe('query-backed playbook stream dispatcher', () => {
       hasOutputFormatTemplate: true,
       activeOutputFormatTemplateId: 'template-1',
       activeOutputFormatTemplateVersion: 3,
+    });
+  });
+
+  it('updates HITL query caches from policy, blocker, and memory stream events', () => {
+    const execution = makeExecution();
+    const policy: HitlPolicy = {
+      mode: 'auto',
+      sensitivity: 'strict',
+      clarificationEnabled: true,
+      approvalEnabled: true,
+      reviewEnabled: true,
+      propagateFeedbackDefault: true,
+      defaultFeedbackScope: 'downstream_run',
+    };
+    const blocker = {
+      id: 'rule-1',
+      enabled: true,
+      scope: 'workflow',
+    } as HitlBlockerRule;
+    const memory = {
+      id: 'memory-1',
+      flowId: 'playbook-1',
+    } as HitlMemory;
+
+    queryClient.setQueryData(playbookKeys.execution('exec-1'), execution);
+    queryClient.setQueryData(playbookKeys.hitlBlockers('playbook-1'), [blocker]);
+
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_policy_updated',
+      data: { executionId: 'exec-1', policy },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_blocker_disabled',
+      data: { executionId: 'exec-1', blockerId: 'rule-1' },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_memory_saved',
+      data: { executionId: 'exec-1', memory },
+    }, { queryClient });
+
+    expect(queryClient.getQueryData(playbookKeys.hitlPolicy('playbook-1'))).toEqual(policy);
+    expect(queryClient.getQueryData<HitlBlockerRule[]>(playbookKeys.hitlBlockers('playbook-1'))?.[0].enabled).toBe(false);
+    expect(queryClient.getQueryData(playbookKeys.hitlMemories('playbook-1'))).toEqual([memory]);
+  });
+
+  it('merges HITL interrupt lifecycle events into execution cache', () => {
+    queryClient.setQueryData(playbookKeys.execution('exec-1'), makeExecution({
+      taskResults: [{ taskId: 'task-1', status: 'running' } as PlaybookExecution['taskResults'][number]],
+    }));
+
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_interrupt_created',
+      data: {
+        executionId: 'exec-1',
+        taskId: 'task-1',
+        type: 'clarification',
+        message: 'Which signed contract should I use?',
+        threadId: 'thread-1',
+        interruptId: 'interrupt-1',
+        resumableActions: ['reply'],
+        feedbackScopeDefault: 'downstream_run',
+      },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_interrupt_updated',
+      data: {
+        executionId: 'exec-1',
+        interruptId: 'interrupt-1',
+        message: 'Which final signed contract should I use?',
+      },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_hitl_interrupt_resolved',
+      data: {
+        executionId: 'exec-1',
+        interruptId: 'interrupt-1',
+        taskId: 'task-1',
+        action: 'reply',
+        scope: 'downstream_run',
+        remember: true,
+      },
+    }, { queryClient });
+
+    const execution = queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution('exec-1'));
+    expect(execution).toMatchObject({
+      status: 'running',
+      waitingForHumanInput: false,
+      currentInterruptId: null,
+      currentInterruptTaskId: null,
+      pendingInterrupts: [],
+    });
+    expect(execution?.hitlHistory?.[0]).toMatchObject({
+      interruptId: 'interrupt-1',
+      status: 'answered',
+      responseAction: 'reply',
+      responseScope: 'downstream_run',
+      responseRemember: true,
+      message: 'Which final signed contract should I use?',
     });
   });
 });

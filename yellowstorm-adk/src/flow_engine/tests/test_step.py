@@ -48,6 +48,8 @@ class _FakeStepHitlResult:
         self.updated_description = updated_description
         self.error_msg = error_msg
         self.needs_reexec = needs_reexec
+        self.suppress_follow_up_clarification = False
+        self.human_context = []
 
 
 async def _fake_handle_hitl(*args, **kwargs):
@@ -56,6 +58,18 @@ async def _fake_handle_hitl(*args, **kwargs):
 
 fake_step_hitl.StepHitlResult = _FakeStepHitlResult
 fake_step_hitl.needs_hitl = lambda metadata: False
+fake_step_hitl._build_interrupt_payload = lambda interrupt_type, message, **kwargs: {
+    "type": interrupt_type,
+    "message": message,
+    **kwargs,
+}
+fake_step_hitl.extract_interrupt_message = lambda response: str((response or {}).get("message") or "")
+fake_step_hitl.normalize_interrupt_action = lambda response, interrupt_type: "approve"
+fake_step_hitl.should_proceed_without_more_clarification = lambda _message: False
+fake_step_hitl.extract_feedback_scope = lambda response, default_scope="step_only": (
+    response.get("scope") if isinstance(response, dict) and response.get("scope") else default_scope
+)
+fake_step_hitl.build_human_context_entry = lambda *args, **kwargs: None
 fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_after = _fake_handle_hitl
@@ -70,6 +84,10 @@ fake_step_hitl_handlers.handle_interrupt_after = _fake_handle_hitl
 sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hitl_handlers)
 
 from src.flow_engine.nodes.step import run_step
+
+sys.modules.pop("src.flow_engine.nodes.step_hitl", None)
+sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
+sys.modules.pop("src.flow_engine.nodes.step_hitl_blockers", None)
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_result import finalize_step_result
 
@@ -432,6 +450,63 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
+
+
+@pytest.mark.anyio
+async def test_run_step_hitl_policy_off_suppresses_legacy_clarification(monkeypatch):
+    handler_calls = []
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    async def _unexpected_clarification(*args, **kwargs):
+        handler_calls.append((args, kwargs))
+        return _FakeStepHitlResult()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.needs_hitl", lambda _metadata: True)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_before", _unexpected_clarification)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect input",
+            "metadata": {"allowClarification": True},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "hitl_policy": {"mode": "off"},
+        },
+    )
+
+    assert handler_calls == []
+    assert result["task_outputs"][("step-1", 0)]["output"] == "done"
 
 
 @pytest.mark.anyio

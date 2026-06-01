@@ -2,6 +2,9 @@ import type {
   PlaybookAdvisorAutopilotUpdatedEvent,
   PlaybookExecution,
   PlaybookExecutionCompleteEvent,
+  HitlFeedbackScope,
+  HitlHistoryEntry,
+  InterruptPayload,
   PlaybookInterruptEvent,
   PlaybookIteratorChildStepCompleteEvent,
   PlaybookIteratorChildStepStartEvent,
@@ -116,17 +119,83 @@ export function mergeExecutionCompleted(previous: PlaybookExecution | undefined,
 
 export function mergeInterrupt(previous: PlaybookExecution | undefined, data: PlaybookInterruptEvent) {
   if (!previous) return undefined;
+  const interruptPayload = {
+    ...data,
+    taskTitle: data.taskDescription || '',
+  };
+  const pendingInterrupts = [
+    ...(previous.pendingInterrupts || []).filter((entry) => entry.interruptId !== data.interruptId),
+    interruptPayload,
+  ];
+  const activeInterrupt = previous.interruptPayload && previous.waitingForHumanInput
+    ? previous.interruptPayload
+    : pendingInterrupts[0];
   return {
     ...previous,
     status: 'interrupted' as const,
     threadId: data.threadId || previous.threadId,
-    interruptPayload: {
-      ...data,
-      taskTitle: data.taskDescription || '',
-    },
+    interruptPayload: activeInterrupt,
+    pendingInterrupts,
     waitingForHumanInput: true,
-    currentInterruptId: data.interruptId ?? previous.currentInterruptId ?? null,
-    currentInterruptTaskId: data.taskId,
+    currentInterruptId: activeInterrupt?.interruptId ?? previous.currentInterruptId ?? null,
+    currentInterruptTaskId: activeInterrupt?.taskId ?? data.taskId,
+    hitlHistory: mergePendingHitlHistory(previous, data),
+    updatedAt: now(),
+  };
+}
+
+export function mergeHitlInterruptUpdated(
+  previous: PlaybookExecution | undefined,
+  data: Record<string, unknown>,
+) {
+  if (!previous || typeof data.interruptId !== 'string') return previous;
+  const interruptPatch = toInterruptPatch(data);
+  const historyPatch = toHitlHistoryPatch(data);
+  const pendingInterrupts = (previous.pendingInterrupts || []).map((entry) => (
+    entry.interruptId === data.interruptId ? { ...entry, ...interruptPatch } : entry
+  ));
+  return {
+    ...previous,
+    interruptPayload: previous.interruptPayload?.interruptId === data.interruptId
+      ? { ...previous.interruptPayload, ...interruptPatch }
+      : previous.interruptPayload,
+    pendingInterrupts,
+    hitlHistory: (previous.hitlHistory || []).map((entry) => (
+      entry.interruptId === data.interruptId ? { ...entry, ...historyPatch } : entry
+    )),
+    updatedAt: now(),
+  };
+}
+
+export function mergeHitlInterruptResolved(
+  previous: PlaybookExecution | undefined,
+  data: { interruptId: string; action: string; taskId?: string; scope?: string; remember?: boolean },
+) {
+  if (!previous) return undefined;
+  const responseScope = toHitlFeedbackScope(data.scope);
+  const pendingInterrupts = (previous.pendingInterrupts || []).filter((entry) => (
+    data.interruptId ? entry.interruptId !== data.interruptId : entry.taskId !== data.taskId
+  ));
+  const nextInterrupt = pendingInterrupts[0] ?? null;
+  return {
+    ...previous,
+    status: pendingInterrupts.length === 0 && previous.status === 'interrupted' ? 'running' : previous.status,
+    interruptPayload: nextInterrupt,
+    pendingInterrupts,
+    waitingForHumanInput: pendingInterrupts.length > 0,
+    currentInterruptId: nextInterrupt?.interruptId ?? null,
+    currentInterruptTaskId: nextInterrupt?.taskId ?? null,
+    hitlHistory: (previous.hitlHistory || []).map((entry) => {
+      if (entry.interruptId !== data.interruptId && entry.taskId !== data.taskId) return entry;
+      return {
+        ...entry,
+        status: 'answered' as const,
+        responseAction: data.action,
+        responseScope,
+        responseRemember: data.remember,
+        respondedAt: now(),
+      };
+    }),
     updatedAt: now(),
   };
 }
@@ -143,6 +212,68 @@ function updateTask(
       : task),
     updatedAt: now(),
   };
+}
+
+function mergePendingHitlHistory(previous: PlaybookExecution, data: PlaybookInterruptEvent): HitlHistoryEntry[] {
+  const interruptId = data.interruptId || '';
+  return [
+    ...(previous.hitlHistory || []).filter((entry) => !(entry.status === 'pending' && entry.interruptId === interruptId)),
+    {
+      interruptId,
+      taskId: data.taskId,
+      type: data.type,
+      taskTitle: '',
+      message: data.message,
+      taskDescription: data.taskDescription || '',
+      result: data.result || '',
+      round: data.round || 0,
+      payloadJson: data.payloadJson || '',
+      resumableActions: data.resumableActions || [],
+      status: 'pending' as const,
+      responseAction: null,
+      responseMessage: null,
+      responseApproved: null,
+      responseReason: null,
+      responseFeedback: null,
+      respondedBy: null,
+      respondedAt: null,
+      createdAt: now(),
+      blockerRuleId: data.blockerRuleId,
+      blockerKind: data.blockerKind,
+      reasonCode: data.reasonCode,
+      riskLevel: data.riskLevel,
+      downstreamNodeIds: data.downstreamNodeIds,
+    },
+  ];
+}
+
+function toInterruptPatch(data: Record<string, unknown>): Partial<InterruptPayload> {
+  const patch: Partial<InterruptPayload> = {};
+  if (typeof data.message === 'string') patch.message = data.message;
+  const feedbackScopeDefault = toHitlFeedbackScope(data.feedbackScopeDefault);
+  if (feedbackScopeDefault) patch.feedbackScopeDefault = feedbackScopeDefault;
+  if (Array.isArray(data.downstreamNodeIds)) patch.downstreamNodeIds = data.downstreamNodeIds as string[];
+  return patch;
+}
+
+function toHitlHistoryPatch(data: Record<string, unknown>): Partial<HitlHistoryEntry> {
+  const patch: Partial<HitlHistoryEntry> = {};
+  if (typeof data.message === 'string') patch.message = data.message;
+  if (Array.isArray(data.downstreamNodeIds)) patch.downstreamNodeIds = data.downstreamNodeIds as string[];
+  return patch;
+}
+
+function toHitlFeedbackScope(value: unknown): HitlFeedbackScope | undefined {
+  if (
+    value === 'step_only'
+    || value === 'downstream_run'
+    || value === 'entire_run'
+    || value === 'future_node_runs'
+    || value === 'future_workflow_runs'
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function mergeIteratorChild(

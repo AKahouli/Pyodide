@@ -1,4 +1,5 @@
 import { CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { usePlaybookStore } from '../store';
 import type { HumanFeedbackData } from '../types';
@@ -22,6 +23,7 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
   const isReview = data.interruptType === 'review_request';
   const isClarification = data.interruptType === 'clarification';
   const interruptPanelOpen = designerOpen && copilotMode === 'interrupt';
+  const scope = data.scope ?? data.feedbackScopeDefault;
 
   const openCopilot = () => {
     selectStep(taskId);
@@ -71,6 +73,14 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
         {data.feedback && (isReview || isClarification) && (
           <p className="text-xs text-muted-foreground mt-1 ml-1">{data.feedback}</p>
         )}
+        {(scope || data.remember != null) && (
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            {scope && <Badge variant="outline">{t(`interrupt.scope.${scope}`)}</Badge>}
+            {data.remember === true && (
+              <Badge variant="secondary">{t('interrupt.rememberFeedback')}</Badge>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -89,6 +99,17 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
       </div>
       {data.message && (
         <p className="text-sm text-muted-foreground mb-3">{data.message}</p>
+      )}
+      {(scope || data.downstreamNodeIds?.length || data.memoryCandidate) && (
+        <div className="mb-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+          {scope && <Badge variant="outline">{t(`interrupt.scope.${scope}`)}</Badge>}
+          {(data.downstreamNodeIds?.length ?? 0) > 0 && (
+            <Badge variant="outline">
+              {t('interrupt.downstreamImpact', { count: data.downstreamNodeIds?.length ?? 0 })}
+            </Badge>
+          )}
+          {data.memoryCandidate && <Badge variant="secondary">{t('interrupt.rememberFeedback')}</Badge>}
+        </div>
       )}
       <div className="space-y-2 rounded-md border bg-background px-3 py-3">
         <p className="text-xs font-medium text-foreground">{t('interrupt.waitingForDecision')}</p>

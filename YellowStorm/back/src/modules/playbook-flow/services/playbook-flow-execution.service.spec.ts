@@ -1,4 +1,5 @@
-import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { EventEmitter } from 'events';
+import { buildGrpcNodeMetadata, PlaybookFlowExecutionService } from './playbook-flow-execution.service';
 
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
@@ -6,6 +7,32 @@ import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 
 import { createExecutionServiceForTests } from './playbook-flow-execution.test-support';
+
+describe('buildGrpcNodeMetadata', () => {
+  it('maps explicit node HITL fields to ADK metadata keys', () => {
+    const metadata = buildGrpcNodeMetadata(
+      {
+        metadata: { enabled: true },
+        interruptBefore: false,
+        interruptAfter: true,
+        allowClarification: true,
+        clarificationPrompt: 'Ask one concise question.',
+        maxClarifications: 2,
+      },
+      { hitlPolicy: { mode: 'off' } },
+    );
+
+    expect(metadata).toMatchObject({
+      enabled: true,
+      interrupt_before: false,
+      interrupt_after: true,
+      allow_clarification: true,
+      clarification_prompt: 'Ask one concise question.',
+      max_clarifications: 2,
+      hitl_policy: { mode: 'off' },
+    });
+  });
+});
 
 describe('PlaybookFlowExecutionService start preflight', () => {
   it('uses the base execution-start read instead of the enriched read path', async () => {
@@ -709,6 +736,143 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     scheduleQueueDrainSpy.mockRestore();
   });
 
+  it('injects active HITL memory into the runtime input context', async () => {
+    const snapshot = {
+      nodes: [{ id: 'step-1', kind: 'step', metadata: {} }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: {},
+    };
+    const run = jest.fn().mockReturnValue({ on: jest.fn() });
+    const { service, agentService } = createExecutionServiceForTests({
+      flowService: { findOne: jest.fn().mockResolvedValue(snapshot) },
+      builderService: { buildSnapshot: jest.fn().mockReturnValue(snapshot) },
+      executionModel: {
+        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+        findById: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
+          }),
+        })),
+        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      },
+      hitlMemoryModel: {
+        find: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([{
+              _id: 'memory-1',
+              flowId: 'flow-1',
+              nodeId: 'step-1',
+              memoryType: 'procedural',
+              title: 'Use CSV exports',
+              normalizedInstruction: 'Prefer CSV exports for this step.',
+              content: 'Prefer CSV exports for this step.',
+              appliesTo: 'node',
+              sensitivity: 'normal',
+            }]),
+          }),
+        })),
+      },
+    });
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, { brief: 'run it' }, snapshot);
+
+    const sentContext = run.mock.calls[0][0].input_context.fields;
+    expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+  });
+
+  it('replaces caller-supplied HITL memory with server-loaded runtime memory', async () => {
+    const snapshot = {
+      nodes: [{ id: 'step-1', kind: 'step', metadata: {} }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: {},
+    };
+    const run = jest.fn().mockReturnValue({ on: jest.fn() });
+    const { service, agentService } = createExecutionServiceForTests({
+      flowService: { findOne: jest.fn().mockResolvedValue(snapshot) },
+      builderService: { buildSnapshot: jest.fn().mockReturnValue(snapshot) },
+      executionModel: {
+        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+        findById: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
+          }),
+        })),
+        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      },
+      hitlMemoryModel: {
+        find: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([]),
+          }),
+        })),
+      },
+    });
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRun(
+      'exec-1',
+      'flow-1',
+      'owner-1',
+      snapshot,
+      { brief: 'run it', __playbook_hitl_memory: [{ id: 'spoofed' }] },
+      snapshot,
+    );
+
+    const sentContext = run.mock.calls[0][0].input_context.fields;
+    expect(sentContext.__playbook_hitl_memory.listValue.values).toEqual([]);
+  });
+
+  it('injects active HITL memory into replay checkpoint input context', async () => {
+    const call = new EventEmitter();
+    const runFromCheckpoint = jest.fn().mockReturnValue(call);
+    const snapshot = {
+      nodes: [{ id: 'step-1', kind: 'step', label: 'Step 1', metadata: {} }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+    const { service, agentService } = createExecutionServiceForTests({
+      hitlMemoryModel: {
+        find: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([{
+              _id: 'memory-1',
+              nodeId: null,
+              memoryType: 'semantic',
+              title: 'Prefer signed docs',
+              normalizedInstruction: 'Use signed documents over drafts.',
+              content: 'Use signed documents over drafts.',
+              appliesTo: 'workflow',
+              sensitivity: 'normal',
+            }]),
+          }),
+        })),
+      },
+    });
+    (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRunFromCheckpoint(
+      'exec-replay',
+      'flow-1',
+      'owner-1',
+      'exec-source',
+      snapshot,
+      { brief: 'rerun it', __playbook_hitl_memory: [{ id: 'spoofed' }] },
+      'step-1',
+      0,
+    );
+
+    const sentContext = runFromCheckpoint.mock.calls[0][0].input_context.fields;
+    expect(sentContext.brief).toEqual(expect.any(Object));
+    expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+  });
+
   it('does not start gRPC when a claimed execution is cancelled before launch', async () => {
     const { service, agentService, executionModel, streamEvents } = createExecutionServiceForTests({
       flowService: { findOne: jest.fn().mockResolvedValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) },
@@ -933,6 +1097,274 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       },
     );
     expect(streamEvents.emitQueuePositionUpdate).toHaveBeenCalledWith('exec-1', 1);
+  });
+});
+
+describe('PlaybookFlowExecutionService HITL memory persistence', () => {
+  function createPendingStepExecution(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'exec-1',
+      _id: 'exec-1',
+      ownerId: 'owner-1',
+      flowId: 'flow-1',
+      status: 'pending_approval',
+      pendingApproval: {
+        nodeId: 'task-1',
+        iteration: 0,
+        prompt: 'Which contract?',
+        interruptId: 'interrupt-1',
+        interruptType: 'clarification',
+        taskTitle: 'Review contract',
+        feedbackScopeDefault: 'downstream_run',
+      },
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-1', status: 'running' }),
+      ...overrides,
+    };
+  }
+
+  it('creates active node memory when future node feedback is explicitly remembered', async () => {
+    const execution = createPendingStepExecution();
+    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
+    const streamEvents = { emitHitlInterruptResolved: jest.fn(), emitHitlMemorySaved: jest.fn() };
+    const executionModel = {
+      findById: jest.fn().mockResolvedValue(execution),
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    };
+    const runtimeClient = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: true })),
+    };
+    const { service } = createExecutionServiceForTests({
+      executionModel,
+      runtimeClient,
+      streamEvents,
+      hitlMemoryModel,
+    });
+
+    await service.resumeFromStep('exec-1', 'owner-1', {
+      taskId: 'task-1',
+      action: 'reply',
+      message: 'Use the signed contract.',
+      scope: 'future_node_runs',
+      remember: true,
+    });
+
+    expect(hitlMemoryModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: 'owner-1',
+      flowId: 'flow-1',
+      nodeId: 'task-1',
+      memoryType: 'procedural',
+      source: 'hitl_feedback',
+      title: 'HITL guidance for Review contract',
+      content: 'Use the signed contract.',
+      normalizedInstruction: 'Use the signed contract.',
+      appliesTo: 'node',
+      status: 'active',
+      sensitivity: 'normal',
+      createdFromExecutionId: 'exec-1',
+      createdFromInterruptId: 'interrupt-1',
+    }));
+    expect(streamEvents.emitHitlMemorySaved).toHaveBeenCalledWith('exec-1', {
+      taskId: 'task-1',
+      scope: 'future_node_runs',
+      interruptId: 'interrupt-1',
+    });
+  });
+
+  it('does not create memory for current-run or unremembered feedback scopes', async () => {
+    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
+    const executionModel = {
+      findById: jest.fn()
+        .mockResolvedValueOnce(createPendingStepExecution())
+        .mockResolvedValueOnce(createPendingStepExecution()),
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    };
+    const runtimeClient = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: true })),
+    };
+    const { service } = createExecutionServiceForTests({ executionModel, runtimeClient, hitlMemoryModel });
+
+    await service.resumeFromStep('exec-1', 'owner-1', {
+      taskId: 'task-1',
+      action: 'reply',
+      message: 'Use the signed contract.',
+      scope: 'downstream_run',
+      remember: true,
+    });
+    await service.resumeFromStep('exec-1', 'owner-1', {
+      taskId: 'task-1',
+      action: 'reply',
+      message: 'Use the signed contract.',
+      scope: 'future_workflow_runs',
+      remember: false,
+    });
+
+    expect(hitlMemoryModel.create).not.toHaveBeenCalled();
+  });
+
+  it('restarts the stream with a hidden resume command when runtime state was lost', async () => {
+    const snapshot = { settings: {}, nodes: [{ id: 'task-1', kind: 'step', metadata: {} }], controlEdges: [], dataBindings: [] };
+    const execution = createPendingStepExecution({
+      snapshot,
+      inputContext: { customer: 'acme' },
+    });
+    const executionModel = {
+      findById: jest.fn().mockResolvedValue(execution),
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    };
+    const runtimeClient = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: false })),
+    };
+    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
+    const durableRun = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
+
+    await service.resumeFromStep('exec-1', 'owner-1', {
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Use the signed contract.',
+      scope: 'downstream_run',
+    });
+
+    expect(durableRun).toHaveBeenCalledWith(
+      'exec-1',
+      'flow-1',
+      'owner-1',
+      null,
+      expect.objectContaining({
+        customer: 'acme',
+        __playbook_resume: expect.objectContaining({
+          action: 'reply',
+          message: 'Use the signed contract.',
+          scope: 'downstream_run',
+        }),
+      }),
+      snapshot,
+    );
+    expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
+      'exec-1',
+      'interrupt-1',
+      expect.objectContaining({ action: 'reply', taskId: 'task-1' }),
+    );
+  });
+
+  it('restarts an approval with a hidden resume command when runtime state was lost', async () => {
+    const snapshot = { settings: {}, nodes: [{ id: 'task-1', kind: 'step', metadata: {} }], controlEdges: [], dataBindings: [] };
+    const execution = createPendingStepExecution({
+      snapshot,
+      inputContext: { recipient: 'customer@example.com' },
+      pendingApproval: {
+        nodeId: 'task-1',
+        iteration: 0,
+        prompt: 'Approve external send?',
+        interruptId: 'approval-1',
+        interruptType: 'approval_request',
+        taskTitle: 'Send customer email',
+        riskLevel: 'critical',
+      },
+    });
+    const executionModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockResolvedValue(execution),
+      }),
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    };
+    const runtimeClient = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      resumeApproval: jest.fn((_request, callback) => callback(null, { resumed: false })),
+    };
+    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
+    const durableRun = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
+
+    await service.resumeApproval('exec-1', 'owner-1', {
+      decision: 'approved',
+      payload: {
+        feedback: 'Approved for this signed contract only.',
+        scope: 'step_only',
+        remember: false,
+      },
+    });
+
+    expect(durableRun).toHaveBeenCalledWith(
+      'exec-1',
+      'flow-1',
+      'owner-1',
+      null,
+      expect.objectContaining({
+        recipient: 'customer@example.com',
+        __playbook_resume: expect.objectContaining({
+          decision: 'approved',
+          payload: expect.objectContaining({
+            feedback: 'Approved for this signed contract only.',
+            scope: 'step_only',
+          }),
+        }),
+      }),
+      snapshot,
+    );
+    expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
+      'exec-1',
+      'approval-1',
+      expect.objectContaining({ action: 'approved', taskId: 'task-1' }),
+    );
+  });
+
+  it('creates sensitive workflow memory for remembered approval responses', async () => {
+    const execution = createPendingStepExecution({
+      pendingApproval: {
+        nodeId: 'task-1',
+        iteration: 0,
+        prompt: 'Approve external send?',
+        interruptId: 'approval-1',
+        interruptType: 'approval_request',
+        taskTitle: 'Send customer email',
+        riskLevel: 'critical',
+      },
+    });
+    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
+    const streamEvents = { emitHitlInterruptResolved: jest.fn(), emitHitlMemorySaved: jest.fn() };
+    const executionModel = {
+      findById: jest.fn().mockResolvedValue(execution),
+      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    };
+    const runtimeClient = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      resumeApproval: jest.fn((_request, callback) => callback(null, { resumed: true })),
+    };
+    const { service } = createExecutionServiceForTests({
+      executionModel,
+      runtimeClient,
+      streamEvents,
+      hitlMemoryModel,
+    });
+
+    await service.resumeApproval('exec-1', 'owner-1', {
+      decision: 'approved',
+      payload: {
+        feedback: 'Approved only for signed contracts.',
+        scope: 'future_workflow_runs',
+        remember: true,
+      },
+    });
+
+    expect(hitlMemoryModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: 'flow-1',
+      nodeId: null,
+      memoryType: 'approval_policy',
+      content: 'Approved only for signed contracts.',
+      appliesTo: 'workflow',
+      sensitivity: 'sensitive',
+      createdFromExecutionId: 'exec-1',
+      createdFromInterruptId: 'approval-1',
+    }));
+    expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith('exec-1', 'approval-1', {
+      action: 'approved',
+      taskId: 'task-1',
+      scope: 'future_workflow_runs',
+      remember: true,
+    });
   });
 });
 

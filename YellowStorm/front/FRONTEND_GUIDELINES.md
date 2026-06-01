@@ -11,7 +11,9 @@
 | Framework | React 18 + TypeScript (strict) |
 | Bundler | Vite 6 |
 | Routing | `react-router-dom` v6 (hash router) |
-| State | Zustand 5 (`devtools` middleware) + React Context for auth/theme/settings |
+| State & UI State | Zustand 5 (`devtools` middleware) + React Context for auth/theme/settings |
+| Data Fetching | `@tanstack/react-query` v5 (alongside Zustand during staged migration) |
+| Workflow / State Machines | `xstate` v5 + `@xstate/react` v6 (execution lifecycle, autosave) |
 | HTTP | Axios (single shared instance with interceptors) |
 | Forms | `react-hook-form` + `zod` + `@hookform/resolvers` |
 | UI primitives | Radix UI + shadcn/ui wrappers under `src/components/ui/` |
@@ -19,8 +21,8 @@
 | Icons | `lucide-react` + custom `Icons` map in `src/components/icons.tsx` |
 | i18n | `i18next` + `react-i18next` (lazy namespace loading) |
 | Toasts | `sonner` via `@/lib/notifications` wrapper |
-| Streaming | Native `EventSource` SSE, wrapped in singleton services |
-| Charts / tables / graphs | `recharts`, `@tanstack/react-table`, `@xyflow/react` |
+| Streaming | Native `EventSource` SSE — singleton services, BroadcastChannel leader-election, per-session hooks |
+| Charts / tables / graphs / flow | `recharts`, `@tanstack/react-table`, `@xyflow/react`, `@dagrejs/dagre` |
 | Virtualization | `virtua` |
 | Testing | Vitest 2 + React Testing Library + `jest-dom` |
 
@@ -72,9 +74,14 @@ import { useConversationStore } from '@/modules/conversation';
 ├── types.ts           # All module types, enums, discriminated unions
 ├── api.ts             # Thin typed wrappers over apiClient (+ api.test.ts)
 ├── store.ts           # Zustand store — single file (+ store.test.ts)
+├── features.ts        # Feature flags for staged migrations — optional (playbook)
+├── uiStore.ts         # UI-only Zustand store — optional when UI state is large
 ├── hooks/             # Module-specific hooks (match neighbour naming)
 ├── components/        # PascalCase React components, colocated tests
 ├── services/          # Long-lived service classes (SSE, buffers) — optional
+├── query/             # TanStack Query hooks, client, keys, mutation actions — optional
+├── machines/          # XState state machines + react actor hooks — optional
+├── stream/            # SSE event types, dispatchers, event mergers — optional
 ├── locales/           # en.json, fr.json (flat keys, dot-notation)
 └── test-utils.ts      # Module test fixtures / factories — optional
 ```
@@ -97,6 +104,8 @@ export type { Conversation, Message } from './types';
 
 ## 5. State Management
 
+The frontend uses a **layered state architecture**. The legacy/default layer is Zustand; newer code paths add TanStack Query for server-state caching and XState for complex lifecycle orchestration. Modules may use all three during staged migrations, gated behind feature flags.
+
 ### Zustand (default for module state)
 
 One `store.ts` per module, always with `devtools({ name: '<module>-store' })`. Keep `initialState` as a `const` for resets and tests. Use `useShallow` when selecting multiple fields:
@@ -107,7 +116,38 @@ const { playbooks, loading } = usePlaybookStore(
 );
 ```
 
-Single `store.ts` per module — do **not** split into slices. Persist only UI prefs (panel state) via direct `localStorage`; do not use Zustand's `persist` middleware.
+Single `store.ts` per module — do **not** split into slices. Persist only UI prefs (panel state) via direct `localStorage`; do not use Zustand's `persist` middleware. If UI state grows large, extract a second `uiStore.ts` (e.g. `playbook/uiStore.ts`).
+
+### TanStack Query (server-state cache)
+
+`@tanstack/react-query` v5 is used alongside Zustand for **server-state ownership** — reads, cache invalidation, and mutation integration. Used in modules undergoing staged migration (playbook).
+
+- Query hooks live in `<module>/query/hooks/`
+- Mutation actions live in `<module>/query/mutationActions.ts`
+- Query keys in `<module>/query/queryKeys.ts`
+- The module provides a `QueryClientProvider` via `CombinedProvider.tsx`
+
+Zustand stores remain the UI/orchestration layer; they may read from the Query cache with `queryClient.fetchQuery()` when the matching feature flag is enabled.
+
+### XState (lifecycle orchestration)
+
+`xstate` v5 + `@xstate/react` v6 are used for **complex stateful workflows** where Zustand actions become unwieldy — execution lifecycle, autosave coordination. Used in playbook.
+
+- Machines live in `<module>/machines/<domain>/`
+- Actor hooks in `<module>/hooks/` wrap `useSelector` from `@xstate/react`
+
+Gated behind feature flags (e.g. `xstateExecutionEnabled`, `xstateAutosaveEnabled`).
+
+### Feature flags for staged migration
+
+When migrating a module's state layer, gate old and new paths with feature flags in `<module>/features.ts`. Flags are `const` booleans (compile-time eliminated by Vite tree-shaking in production). Example flags pattern from playbook:
+
+```ts
+export const queryEnabled = true;
+export const queryMutationsEnabled = true;
+export const querySseEnabled = true;
+export const xstateExecutionEnabled = false; // still rolling out
+```
 
 ### React Context (cross-cutting only)
 
@@ -141,7 +181,20 @@ Options: `showErrorToast` (default `true` — set `false` for inline form errors
 
 ## 7. Caching & Data Fetching
 
-**No TanStack Query.** Caching is handled in Zustand stores:
+The frontend uses a **hybrid approach** during staged migration:
+
+### TanStack Query (newer modules, migrating modules)
+
+Modules using `@tanstack/react-query` v5 declare query hooks, mutation actions, and cache keys under `<module>/query/`. SSE events can update the query cache directly via `queryClient.setQueryData()`.
+
+- Reads: `useQuery` with stale-while-revalidate defaults
+- Mutations: `useMutation` with cache invalidation or optimistic updates
+- Cache keys use structured factories in `query/queryKeys.ts`
+- The `queryClient` instance per module is registered in `CombinedProvider.tsx`
+
+### Zustand stores (legacy / non-migrated modules)
+
+For modules that have not adopted TanStack Query:
 
 - **By-id map:** `conversations: Map<string, Conversation>`
 - **By-page map:** `documents: Map<pageNumber, Document[]>`
@@ -150,7 +203,13 @@ Options: `showErrorToast` (default `true` — set `false` for inline form errors
 
 Cache invalidation is **explicit**: after mutation, update the store entry immediately — don't rely on refetching. No TTL-based expiration. For request deduplication, gate with an `inFlight` flag in the store.
 
-**Browser storage:** `localStorage` for `yellostorm_access_token`, `yellostorm_user`, and UI prefs. `sessionStorage` for maintenance info. Keys always declared as exported constants.
+### Migration pattern
+
+During migration a module may run **both paths** — Zustand store reads from the Query cache via `queryClient.fetchQuery()` when a feature flag is enabled, with SSE events updating both layers (controlled by `querySseMirrorZustandEnabled`).
+
+### Browser storage
+
+`localStorage` for `yellostorm_access_token`, `yellostorm_user`, and UI prefs. `sessionStorage` for maintenance info. Keys always declared as exported constants.
 
 ---
 
@@ -159,6 +218,8 @@ Cache invalidation is **explicit**: after mutation, update the store entry immed
 `react-hook-form` + `zod` + shadcn `<Form>` primitives. Zod schema first, type with `z.infer`. Use `<FormField>` / `<FormMessage>` — don't render errors manually. Use `scrollToFirstError` from `@/lib/form-utils` for long forms on submit failure. Validation messages map to translation keys where user-facing.
 
 **Autosaved editors:** keep editable form data in a single draft object (or a form library state object), not scattered independent `useState` fields. Autosave effects should depend on that single draft object so adding a field cannot be missed in a dependency list. Standalone state is acceptable only for UI-only concerns such as dialog open state, loading flags, selected tabs, or transient search input.
+
+**Delta patch saves (playbook):** when `PLAYBOOK_DELTA_AUTOSAVE_ENABLED` is on, autosave sends `PATCH /playbooks/:id/delta` with only changed fields instead of the full object. Fall back to full save on 4xx/5xx. The autosave XState machine manages the retry/fallback logic.
 
 When adding a new editable field to an autosaved editor, update all layers in one change: frontend type, draft initialization, change handler/draft patch, save payload, backend DTO/schema/serializer when persisted, and tests where the editor has coverage.
 
@@ -196,7 +257,26 @@ Always go through `@/lib/notifications`: `showSuccess`, `showError`, `showWarnin
 
 ## 12. Streaming (SSE)
 
-Two singleton SSE services: `ConversationStreamService` and `NotificationsService`. **One `EventSource` per service** — never open an ad-hoc `new EventSource` in a component. Token refresh integration mandatory: axios response interceptor calls `reconnectWithNewToken()`. Standard patterns: exponential backoff (base 1s, cap 60s), heartbeat timeout (~30s), eviction handling (`TOO_MANY_TABS`), high-frequency chunk buffer with ~30ms drain interval.
+Three SSE patterns coexist depending on module requirements:
+
+### Pattern 1: Singleton Service (conversation, notifications)
+
+Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `EventSource` per service. Token refresh integration via axios response interceptor calling `reconnectWithNewToken()`. Exponential backoff (base 1s, cap 60s), heartbeat timeout (~30s), eviction handling (`TOO_MANY_TABS`).
+
+### Pattern 2: BroadcastChannel Leader-Election (playbook)
+
+`PlaybookStreamService` — one `EventSource` shared across tabs via `BroadcastChannel` with leader election. Leader owns the connection and broadcasts events to followers. Followers sync state via channel messages. Heartbeat, reconnect, and buffered step updates. SSE events dispatched into TanStack Query cache (when `querySseEnabled`) and optionally mirrored to Zustand.
+
+### Pattern 3: Per-Session Hook (conversation-v2)
+
+`useStream()` hook — one `EventSource` per active session, scoped to component lifecycle. Closes on `done`/`error`. Supports gap recovery by paging historical events. Zustand store is the state sink; no TanStack Query involvement.
+
+### Rules (all patterns)
+
+- Never open ad-hoc `new EventSource` in a component (use the module's service/hook)
+- Token refresh integration mandatory where applicable
+- Always clean up on unmount / disconnect
+- Cap per-user connections (backend enforces, frontend handles eviction with `TOO_MANY_TABS`)
 
 ---
 
@@ -263,7 +343,10 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 | Library | Use for |
 |---------|---------|
 | `@xyflow/react` | Playbook canvas (nodes/edges) |
+| `@dagrejs/dagre` | Graph layout for playbook canvas |
 | `@tanstack/react-table` | Admin tables |
+| `@tanstack/react-query` | Server-state cache and data fetching |
+| `xstate` + `@xstate/react` | Complex stateful workflows (execution, autosave) |
 | `recharts` | Analytics/usage charts |
 | `virtua` | Long virtualised lists |
 | `ai` (Vercel AI SDK) + `@anthropic-ai/sdk` | LLM streaming UIs |
@@ -280,6 +363,9 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - [ ] No hardcoded API paths — everything through `API_ENDPOINTS`.
 - [ ] API calls in components via `useApiAction` (or justified exception).
 - [ ] Zustand store: `devtools({ name: '…' })`, `initialState` exported.
+- [ ] If using TanStack Query: hooks in `query/hooks/`, mutation actions in `query/mutationActions.ts`, keys in `query/queryKeys.ts`.
+- [ ] If using XState: machines in `machines/<domain>/`, feature-flag gated alongside legacy path.
+- [ ] If adding a state migration path (Zustand → Query/XState): gate behind a feature flag in `features.ts`.
 - [ ] No new axios instance, no direct `toast` import, no `new EventSource` in components.
 - [ ] `cn()` for className merging; variants via CVA.
 - [ ] Errors surfaced (toast or inline); error codes from `ErrorCode` enum.
@@ -303,3 +389,6 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - Silent error swallowing (`catch {}`).
 - Adding a dependency that overlaps with an existing one (moment vs date-fns, etc.).
 - Disabling `strict` rules or `// @ts-ignore` without a linked issue.
+- Mixing Zustand, TanStack Query, and XState for the same concern **without** a feature flag gating the migration.
+- Ad-hoc `new EventSource()` in a component instead of using the module's service/hook.
+- Adding a new state management library or pattern without first checking whether an existing pattern (Zustand, Query, XState) fits.

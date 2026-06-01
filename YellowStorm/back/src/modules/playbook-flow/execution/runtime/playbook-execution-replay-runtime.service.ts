@@ -75,6 +75,7 @@ export class PlaybookExecutionReplayRuntimeService {
     taskId: string;
     iteration?: number;
     replayId: string;
+    referenceExecutionId: string;
     validationVersion: number;
     mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive';
     eligibility: ReplayEligibilityResult;
@@ -86,6 +87,7 @@ export class PlaybookExecutionReplayRuntimeService {
         taskId: params.taskId,
         iteration: params.iteration ?? 0,
         replayId: params.replayId,
+        referenceExecutionId: params.referenceExecutionId,
         validationVersion: params.validationVersion,
         mode: params.mode,
         eligibility: params.eligibility,

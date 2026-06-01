@@ -222,6 +222,8 @@ export class PlaybookFlowExecutionController {
       approved?: boolean;
       reason?: string;
       feedback?: string;
+      scope?: string;
+      remember?: boolean;
       payload?: Record<string, unknown>;
     },
   ) {
@@ -236,6 +238,8 @@ export class PlaybookFlowExecutionController {
       approved: body.approved,
       reason: body.reason,
       feedback: body.feedback,
+      scope: body.scope,
+      remember: body.remember,
       payload: body.payload,
     });
     return {

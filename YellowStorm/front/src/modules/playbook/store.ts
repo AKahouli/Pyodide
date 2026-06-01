@@ -54,6 +54,7 @@ import type {
   PlaybookResourceReference,
   PlaybookDefinitionExport,
   UpdateFlowData,
+  InterruptPayload,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -97,6 +98,38 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
   return fallback;
 }
 
+function buildInterruptPayload(data: PlaybookInterruptEvent): InterruptPayload {
+  return {
+    type: data.type,
+    taskId: data.taskId,
+    taskTitle: '',
+    message: data.message,
+    threadId: data.threadId,
+    interruptId: data.interruptId || '',
+    round: data.round || 0,
+    payloadJson: data.payloadJson || '',
+    resumableActions: data.resumableActions || [],
+    taskDescription: data.taskDescription || '',
+    result: data.result || '',
+    blockerRuleId: data.blockerRuleId,
+    blockerKind: data.blockerKind,
+    reasonCode: data.reasonCode,
+    riskLevel: data.riskLevel,
+    downstreamNodeIds: data.downstreamNodeIds,
+    feedbackScopeDefault: data.feedbackScopeDefault,
+  };
+}
+
+function removePendingInterrupt(
+  pendingInterrupts: InterruptPayload[] | undefined,
+  taskId: string,
+  interruptId?: string,
+): InterruptPayload[] {
+  return (pendingInterrupts || []).filter((entry) => (
+    interruptId ? entry.interruptId !== interruptId : entry.taskId !== taskId
+  ));
+}
+
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
 const INTENT_HISTORY_KEY = 'ys_playbook_intent_history';
@@ -110,6 +143,34 @@ function persistPanelOpen(open: boolean) {
 
 function persistWorkspaceExplorerOpen(open: boolean) {
   try { localStorage.setItem(WORKSPACE_EXPLORER_KEY, open ? '1' : '0'); } catch { /* noop */ }
+}
+
+function syncUiStoreForRun(taskId?: string | null) {
+  usePlaybookUiStore.setState((state) => ({
+    ...state,
+    executionPanelOpen: true,
+    workspaceExplorerOpen: false,
+    connectorSidebarOpen: false,
+    nodeEditorOpen: false,
+    pageMode: 'run',
+    ...(taskId !== undefined ? { selectedStepId: taskId } : {}),
+  }));
+  persistPanelOpen(true);
+}
+
+function syncUiStoreForInterrupt(taskId: string) {
+  usePlaybookUiStore.setState((state) => ({
+    ...state,
+    selectedStepId: taskId,
+    designerOpen: true,
+    copilotMode: 'interrupt',
+    executionPanelOpen: true,
+    workspaceExplorerOpen: false,
+    connectorSidebarOpen: false,
+    nodeEditorOpen: false,
+    pageMode: 'run',
+  }));
+  persistPanelOpen(true);
 }
 
 function isValidHistoryEntry(entry: unknown): entry is IntentSuggestionHistoryEntry {
@@ -937,6 +998,36 @@ function mergeRicherIteratorData(
     ...incomingTaskResult,
     iteratorIterations: cachedTaskResult.iteratorIterations,
   };
+}
+
+function mergeHitlHistory(
+  cached: PlaybookExecution['hitlHistory'],
+  incoming: PlaybookExecution['hitlHistory'],
+): PlaybookExecution['hitlHistory'] {
+  const cachedHistory = cached || [];
+  const incomingHistory = incoming || [];
+  if (cachedHistory.length === 0) {
+    return incomingHistory;
+  }
+  if (incomingHistory.length === 0) {
+    return cachedHistory;
+  }
+
+  const incomingByInterruptId = new Map(
+    incomingHistory.map((entry) => [entry.interruptId, entry]),
+  );
+  const mergedByIncomingOrder = incomingHistory.map((incomingEntry) => {
+    const cachedEntry = cachedHistory.find((entry) => entry.interruptId === incomingEntry.interruptId);
+    if (!cachedEntry) {
+      return incomingEntry;
+    }
+    return cachedEntry.status === 'answered' || incomingEntry.status === 'pending' ? cachedEntry : incomingEntry;
+  });
+
+  const missingCached = cachedHistory.filter(
+    (entry) => !incomingByInterruptId.has(entry.interruptId),
+  );
+  return [...mergedByIncomingOrder, ...missingCached];
 }
 
 function shouldKeepCachedTaskResult(
@@ -1896,6 +1987,10 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           error: null,
         }));
         try {
+          const currentPlaybook = get().currentPlaybook?.id === id ? get().currentPlaybook : null;
+          const optimisticSelectedTaskId = data?.singleStepTaskId
+            || [...(currentPlaybook?.tasks || [])].sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0))[0]?.id
+            || null;
           const result = await api.executePlaybook(id, data);
           set((state) => {
             if (state.currentPlaybook?.id !== id) {
@@ -1944,6 +2039,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               taskResults,
               threadId: null,
               interruptPayload: null,
+              pendingInterrupts: [],
               waitingForHumanInput: false,
               currentInterruptId: null,
               currentInterruptTaskId: null,
@@ -1970,6 +2066,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               pageMode: 'run',
             };
           });
+          syncUiStoreForRun(optimisticSelectedTaskId);
           return result.executionId;
         } catch (err) {
           set((state) => ({
@@ -2002,6 +2099,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                   status: 'completed',
                   waitingForHumanInput: false,
                   interruptPayload: null,
+                  pendingInterrupts: [],
                   taskResults: cached.taskResults.map((tr) =>
                     tr.status === 'running' || tr.status === 'interrupted'
                       ? { ...tr, status: 'completed' as const }
@@ -2810,6 +2908,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                     approved: data.approved,
                     reason: data.reason || '',
                     feedback: data.feedback || '',
+                    scope: data.scope,
+                    remember: data.remember,
                     humanResponse: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action,
                   },
                 };
@@ -2827,20 +2927,29 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                   status: 'answered' as const,
                   responseAction: action,
                   responseMessage: message || null,
-                  responseApproved: data.approved ?? null,
-                  responseReason: data.reason || null,
-                  responseFeedback: data.feedback || null,
-                }
+                responseApproved: data.approved ?? null,
+                responseReason: data.reason || null,
+                responseFeedback: data.feedback || null,
+                responseScope: data.scope ?? null,
+                responseRemember: data.remember ?? null,
+              }
               : entry
           ));
+          const pendingInterrupts = removePendingInterrupt(
+            state.currentExecution.pendingInterrupts,
+            data.taskId,
+            interruptId,
+          );
+          const nextInterrupt = pendingInterrupts[0] ?? null;
           const updatedExec: PlaybookExecution = {
             ...state.currentExecution,
             taskResults,
-            status: 'running',
-            interruptPayload: null,
-            waitingForHumanInput: false,
-            currentInterruptId: null,
-            currentInterruptTaskId: null,
+            status: nextInterrupt ? 'interrupted' : 'running',
+            interruptPayload: nextInterrupt,
+            pendingInterrupts,
+            waitingForHumanInput: pendingInterrupts.length > 0,
+            currentInterruptId: nextInterrupt?.interruptId || null,
+            currentInterruptTaskId: nextInterrupt?.taskId || null,
             hitlHistory,
             updatedAt: new Date().toISOString(),
           };
@@ -2863,6 +2972,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               approved: data.approved,
               reason: data.reason,
               feedback: data.feedback,
+              scope: data.scope,
+              remember: data.remember,
             };
             if (playbookFeatures.queryMutationsEnabled) {
               await resumeFromStepMutation({ playbookId: id, executionId: data.executionId, data: resumeData });
@@ -2877,6 +2988,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               approved: data.approved,
               reason: data.reason,
               feedback: data.feedback,
+              scope: data.scope,
+              remember: data.remember,
             };
             if (playbookFeatures.queryMutationsEnabled) {
               await resumeApprovalMutation({ executionId: data.executionId, decision: action, payload: resumePayload });
@@ -2921,6 +3034,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             approved: options.approved,
             reason: options.reason,
             feedback: options.feedback,
+            scope: options.scope,
+            remember: options.remember,
             payload: options.payload,
           };
           if (playbookFeatures.queryMutationsEnabled) {
@@ -2928,6 +3043,16 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           } else {
             await api.resumePlaybookFromStep(playbookId, executionId, resumeData);
           }
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      disableHitlBlocker: async (executionId, interruptId) => {
+        try {
+          await api.disableHitlBlocker(executionId, interruptId);
+          toast.success(tPlaybook('interrupt.blockerDisabled', 'This blocker is disabled for future runs.'));
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -2978,6 +3103,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               taskResults: optimisticTaskResults,
               threadId: null,
               interruptPayload: null,
+              pendingInterrupts: [],
               waitingForHumanInput: false,
               currentInterruptId: null,
               currentInterruptTaskId: null,
@@ -3078,6 +3204,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             taskResults,
             threadId: null,
             interruptPayload: null,
+            pendingInterrupts: [],
             waitingForHumanInput: false,
             currentInterruptId: null,
             currentInterruptTaskId: null,
@@ -3113,6 +3240,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
           const shouldSetCurrent = state.currentPlaybook?.id === data.playbookId;
           const executionCache = evictCache({ ...state.executionCache, [data.executionId]: newExecution });
+          if (shouldSetCurrent) {
+            syncUiStoreForRun(firstStep?.taskId ?? null);
+          }
           return {
             executingPlaybookIds: state.executingPlaybookIds.includes(data.playbookId)
               ? state.executingPlaybookIds
@@ -3746,6 +3876,14 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       onInterrupt: (data: PlaybookInterruptEvent) => {
         const cached = get().executionCache[data.executionId];
         const playbookId = cached?.playbookId || get().currentPlaybook?.id;
+        if (cached || (playbookId && get().currentPlaybook?.id === playbookId)) {
+          syncUiStoreForInterrupt(data.taskId);
+        }
+        if (playbookId) {
+          // Interrupt SSE payloads can be thinner than the persisted pendingApproval state.
+          // Always backfill the latest execution detail so the sidebar has the full interrupt payload.
+          setTimeout(() => void get().fetchExecution(playbookId, data.executionId), 0);
+        }
         const viewAction = playbookId
           ? {
             label: tPlaybook('store.toasts.viewExecution', 'View'),
@@ -3770,7 +3908,17 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
           const cachedExec = state.executionCache[data.executionId];
           if (!cachedExec) {
-            return { executionHistory, executingPlaybookIds };
+            return {
+              executionHistory,
+              executingPlaybookIds,
+              selectedStepId: data.taskId,
+              copilotMode: 'interrupt',
+              designerOpen: true,
+              executionPanelOpen: true,
+              workspaceExplorerOpen: false,
+              connectorSidebarOpen: false,
+              nodeEditorOpen: false,
+            };
           }
 
           // Add humanFeedback component to the interrupted task's components
@@ -3792,6 +3940,14 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 resumableActions: data.resumableActions || [],
                 taskDescription: data.taskDescription || '',
                 result: data.result || '',
+                blockerRuleId: data.blockerRuleId,
+                blockerKind: data.blockerKind,
+                reasonCode: data.reasonCode,
+                riskLevel: data.riskLevel,
+                downstreamNodeIds: data.downstreamNodeIds,
+                feedbackScopeDefault: data.feedbackScopeDefault,
+                memoryCandidate: data.memoryCandidate,
+                scope: data.feedbackScopeDefault,
               },
             };
             return {
@@ -3801,13 +3957,24 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             };
           });
 
+          const interruptPayload = buildInterruptPayload(data);
+          const pendingInterrupts = [
+            ...(cachedExec.pendingInterrupts || []).filter((entry) => (
+              entry.interruptId !== interruptPayload.interruptId
+            )),
+            interruptPayload,
+          ];
+          const activeInterrupt = cachedExec.interruptPayload && cachedExec.waitingForHumanInput
+            ? cachedExec.interruptPayload
+            : pendingInterrupts[0];
           const updatedExec: PlaybookExecution = {
             ...cachedExec,
             taskResults,
             status: 'interrupted',
             waitingForHumanInput: true,
-            currentInterruptId: data.interruptId || null,
-            currentInterruptTaskId: data.taskId,
+            currentInterruptId: activeInterrupt?.interruptId || null,
+            currentInterruptTaskId: activeInterrupt?.taskId || null,
+            pendingInterrupts,
             hitlHistory: [
               ...(cachedExec.hitlHistory || []).filter((entry) => !(entry.status === 'pending' && entry.interruptId === (data.interruptId || ''))),
               {
@@ -3830,26 +3997,24 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 respondedBy: null,
                 respondedAt: null,
                 createdAt: new Date().toISOString(),
+                blockerRuleId: data.blockerRuleId,
+                blockerKind: data.blockerKind,
+                reasonCode: data.reasonCode,
+                riskLevel: data.riskLevel,
+                downstreamNodeIds: data.downstreamNodeIds,
+                feedbackScopeDefault: data.feedbackScopeDefault,
+                memoryCandidate: data.memoryCandidate,
               },
             ],
-            interruptPayload: {
-              type: data.type,
-              taskId: data.taskId,
-              taskTitle: '',
-              message: data.message,
-              threadId: data.threadId,
-              interruptId: data.interruptId || '',
-              round: data.round || 0,
-              payloadJson: data.payloadJson || '',
-              resumableActions: data.resumableActions || [],
-              taskDescription: data.taskDescription || '',
-              result: data.result || '',
-            },
+            interruptPayload: activeInterrupt,
             updatedAt: new Date().toISOString(),
           };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
-          const currentExecution =
-            state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          const shouldSetCurrentExecution =
+            !state.currentExecution
+            || state.currentExecution.id === data.executionId
+            || state.currentPlaybook?.id === updatedExec.playbookId;
+          const currentExecution = shouldSetCurrentExecution ? updatedExec : state.currentExecution;
 
           return {
             executionCache,
@@ -3924,7 +4089,16 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 ...incoming,
                 taskResults: mergedTaskResults,
                 status: mergedStatus,
-                interruptPayload: cached.interruptPayload || incoming.interruptPayload,
+                interruptPayload: isActiveExecutionStatus(mergedStatus) ? cached.interruptPayload || incoming.interruptPayload : null,
+                hitlHistory: isActiveExecutionStatus(mergedStatus)
+                  ? mergeHitlHistory(cached.hitlHistory || [], incoming.hitlHistory || [])
+                  : [],
+                pendingInterrupts: isActiveExecutionStatus(mergedStatus)
+                  ? ((cached.pendingInterrupts && cached.pendingInterrupts.length > 0) ? cached.pendingInterrupts : incoming.pendingInterrupts)
+                  : [],
+                currentInterruptId: isActiveExecutionStatus(mergedStatus) ? cached.currentInterruptId ?? incoming.currentInterruptId : null,
+                currentInterruptTaskId: isActiveExecutionStatus(mergedStatus) ? cached.currentInterruptTaskId ?? incoming.currentInterruptTaskId : null,
+                waitingForHumanInput: isActiveExecutionStatus(mergedStatus) ? Boolean(cached.waitingForHumanInput || incoming.waitingForHumanInput) : false,
               };
             } else {
               // No cached version — use incoming as-is
@@ -4047,7 +4221,20 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               taskResults: mergedTaskResults,
               status: mergedStatus,
               singleStepTaskId: latestCached.singleStepTaskId ?? normalizedExecution.singleStepTaskId ?? null,
-              interruptPayload: latestCached.interruptPayload || normalizedExecution.interruptPayload,
+              interruptPayload: isActiveExecutionStatus(mergedStatus) ? latestCached.interruptPayload || normalizedExecution.interruptPayload : null,
+              hitlHistory: isActiveExecutionStatus(mergedStatus)
+                ? mergeHitlHistory(latestCached.hitlHistory || [], normalizedExecution.hitlHistory || [])
+                : [],
+              pendingInterrupts: isActiveExecutionStatus(mergedStatus)
+                ? ((latestCached.pendingInterrupts && latestCached.pendingInterrupts.length > 0)
+                  ? latestCached.pendingInterrupts
+                  : normalizedExecution.pendingInterrupts)
+                : [],
+              currentInterruptId: isActiveExecutionStatus(mergedStatus) ? latestCached.currentInterruptId ?? normalizedExecution.currentInterruptId : null,
+              currentInterruptTaskId: isActiveExecutionStatus(mergedStatus) ? latestCached.currentInterruptTaskId ?? normalizedExecution.currentInterruptTaskId : null,
+              waitingForHumanInput: isActiveExecutionStatus(mergedStatus)
+                ? Boolean(latestCached.waitingForHumanInput || normalizedExecution.waitingForHumanInput)
+                : false,
             };
           }
 

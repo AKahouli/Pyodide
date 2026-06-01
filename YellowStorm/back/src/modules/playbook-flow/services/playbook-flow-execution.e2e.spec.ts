@@ -152,6 +152,7 @@ async function createE2EService(
   };
   const streamEvents = {
     emitExecutionComplete: jest.fn(),
+    emitExecutionCancelled: jest.fn(),
     emitExecutionStart: jest.fn(),
     emitRouterDecision: jest.fn(),
     emitQueuePositionUpdate: jest.fn(),
@@ -161,7 +162,6 @@ async function createE2EService(
     emitInterrupt: jest.fn(),
     cacheOwner: jest.fn(),
     emitExecutionQueued: jest.fn(),
-    emitExecutionCancelled: jest.fn(),
   };
   const replayReportService = { findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null) };
   const outputContractService = new PlaybookFlowOutputContractService();
@@ -457,6 +457,13 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
           result: '',
           conversation_json: '[]',
           resumable_actions: ['reply', 'skip'],
+          blocker_rule_id: 'rule-1',
+          blocker_kind: 'missing_required_input',
+          reason_code: 'missing_required_input',
+          risk_level: 'medium',
+          confidence: 1,
+          downstream_node_ids: ['task-2'],
+          feedback_scope_default: 'downstream_run',
         },
       },
     ]);
@@ -479,6 +486,14 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
           taskDescription: 'Analyze GDP for a country and year',
           payloadJson: '[]',
           resumableActions: ['reply', 'skip'],
+          blockerRuleId: 'rule-1',
+          blockerKind: 'missing_required_input',
+          reasonCode: 'missing_required_input',
+          riskLevel: 'medium',
+          confidence: 1,
+          downstreamNodeIds: ['task-2'],
+          feedbackScopeDefault: 'downstream_run',
+          interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
         }),
       }),
     );
@@ -666,6 +681,8 @@ describe('E2E: Cancel', () => {
       _id: 'exec-run-1',
       ownerId: 'owner-1',
       status: 'running',
+      pendingApproval: { nodeId: 'step-1', interruptId: 'int-1', prompt: 'Clarify?' },
+      hitlEvents: [{ interruptId: 'int-1', status: 'pending' }],
       save: jest.fn().mockResolvedValue(undefined),
       toJSON: jest.fn().mockReturnValue({ id: 'exec-run-1', status: 'cancelled' }),
     };
@@ -686,6 +703,12 @@ describe('E2E: Cancel', () => {
     const result = await ctx.service.cancel('exec-run-1', 'owner-1');
 
     expect(execDoc.status).toBe('cancelled');
+    expect(execDoc.pendingApproval).toBeNull();
+    expect(execDoc.hitlEvents[0]).toEqual(expect.objectContaining({
+      interruptId: 'int-1',
+      status: 'cancelled',
+      respondedAt: expect.any(Date),
+    }));
     expect(execDoc.endedAt).toBeInstanceOf(Date);
     expect(execDoc.save).toHaveBeenCalled();
     expect(mockCancel).toHaveBeenCalledWith(

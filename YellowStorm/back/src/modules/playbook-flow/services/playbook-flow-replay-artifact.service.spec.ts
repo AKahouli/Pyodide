@@ -25,6 +25,7 @@ function makeReplay(overrides: Partial<FlowValidatedReplayDocument> = {}): any {
     toolPolicy: overrides.toolPolicy ?? null,
     outputContract: overrides.outputContract ?? null,
     referenceNodeSnapshot: overrides.referenceNodeSnapshot ?? null,
+    hitlMemorySnapshots: (overrides as any).hitlMemorySnapshots ?? [],
     replayConfig: overrides.replayConfig ?? { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
   };
 }
@@ -142,6 +143,37 @@ describe('PlaybookFlowReplayArtifactService', () => {
       replayToolTrace: false,
       replayReasoningChain: true,
     });
+  });
+
+  it('preserves replay HITL memory snapshots in resolved artifacts', async () => {
+    const replay = makeReplay({
+      hitlMemorySnapshots: [{
+        interruptId: 'int-1',
+        nodeId: 'task-1',
+        iteration: 0,
+        type: 'clarification',
+        blockerKind: 'missing_document',
+        reasonCode: 'missing_document',
+        prompt: 'Which document?',
+        responseAction: 'reply',
+        responseMessage: 'Use the signed document.',
+        responseScope: 'downstream_run',
+        downstreamNodeIds: ['task-2'],
+        reusableInReplay: true,
+        contextFingerprint: 'hash-1',
+      }],
+    } as any);
+    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+
+    const result = await service.resolveReplayArtifacts('flow-1', ['task-1']);
+
+    expect(result.get('task-1')?.hitlMemorySnapshots).toEqual([
+      expect.objectContaining({
+        interruptId: 'int-1',
+        reusableInReplay: true,
+        contextFingerprint: 'hash-1',
+      }),
+    ]);
   });
 
   it('handles multiple tasks with mixed replay presence', async () => {

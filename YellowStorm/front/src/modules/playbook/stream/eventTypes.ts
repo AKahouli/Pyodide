@@ -34,5 +34,15 @@ export type PlaybookStreamEvent =
   | { type: 'playbook_replay_format_guide_updated'; data: PlaybookReplayFormatGuideUpdatedEvent }
   | { type: 'playbook_output_format_template_updated'; data: PlaybookOutputFormatTemplateUpdatedEvent }
   | { type: 'playbook_execution_complete' | 'playbook_execution_error'; data: PlaybookExecutionCompleteEvent }
-  | { type: 'playbook_interrupt'; data: PlaybookInterruptEvent };
-
+  | { type: 'playbook_interrupt'; data: PlaybookInterruptEvent }
+  | { type: 'playbook_hitl_interrupt_created'; data: PlaybookInterruptEvent }
+  | { type: 'playbook_hitl_interrupt_updated'; data: Record<string, unknown> }
+  | {
+      type: 'playbook_hitl_interrupt_resolved';
+      data: { executionId: string; interruptId: string; action: string; taskId?: string; scope?: string; remember?: boolean };
+    }
+  | { type: 'playbook_hitl_memory_suggested'; data: Record<string, unknown> }
+  | { type: 'playbook_hitl_memory_saved'; data: Record<string, unknown> }
+  | { type: 'playbook_hitl_blocker_disabled'; data: Record<string, unknown> }
+  | { type: 'playbook_hitl_policy_updated'; data: Record<string, unknown> }
+  | { type: 'playbook_replay_hitl_summary_updated'; data: Record<string, unknown> };

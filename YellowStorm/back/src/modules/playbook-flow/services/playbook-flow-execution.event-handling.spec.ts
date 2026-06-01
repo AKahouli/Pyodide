@@ -71,6 +71,34 @@ describe('PlaybookFlowExecutionService event handling', () => {
     );
   });
 
+  it('ignores replayed HITL interrupts that were already answered', async () => {
+    const executionModel = {
+      exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ _id: 'exec-1' }) })),
+    };
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests({ executionModel });
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeSuspended',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: {
+        type: 'clarification',
+        interrupt_id: 'step-1:clarification:1',
+        message: 'Which country?',
+      },
+    });
+
+    expect(executionModel.exists).toHaveBeenCalledWith({
+      _id: 'exec-1',
+      $or: [
+        { status: { $in: ['completed', 'failed', 'cancelled'] } },
+        { hitlEvents: { $elemMatch: { interruptId: 'step-1:clarification:1', status: 'answered' } } },
+      ],
+    });
+    expect(taskResultModel.updateOne).not.toHaveBeenCalled();
+    expect(streamEvents.emitInterrupt).not.toHaveBeenCalled();
+  });
+
   it('persists enriched node results without collapsing metadata into output', async () => {
     const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
     taskResultModel.updateOne.mockResolvedValue(undefined);

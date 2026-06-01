@@ -34,6 +34,7 @@ import { FlowEvaluationExecution, FlowEvaluationExecutionSchema } from './schema
 import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbook-flow-mail-event-ledger.schema';
 import { FlowIdempotencyRecord, FlowIdempotencyRecordSchema } from './schemas/playbook-flow-idempotency-record.schema';
 import { FlowExecutionLease, FlowExecutionLeaseSchema } from './schemas/playbook-flow-execution-lease.schema';
+import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hitl-memory.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -48,6 +49,7 @@ import { PlaybookFlowExecutionAdvisorController } from './controllers/playbook-f
 import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream.controller';
 import { PlaybookFlowPromptTemplateController } from './controllers/playbook-flow-prompt-template.controller';
 import { PlaybookFlowSettingsController } from './controllers/playbook-flow-settings.controller';
+import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
@@ -101,6 +103,11 @@ import { PlaybookFlowReplayReportService } from './services/playbook-flow-replay
 import { PlaybookFlowReplayDriftService } from './services/playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './services/playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './services/playbook-flow-output-contract.service';
+import { PlaybookFlowHitlService } from './services/playbook-flow-hitl.service';
+import { PlaybookFlowHitlBlockerService } from './services/playbook-flow-hitl-blocker.service';
+import { PlaybookFlowHitlContextService } from './services/playbook-flow-hitl-context.service';
+import { PlaybookFlowHitlMemoryService } from './services/playbook-flow-hitl-memory.service';
+import { PlaybookFlowHitlPromptService } from './services/playbook-flow-hitl-prompt.service';
 import { PlaybookFlowReplaySemanticJudgeService } from './services/playbook-flow-replay-semantic-judge.service';
 import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-flow-replay-post-run-evaluation.service';
 import { FlowAccessService } from './domain/flow-access.service';
@@ -138,6 +145,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
       { name: FlowMailEventLedger.name, schema: FlowMailEventLedgerSchema },
       { name: FlowIdempotencyRecord.name, schema: FlowIdempotencyRecordSchema },
       { name: FlowExecutionLease.name, schema: FlowExecutionLeaseSchema },
+      { name: FlowHitlMemory.name, schema: FlowHitlMemorySchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -165,6 +173,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowStreamController,
     PlaybookFlowPromptTemplateController,
     PlaybookFlowSettingsController,
+    PlaybookFlowHitlController,
   ],
   providers: [
     PlaybookFlowService,
@@ -233,6 +242,11 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowReplayDriftService,
     PlaybookFlowReplayPlanService,
     PlaybookFlowOutputContractService,
+    PlaybookFlowHitlService,
+    PlaybookFlowHitlBlockerService,
+    PlaybookFlowHitlContextService,
+    PlaybookFlowHitlMemoryService,
+    PlaybookFlowHitlPromptService,
     PlaybookFlowReplaySemanticJudgeService,
     PlaybookFlowReplayPostRunEvaluationService,
   ],

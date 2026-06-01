@@ -53,4 +53,10 @@ export const playbookKeys = {
     [...playbookKeys.execution(executionId), 'advisor-remediations', playbookId, taskId ?? null] as const,
   flowTriggers: (flowId: string) =>
     [...playbookKeys.detail(flowId, 'enriched'), 'triggers'] as const,
+  hitlPolicy: (flowId: string, nodeId?: string | null) =>
+    [...playbookKeys.detail(flowId, 'base'), 'hitl-policy', nodeId ?? 'workflow'] as const,
+  hitlBlockers: (flowId: string) =>
+    [...playbookKeys.detail(flowId, 'base'), 'hitl-blockers'] as const,
+  hitlMemories: (flowId: string) =>
+    [...playbookKeys.detail(flowId, 'base'), 'hitl-memories'] as const,
 };

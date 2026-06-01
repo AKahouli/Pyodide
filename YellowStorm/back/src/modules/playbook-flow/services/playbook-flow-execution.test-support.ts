@@ -28,8 +28,10 @@ export function createExecutionServiceForTests(overrides?: {
   executionLeaseService?: Record<string, any>;
   graphSanitizerService?: Record<string, any>;
   executionDispatcherService?: Record<string, any>;
+  hitlMemoryModel?: Record<string, any>;
 }) {
   const executionModel = {
+    exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
     findById: jest.fn(() => ({
       select: jest.fn().mockReturnValue({
@@ -92,6 +94,7 @@ export function createExecutionServiceForTests(overrides?: {
   };
   const streamEvents = {
     emitExecutionComplete: jest.fn(),
+    emitExecutionCancelled: jest.fn(),
     emitExecutionStart: jest.fn(),
     emitRouterDecision: jest.fn(),
     emitQueuePositionUpdate: jest.fn(),
@@ -99,6 +102,8 @@ export function createExecutionServiceForTests(overrides?: {
     emitStepStart: jest.fn(),
     emitStepUpdate: jest.fn(),
     emitInterrupt: jest.fn(),
+    emitHitlInterruptResolved: jest.fn(),
+    emitHitlMemorySaved: jest.fn(),
     ...overrides?.streamEvents,
   };
   const observabilityService = new PlaybookFlowObservabilityService(
@@ -209,6 +214,10 @@ export function createExecutionServiceForTests(overrides?: {
     executionLeaseService as any,
     overrides?.graphSanitizerService as any,
     overrides?.executionDispatcherService as any,
+    undefined as any,
+    undefined as any,
+    undefined as any,
+    overrides?.hitlMemoryModel as any,
   );
 
   return {

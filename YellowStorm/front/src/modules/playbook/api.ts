@@ -64,6 +64,11 @@ import type {
   PlaybookDeltaPatchFields,
   PlaybookDeltaNodePatch,
   PlaybookDeltaNodePositionUpdate,
+  HitlBlockerRule,
+  HitlEventLog,
+  HitlFeedbackScope,
+  HitlMemory,
+  HitlPolicy,
  } from './types';
 import {
   normalizePlaybook,
@@ -828,9 +833,30 @@ function normalizeExecution(raw: any): PlaybookExecution {
   const summary = normalizeExecutionSummary(raw);
   const stepExecutionModes = raw.stepExecutionModes ?? raw.step_execution_modes;
   const replayPlanningByTask = raw.replayPlanningByTask;
+  const isTerminal = summary.status === 'completed' || summary.status === 'failed' || summary.status === 'cancelled';
   const pendingApprovalType = raw.pendingApproval?.interruptType === 'human_approval'
     ? 'approval_request'
     : raw.pendingApproval?.interruptType;
+  const interruptPayload = isTerminal ? null : raw.interruptPayload ?? (raw.pendingApproval
+    ? {
+        type: pendingApprovalType ?? 'approval_request',
+        taskId: raw.pendingApproval.nodeId,
+        taskTitle: raw.pendingApproval.taskTitle ?? '',
+        message: raw.pendingApproval.prompt ?? '',
+        threadId: raw.threadId ?? '',
+        interruptId: raw.pendingApproval.interruptId ?? '',
+        round: raw.pendingApproval.iteration ?? 0,
+        payloadJson: raw.pendingApproval.payloadJson ?? '',
+        resumableActions: raw.pendingApproval.resumableActions ?? [],
+        taskDescription: raw.pendingApproval.taskDescription ?? '',
+        result: raw.pendingApproval.result ?? '',
+      }
+    : null);
+  const pendingInterrupts = Array.isArray(raw.pendingInterrupts)
+    ? raw.pendingInterrupts
+    : interruptPayload
+      ? [interruptPayload]
+      : [];
 
   return {
     ...summary,
@@ -841,24 +867,11 @@ function normalizeExecution(raw: any): PlaybookExecution {
         : undefined,
     taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
     threadId: toNullableString(raw.threadId),
-    interruptPayload: raw.interruptPayload ?? (raw.pendingApproval
-      ? {
-          type: pendingApprovalType ?? 'approval_request',
-          taskId: raw.pendingApproval.nodeId,
-          taskTitle: raw.pendingApproval.taskTitle ?? '',
-          message: raw.pendingApproval.prompt ?? '',
-          threadId: raw.threadId ?? '',
-          interruptId: raw.pendingApproval.interruptId ?? '',
-          round: raw.pendingApproval.iteration ?? 0,
-          payloadJson: raw.pendingApproval.payloadJson ?? '',
-          resumableActions: raw.pendingApproval.resumableActions ?? [],
-          taskDescription: raw.pendingApproval.taskDescription ?? '',
-          result: raw.pendingApproval.result ?? '',
-        }
-      : null),
-    waitingForHumanInput: Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
-    currentInterruptId: toNullableString(raw.currentInterruptId),
-    currentInterruptTaskId: toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
+    interruptPayload,
+    pendingInterrupts: isTerminal ? [] : pendingInterrupts,
+    waitingForHumanInput: isTerminal ? false : Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
+    currentInterruptId: isTerminal ? null : toNullableString(raw.currentInterruptId),
+    currentInterruptTaskId: isTerminal ? null : toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
     hitlHistory: Array.isArray(raw.hitlHistory) ? raw.hitlHistory : [],
     playbookSnapshot: raw.playbookSnapshot ?? null,
     totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
@@ -918,6 +931,7 @@ function normalizeValidatedTaskReplay(raw: any): ValidatedTaskReplay {
     toolTraceTemplate: Array.isArray(raw.toolTraceTemplate) ? raw.toolTraceTemplate : [],
     driftPolicy: raw.driftPolicy ?? null,
     acceptedExamples: Array.isArray(raw.acceptedExamples) ? raw.acceptedExamples : [],
+    hitlMemorySnapshots: Array.isArray(raw.hitlMemorySnapshots) ? raw.hitlMemorySnapshots : [],
   };
 }
 
@@ -1167,6 +1181,8 @@ export async function resumePlaybookFromStep(
     approved?: boolean;
     reason?: string;
     feedback?: string;
+    scope?: HitlFeedbackScope;
+    remember?: boolean;
     payload?: Record<string, unknown>;
   },
 ): Promise<{ status: string; executionId: string }> {
@@ -1174,6 +1190,109 @@ export async function resumePlaybookFromStep(
     API_ENDPOINTS.playbooks.resumeFromStep(playbookId, executionId),
     data,
   );
+  return response.data.data;
+}
+
+export async function getHitlPolicy(playbookId: string): Promise<HitlPolicy> {
+  const response = await apiClient.get<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlPolicy(playbookId));
+  return response.data.data;
+}
+
+export async function updateHitlPolicy(playbookId: string, data: Partial<HitlPolicy>): Promise<HitlPolicy> {
+  const response = await apiClient.patch<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlPolicy(playbookId), data);
+  return response.data.data;
+}
+
+export async function getNodeHitlPolicy(playbookId: string, nodeId: string): Promise<HitlPolicy> {
+  const response = await apiClient.get<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlNodePolicy(playbookId, nodeId));
+  return response.data.data;
+}
+
+export async function updateNodeHitlPolicy(playbookId: string, nodeId: string, data: Partial<HitlPolicy>): Promise<HitlPolicy> {
+  const response = await apiClient.patch<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlNodePolicy(playbookId, nodeId), data);
+  return response.data.data;
+}
+
+export async function getHitlBlockers(playbookId: string): Promise<HitlBlockerRule[]> {
+  const response = await apiClient.get<ApiResponse<HitlBlockerRule[]>>(API_ENDPOINTS.playbooks.hitlBlockers(playbookId));
+  return response.data.data;
+}
+
+export async function createHitlBlocker(
+  playbookId: string,
+  data: Omit<Partial<HitlBlockerRule>, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> & Pick<HitlBlockerRule, 'kind' | 'label' | 'description' | 'action'>,
+): Promise<HitlBlockerRule> {
+  const response = await apiClient.post<ApiResponse<HitlBlockerRule>>(API_ENDPOINTS.playbooks.hitlBlockers(playbookId), data);
+  return response.data.data;
+}
+
+export async function normalizeHitlBlocker(
+  playbookId: string,
+  data: { description: string; nodeId?: string | null },
+): Promise<Partial<HitlBlockerRule>> {
+  const response = await apiClient.post<ApiResponse<Partial<HitlBlockerRule>>>(API_ENDPOINTS.playbooks.hitlBlockerNormalize(playbookId), data);
+  return response.data.data;
+}
+
+export async function updateHitlBlocker(
+  playbookId: string,
+  blockerId: string,
+  data: Partial<HitlBlockerRule>,
+): Promise<HitlBlockerRule> {
+  const response = await apiClient.patch<ApiResponse<HitlBlockerRule>>(API_ENDPOINTS.playbooks.hitlBlocker(playbookId, blockerId), data);
+  return response.data.data;
+}
+
+export async function deleteHitlBlocker(playbookId: string, blockerId: string): Promise<{ deleted: true }> {
+  const response = await apiClient.delete<ApiResponse<{ deleted: true }>>(API_ENDPOINTS.playbooks.hitlBlocker(playbookId, blockerId));
+  return response.data.data;
+}
+
+export async function getHitlMemories(playbookId: string): Promise<HitlMemory[]> {
+  const response = await apiClient.get<ApiResponse<HitlMemory[]>>(API_ENDPOINTS.playbooks.hitlMemories(playbookId));
+  return response.data.data;
+}
+
+export async function saveHitlMemory(
+  playbookId: string,
+  data: Omit<Partial<HitlMemory>, 'id' | 'ownerId' | 'flowId' | 'createdAt' | 'updatedAt'> & Pick<HitlMemory, 'title' | 'content' | 'normalizedInstruction'>,
+): Promise<HitlMemory> {
+  const response = await apiClient.post<ApiResponse<HitlMemory>>(API_ENDPOINTS.playbooks.hitlMemories(playbookId), data);
+  return response.data.data;
+}
+
+export async function getHitlEvents(executionId: string): Promise<HitlEventLog[]> {
+  const response = await apiClient.get<ApiResponse<HitlEventLog[]>>(API_ENDPOINTS.playbooks.hitlEvents(executionId));
+  return response.data.data;
+}
+
+export async function getPendingHitlInterrupt(executionId: string): Promise<Record<string, unknown> | null> {
+  const response = await apiClient.get<ApiResponse<Record<string, unknown> | null>>(API_ENDPOINTS.playbooks.hitlPending(executionId));
+  return response.data.data;
+}
+
+export async function resumeHitlInterrupt(
+  executionId: string,
+  interruptId: string,
+  data: {
+    action?: 'reply' | 'approve' | 'reject' | 'skip';
+    message?: string;
+    reason?: string;
+    feedback?: string;
+    scope?: HitlFeedbackScope;
+    remember?: boolean;
+    payload?: Record<string, unknown>;
+  },
+): Promise<{ status: string; executionId: string }> {
+  const response = await apiClient.post<ApiResponse<{ status: string; executionId: string }>>(
+    API_ENDPOINTS.playbooks.hitlResume(executionId, interruptId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function disableHitlBlocker(executionId: string, interruptId: string): Promise<{ disabled: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ disabled: boolean }>>(API_ENDPOINTS.playbooks.hitlDisableBlocker(executionId, interruptId));
   return response.data.data;
 }
 

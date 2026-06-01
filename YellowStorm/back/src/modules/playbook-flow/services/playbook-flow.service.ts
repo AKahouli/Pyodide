@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
@@ -21,6 +22,8 @@ import { FlowResponseAssemblerService } from '../domain/flow-response-assembler.
 import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.service';
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
+import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
+import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 
 @Injectable()
 export class PlaybookFlowService {
@@ -62,7 +65,21 @@ export class PlaybookFlowService {
     private readonly workspacePolicy: FlowWorkspacePolicyService,
     private readonly graphSanitizer: FlowGraphSanitizerService,
     private readonly deltaPatchService: FlowDeltaPatchService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private buildDefaultHitlPolicy(): Record<string, unknown> {
+    if (this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) {
+      return { ...DEFAULT_HITL_POLICY };
+    }
+    return { ...DEFAULT_HITL_POLICY, mode: 'manual', disabledReason: 'Smart HITL defaults are disabled by configuration.' };
+  }
+
+  private buildDefaultHitlBlockers(): Array<Record<string, unknown>> {
+    if (!this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) return [];
+    const now = new Date();
+    return DEFAULT_HITL_BLOCKERS.map((blocker) => ({ ...blocker, createdAt: now, updatedAt: now }));
+  }
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
     const nodes = dto.nodes || [];
@@ -83,6 +100,8 @@ export class PlaybookFlowService {
       description: dto.description,
       triggerConfig: dto.triggerConfig,
       settings: dto.settings || { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: dto.hitlPolicy ?? this.buildDefaultHitlPolicy(),
+      hitlBlockers: dto.hitlBlockers ?? this.buildDefaultHitlBlockers(),
       nodes,
       controlEdges,
       dataBindings,
@@ -233,6 +252,8 @@ export class PlaybookFlowService {
     if (dto.description !== undefined) existing.description = dto.description;
     if (dto.triggerConfig !== undefined) existing.triggerConfig = dto.triggerConfig as any;
     if (dto.settings !== undefined) existing.settings = dto.settings as any;
+    if (dto.hitlPolicy !== undefined) existing.hitlPolicy = dto.hitlPolicy as any;
+    if (dto.hitlBlockers !== undefined) existing.hitlBlockers = dto.hitlBlockers as any[];
     if (dto.nodes !== undefined) existing.nodes = dto.nodes as any[];
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
@@ -389,6 +410,8 @@ export class PlaybookFlowService {
       ownerId, schemaVersion: 1, name, description,
       nodes, controlEdges, dataBindings, workspaces: normalizedWorkspaces,
       settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: this.buildDefaultHitlPolicy(),
+      hitlBlockers: this.buildDefaultHitlBlockers(),
     });
     try {
       const saved = await flow.save();
@@ -457,6 +480,8 @@ export class PlaybookFlowService {
       name: cloneName,
       description: existing.description,
       triggerConfig: existing.triggerConfig,
+      hitlPolicy: existing.hitlPolicy ?? this.buildDefaultHitlPolicy(),
+      hitlBlockers: existing.hitlBlockers ?? this.buildDefaultHitlBlockers(),
       settings: existing.settings,
       nodes: existing.nodes,
       controlEdges: existing.controlEdges,

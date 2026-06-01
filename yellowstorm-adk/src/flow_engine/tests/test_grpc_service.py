@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from google.protobuf.json_format import ParseDict
 
+from src.flow_engine.grpc_service import _snapshot_hitl_blockers, _snapshot_hitl_policy
 from src.flow_engine.grpc_contract import (
     snapshot_to_dict,
     should_emit_fallback_completion,
@@ -12,6 +13,29 @@ from src.flow_engine.grpc_contract import (
 )
 
 struct_pb2 = pytest.importorskip("google.protobuf.struct_pb2", reason="protobuf not available")
+
+
+def test_snapshot_hitl_policy_reads_node_metadata_fallback():
+    snapshot = {
+        "nodes": [{
+            "id": "step-1",
+            "metadata": {"hitl_policy": {"mode": "auto", "clarificationEnabled": True}},
+        }],
+    }
+
+    assert _snapshot_hitl_policy(snapshot) == {"mode": "auto", "clarificationEnabled": True}
+
+
+def test_snapshot_hitl_blockers_reads_deduped_node_metadata_fallback():
+    blocker = {"id": "system-explicit-user-instruction", "kind": "explicit_user_instruction"}
+    snapshot = {
+        "nodes": [
+            {"id": "step-1", "metadata": {"hitl_blockers": [blocker]}},
+            {"id": "step-2", "metadata": {"hitl_blockers": [blocker]}},
+        ],
+    }
+
+    assert _snapshot_hitl_blockers(snapshot) == [blocker]
 
 
 class TestUnwrapMetadataFields:
@@ -334,6 +358,72 @@ def test_run_seeds_task_outputs_from_request(monkeypatch):
     asyncio.run(_run_test())
 
 
+def test_run_seeds_hitl_memory_from_request(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunRequest(execution_id="exec-hitl-memory", flow_id="flow-hitl-memory")
+        ParseDict(
+            {
+                "__playbook_hitl_memory": [{
+                    "id": "memory-1",
+                    "node_id": "step-1",
+                    "memory_type": "procedural",
+                    "title": "Use CSV exports",
+                    "normalized_instruction": "Prefer CSV exports for this step.",
+                    "content": "Prefer CSV exports for this step.",
+                    "applies_to": "node",
+                    "sensitivity": "normal",
+                }],
+                "brief": "run it",
+            },
+            request.input_context,
+        )
+
+        captured: dict[str, object] = {}
+
+        async def fake_ensure_checkpointer():
+            return object()
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            captured["graph_input"] = graph_input
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            if False:
+                yield None
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+
+        events = [event async for event in servicer.Run(request, None)]
+
+        assert captured["graph_input"]["inputs"] == {"brief": "run it"}
+        assert captured["graph_input"]["hitl_memory"] == [{
+            "id": "memory-1",
+            "node_id": "step-1",
+            "memory_type": "procedural",
+            "title": "Use CSV exports",
+            "normalized_instruction": "Prefer CSV exports for this step.",
+            "content": "Prefer CSV exports for this step.",
+            "applies_to": "node",
+            "sensitivity": "normal",
+        }]
+        assert events[-1].event_type == "ExecutionCompleted"
+
+    asyncio.run(_run_test())
+
+
 def test_resume_approval_unblocks_run(monkeypatch):
     pytest.importorskip("langgraph", reason="langgraph not installed")
     pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
@@ -549,6 +639,9 @@ def test_seed_replay_state_returns_none_when_no_source_state(monkeypatch):
         next = ()
 
     class FakeGraph:
+        def __init__(self):
+            self.state_updates = []
+
         async def aget_state(self, config):
             return FakeState()
 
@@ -632,6 +725,9 @@ def test_seed_replay_state_prefers_historical_checkpoint_fork(monkeypatch):
             })
 
     class FakeGraph:
+        def __init__(self):
+            self.state_updates = []
+
         async def aget_state(self, config):
             checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
             if checkpoint_id == "cp-current":
@@ -682,7 +778,12 @@ def test_seed_replay_state_prefers_historical_checkpoint_fork(monkeypatch):
             raise AssertionError(f"Unexpected config: {config}")
 
         async def aupdate_state(self, config, values, as_node=None):
-            raise AssertionError("fallback state seeding should not run when historical checkpoint fork succeeds")
+            self.state_updates.append({
+                "config": config,
+                "values": values,
+                "as_node": as_node,
+            })
+            return config
 
         async def abulk_update_state(self, config, supersteps):
             raise AssertionError("fallback bulk replay should not run when historical checkpoint fork succeeds")
@@ -691,8 +792,9 @@ def test_seed_replay_state_prefers_historical_checkpoint_fork(monkeypatch):
             raise AssertionError("fallback bootstrap should not run when historical checkpoint fork succeeds")
 
     checkpointer = FakeCheckpointer()
+    graph = FakeGraph()
     result = asyncio.run(_seed_replay_state(
-        FakeGraph(), checkpointer, "exec-new", "exec-src",
+        graph, checkpointer, "exec-new", "exec-src",
         {
             "control_edges": [],
             "nodes": [{"id": "target", "kind": "step"}, {"id": "downstream", "kind": "step"}],
@@ -729,6 +831,11 @@ def test_seed_replay_state_prefers_historical_checkpoint_fork(monkeypatch):
         "writes": [("channel-a", {"hello": "world"})],
         "task_id": "task-123",
         "task_path": "",
+    }]
+    assert graph.state_updates == [{
+        "config": {"configurable": {"thread_id": "exec-new", "checkpoint_ns": "", "checkpoint_id": "cp-target"}},
+        "values": {"hitl_memory": []},
+        "as_node": "__input__",
     }]
 
 
@@ -856,6 +963,182 @@ def test_seed_replay_state_does_not_bootstrap_with_astream(monkeypatch):
     assert captured["astream_called"] is False
     assert captured["seed_values"]["flow_id"] == "flow-1"
     assert captured["seed_values"]["inputs"] == {"foo": "bar"}
+
+
+def test_seed_replay_state_filters_human_context_by_scope(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    captured = {}
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {("upstream", 0): {"out": "a"}},
+                        "iterations": {"upstream": 1},
+                        "router_decisions": {},
+                        "human_context": [
+                            {"id": "entire-upstream", "scope": "entire_run", "node_id": "upstream"},
+                            {"id": "entire-target", "scope": "entire_run", "node_id": "target"},
+                            {"id": "entire-downstream", "scope": "entire_run", "node_id": "downstream"},
+                            {"id": "entire-unknown", "scope": "entire_run"},
+                            {"id": "upstream", "scope": "downstream_run", "node_id": "upstream"},
+                            {"id": "target", "scope": "downstream_run", "node_id": "target"},
+                            {"id": "step", "scope": "step_only", "node_id": "upstream"},
+                            {"id": "future-node", "scope": "future_node_runs", "node_id": "upstream"},
+                            {"id": "future-flow", "scope": "future_workflow_runs", "node_id": "upstream"},
+                            {"id": "invalid", "scope": "downstream_run"},
+                            "not-a-context-entry",
+                        ],
+                    },
+                )
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            if as_node == "__input__":
+                captured["state_update"] = values
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            return config
+
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {
+            "control_edges": [
+                {"source": "upstream", "target": "target"},
+                {"source": "target", "target": "downstream"},
+            ],
+            "nodes": [
+                {"id": "upstream", "kind": "step"},
+                {"id": "target", "kind": "step"},
+                {"id": "downstream", "kind": "step"},
+            ],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result is not None
+    assert captured["state_update"]["human_context"] == [
+        {"id": "entire-upstream", "scope": "entire_run", "node_id": "upstream"},
+        {"id": "entire-target", "scope": "entire_run", "node_id": "target"},
+        {"id": "upstream", "scope": "downstream_run", "node_id": "upstream"},
+        {"id": "target", "scope": "downstream_run", "node_id": "target"},
+    ]
+
+
+def test_seed_replay_state_seeds_runtime_hitl_memory(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        def __init__(self, values=None, next_nodes=()):
+            self.values = values or {}
+            self.next = next_nodes
+
+    captured = {}
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            tid = config.get("configurable", {}).get("thread_id", "")
+            if tid == "exec-src":
+                return FakeState(
+                    values={
+                        "task_outputs": {},
+                        "iterations": {"target": 0},
+                        "router_decisions": {},
+                        "flow_id": "flow-1",
+                    },
+                )
+            return FakeState(values={"execution_id": tid}, next_nodes=("target",))
+
+        async def aupdate_state(self, config, values, as_node=None):
+            if as_node == "__input__":
+                captured["state_update"] = values
+            return config
+
+        async def abulk_update_state(self, config, supersteps):
+            return config
+
+        async def astream(self, graph_input, config, **kwargs):
+            yield {}
+
+    hitl_memory = [{
+        "id": "memory-1",
+        "node_id": "target",
+        "normalized_instruction": "Use signed documents.",
+    }]
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {
+            "control_edges": [],
+            "nodes": [{"id": "target", "kind": "step"}],
+        },
+        {"brief": "rerun"},
+        "target",
+        0,
+        hitl_memory,
+    ))
+
+    assert result is not None
+    assert captured["state_update"]["inputs"] == {"brief": "rerun"}
+    assert captured["state_update"]["hitl_memory"] == hitl_memory
+
+
+def test_seed_replay_checkpoint_clears_stale_hitl_memory(monkeypatch):
+    from src.flow_engine.grpc_service import _seed_replay_state
+
+    class FakeState:
+        config = {"configurable": {"thread_id": "exec-src", "checkpoint_id": "checkpoint-1"}}
+        values = {
+            "task_outputs": {},
+            "iterations": {"target": 0},
+            "router_decisions": {},
+            "flow_id": "flow-1",
+            "hitl_memory": [{"id": "stale"}],
+        }
+        next = ("target",)
+        parent_config = None
+
+    captured = {}
+
+    async def fake_fork_replay_checkpoint(checkpointer, execution_id, replay_checkpoint_state):
+        captured["fork_execution_id"] = execution_id
+        return {"configurable": {"thread_id": execution_id, "checkpoint_id": "forked"}}
+
+    class FakeGraph:
+        async def aget_state(self, config):
+            return FakeState()
+
+        async def aupdate_state(self, config, values, as_node=None):
+            captured["state_update"] = values
+            captured["as_node"] = as_node
+            return config
+
+    monkeypatch.setattr("src.flow_engine.grpc_service._fork_replay_checkpoint", fake_fork_replay_checkpoint)
+
+    result = asyncio.run(_seed_replay_state(
+        FakeGraph(), object(), "exec-new", "exec-src",
+        {
+            "control_edges": [],
+            "nodes": [{"id": "target", "kind": "step"}],
+        },
+        {},
+        "target",
+        0,
+    ))
+
+    assert result is not None
+    assert captured["state_update"] == {"hitl_memory": []}
+    assert captured["as_node"] == "__input__"
 
 
 def test_seed_replay_state_does_not_seed_downstream_outputs(monkeypatch):

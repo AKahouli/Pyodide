@@ -141,6 +141,17 @@ def _build_execution_clarification_guidance(
     )
 
 
+def _build_limit_reached_description(task_description: str) -> str:
+    # Force the final pass to complete with the best available context instead of looping forever.
+    return (
+        f"{task_description}\n\n"
+        "Clarification from system: The clarification round limit was reached. "
+        "Proceed with the available information, choose broad reasonable defaults for any "
+        "remaining unknowns, and produce the best possible final result now. "
+        "Do not ask another clarification question."
+    )
+
+
 def _store_clarification_context(
     state: ExecutionState,
     task_id: str,
@@ -1391,14 +1402,19 @@ class DynamicGraphBuilder:
                     if clarification_limit == 0:
                         clarification_resolved = True
                     if not clarification_resolved:
-                        return {
-                            "completed_task_ids": [task_id],
-                            "results": {
-                                task_id: {"error": "Clarification limit exceeded"}
-                            },
-                            "error": "Clarification limit exceeded",
-                            "status": "failed",
+                        task_description = _build_limit_reached_description(
+                            task_for_execution["description"]
+                        )
+                        task_for_execution = {
+                            **task_for_execution,
+                            "description": task_description,
                         }
+                        _store_clarification_context(
+                            state,
+                            task_id,
+                            clarification_transcript,
+                            task_description,
+                        )
 
                 # === STEP 2: interrupt_before (approval) ===
                 if task_config.get("interrupt_before", False):
@@ -2034,6 +2050,23 @@ class DynamicGraphBuilder:
                                 {"role": "user", "content": user_reply}
                             )
                             task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                            task_for_execution = {
+                                **task_for_execution,
+                                "description": task_description,
+                            }
+                            _store_clarification_context(
+                                state,
+                                task_id,
+                                clarification_transcript,
+                                task_description,
+                            )
+                            user_prompt = _build_user_prompt(task_for_execution)
+                            user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
+                            continue
+                        if follow_up_question and clarification_limit > 0:
+                            task_description = _build_limit_reached_description(
+                                task_for_execution["description"]
+                            )
                             task_for_execution = {
                                 **task_for_execution,
                                 "description": task_description,

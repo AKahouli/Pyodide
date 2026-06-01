@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeExecution, makeExecutionSummary, makePlaybook, makeTask } from './test-utils';
 import { __setDeltaAutosaveAvailableForTests, usePlaybookStore } from './store';
+import { initialPlaybookUiState, usePlaybookUiStore } from './uiStore';
 
 const apiMock = vi.hoisted(() => ({
   getPlaybooks: vi.fn(),
@@ -62,11 +63,13 @@ describe('playbook store', () => {
     parseApiErrorMock.mockReset();
     parseApiErrorMock.mockImplementation(() => ({ message: 'parseApiError message' }));
     usePlaybookStore.getState().reset();
+    usePlaybookUiStore.setState(initialPlaybookUiState);
     __setDeltaAutosaveAvailableForTests(false);
   });
 
   afterEach(() => {
     usePlaybookStore.getState().reset();
+    usePlaybookUiStore.setState(initialPlaybookUiState);
     __setDeltaAutosaveAvailableForTests(false);
   });
 
@@ -1317,6 +1320,9 @@ describe('playbook store', () => {
       type: 'approval_request',
       message: 'Approve?',
       threadId: 'th-1',
+      feedbackScopeDefault: 'future_workflow_runs',
+      memoryCandidate: true,
+      downstreamNodeIds: ['task-2'],
     });
 
     const state = usePlaybookStore.getState();
@@ -1326,7 +1332,22 @@ describe('playbook store', () => {
     expect(state.executionCache.e1.waitingForHumanInput).toBe(true);
     expect(state.executionCache.e1.currentInterruptId).toBeNull();
     expect(state.executionCache.e1.currentInterruptTaskId).toBe('task-1');
-    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({ taskId: 'task-1', status: 'pending' });
+    expect(state.executionCache.e1.pendingInterrupts).toHaveLength(1);
+    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({
+      taskId: 'task-1',
+      status: 'pending',
+      feedbackScopeDefault: 'future_workflow_runs',
+      memoryCandidate: true,
+      downstreamNodeIds: ['task-2'],
+    });
+    expect(state.executionCache.e1.taskResults[0].components?.[0]).toMatchObject({
+      type: 'humanFeedback',
+      data: {
+        feedbackScopeDefault: 'future_workflow_runs',
+        memoryCandidate: true,
+        downstreamNodeIds: ['task-2'],
+      },
+    });
   });
 
   it('does not downgrade a completed step back to running on late step updates', () => {
@@ -1586,6 +1607,296 @@ describe('playbook store', () => {
     expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
   });
 
+  it('keeps queued interrupts pending after answering the active interrupt', async () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [
+        {
+          type: 'clarification',
+          taskId: 'task-1',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          threadId: 'th-1',
+          interruptId: 'interrupt-1',
+        },
+        {
+          type: 'approval_request',
+          taskId: 'task-2',
+          taskTitle: 'Task 2',
+          message: 'Approve?',
+          threadId: 'th-1',
+          interruptId: 'interrupt-2',
+        },
+      ],
+      hitlHistory: [{
+        interruptId: 'interrupt-1', taskId: 'task-1', type: 'clarification', taskTitle: 'Task 1', message: 'Need input', taskDescription: '', result: '', round: 1, payloadJson: '', resumableActions: ['reply'], status: 'pending', responseAction: null, responseMessage: null, responseApproved: null, responseReason: null, responseFeedback: null, respondedBy: null, respondedAt: null, createdAt: '2025-01-01T00:00:00.000Z',
+      }],
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-1' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.status).toBe('interrupted');
+    expect(updated.waitingForHumanInput).toBe(true);
+    expect(updated.interruptPayload).toMatchObject({ interruptId: 'interrupt-2', taskId: 'task-2' });
+    expect(updated.currentInterruptId).toBe('interrupt-2');
+    expect(updated.currentInterruptTaskId).toBe('task-2');
+    expect(updated.pendingInterrupts).toHaveLength(1);
+  });
+
+  it('preserves queued interrupt state when fetchExecution merges API data', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [
+        {
+          type: 'clarification',
+          taskId: 'task-1',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          threadId: 'th-1',
+          interruptId: 'interrupt-1',
+        },
+        {
+          type: 'approval_request',
+          taskId: 'task-2',
+          taskTitle: 'Task 2',
+          message: 'Approve?',
+          threadId: 'th-1',
+          interruptId: 'interrupt-2',
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      waitingForHumanInput: false,
+      interruptPayload: null,
+      pendingInterrupts: [],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.pendingInterrupts).toHaveLength(2);
+    expect(updated.currentInterruptId).toBe('interrupt-1');
+    expect(updated.currentInterruptTaskId).toBe('task-1');
+    expect(updated.waitingForHumanInput).toBe(true);
+  });
+
+  it('preserves HITL history when fetchExecution merges API data', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      hitlHistory: [
+        {
+          interruptId: 'interrupt-1',
+          taskId: 'task-1',
+          type: 'clarification',
+          taskTitle: 'Task 1',
+          message: 'Need input',
+          taskDescription: '',
+          result: '',
+          round: 0,
+          payloadJson: '',
+          resumableActions: ['reply'],
+          status: 'answered',
+          responseAction: 'reply',
+          responseMessage: 'Use draft',
+          responseApproved: null,
+          responseReason: null,
+          responseFeedback: null,
+          respondedBy: 'User',
+          respondedAt: '2025-01-01T00:00:01.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          blockerRuleId: null,
+          blockerKind: null,
+          reasonCode: null,
+          riskLevel: 'low',
+          downstreamNodeIds: ['task-2'],
+          feedbackScopeDefault: 'downstream_run',
+          memoryCandidate: false,
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      waitingForHumanInput: false,
+      hitlHistory: [],
+      pendingInterrupts: [],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.hitlHistory).toHaveLength(1);
+    expect(updated.hitlHistory?.[0].responseMessage).toBe('Use draft');
+  });
+
+  it('fetchExecution promotes incoming interrupt payload when cached execution has not captured it yet', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: false,
+      interruptPayload: null,
+      pendingInterrupts: [],
+      currentInterruptId: null,
+      currentInterruptTaskId: null,
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'pending_approval',
+      waitingForHumanInput: true,
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      pendingInterrupts: [{
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      }],
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.waitingForHumanInput).toBe(true);
+    expect(updated.interruptPayload).toMatchObject({ interruptId: 'interrupt-1', taskId: 'task-1' });
+    expect(updated.pendingInterrupts).toHaveLength(1);
+    expect(updated.currentInterruptId).toBe('interrupt-1');
+    expect(updated.currentInterruptTaskId).toBe('task-1');
+  });
+
+  it('preserves HITL history when fetchExecutions merges a sparse active summary', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      hitlHistory: [
+        {
+          interruptId: 'interrupt-1',
+          taskId: 'task-1',
+          type: 'approval_request',
+          taskTitle: 'Task 1',
+          message: 'Approve this',
+          taskDescription: '',
+          result: '',
+          round: 0,
+          payloadJson: '',
+          resumableActions: ['approve', 'reject'],
+          status: 'pending',
+          responseAction: null,
+          responseMessage: null,
+          responseApproved: null,
+          responseReason: null,
+          responseFeedback: null,
+          respondedBy: null,
+          respondedAt: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          blockerRuleId: null,
+          blockerKind: null,
+          reasonCode: null,
+          riskLevel: 'medium',
+          downstreamNodeIds: [],
+          feedbackScopeDefault: 'future_workflow_runs',
+          memoryCandidate: true,
+        },
+      ],
+    });
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionCache: { e1: cached },
+    });
+    apiMock.getExecutions.mockResolvedValueOnce({
+      executions: [
+        {
+          ...makeExecutionSummary({ id: 'e1', playbookId: 'p1', status: 'running' }),
+          executionNumber: 1,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+
+    await usePlaybookStore.getState().fetchExecutions('p1');
+
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.hitlHistory).toHaveLength(1);
+    expect(updated.hitlHistory?.[0].status).toBe('pending');
+  });
+
   it('routes interrupted step resumes through resume-from-step', async () => {
     const execution = makeExecution({
       id: 'e2',
@@ -1776,6 +2087,8 @@ describe('playbook store', () => {
     });
     const state = usePlaybookStore.getState();
     expect(state.executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().pageMode).toBe('run');
     expect(state.currentExecution).toMatchObject({
       executionMode: 'inherit',
       stepExecutionModes: { 'task-2': 'replay_flex' },
@@ -1806,6 +2119,7 @@ describe('playbook store', () => {
   it('onInterrupt auto-opens panel', () => {
     const execution = makeExecution({ id: 'e1', playbookId: 'p1', taskResults: [{ ...makeExecution().taskResults[0], taskId: 'task-1', components: [] }] });
     usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
       executionCache: { e1: execution },
       currentExecution: execution,
       executionHistory: [makeExecutionSummary({ id: 'e1', playbookId: 'p1' })],
@@ -1820,6 +2134,78 @@ describe('playbook store', () => {
       threadId: 'th-1',
     });
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
+    expect(usePlaybookUiStore.getState().designerOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().copilotMode).toBe('interrupt');
+  });
+
+  it('onInterrupt opens copilot and fetches details when the execution is not cached yet', async () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionPanelOpen: false,
+      designerOpen: false,
+      copilotMode: 'design',
+    });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+    }));
+
+    usePlaybookStore.getState().onInterrupt({
+      executionId: 'e1',
+      taskId: 'task-1',
+      type: 'clarification',
+      message: 'Need input',
+      threadId: 'th-1',
+      interruptId: 'task-1:clarification:1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.designerOpen).toBe(true);
+    expect(state.copilotMode).toBe('interrupt');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().designerOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().copilotMode).toBe('interrupt');
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e1');
+  });
+
+  it('onInterrupt promotes the interrupted execution when an older run is current', () => {
+    const olderExecution = makeExecution({ id: 'old-run', playbookId: 'p1' });
+    const interruptedExecution = makeExecution({
+      id: 'new-run',
+      playbookId: 'p1',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 'task-1', components: [] }],
+    });
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      executionCache: { 'old-run': olderExecution, 'new-run': interruptedExecution },
+      currentExecution: olderExecution,
+      executionPanelOpen: false,
+    });
+
+    usePlaybookStore.getState().onInterrupt({
+      executionId: 'new-run',
+      taskId: 'task-1',
+      type: 'clarification',
+      message: 'Need input',
+      threadId: 'new-run',
+      interruptId: 'task-1:clarification:1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.id).toBe('new-run');
+    expect(state.currentExecution?.waitingForHumanInput).toBe(true);
+    expect(state.designerOpen).toBe(true);
+    expect(state.copilotMode).toBe('interrupt');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('keeps the execution panel closed while selecting a node in design mode', () => {

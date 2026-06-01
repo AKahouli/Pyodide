@@ -139,7 +139,7 @@ export const configValidationSchema = Joi.object({
   // Conversation
   CONVERSATION_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(300000).default(120000),
-  CONVERSATION_MAX_CONCURRENT_STREAMS: Joi.number().min(1).max(20).default(5),
+  CONVERSATION_MAX_CONCURRENT_STREAMS: Joi.number().min(1).max(50).default(5),
   CONVERSATION_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   CONVERSATION_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
   CONVERSATION_MAX_MESSAGE_LENGTH: Joi.number().min(1000).max(100000).default(50000),
@@ -183,6 +183,7 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
   PLAYBOOK_DELTA_PATCH_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_BASE_READ_SPLIT_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_SMART_HITL_DEFAULT_ENABLED: Joi.boolean().default(true),
   PLAYBOOK_TOKEN_BUFFER_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_TOKEN_BUFFER_FLUSH_INTERVAL_MS: Joi.number().min(100).max(5000).default(750),
   PLAYBOOK_TOKEN_BUFFER_MAX_BYTES: Joi.number().min(512).max(65536).default(4096),

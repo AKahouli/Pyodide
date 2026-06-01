@@ -68,6 +68,7 @@ export class PlaybookFlowReplayArtifactService {
     return {
       taskId: replay.taskId,
       replayId: String(replay._id),
+      referenceExecutionId: replay.referenceExecutionId,
       validationVersion: replay.validationVersion,
       mode: normalizeReplayMode(replay.mode),
       flowId: replay.flowId,
@@ -82,6 +83,7 @@ export class PlaybookFlowReplayArtifactService {
       contextVariableSchema: replay.contextVariableSchema ?? [],
       toolTraceTemplate: replay.toolTraceTemplate ?? [],
       semanticChecklist: replay.semanticChecklist ?? [],
+      hitlMemorySnapshots: replay.hitlMemorySnapshots ?? [],
       driftPolicy: replay.driftPolicy ?? null,
       toolCalls: replay.toolCalls ?? [],
       reasoningChain: replay.reasoningChain ?? [],

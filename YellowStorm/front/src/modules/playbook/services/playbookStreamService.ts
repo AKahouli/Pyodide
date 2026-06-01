@@ -83,8 +83,31 @@ const SSE_EVENT_TYPES = [
   'playbook_execution_complete',
   'playbook_execution_error',
   'playbook_interrupt',
+  'playbook_hitl_interrupt_created',
+  'playbook_hitl_interrupt_updated',
+  'playbook_hitl_interrupt_resolved',
+  'playbook_hitl_memory_suggested',
+  'playbook_hitl_memory_saved',
+  'playbook_hitl_blocker_disabled',
+  'playbook_hitl_policy_updated',
+  'playbook_replay_hitl_summary_updated',
   'playbook_shared',
 ] as const;
+
+const ZUSTAND_PROJECTION_EVENT_TYPES = new Set<string>([
+  'playbook_connected',
+  'playbook_execution_start',
+  'playbook_step_start',
+  'playbook_step_update',
+  'playbook_step_complete',
+  'playbook_iterator_child_step_start',
+  'playbook_iterator_child_step_update',
+  'playbook_iterator_child_step_complete',
+  'playbook_execution_complete',
+  'playbook_execution_error',
+  'playbook_interrupt',
+  'playbook_hitl_interrupt_created',
+]);
 
 // ===== Timer helpers =====
 
@@ -195,7 +218,12 @@ function handleSsePayload(raw: string) {
       return;
     }
 
-    if (!playbookFeatures.querySseEnabled || playbookFeatures.querySseMirrorZustandEnabled) {
+    const shouldUpdateZustandProjection =
+      !playbookFeatures.querySseEnabled
+      || playbookFeatures.querySseMirrorZustandEnabled
+      || ZUSTAND_PROJECTION_EVENT_TYPES.has(eventType);
+
+    if (shouldUpdateZustandProjection) {
       handleStoreEvent(eventType, eventData);
     }
   } catch (err) {
@@ -266,6 +294,7 @@ function handleStoreEvent(eventType: string, eventData: unknown) {
         store.onExecutionComplete(eventData as Parameters<typeof store.onExecutionComplete>[0]);
         break;
       case 'playbook_interrupt':
+      case 'playbook_hitl_interrupt_created':
         store.onInterrupt(eventData as Parameters<typeof store.onInterrupt>[0]);
         break;
       case 'playbook_shared':

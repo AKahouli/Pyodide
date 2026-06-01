@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString, MinLength, MaxLength, IsOptional, IsArray, IsEnum,
-  ValidateNested, ArrayMaxSize,
+  ValidateNested, ArrayMaxSize, IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FlowNodeDto } from './playbook-flow-node.dto';
@@ -35,6 +35,17 @@ export class CreatePlaybookFlowDto {
   @ValidateNested()
   @Type(() => FlowSettingsDto)
   settings?: FlowSettingsDto;
+
+  @ApiPropertyOptional({ description: 'Smart HITL policy for the workflow.' })
+  @IsOptional()
+  @IsObject()
+  hitlPolicy?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: [Object], description: 'Workflow-level blocker rules for Smart HITL.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  hitlBlockers?: Array<Record<string, unknown>>;
 
   @ApiPropertyOptional({ type: [FlowNodeDto] })
   @IsOptional()

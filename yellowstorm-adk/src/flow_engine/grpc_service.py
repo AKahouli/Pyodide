@@ -67,6 +67,46 @@ def _seed_task_outputs(request: Any) -> tuple[dict[tuple[str, int], Any], dict[s
 
     return task_outputs, iterations
 
+
+def _pop_runtime_hitl_memory(input_context: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_memory = input_context.pop("__playbook_hitl_memory", None)
+    if not isinstance(raw_memory, list):
+        return []
+    return [entry for entry in raw_memory if isinstance(entry, dict)]
+
+
+def _snapshot_hitl_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
+    policy = snapshot.get("hitl_policy") or snapshot.get("hitlPolicy")
+    if isinstance(policy, dict):
+        return policy
+    for node in snapshot.get("nodes", []) if isinstance(snapshot.get("nodes"), list) else []:
+        metadata = node.get("metadata") if isinstance(node, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        policy = metadata.get("hitl_policy") or metadata.get("hitlPolicy")
+        if isinstance(policy, dict):
+            return policy
+    return {}
+
+
+def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    blockers = snapshot.get("hitl_blockers") or snapshot.get("hitlBlockers")
+    if isinstance(blockers, list):
+        return [blocker for blocker in blockers if isinstance(blocker, dict)]
+    by_id: dict[str, dict[str, Any]] = {}
+    for node in snapshot.get("nodes", []) if isinstance(snapshot.get("nodes"), list) else []:
+        metadata = node.get("metadata") if isinstance(node, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        node_blockers = metadata.get("hitl_blockers") or metadata.get("hitlBlockers")
+        if not isinstance(node_blockers, list):
+            continue
+        for blocker in node_blockers:
+            if isinstance(blocker, dict):
+                key = str(blocker.get("id") or len(by_id))
+                by_id[key] = blocker
+    return list(by_id.values())
+
 try:
     from src.grpc_generated import playbook_flow_pb2 as pb
     from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc
@@ -90,6 +130,8 @@ class PlaybookFlowRuntimeServicer:
 
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
+        initial_resume_input = _pop_initial_resume_input(input_context)
+        hitl_memory = _pop_runtime_hitl_memory(input_context)
 
         graph = None
         active = None
@@ -142,13 +184,16 @@ class PlaybookFlowRuntimeServicer:
                 "errors": [],
                 "pending_approval": None,
                 "cancelled": False,
+                "hitl_policy": _snapshot_hitl_policy(snapshot),
+                "hitl_blockers": _snapshot_hitl_blockers(snapshot),
+                "hitl_memory": hitl_memory,
             }
 
             config = {"configurable": {"thread_id": execution_id}}
             active = _ActiveExecution(graph=graph, config=config)
             self._active_executions[execution_id] = active
 
-            graph_input: Any = initial_state
+            graph_input: Any = initial_resume_input or initial_state
             saw_terminal_event = False
 
             while True:
@@ -286,6 +331,7 @@ class PlaybookFlowRuntimeServicer:
 
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
+        hitl_memory = _pop_runtime_hitl_memory(input_context)
 
         active = None
 
@@ -317,7 +363,7 @@ class PlaybookFlowRuntimeServicer:
 
             replay_config = await _seed_replay_state(
                 graph, checkpointer, execution_id, source_execution_id,
-                snapshot, input_context, target_node_id, target_iteration,
+                snapshot, input_context, target_node_id, target_iteration, hitl_memory,
             )
 
             if replay_config is None:
@@ -406,6 +452,13 @@ class PlaybookFlowRuntimeServicer:
             self._active_executions.pop(execution_id, None)
 
 
+def _pop_initial_resume_input(input_context: dict[str, Any]) -> Command[Any] | None:
+    resume_payload = input_context.pop("__playbook_resume", None)
+    if not isinstance(resume_payload, dict):
+        return None
+    return Command(resume=resume_payload)
+
+
 def _pick_positive_setting(primary: Any, secondary: Any, default: int) -> int:
     for value in (primary, secondary):
         try:
@@ -426,6 +479,7 @@ async def _seed_replay_state(
     input_context: dict[str, Any],
     target_node_id: str,
     target_iteration: int,
+    hitl_memory: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     source_config = {"configurable": {"thread_id": source_execution_id}}
     source_state = await graph.aget_state(source_config)
@@ -442,6 +496,7 @@ async def _seed_replay_state(
     if replay_checkpoint_state is not None:
         forked_config = await _fork_replay_checkpoint(checkpointer, execution_id, replay_checkpoint_state)
         if forked_config is not None:
+            await graph.aupdate_state(forked_config, {"hitl_memory": hitl_memory or []}, as_node="__input__")
             return forked_config
 
     source_values = source_state.values
@@ -455,6 +510,11 @@ async def _seed_replay_state(
     adjacency = _build_adjacency(raw_edges, node_ids)
     replay_nodes = {target_node_id, *_find_downstream_nodes(target_node_id, adjacency)}
     completed_nodes_to_keep = node_ids - replay_nodes
+    human_context = _filter_replay_human_context(
+        source_values.get("human_context", []),
+        target_node_id,
+        adjacency,
+    )
 
     target_outputs_to_keep = {}
     for key, value in source_task_outputs.items():
@@ -501,6 +561,10 @@ async def _seed_replay_state(
         "iterations": target_iterations,
         "router_decisions": seeded_router_decisions,
         "errors": [],
+        "human_context": human_context,
+        "hitl_policy": _snapshot_hitl_policy(snapshot),
+        "hitl_blockers": _snapshot_hitl_blockers(snapshot),
+        "hitl_memory": hitl_memory or [],
     }
 
     fork_config = await graph.aupdate_state(replay_config, state_update, as_node="__input__")
@@ -625,6 +689,44 @@ def _build_replay_node_update(
     if node_id in router_decisions:
         update["router_decisions"] = {node_id: router_decisions[node_id]}
     return update
+
+
+def _filter_replay_human_context(
+    human_context: Any,
+    target_node_id: str,
+    adjacency: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    if not isinstance(human_context, list):
+        return []
+    return [
+        entry
+        for entry in human_context
+        if isinstance(entry, dict)
+        and _is_human_context_visible_in_replay(entry, target_node_id, adjacency)
+    ]
+
+
+def _is_human_context_visible_in_replay(
+    entry: dict[str, Any],
+    target_node_id: str,
+    adjacency: dict[str, list[str]],
+) -> bool:
+    if entry.get("scope") not in {"downstream_run", "entire_run"}:
+        return False
+    return _is_source_visible_in_replay(entry, target_node_id, adjacency)
+
+
+def _is_source_visible_in_replay(
+    entry: dict[str, Any],
+    target_node_id: str,
+    adjacency: dict[str, list[str]],
+) -> bool:
+    source_node_id = entry.get("source_node_id") or entry.get("node_id")
+    if not isinstance(source_node_id, str) or not source_node_id:
+        return False
+    if source_node_id == target_node_id:
+        return True
+    return target_node_id in _find_downstream_nodes(source_node_id, adjacency)
 
 
 def _build_adjacency(

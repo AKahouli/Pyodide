@@ -76,6 +76,28 @@ export type StartDesignOperationVariables = {
   data: Parameters<typeof api.startDesignOperation>[1];
 };
 
+export type UpdateHitlPolicyVariables = {
+  flowId: string;
+  nodeId?: string | null;
+  data: Parameters<typeof api.updateHitlPolicy>[1];
+};
+
+export type CreateHitlBlockerVariables = {
+  flowId: string;
+  data: Parameters<typeof api.createHitlBlocker>[1];
+};
+
+export type UpdateHitlBlockerVariables = {
+  flowId: string;
+  blockerId: string;
+  data: Parameters<typeof api.updateHitlBlocker>[2];
+};
+
+export type DeleteHitlBlockerVariables = {
+  flowId: string;
+  blockerId: string;
+};
+
 /** Runs playbook creation and refreshes list buckets that may now include the new summary. */
 export async function createPlaybookMutation(data: Parameters<typeof api.createPlaybook>[0]) {
   const playbook = await api.createPlaybook(data);
@@ -253,4 +275,31 @@ export async function startDesignOperationMutation({ flowId, data }: StartDesign
   const operation = await api.startDesignOperation(flowId, data);
   await playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.designOperation(flowId, operation.id) });
   return operation;
+}
+
+export async function updateHitlPolicyMutation({ flowId, nodeId, data }: UpdateHitlPolicyVariables) {
+  const policy = nodeId
+    ? await api.updateNodeHitlPolicy(flowId, nodeId, data)
+    : await api.updateHitlPolicy(flowId, data);
+  playbookQueryClient.setQueryData(playbookKeys.hitlPolicy(flowId, nodeId), policy);
+  await playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.detail(flowId, 'base') });
+  return policy;
+}
+
+export async function createHitlBlockerMutation({ flowId, data }: CreateHitlBlockerVariables) {
+  const blocker = await api.createHitlBlocker(flowId, data);
+  await playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.hitlBlockers(flowId) });
+  return blocker;
+}
+
+export async function updateHitlBlockerMutation({ flowId, blockerId, data }: UpdateHitlBlockerVariables) {
+  const blocker = await api.updateHitlBlocker(flowId, blockerId, data);
+  await playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.hitlBlockers(flowId) });
+  return blocker;
+}
+
+export async function deleteHitlBlockerMutation({ flowId, blockerId }: DeleteHitlBlockerVariables) {
+  const result = await api.deleteHitlBlocker(flowId, blockerId);
+  await playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.hitlBlockers(flowId) });
+  return result;
 }

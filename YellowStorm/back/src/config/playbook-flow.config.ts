@@ -13,6 +13,7 @@ export default registerAs('playbook-flow', () => ({
   idempotencyTtlHours: parseInt(process.env.PLAYBOOK_IDEMPOTENCY_TTL_HOURS || '24', 10),
   deltaPatchEnabled: process.env.PLAYBOOK_DELTA_PATCH_ENABLED === 'true',
   baseReadSplitEnabled: process.env.PLAYBOOK_BASE_READ_SPLIT_ENABLED === 'true',
+  smartHitlDefaultEnabled: process.env.PLAYBOOK_SMART_HITL_DEFAULT_ENABLED !== 'false',
   tokenBufferEnabled: process.env.PLAYBOOK_TOKEN_BUFFER_ENABLED === 'true',
   tokenBufferFlushIntervalMs: parseInt(process.env.PLAYBOOK_TOKEN_BUFFER_FLUSH_INTERVAL_MS || '750', 10),
   tokenBufferMaxBytes: parseInt(process.env.PLAYBOOK_TOKEN_BUFFER_MAX_BYTES || '4096', 10),

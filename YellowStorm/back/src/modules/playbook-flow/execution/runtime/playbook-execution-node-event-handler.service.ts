@@ -1,6 +1,6 @@
 import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
 import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
 import { FlowCompletedResultPayload } from '../../interfaces/playbook-flow-observability.interface';
@@ -192,6 +192,32 @@ export class PlaybookExecutionNodeEventHandlerService {
     const resumableActions: string[] = Array.isArray(payload.resumable_actions || payload.resumableActions)
       ? (payload.resumable_actions || payload.resumableActions) as string[]
       : [];
+    const downstreamNodeIds: string[] = Array.isArray(payload.downstream_node_ids || payload.downstreamNodeIds)
+      ? (payload.downstream_node_ids || payload.downstreamNodeIds) as string[]
+      : [];
+    const blockerRuleId = String(payload.blocker_rule_id || payload.blockerRuleId || '');
+    const blockerKind = String(payload.blocker_kind || payload.blockerKind || '');
+    const reasonCode = String(payload.reason_code || payload.reasonCode || '');
+    const riskLevel = String(payload.risk_level || payload.riskLevel || '');
+    const feedbackScopeDefault = String(payload.feedback_scope_default || payload.feedbackScopeDefault || '');
+    const confidence = typeof payload.confidence === 'number' ? payload.confidence : undefined;
+    const hitlEventType = interruptType === 'review_request'
+      ? 'review_request'
+      : interruptType === 'clarification'
+        ? 'clarification'
+        : 'approval_request';
+
+    const staleInterrupt = await this.executionModel.exists({
+      _id: executionId,
+      $or: [
+        { status: { $in: TERMINAL_STATUSES as unknown as string[] } },
+        { hitlEvents: { $elemMatch: { interruptId, status: 'answered' } } },
+      ],
+    }).exec();
+    if (staleInterrupt) {
+      this.logger.warn(`Ignoring stale HITL interrupt ${interruptId || '<none>'} for execution ${executionId}`);
+      return;
+    }
 
     await this.taskResultModel.updateOne(
       { executionId, taskId: taskNodeId, iteration },
@@ -209,27 +235,61 @@ export class PlaybookExecutionNodeEventHandlerService {
       { upsert: true },
     );
 
-    await this.executionModel
+    const updateResult = await this.executionModel
       .updateOne(
         { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
         {
-          status: 'pending_approval',
-          pendingApproval: {
-            nodeId: taskNodeId,
-            iteration,
-            prompt: interruptMessage,
-            requestedAt: new Date(),
-            interruptType,
-            interruptId,
-            taskTitle: String(payload.task_title || payload.taskTitle || ''),
-            taskDescription,
-            result,
-            payloadJson,
-            resumableActions,
+          $set: {
+            status: 'pending_approval',
+            pendingApproval: {
+              nodeId: taskNodeId,
+              iteration,
+              prompt: interruptMessage,
+              requestedAt: new Date(),
+              interruptType,
+              interruptId,
+              taskTitle: String(payload.task_title || payload.taskTitle || ''),
+              taskDescription,
+              result,
+              payloadJson,
+              resumableActions,
+              ...(blockerRuleId ? { blockerRuleId } : {}),
+              ...(blockerKind ? { blockerKind } : {}),
+              ...(reasonCode ? { reasonCode } : {}),
+              ...(riskLevel ? { riskLevel } : {}),
+              ...(confidence !== undefined ? { confidence } : {}),
+              ...(downstreamNodeIds.length > 0 ? { downstreamNodeIds } : {}),
+              ...(feedbackScopeDefault ? { feedbackScopeDefault } : {}),
+              interruptPayload: payload,
+            },
+          },
+          $push: {
+            hitlEvents: {
+              id: new Types.ObjectId().toString(),
+              nodeId: taskNodeId,
+              iteration,
+              interruptId,
+              type: hitlEventType,
+              blockerRuleId: blockerRuleId || null,
+              blockerKind: blockerKind || null,
+              reasonCode: reasonCode || 'runtime_interrupt',
+              riskLevel: riskLevel || 'medium',
+              prompt: interruptMessage,
+              payload,
+              status: 'pending',
+              response: null,
+              downstreamNodeIds,
+              createdAt: new Date(),
+              respondedAt: null,
+            },
           },
         },
       )
       .exec();
+
+    if (!(updateResult as { modifiedCount?: number; upsertedCount?: number }).modifiedCount) {
+      return;
+    }
 
     this.streamEvents.emitInterrupt(
       executionId,
@@ -244,6 +304,13 @@ export class PlaybookExecutionNodeEventHandlerService {
         result,
         payloadJson,
         resumableActions,
+        ...(blockerRuleId ? { blockerRuleId } : {}),
+        ...(blockerKind ? { blockerKind } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
+        ...(riskLevel ? { riskLevel } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(downstreamNodeIds.length > 0 ? { downstreamNodeIds } : {}),
+        ...(feedbackScopeDefault ? { feedbackScopeDefault } : {}),
       },
     );
   }

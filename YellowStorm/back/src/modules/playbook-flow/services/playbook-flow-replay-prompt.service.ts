@@ -24,6 +24,11 @@ export class PlaybookFlowReplayPromptService {
       sections.push(planningSection);
     }
 
+    const hitlMemorySection = this.buildHitlMemorySection(artifacts);
+    if (hitlMemorySection) {
+      sections.push(hitlMemorySection);
+    }
+
     const behaviorSection = this.buildBehaviorSection(artifacts);
     if (behaviorSection) {
       sections.push(behaviorSection);
@@ -146,6 +151,17 @@ export class PlaybookFlowReplayPromptService {
       lines.push(check);
     }
     return this.buildBulletSection('### Replay Plan', lines);
+  }
+
+  private buildHitlMemorySection(artifacts: ResolvedReplayArtifacts): string {
+    const lines = (artifacts.hitlMemorySnapshots ?? [])
+      .filter((snapshot) => snapshot.reusableInReplay && snapshot.responseMessage)
+      .map((snapshot) => {
+        const scope = snapshot.responseScope || 'step_only';
+        const reason = snapshot.reasonCode || snapshot.blockerKind || 'human feedback';
+        return `${snapshot.type} (${reason}, scope ${scope}): ${snapshot.responseMessage}`;
+      });
+    return this.buildBulletSection('### Reusable HITL Memory', lines);
   }
 
   private formatExpectedArgs(args: Record<string, unknown>): string | null {

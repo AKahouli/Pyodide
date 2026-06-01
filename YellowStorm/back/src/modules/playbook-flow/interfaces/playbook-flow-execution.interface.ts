@@ -107,6 +107,8 @@ export interface IResumeFromStepPayload {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+  scope?: string;
+  remember?: boolean;
   payload?: Record<string, unknown>;
 }
 
