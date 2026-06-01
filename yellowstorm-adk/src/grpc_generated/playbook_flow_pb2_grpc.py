@@ -54,6 +54,11 @@ class PlaybookFlowRuntimeStub(object):
                 request_serializer=playbook__flow__pb2.ResumeFromStepRequest.SerializeToString,
                 response_deserializer=playbook__flow__pb2.ResumeFromStepResponse.FromString,
                 _registered_method=True)
+        self.RunFromCheckpoint = channel.unary_stream(
+                '/playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint',
+                request_serializer=playbook__flow__pb2.RunFromCheckpointRequest.SerializeToString,
+                response_deserializer=playbook__flow__pb2.RunEvent.FromString,
+                _registered_method=True)
 
 
 class PlaybookFlowRuntimeServicer(object):
@@ -83,6 +88,12 @@ class PlaybookFlowRuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RunFromCheckpoint(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PlaybookFlowRuntimeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -105,6 +116,11 @@ def add_PlaybookFlowRuntimeServicer_to_server(servicer, server):
                     servicer.ResumeFromStep,
                     request_deserializer=playbook__flow__pb2.ResumeFromStepRequest.FromString,
                     response_serializer=playbook__flow__pb2.ResumeFromStepResponse.SerializeToString,
+            ),
+            'RunFromCheckpoint': grpc.unary_stream_rpc_method_handler(
+                    servicer.RunFromCheckpoint,
+                    request_deserializer=playbook__flow__pb2.RunFromCheckpointRequest.FromString,
+                    response_serializer=playbook__flow__pb2.RunEvent.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -215,6 +231,33 @@ class PlaybookFlowRuntime(object):
             '/playbook_flow.PlaybookFlowRuntime/ResumeFromStep',
             playbook__flow__pb2.ResumeFromStepRequest.SerializeToString,
             playbook__flow__pb2.ResumeFromStepResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunFromCheckpoint(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint',
+            playbook__flow__pb2.RunFromCheckpointRequest.SerializeToString,
+            playbook__flow__pb2.RunEvent.FromString,
             options,
             channel_credentials,
             insecure,

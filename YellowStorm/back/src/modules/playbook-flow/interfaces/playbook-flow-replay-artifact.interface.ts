@@ -9,6 +9,7 @@ import type {
 import type {
   FlowReplayBehaviorBaseline,
   FlowReplayFingerprints,
+  FlowReplayHitlMemorySnapshot,
   FlowReplayOutputContract,
   FlowReplayToolCall,
   FlowReplayToolPolicy,
@@ -18,6 +19,7 @@ import type {
 export interface ResolvedReplayArtifacts {
   taskId: string;
   replayId: string;
+  referenceExecutionId: string;
   validationVersion: number;
   mode: ReplayMode;
   flowId?: string;
@@ -32,6 +34,7 @@ export interface ResolvedReplayArtifacts {
   contextVariableSchema: ReplayContextVariable[];
   toolTraceTemplate: ReplayToolTraceTemplateItem[];
   semanticChecklist: ReplaySemanticChecklistItem[];
+  hitlMemorySnapshots?: FlowReplayHitlMemorySnapshot[];
   driftPolicy: ReplayDriftPolicy | null;
   toolCalls: FlowReplayToolCall[];
   reasoningChain: FlowTaskPublicReasoningTraceItem[];

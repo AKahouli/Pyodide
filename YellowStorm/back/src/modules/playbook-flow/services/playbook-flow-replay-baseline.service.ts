@@ -16,6 +16,7 @@ import {
   type BuildValidatedReplayBaselineInput,
   type FlowReplayOutputContract,
   type FlowReplayFingerprints,
+  type FlowReplayHitlMemorySnapshot,
   normalizeReplayMode,
   type ValidatedReplayBaselineFields,
 } from '../schemas/playbook-flow-validated-replay.schema';
@@ -91,6 +92,13 @@ export class PlaybookFlowReplayBaselineService {
         output: params.taskResult.output,
         taskTitle: params.taskTitle ?? intent.intentLabel,
       }),
+      hitlMemorySnapshots: this.buildHitlMemorySnapshots({
+        taskId: params.taskId,
+        iteration: params.iteration ?? 0,
+        inputContext: params.inputContext,
+        nodeSnapshot: params.nodeSnapshot,
+        hitlEvents: params.hitlEvents ?? [],
+      }),
     };
   }
 
@@ -143,6 +151,22 @@ export class PlaybookFlowReplayBaselineService {
     }
 
     return this.replayHashService.buildHash(outputContract);
+  }
+
+  buildHitlContextFingerprint(params: {
+    inputContext?: unknown;
+    nodeSnapshot?: Record<string, unknown> | null;
+    reasonCode?: string | null;
+    prompt?: string | null;
+    downstreamNodeIds?: string[];
+  }): string {
+    return this.replayHashService.buildHash({
+      inputContext: params.inputContext ?? null,
+      nodeSnapshot: params.nodeSnapshot ?? null,
+      reasonCode: params.reasonCode ?? null,
+      prompt: params.prompt ?? null,
+      downstreamNodeIds: params.downstreamNodeIds ?? [],
+    });
   }
 
   private buildReasoningOutline(reasoningChain: FlowTaskPublicReasoningTraceItem[]): ReplayReasoningStage[] {
@@ -249,6 +273,56 @@ export class PlaybookFlowReplayBaselineService {
       summary: `Validated replay baseline for ${params.taskTitle}.`,
       outputPreview: this.toPreview(params.output),
     }];
+  }
+
+  private buildHitlMemorySnapshots(params: {
+    taskId: string;
+    iteration: number;
+    inputContext?: unknown;
+    nodeSnapshot?: Record<string, unknown> | null;
+    hitlEvents: NonNullable<Parameters<PlaybookFlowReplayBaselineService['buildValidatedReplayBaseline']>[0]['hitlEvents']>;
+  }): FlowReplayHitlMemorySnapshot[] {
+    return params.hitlEvents
+      .filter((event) => event.status === 'answered' && event.nodeId === params.taskId && (event.iteration ?? 0) === params.iteration && event.interruptId && event.response?.action)
+      .map((event) => {
+        const responseMessage = event.response?.feedback ?? event.response?.message ?? null;
+        const responseScope = event.response?.scope ?? 'step_only';
+        return {
+          interruptId: String(event.interruptId),
+          nodeId: params.taskId,
+          iteration: event.iteration ?? 0,
+          type: this.normalizeHitlType(event.type),
+          blockerKind: event.blockerKind ?? null,
+          reasonCode: event.reasonCode || 'unknown',
+          prompt: event.prompt || '',
+          responseAction: event.response?.action ?? 'reply',
+          responseMessage,
+          responseScope,
+          downstreamNodeIds: event.downstreamNodeIds ?? [],
+          reusableInReplay: this.isReusableInReplay(event.type, responseScope, Boolean(event.response?.remember)),
+          contextFingerprint: this.buildHitlContextFingerprint({
+            inputContext: params.inputContext ?? null,
+            nodeSnapshot: params.nodeSnapshot ?? null,
+            reasonCode: event.reasonCode ?? null,
+            prompt: event.prompt ?? null,
+            downstreamNodeIds: event.downstreamNodeIds ?? [],
+          }),
+        };
+      });
+  }
+
+  private normalizeHitlType(value: unknown): FlowReplayHitlMemorySnapshot['type'] {
+    if (value === 'approval_request' || value === 'review_request') {
+      return value;
+    }
+    return 'clarification';
+  }
+
+  private isReusableInReplay(type: unknown, scope: string, remember: boolean): boolean {
+    if (type === 'approval_request') {
+      return remember && (scope === 'future_node_runs' || scope === 'future_workflow_runs');
+    }
+    return scope !== 'step_only';
   }
 
   private buildSemanticChecklist(params: {

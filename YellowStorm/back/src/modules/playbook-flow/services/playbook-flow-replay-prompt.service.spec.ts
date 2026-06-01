@@ -6,6 +6,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
   return {
     taskId: overrides.taskId ?? 'task-1',
     replayId: overrides.replayId ?? 'replay-1',
+    referenceExecutionId: overrides.referenceExecutionId ?? 'reference-exec-1',
     validationVersion: overrides.validationVersion ?? 1,
     mode: overrides.mode ?? 'replay_strict',
     isStale: overrides.isStale ?? false,
@@ -31,6 +32,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
       replayReasoningChain: true,
     },
     semanticChecklist: overrides.semanticChecklist ?? [],
+    hitlMemorySnapshots: overrides.hitlMemorySnapshots ?? [],
   };
 }
 
@@ -304,5 +306,48 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(result).toContain('Required stage: Extract data');
     expect(result).toContain('Tool step 1: search_financials with arguments {"ticker":"MSFT","dateRange":"Q1 2026"}');
     expect(result).toContain('Keep the validated comparison logic.');
+  });
+
+  it('includes only reusable HITL memory snapshots', () => {
+    const artifacts = makeArtifacts({
+      hitlMemorySnapshots: [
+        {
+          interruptId: 'clarify-1',
+          nodeId: 'task-1',
+          iteration: 0,
+          type: 'clarification',
+          blockerKind: null,
+          reasonCode: 'missing_document',
+          prompt: 'Which contract?',
+          responseAction: 'reply',
+          responseMessage: 'Use the signed May contract.',
+          responseScope: 'downstream_run',
+          downstreamNodeIds: [],
+          reusableInReplay: true,
+          contextFingerprint: 'hitl-a',
+        },
+        {
+          interruptId: 'approval-1',
+          nodeId: 'task-1',
+          iteration: 0,
+          type: 'approval_request',
+          blockerKind: null,
+          reasonCode: 'external_send',
+          prompt: 'Send email?',
+          responseAction: 'approve',
+          responseMessage: 'Approved once.',
+          responseScope: 'step_only',
+          downstreamNodeIds: [],
+          reusableInReplay: false,
+          contextFingerprint: 'hitl-b',
+        },
+      ],
+    });
+
+    const result = service.buildReplayPromptSection({ artifacts });
+
+    expect(result).toContain('### Reusable HITL Memory');
+    expect(result).toContain('clarification (missing_document, scope downstream_run): Use the signed May contract.');
+    expect(result).not.toContain('Approved once.');
   });
 });

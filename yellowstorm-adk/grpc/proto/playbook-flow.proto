@@ -10,6 +10,7 @@ service PlaybookFlowRuntime {
   rpc Cancel(CancelRequest) returns (CancelResponse);
   rpc ResumeApproval(ResumeApprovalRequest) returns (ResumeApprovalResponse);
   rpc ResumeFromStep(ResumeFromStepRequest) returns (ResumeFromStepResponse);
+  rpc RunFromCheckpoint(RunFromCheckpointRequest) returns (stream RunEvent);
 }
 
 message RunRequest {
@@ -173,4 +174,16 @@ message ResumeFromStepRequest {
 
 message ResumeFromStepResponse {
   bool resumed = 1;
+}
+
+message RunFromCheckpointRequest {
+  string execution_id = 1;
+  string source_execution_id = 2;
+  string flow_id = 3;
+  string owner_id = 4;
+  FlowSnapshot snapshot = 5;
+  google.protobuf.Struct input_context = 6;
+  RunSettings settings = 7;
+  string target_node_id = 8;
+  int32 target_iteration = 9;
 }

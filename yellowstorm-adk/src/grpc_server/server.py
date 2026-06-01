@@ -111,6 +111,7 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/Cancel (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeApproval (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeFromStep (unary)")
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
 
     # Keep the server running until terminated
     try:

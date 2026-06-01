@@ -6,6 +6,7 @@ import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.servi
 describe('PlaybookFlowReplayDriftService', () => {
   function createService(overrides?: {
     executionModel?: Record<string, unknown>;
+    hitlMemoryModel?: Record<string, unknown>;
     replayReportService?: Record<string, unknown>;
   }) {
     const executionModel = {
@@ -30,9 +31,11 @@ describe('PlaybookFlowReplayDriftService', () => {
       new PlaybookFlowOutputContractService(),
       new PlaybookFlowReplayPlanService(),
       loggerService as any,
+      undefined,
+      overrides?.hitlMemoryModel as any,
     );
 
-    return { service, executionModel, replayReportService, loggerService };
+    return { service, executionModel, hitlMemoryModel: overrides?.hitlMemoryModel, replayReportService, loggerService };
   }
 
   it('persists a pre-run replay report', async () => {
@@ -43,6 +46,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       flowId: 'flow-1',
       taskId: 'task-1',
       replayId: 'replay-1',
+      referenceExecutionId: 'baseline-exec-1',
       validationVersion: 2,
       mode: 'replay_strict',
       eligibility: {
@@ -85,6 +89,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       flowId: 'flow-1',
       taskId: 'task-1',
       replayId: 'replay-1',
+      referenceExecutionId: 'baseline-exec-1',
       validationVersion: 2,
       mode: 'replay_flex',
       eligibility: {
@@ -112,6 +117,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       flowId: 'flow-1',
       taskId: 'task-1',
       replayId: 'replay-1',
+      referenceExecutionId: 'baseline-exec-1',
       validationVersion: 2,
       mode: 'replay_flex',
       eligibility: {
@@ -129,6 +135,162 @@ describe('PlaybookFlowReplayDriftService', () => {
       toolSequenceStatus: { status: 'not_evaluated', reason: 'required_context_unresolved' },
       semanticStatus: { status: 'not_evaluated', reason: 'required_context_unresolved' },
     }));
+  });
+
+  it('counts active baseline HITL memories in the replay HITL summary', async () => {
+    const { service, replayReportService } = createService({
+      executionModel: {
+        findById: jest.fn((executionId: string) => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              hitlEvents: executionId === 'baseline-exec-1'
+                ? [{ nodeId: 'task-1', type: 'clarification', status: 'answered' }]
+                : [],
+            }),
+          }),
+        })),
+      },
+      hitlMemoryModel: {
+        countDocuments: jest.fn(() => ({
+          exec: jest.fn().mockResolvedValue(2),
+        })),
+      },
+    });
+
+    await service.createPreRunReport({
+      executionId: 'exec-1',
+      flowId: 'flow-1',
+      taskId: 'task-1',
+      replayId: 'replay-1',
+      referenceExecutionId: 'baseline-exec-1',
+      validationVersion: 2,
+      mode: 'replay_flex',
+      eligibility: {
+        applied: true,
+        confidenceScore: 95,
+        confidenceFactors: {},
+        invalidationReasons: [],
+        appliedSections: ['tool_policy'],
+        skippedSections: [],
+      },
+    });
+
+    expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
+      hitlSummary: expect.objectContaining({
+        baselineHitlCount: 1,
+        runtimeHitlCount: 0,
+        reusedMemoryCount: 2,
+      }),
+    }));
+  });
+
+  it('prefers reusable replay HITL snapshots over baseline memory candidates after artifacts load', async () => {
+    const countDocuments = jest.fn(() => ({
+      exec: jest.fn().mockResolvedValue(3),
+    }));
+    const { service, replayReportService } = createService({
+      executionModel: {
+        findById: jest.fn((executionId: string) => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              hitlEvents: executionId === 'baseline-exec-1'
+                ? [{ nodeId: 'task-1', type: 'clarification', status: 'answered' }]
+                : [],
+            }),
+          }),
+        })),
+      },
+      hitlMemoryModel: { countDocuments },
+      replayReportService: {
+        findLatestReportRecord: jest.fn().mockResolvedValue({
+          _id: 'report-1',
+          applied: true,
+          mode: 'replay_strict',
+          invalidationReasons: [],
+          confidenceScore: 100,
+        }),
+      },
+    });
+
+    await service.recordCompletedTaskDrift({
+      executionId: 'exec-1',
+      taskId: 'task-1',
+      iteration: 0,
+      output: 'some output',
+      toolTrace: [],
+      reasoningChain: [],
+      semanticMatch: null,
+      replayArtifacts: {
+        taskId: 'task-1',
+        replayId: 'replay-1',
+        referenceExecutionId: 'baseline-exec-1',
+        validationVersion: 1,
+        mode: 'replay_strict',
+        isStale: false,
+        staleReasons: [],
+        referenceOutput: null,
+        outputFormatGuide: null,
+        intentKey: null,
+        intentLabel: null,
+        reasoningOutline: [],
+        stableReasoningRules: [],
+        contextVariableSchema: [],
+        toolTraceTemplate: [],
+        semanticChecklist: [],
+        driftPolicy: null,
+        toolCalls: [],
+        reasoningChain: [],
+        fingerprints: null,
+        behaviorBaseline: null,
+        toolPolicy: null,
+        outputContract: null,
+        replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
+        hitlMemorySnapshots: [
+          {
+            interruptId: 'interrupt-1',
+            nodeId: 'task-1',
+            iteration: 0,
+            type: 'clarification',
+            blockerKind: 'missing_document',
+            reasonCode: 'missing_document',
+            prompt: 'Which document?',
+            responseAction: 'reply',
+            responseMessage: 'Use signed.pdf',
+            responseScope: 'downstream_run',
+            downstreamNodeIds: ['task-2'],
+            reusableInReplay: true,
+            contextFingerprint: 'fingerprint-1',
+          },
+          {
+            interruptId: 'interrupt-2',
+            nodeId: 'task-1',
+            iteration: 0,
+            type: 'approval_request',
+            blockerKind: 'external_send',
+            reasonCode: 'external_send',
+            prompt: 'Approve send?',
+            responseAction: 'approve',
+            responseMessage: null,
+            responseScope: 'step_only',
+            downstreamNodeIds: [],
+            reusableInReplay: false,
+            contextFingerprint: 'fingerprint-2',
+          },
+        ],
+      },
+      traceMetadata: null,
+    });
+
+    expect(countDocuments).not.toHaveBeenCalled();
+    expect(replayReportService.updateReport).toHaveBeenCalledWith(
+      'report-1',
+      expect.objectContaining({
+        hitlSummary: expect.objectContaining({
+          baselineHitlCount: 1,
+          reusedMemoryCount: 1,
+        }),
+      }),
+    );
   });
 
   it('materializes later iterations from pre-run state instead of copying prior evaluation results', async () => {
@@ -292,6 +454,7 @@ describe('PlaybookFlowReplayDriftService', () => {
         replayArtifacts: {
           taskId: 'task-1',
           replayId: 'replay-1',
+          referenceExecutionId: 'baseline-exec-1',
           validationVersion: 1,
           mode: 'replay_strict',
           isStale: false,
@@ -330,7 +493,11 @@ describe('PlaybookFlowReplayDriftService', () => {
     });
 
     it('infers observed_intent_key from tool trace evidence when trace metadata has none', async () => {
+      const countDocuments = jest.fn(() => ({
+        exec: jest.fn().mockResolvedValue(3),
+      }));
       const { service, replayReportService } = createService({
+        hitlMemoryModel: { countDocuments },
         executionModel: {
           findById: jest.fn(() => ({
             lean: jest.fn().mockReturnValue({
@@ -379,6 +546,7 @@ describe('PlaybookFlowReplayDriftService', () => {
         replayArtifacts: {
           taskId: 'task-1',
           replayId: 'replay-1',
+          referenceExecutionId: 'baseline-exec-1',
           validationVersion: 1,
           mode: 'replay_flex',
           isStale: false,
@@ -400,14 +568,33 @@ describe('PlaybookFlowReplayDriftService', () => {
           toolPolicy: null,
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
+          hitlMemorySnapshots: [
+            {
+              interruptId: 'interrupt-1',
+              nodeId: 'task-1',
+              iteration: 0,
+              type: 'clarification',
+              blockerKind: 'missing_document',
+              reasonCode: 'missing_document',
+              prompt: 'Which document?',
+              responseAction: 'reply',
+              responseMessage: 'Use signed.pdf',
+              responseScope: 'downstream_run',
+              downstreamNodeIds: ['task-2'],
+              reusableInReplay: true,
+              contextFingerprint: 'fingerprint-1',
+            },
+          ],
         },
         traceMetadata: null,
       });
 
+      expect(countDocuments).not.toHaveBeenCalled();
       expect(replayReportService.updateReport).toHaveBeenCalledWith(
         'report-1',
         expect.objectContaining({
           intentKey: 'research_topic',
+          hitlSummary: expect.objectContaining({ reusedMemoryCount: 1 }),
         }),
       );
     });

@@ -36,3 +36,8 @@ class ExecutionState(TypedDict):
     cancelled: Annotated[bool, or_]
     hitl_checkpoint: Annotated[Optional[dict[str, Any]], last_write]
     evaluation_user_id: Annotated[Optional[str], last_write]
+    human_context: Annotated[list[dict[str, Any]], append]
+    hitl_events: Annotated[list[dict[str, Any]], append]
+    hitl_policy: Annotated[dict[str, Any], last_write]
+    hitl_blockers: Annotated[list[dict[str, Any]], append]
+    hitl_memory: Annotated[list[dict[str, Any]], append]

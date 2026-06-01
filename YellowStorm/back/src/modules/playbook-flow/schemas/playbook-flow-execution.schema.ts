@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 import { ADVISOR_SCORING_MODES, AdvisorScoringMode } from './playbook-flow.schema';
+import { HITL_FEEDBACK_SCOPES, HITL_RISK_LEVELS, HitlFeedbackScope, HitlRiskLevel } from './playbook-flow-hitl.schema';
 
 @Schema({ _id: false })
 export class ReplayPlanningMetadata {
@@ -71,6 +72,119 @@ export class PendingApproval {
 
   @Prop({ required: false, type: [String], default: undefined })
   resumableActions?: string[];
+
+  @Prop({ required: false, type: String })
+  blockerRuleId?: string;
+
+  @Prop({ required: false, type: String })
+  blockerKind?: string;
+
+  @Prop({ required: false, type: String })
+  reasonCode?: string;
+
+  @Prop({ required: false, type: String, enum: HITL_RISK_LEVELS })
+  riskLevel?: HitlRiskLevel;
+
+  @Prop({ required: false, type: Number })
+  confidence?: number;
+
+  @Prop({ required: false, type: [String], default: undefined })
+  downstreamNodeIds?: string[];
+
+  @Prop({ required: false, type: String, enum: HITL_FEEDBACK_SCOPES })
+  feedbackScopeDefault?: HitlFeedbackScope;
+
+  @Prop({ required: false, type: Object })
+  interruptPayload?: Record<string, unknown>;
+}
+
+@Schema({ _id: false })
+export class HitlResponse {
+  /** Normalized human answer used by resume, audit, memory, and replay flows. */
+  @Prop({ required: true, type: String })
+  action!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  message?: string | null;
+
+  @Prop({ required: false, type: Boolean, default: null })
+  approved?: boolean | null;
+
+  @Prop({ required: false, type: String, default: null })
+  reason?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
+  feedback?: string | null;
+
+  @Prop({ required: false, type: String, enum: HITL_FEEDBACK_SCOPES, default: 'step_only' })
+  scope?: HitlFeedbackScope;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  remember?: boolean;
+}
+
+@Schema({ _id: false })
+export class HitlEventLog {
+  /** Immutable per-execution audit event for each HITL pause and response. */
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: true, type: String })
+  nodeId!: string;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  iteration!: number;
+
+  @Prop({ required: true, type: String })
+  interruptId!: string;
+
+  @Prop({ required: true, type: String, enum: ['clarification', 'approval_request', 'review_request'] })
+  type!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  blockerRuleId?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
+  blockerKind?: string | null;
+
+  @Prop({ required: true, type: String })
+  reasonCode!: string;
+
+  @Prop({ required: true, type: String, enum: HITL_RISK_LEVELS, default: 'medium' })
+  riskLevel!: HitlRiskLevel;
+
+  @Prop({ required: true, type: String })
+  prompt!: string;
+
+  @Prop({ required: true, type: Object, default: () => ({}) })
+  payload!: Record<string, unknown>;
+
+  @Prop({ required: true, type: String, enum: ['pending', 'answered', 'expired', 'cancelled'], default: 'pending' })
+  status!: string;
+
+  @Prop({ required: false, type: HitlResponse, default: null })
+  response?: HitlResponse | null;
+
+  @Prop({ required: true, type: [String], default: [] })
+  downstreamNodeIds!: string[];
+
+  @Prop({ required: true, type: Date, default: Date.now })
+  createdAt!: Date;
+
+  @Prop({ required: false, type: Date, default: null })
+  respondedAt?: Date | null;
+}
+
+@Schema({ _id: false })
+export class ReplaySource {
+  @Prop({ required: true, type: String })
+  executionId!: string;
+
+  @Prop({ required: true, type: String })
+  taskId!: string;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  iteration?: number;
 }
 
 @Schema({ timestamps: true })
@@ -114,6 +228,9 @@ export class FlowExecution {
   @Prop({ required: false, type: PendingApproval })
   pendingApproval?: PendingApproval | null;
 
+  @Prop({ required: false, type: [HitlEventLog], default: [] })
+  hitlEvents?: HitlEventLog[];
+
   @Prop({ required: false, type: Number, default: 0 })
   queuePosition?: number;
 
@@ -152,6 +269,9 @@ export class FlowExecution {
 
   @Prop({ required: false, type: String })
   modelIdOverride?: string;
+
+  @Prop({ required: false, type: ReplaySource })
+  replaySource?: ReplaySource;
 
   createdAt?: Date;
 

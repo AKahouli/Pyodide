@@ -28,6 +28,7 @@ import {
   ModelSelectorTrigger,
 } from '@/components/ai-elements/model-selector';
 import { cn } from '@/lib/utils';
+import { useUsage } from '@/modules/usage/UsageContext';
 import {
   useConversationStore,
   useInputDisabled,
@@ -37,7 +38,6 @@ import {
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
 import { GroupChatButton } from './components/GroupChatButton';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';

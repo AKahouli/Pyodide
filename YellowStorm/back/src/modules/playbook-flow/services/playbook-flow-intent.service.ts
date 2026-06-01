@@ -13,7 +13,17 @@ import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-se
 
 type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
-type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
+type PlaybookIntentOperationType =
+  | 'create_node'
+  | 'insert_before'
+  | 'insert_after'
+  | 'update_node'
+  | 'delete_node'
+  | 'update_hitl_policy'
+  | 'create_blocker_rule'
+  | 'update_blocker_rule'
+  | 'delete_blocker_rule'
+  | 'create_hitl_memory';
 
 interface IntentWorkflowValidationContext {
   existingTaskIds: Set<string>;
@@ -1037,6 +1047,11 @@ export class PlaybookFlowIntentService {
       || value === 'insert_after'
       || value === 'update_node'
       || value === 'delete_node'
+      || value === 'update_hitl_policy'
+      || value === 'create_blocker_rule'
+      || value === 'update_blocker_rule'
+      || value === 'delete_blocker_rule'
+      || value === 'create_hitl_memory'
       ? value
       : selectedNodeId
         ? 'insert_after'

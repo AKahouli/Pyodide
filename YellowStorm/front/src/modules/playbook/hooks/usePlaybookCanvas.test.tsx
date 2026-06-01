@@ -732,6 +732,32 @@ describe('usePlaybookCanvas', () => {
     );
   });
 
+  it('updates node data from canonical tasks instead of malformed canvas nodes', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [makeTask({ id: 'task-1', title: 'Original title' })],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      (result.current.nodes as any[]).push({
+        id: undefined,
+        type: 'playbookStep',
+        position: { x: 100, y: 100 },
+        data: { title: 'Malformed transient node' },
+      });
+      result.current.updateNodeData('task-1', { title: 'Updated title' });
+    });
+
+    expect(storeFns.updateTasks).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'task-1', title: 'Updated title' }),
+    ]);
+    expect(storeFns.updateTasks).not.toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: undefined })]),
+    );
+  });
+
   it('stacks a newly assigned task after existing iterator children', () => {
     const iteratorTask = makeTask({
       id: 'iterator-1',

@@ -54,6 +54,24 @@ The playbook module is a self-contained feature module that handles:
 - **Execution schedule**: `Playbook.executionSchedule` (`ExecutionScheduleData | null`) matches the backend embedded document (daily / weekly / monthly / advanced). The **list** exposes `PlaybookSummary.scheduleEnabled` (whether an enabled schedule exists) and optional `executionSchedule` for rich badge display in cards. The **store** persists schedule changes via `upsertPlaybookSchedule` / `clearPlaybookSchedule` (`PUT` and `DELETE` on `/playbooks/:id/schedule`), with `scheduleSaving` / `scheduleError` for UI loading and errors (convenience hooks in `useSchedule.ts`). **UI** lives under `components/schedule/` (extracted sub-components: sheet, badge, type selector, active toggle, daily/weekly/monthly/advanced editors, helpers).
 - **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend [`PlaybookScheduleRunnerService`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) starts a run (see [Backend: schedule runner](#backend-schedule-runner-reference)).
 
+## Agent Quick Context
+
+- Entry points: `src/modules/playbook/api.ts`, `src/modules/playbook/store.ts`, `src/modules/playbook/components/PlaybookCanvasPage.tsx`, `back/src/modules/playbook-flow/*`, `yellowstorm-adk/src/flow_engine/*`
+- Runtime flow: frontend loads the playbook, seeds the save baseline, autosaves through full or delta save, backend persists the flow and logs timing, ADK compiles the graph and reuses cached graphs for repeated identical runs.
+- Contracts: `GET /api/v1/playbooks/:id?view=base|enriched`, `PATCH /api/v1/playbooks/:id`, `PATCH /api/v1/playbooks/:id/delta`, `PLAYBOOK_DELTA_PATCH_ENABLED`, `VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED`, `PLAYBOOK_GRAPH_CACHE_ENABLED`
+- Invariants: optimistic concurrency uses `expectedUpdatedAt`; delta autosave must degrade to full save on explicit delta-disabled responses; playbook reads must keep base and enriched flows equivalent except for replay metadata.
+- Pitfalls: Vite only loads root-level `.env` files, so `front/src/.env` is ignored; delta autosave will always fall back to full mode if the store never seeds `lastSavedRequestBodyByPlaybookId` for the active route.
+
+## Recent Changes
+
+### 2026-05-30 06:45 UTC
+- Changed: Expanded playbook autosave delta support from scalar-only and node-position-only patches to structural patches covering node upserts/deletes, control-edge replacement, and data-binding replacement; backend delta DTO/applier now accepts and applies the same shapes.
+- Changed: Fixed the live autosave baseline on `#/playbooks/:id` by seeding `lastSavedRequestBodyByPlaybookId` in `fetchFlow()` after the base read.
+- Changed: Moved the runtime frontend delta flag to the actual Vite root env file at `YellowStorm/front/.env`; removed the misleading `YellowStorm/front/src/.env`.
+- Changed: Preserved the existing backend base/enriched split for playbook reads and the ADK compiled-graph cache scope/hash normalization work from the earlier phases.
+- Why: Delta autosave was always logging `mode=full` because the browser session was not actually loading the delta flag and the flow-route loader did not initialize a delta baseline.
+- Impact: `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/.env`, `YellowStorm/back/src/modules/playbook-flow/dto/patch-playbook-flow-delta.dto.ts`, `YellowStorm/back/src/modules/playbook-flow/services/playbook-flow.service.ts`, `yellowstorm-adk/src/flow_engine/runtime/graph_cache.py`
+
 ---
 
 ## Architecture

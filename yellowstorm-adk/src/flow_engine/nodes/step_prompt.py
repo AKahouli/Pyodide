@@ -31,6 +31,10 @@ def build_step_prompt(
     iteration: int = 0,
     trigger_context: dict[str, Any] | None = None,
     require_structured_output: bool = False,
+    hitl_policy: dict[str, Any] | None = None,
+    hitl_blockers: list[dict[str, Any]] | None = None,
+    human_context: list[dict[str, Any]] | None = None,
+    hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
         "Task Title:",
@@ -58,6 +62,30 @@ def build_step_prompt(
             "",
             "Below are the Output Contract:",
             json.dumps(output_contract, indent=2, default=str),
+        ])
+    if hitl_policy or hitl_blockers or human_context or hitl_memory:
+        lines.extend([
+            "",
+            "Smart HITL policy:",
+            json.dumps(hitl_policy or {}, indent=2, default=str),
+            "",
+            "Active blocker rules:",
+            json.dumps(hitl_blockers or [], indent=2, default=str),
+            "",
+            "Human guidance from earlier workflow steps:",
+            json.dumps(human_context or [], indent=2, default=str),
+            "",
+            "Reusable HITL memory:",
+            json.dumps(hitl_memory or [], indent=2, default=str),
+            "",
+            "Smart HITL instruction:",
+            (
+                "If a blocker applies, do not guess and do not continue blindly. "
+                "Request the appropriate HITL action using the runtime HITL mechanism. "
+                "If the blocker is missing data or ambiguity, ask one concise clarification. "
+                "If the blocker is a destructive or external side effect, request approval before executing it. "
+                "Apply earlier human guidance when relevant; if it conflicts with current instructions, pause for clarification."
+            ),
         ])
     lines.extend([
         "",

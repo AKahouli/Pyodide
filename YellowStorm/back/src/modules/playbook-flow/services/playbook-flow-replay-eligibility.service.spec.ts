@@ -5,6 +5,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
   return {
     taskId: 'task-1',
     replayId: 'replay-1',
+    referenceExecutionId: 'reference-exec-1',
     validationVersion: 1,
     mode: 'replay_strict',
     isStale: false,
@@ -159,5 +160,77 @@ describe('PlaybookFlowReplayEligibilityService', () => {
 
     expect(result.applied).toBe(true);
     expect(result.confidenceScore).toBe(100);
+  });
+
+  it('blocks strict replay when HITL context fingerprint drifts', () => {
+    const result = service.evaluateReplayEligibility({
+      mode: 'replay_strict',
+      artifacts: makeArtifacts({
+        hitlMemorySnapshots: [{
+          interruptId: 'interrupt-1',
+          nodeId: 'task-1',
+          iteration: 0,
+          type: 'clarification',
+          blockerKind: null,
+          reasonCode: 'missing_document',
+          prompt: 'Which contract?',
+          responseAction: 'reply',
+          responseMessage: 'Use the signed contract.',
+          responseScope: 'downstream_run',
+          downstreamNodeIds: [],
+          reusableInReplay: true,
+          contextFingerprint: 'baseline-hitl',
+        }],
+      }),
+      currentFingerprints: {
+        inputContextHash: 'input-a',
+        flowSnapshotHash: 'flow-a',
+        nodeSnapshotHash: 'node-a',
+        agentConfigHash: null,
+        modelConfigHash: 'model-a',
+        toolConfigHash: 'tool-a',
+        outputContractHash: 'contract-a',
+      },
+      currentHitlContextFingerprints: { 'interrupt-1': 'current-hitl' },
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.invalidationReasons).toContain('hitl_context_drift');
+  });
+
+  it('blocks strict replay for baseline approvals that are not reusable', () => {
+    const result = service.evaluateReplayEligibility({
+      mode: 'replay_strict',
+      artifacts: makeArtifacts({
+        hitlMemorySnapshots: [{
+          interruptId: 'approval-1',
+          nodeId: 'task-1',
+          iteration: 0,
+          type: 'approval_request',
+          blockerKind: null,
+          reasonCode: 'external_send',
+          prompt: 'Send email?',
+          responseAction: 'approve',
+          responseMessage: 'Approved.',
+          responseScope: 'step_only',
+          downstreamNodeIds: [],
+          reusableInReplay: false,
+          contextFingerprint: 'approval-hitl',
+        }],
+      }),
+      currentFingerprints: {
+        inputContextHash: 'input-a',
+        flowSnapshotHash: 'flow-a',
+        nodeSnapshotHash: 'node-a',
+        agentConfigHash: null,
+        modelConfigHash: 'model-a',
+        toolConfigHash: 'tool-a',
+        outputContractHash: 'contract-a',
+      },
+      currentHitlContextFingerprints: { 'approval-1': 'approval-hitl' },
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.invalidationReasons).toContain('hitl_approval_requires_confirmation');
   });
 });

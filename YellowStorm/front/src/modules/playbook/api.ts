@@ -11,6 +11,7 @@ import type {
   PlaybookExecution,
   PlaybookExecutionSummary,
   DesignMessage,
+  DesignOperation,
   CreatePlaybookData,
   GeneratePlaybookData,
   RewritePlaybookPromptData,
@@ -58,6 +59,16 @@ import type {
   AdvisorScoringMode,
   RouterDecision,
   TaskResult,
+  PatchPlaybookFlowDeltaData,
+  PatchPlaybookFlowDeltaResult,
+  PlaybookDeltaPatchFields,
+  PlaybookDeltaNodePatch,
+  PlaybookDeltaNodePositionUpdate,
+  HitlBlockerRule,
+  HitlEventLog,
+  HitlFeedbackScope,
+  HitlMemory,
+  HitlPolicy,
  } from './types';
 import {
   normalizePlaybook,
@@ -72,6 +83,38 @@ interface PaginatedResponse<T> {
     total: number;
     totalPages: number;
   };
+}
+
+export function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return JSON.stringify(value);
+  }
+  if (typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
+}
+
+function stableHash(value: unknown): string {
+  const serialized = stableStringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function measureSerializedBytes(value: unknown): number {
+  return new TextEncoder().encode(stableStringify(value)).length;
 }
 
 export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
@@ -242,6 +285,183 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
+  };
+}
+
+export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record<string, unknown> {
+  const sanitized = sanitizePlaybookSettings(sanitizePlaybookUpdate(data));
+
+  const body: Record<string, unknown> = {
+    name: sanitized.name,
+    description: sanitized.description,
+    workspaces: sanitized.workspaces,
+  };
+
+  if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
+  if (sanitized.advisorScoringMode !== undefined) body.advisorScoringMode = sanitized.advisorScoringMode;
+  if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
+  if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
+  if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
+  if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
+
+  if (data.settings) body.settings = data.settings;
+
+  if (data.nodes !== undefined) {
+    body.nodes = data.nodes;
+  } else if (sanitized.tasks !== undefined) {
+    body.nodes = sanitized.tasks.map(taskToFlowNode);
+  }
+  if (data.controlEdges !== undefined) {
+    body.controlEdges = data.controlEdges;
+  } else if (sanitized.edges !== undefined) {
+    body.controlEdges = sanitized.edges
+      .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
+      .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
+  }
+  if (data.dataBindings !== undefined) {
+    body.dataBindings = data.dataBindings;
+  }
+
+  return body;
+}
+
+function isEqualByStableStringify(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function buildDeltaPatchFields(
+  previous: UpdateFlowData,
+  current: UpdateFlowData,
+): PlaybookDeltaPatchFields | undefined {
+  const fields: PlaybookDeltaPatchFields = {};
+
+  if (!isEqualByStableStringify(previous.name, current.name)) fields.name = current.name;
+  if (!isEqualByStableStringify(previous.description, current.description)) fields.description = current.description;
+  if (!isEqualByStableStringify(previous.designSettings, current.designSettings)) fields.designSettings = current.designSettings;
+  if (!isEqualByStableStringify(previous.settings, current.settings)) fields.settings = current.settings;
+  if (!isEqualByStableStringify(previous.reflectionEnabled, current.reflectionEnabled)) fields.reflectionEnabled = current.reflectionEnabled;
+  if (!isEqualByStableStringify(previous.advisorScoringMode, current.advisorScoringMode)) fields.advisorScoringMode = current.advisorScoringMode;
+  if (!isEqualByStableStringify(previous.advisorAutopilotEnabled, current.advisorAutopilotEnabled)) fields.advisorAutopilotEnabled = current.advisorAutopilotEnabled;
+  if (!isEqualByStableStringify(previous.advisorAutopilotTargetScore, current.advisorAutopilotTargetScore)) {
+    fields.advisorAutopilotTargetScore = current.advisorAutopilotTargetScore;
+  }
+  if (!isEqualByStableStringify(previous.advisorAutopilotMaxTurns, current.advisorAutopilotMaxTurns)) {
+    fields.advisorAutopilotMaxTurns = current.advisorAutopilotMaxTurns;
+  }
+  if (!isEqualByStableStringify(previous.workspaces, current.workspaces)) fields.workspaces = current.workspaces;
+
+  return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+function buildNodeDeltaPatch(
+  previousNodes: FlowNode[] | undefined,
+  currentNodes: FlowNode[] | undefined,
+): PlaybookDeltaNodePatch | undefined {
+  if (currentNodes === undefined) {
+    return undefined;
+  }
+
+  if (previousNodes === undefined) {
+    return currentNodes.length > 0 ? { upserts: currentNodes } : undefined;
+  }
+
+  const previousList = previousNodes;
+  const currentList = currentNodes;
+  const previousById = new Map(previousList.map((node) => [node.id, node]));
+  const currentIds = new Set(currentList.map((node) => node.id));
+  const deleteIds = previousList
+    .filter((node) => !currentIds.has(node.id))
+    .map((node) => node.id);
+  const upserts: FlowNode[] = [];
+  const positionUpdates: PlaybookDeltaNodePositionUpdate[] = [];
+
+  for (const currentNode of currentList) {
+    const previousNode = previousById.get(currentNode.id);
+    if (!previousNode) {
+      upserts.push(currentNode);
+      continue;
+    }
+
+    const previousMetadata = { ...(previousNode.metadata ?? {}) } as Record<string, unknown>;
+    const currentMetadata = { ...(currentNode.metadata ?? {}) } as Record<string, unknown>;
+    const previousX = previousMetadata.positionX;
+    const previousY = previousMetadata.positionY;
+    const currentX = currentMetadata.positionX;
+    const currentY = currentMetadata.positionY;
+
+    delete previousMetadata.positionX;
+    delete previousMetadata.positionY;
+    delete currentMetadata.positionX;
+    delete currentMetadata.positionY;
+
+    const previousComparable = { ...previousNode, metadata: previousMetadata };
+    const currentComparable = { ...currentNode, metadata: currentMetadata };
+    if (!isEqualByStableStringify(previousComparable, currentComparable)) {
+      upserts.push(currentNode);
+      continue;
+    }
+
+    if (previousX !== currentX || previousY !== currentY) {
+      positionUpdates.push({
+        id: currentNode.id,
+        positionX: typeof currentX === 'number' ? currentX : 0,
+        positionY: typeof currentY === 'number' ? currentY : 0,
+      });
+    }
+  }
+
+  if (upserts.length === 0 && deleteIds.length === 0 && positionUpdates.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(positionUpdates.length > 0 ? { positionUpdates } : {}),
+    ...(upserts.length > 0 ? { upserts } : {}),
+    ...(deleteIds.length > 0 ? { deleteIds } : {}),
+  };
+}
+
+export function buildPlaybookDeltaPatch(
+  previous: UpdateFlowData,
+  current: UpdateFlowData,
+  options: {
+    expectedUpdatedAt: string;
+    payloadHash?: string;
+    basePayloadHash?: string;
+    clientMutationId?: string;
+  },
+): PatchPlaybookFlowDeltaData | null {
+  const fields = buildDeltaPatchFields(previous, current);
+  const nodes = buildNodeDeltaPatch(previous.nodes, current.nodes);
+  const controlEdgesChanged = current.controlEdges !== undefined
+    && !isEqualByStableStringify(previous.controlEdges, current.controlEdges);
+  const dataBindingsChanged = current.dataBindings !== undefined
+    && !isEqualByStableStringify(previous.dataBindings, current.dataBindings);
+
+  if (!fields && !nodes && !controlEdgesChanged && !dataBindingsChanged) {
+    return null;
+  }
+
+  return {
+    expectedUpdatedAt: options.expectedUpdatedAt,
+    ...(options.payloadHash ? { payloadHash: options.payloadHash } : {}),
+    ...(options.basePayloadHash ? { basePayloadHash: options.basePayloadHash } : {}),
+    ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
+    patch: {
+      ...(fields ? { fields } : {}),
+      ...(nodes ? { nodes } : {}),
+      ...(controlEdgesChanged ? { controlEdges: current.controlEdges ?? [] } : {}),
+      ...(dataBindingsChanged ? { dataBindings: current.dataBindings ?? [] } : {}),
+    },
+  };
+}
+
+export function getPlaybookUpdateTelemetry(data: UpdatePlaybookData): { payloadBytes: number; payloadHash: string } {
+  const body = buildPlaybookUpdateRequestBody(data);
+  return {
+    payloadBytes: measureSerializedBytes(body),
+    payloadHash: stableHash(body),
   };
 }
 
@@ -613,9 +833,30 @@ function normalizeExecution(raw: any): PlaybookExecution {
   const summary = normalizeExecutionSummary(raw);
   const stepExecutionModes = raw.stepExecutionModes ?? raw.step_execution_modes;
   const replayPlanningByTask = raw.replayPlanningByTask;
+  const isTerminal = summary.status === 'completed' || summary.status === 'failed' || summary.status === 'cancelled';
   const pendingApprovalType = raw.pendingApproval?.interruptType === 'human_approval'
     ? 'approval_request'
     : raw.pendingApproval?.interruptType;
+  const interruptPayload = isTerminal ? null : raw.interruptPayload ?? (raw.pendingApproval
+    ? {
+        type: pendingApprovalType ?? 'approval_request',
+        taskId: raw.pendingApproval.nodeId,
+        taskTitle: raw.pendingApproval.taskTitle ?? '',
+        message: raw.pendingApproval.prompt ?? '',
+        threadId: raw.threadId ?? '',
+        interruptId: raw.pendingApproval.interruptId ?? '',
+        round: raw.pendingApproval.iteration ?? 0,
+        payloadJson: raw.pendingApproval.payloadJson ?? '',
+        resumableActions: raw.pendingApproval.resumableActions ?? [],
+        taskDescription: raw.pendingApproval.taskDescription ?? '',
+        result: raw.pendingApproval.result ?? '',
+      }
+    : null);
+  const pendingInterrupts = Array.isArray(raw.pendingInterrupts)
+    ? raw.pendingInterrupts
+    : interruptPayload
+      ? [interruptPayload]
+      : [];
 
   return {
     ...summary,
@@ -626,24 +867,11 @@ function normalizeExecution(raw: any): PlaybookExecution {
         : undefined,
     taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
     threadId: toNullableString(raw.threadId),
-    interruptPayload: raw.interruptPayload ?? (raw.pendingApproval
-      ? {
-          type: pendingApprovalType ?? 'approval_request',
-          taskId: raw.pendingApproval.nodeId,
-          taskTitle: raw.pendingApproval.taskTitle ?? '',
-          message: raw.pendingApproval.prompt ?? '',
-          threadId: raw.threadId ?? '',
-          interruptId: raw.pendingApproval.interruptId ?? '',
-          round: raw.pendingApproval.iteration ?? 0,
-          payloadJson: raw.pendingApproval.payloadJson ?? '',
-          resumableActions: raw.pendingApproval.resumableActions ?? [],
-          taskDescription: raw.pendingApproval.taskDescription ?? '',
-          result: raw.pendingApproval.result ?? '',
-        }
-      : null),
-    waitingForHumanInput: Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
-    currentInterruptId: toNullableString(raw.currentInterruptId),
-    currentInterruptTaskId: toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
+    interruptPayload,
+    pendingInterrupts: isTerminal ? [] : pendingInterrupts,
+    waitingForHumanInput: isTerminal ? false : Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
+    currentInterruptId: isTerminal ? null : toNullableString(raw.currentInterruptId),
+    currentInterruptTaskId: isTerminal ? null : toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
     hitlHistory: Array.isArray(raw.hitlHistory) ? raw.hitlHistory : [],
     playbookSnapshot: raw.playbookSnapshot ?? null,
     totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
@@ -664,6 +892,14 @@ function normalizeExecution(raw: any): PlaybookExecution {
     advisorAutopilotLastError: toNullableString(raw.advisorAutopilotLastError),
     judgeSummaryStatus: raw.judgeSummaryStatus ?? 'idle',
     judgeSummary: raw.judgeSummary ?? null,
+    replaySource:
+      raw.replaySource && typeof raw.replaySource === 'object'
+        ? {
+            executionId: toNullableString(raw.replaySource.executionId) ?? '',
+            taskId: toNullableString(raw.replaySource.taskId) ?? '',
+            iteration: toNullableNumber(raw.replaySource.iteration) ?? undefined,
+          }
+        : null,
     replaySourceByTask: raw.replaySourceByTask ?? null,
     replayPlanningByTask:
       replayPlanningByTask && typeof replayPlanningByTask === 'object'
@@ -695,6 +931,7 @@ function normalizeValidatedTaskReplay(raw: any): ValidatedTaskReplay {
     toolTraceTemplate: Array.isArray(raw.toolTraceTemplate) ? raw.toolTraceTemplate : [],
     driftPolicy: raw.driftPolicy ?? null,
     acceptedExamples: Array.isArray(raw.acceptedExamples) ? raw.acceptedExamples : [],
+    hitlMemorySnapshots: Array.isArray(raw.hitlMemorySnapshots) ? raw.hitlMemorySnapshots : [],
   };
 }
 
@@ -782,35 +1019,7 @@ export async function updatePlaybook(
   id: string,
   data: UpdatePlaybookData,
 ): Promise<Playbook> {
-  const sanitized = sanitizePlaybookSettings(sanitizePlaybookUpdate(data));
-
-  const body: Record<string, unknown> = {
-    name: sanitized.name,
-    description: sanitized.description,
-    workspaces: sanitized.workspaces,
-  };
-
-  if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
-  if (sanitized.advisorScoringMode !== undefined) body.advisorScoringMode = sanitized.advisorScoringMode;
-  if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
-  if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
-  if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
-  if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
-  if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
-
-  if (data.settings) body.settings = data.settings;
-
-  if (sanitized.tasks !== undefined) {
-    body.nodes = sanitized.tasks.map(taskToFlowNode);
-  }
-  if (sanitized.edges !== undefined) {
-    body.controlEdges = sanitized.edges
-      .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
-      .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
-  }
-  if (data.dataBindings !== undefined) {
-    body.dataBindings = data.dataBindings;
-  }
+  const body = buildPlaybookUpdateRequestBody(data);
 
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
@@ -947,6 +1156,18 @@ export async function rerunPlaybookStep(
   return response.data.data;
 }
 
+export async function runPlaybookFromStep(
+  playbookId: string,
+  executionId: string,
+  data: { taskId: string; iteration?: number },
+): Promise<{ executionId: string }> {
+  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
+    API_ENDPOINTS.playbooks.runFromStep(playbookId, executionId),
+    data,
+  );
+  return response.data.data;
+}
+
 export async function resumePlaybookFromStep(
   playbookId: string,
   executionId: string,
@@ -960,6 +1181,8 @@ export async function resumePlaybookFromStep(
     approved?: boolean;
     reason?: string;
     feedback?: string;
+    scope?: HitlFeedbackScope;
+    remember?: boolean;
     payload?: Record<string, unknown>;
   },
 ): Promise<{ status: string; executionId: string }> {
@@ -967,6 +1190,109 @@ export async function resumePlaybookFromStep(
     API_ENDPOINTS.playbooks.resumeFromStep(playbookId, executionId),
     data,
   );
+  return response.data.data;
+}
+
+export async function getHitlPolicy(playbookId: string): Promise<HitlPolicy> {
+  const response = await apiClient.get<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlPolicy(playbookId));
+  return response.data.data;
+}
+
+export async function updateHitlPolicy(playbookId: string, data: Partial<HitlPolicy>): Promise<HitlPolicy> {
+  const response = await apiClient.patch<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlPolicy(playbookId), data);
+  return response.data.data;
+}
+
+export async function getNodeHitlPolicy(playbookId: string, nodeId: string): Promise<HitlPolicy> {
+  const response = await apiClient.get<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlNodePolicy(playbookId, nodeId));
+  return response.data.data;
+}
+
+export async function updateNodeHitlPolicy(playbookId: string, nodeId: string, data: Partial<HitlPolicy>): Promise<HitlPolicy> {
+  const response = await apiClient.patch<ApiResponse<HitlPolicy>>(API_ENDPOINTS.playbooks.hitlNodePolicy(playbookId, nodeId), data);
+  return response.data.data;
+}
+
+export async function getHitlBlockers(playbookId: string): Promise<HitlBlockerRule[]> {
+  const response = await apiClient.get<ApiResponse<HitlBlockerRule[]>>(API_ENDPOINTS.playbooks.hitlBlockers(playbookId));
+  return response.data.data;
+}
+
+export async function createHitlBlocker(
+  playbookId: string,
+  data: Omit<Partial<HitlBlockerRule>, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> & Pick<HitlBlockerRule, 'kind' | 'label' | 'description' | 'action'>,
+): Promise<HitlBlockerRule> {
+  const response = await apiClient.post<ApiResponse<HitlBlockerRule>>(API_ENDPOINTS.playbooks.hitlBlockers(playbookId), data);
+  return response.data.data;
+}
+
+export async function normalizeHitlBlocker(
+  playbookId: string,
+  data: { description: string; nodeId?: string | null },
+): Promise<Partial<HitlBlockerRule>> {
+  const response = await apiClient.post<ApiResponse<Partial<HitlBlockerRule>>>(API_ENDPOINTS.playbooks.hitlBlockerNormalize(playbookId), data);
+  return response.data.data;
+}
+
+export async function updateHitlBlocker(
+  playbookId: string,
+  blockerId: string,
+  data: Partial<HitlBlockerRule>,
+): Promise<HitlBlockerRule> {
+  const response = await apiClient.patch<ApiResponse<HitlBlockerRule>>(API_ENDPOINTS.playbooks.hitlBlocker(playbookId, blockerId), data);
+  return response.data.data;
+}
+
+export async function deleteHitlBlocker(playbookId: string, blockerId: string): Promise<{ deleted: true }> {
+  const response = await apiClient.delete<ApiResponse<{ deleted: true }>>(API_ENDPOINTS.playbooks.hitlBlocker(playbookId, blockerId));
+  return response.data.data;
+}
+
+export async function getHitlMemories(playbookId: string): Promise<HitlMemory[]> {
+  const response = await apiClient.get<ApiResponse<HitlMemory[]>>(API_ENDPOINTS.playbooks.hitlMemories(playbookId));
+  return response.data.data;
+}
+
+export async function saveHitlMemory(
+  playbookId: string,
+  data: Omit<Partial<HitlMemory>, 'id' | 'ownerId' | 'flowId' | 'createdAt' | 'updatedAt'> & Pick<HitlMemory, 'title' | 'content' | 'normalizedInstruction'>,
+): Promise<HitlMemory> {
+  const response = await apiClient.post<ApiResponse<HitlMemory>>(API_ENDPOINTS.playbooks.hitlMemories(playbookId), data);
+  return response.data.data;
+}
+
+export async function getHitlEvents(executionId: string): Promise<HitlEventLog[]> {
+  const response = await apiClient.get<ApiResponse<HitlEventLog[]>>(API_ENDPOINTS.playbooks.hitlEvents(executionId));
+  return response.data.data;
+}
+
+export async function getPendingHitlInterrupt(executionId: string): Promise<Record<string, unknown> | null> {
+  const response = await apiClient.get<ApiResponse<Record<string, unknown> | null>>(API_ENDPOINTS.playbooks.hitlPending(executionId));
+  return response.data.data;
+}
+
+export async function resumeHitlInterrupt(
+  executionId: string,
+  interruptId: string,
+  data: {
+    action?: 'reply' | 'approve' | 'reject' | 'skip';
+    message?: string;
+    reason?: string;
+    feedback?: string;
+    scope?: HitlFeedbackScope;
+    remember?: boolean;
+    payload?: Record<string, unknown>;
+  },
+): Promise<{ status: string; executionId: string }> {
+  const response = await apiClient.post<ApiResponse<{ status: string; executionId: string }>>(
+    API_ENDPOINTS.playbooks.hitlResume(executionId, interruptId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function disableHitlBlocker(executionId: string, interruptId: string): Promise<{ disabled: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ disabled: boolean }>>(API_ENDPOINTS.playbooks.hitlDisableBlocker(executionId, interruptId));
   return response.data.data;
 }
 
@@ -1418,9 +1744,10 @@ export async function getFlows(
   return { flows: items, pagination };
 }
 
-export async function getFlow(id: string): Promise<Playbook> {
+export async function getFlow(id: string, options?: { view?: 'base' | 'enriched' }): Promise<Playbook> {
   const response = await apiClient.get<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.byId(id),
+    { params: options?.view ? { view: options.view } : undefined },
   );
   return normalizePlaybook(response.data.data);
 }
@@ -1436,6 +1763,21 @@ export async function createFlow(data: CreateFlowData): Promise<Flow> {
 export async function updateFlow(id: string, data: UpdateFlowData, idempotencyKey?: string): Promise<Flow> {
   const response = await apiClient.patch<ApiResponse<Flow>>(
     API_ENDPOINTS.playbookFlows.byId(id),
+    data,
+    idempotencyKey
+      ? { headers: { 'Idempotency-Key': idempotencyKey } }
+      : undefined,
+  );
+  return response.data.data;
+}
+
+export async function patchFlowDelta(
+  id: string,
+  data: PatchPlaybookFlowDeltaData,
+  idempotencyKey?: string,
+): Promise<PatchPlaybookFlowDeltaResult> {
+  const response = await apiClient.patch<ApiResponse<PatchPlaybookFlowDeltaResult>>(
+    API_ENDPOINTS.playbookFlows.delta(id),
     data,
     idempotencyKey
       ? { headers: { 'Idempotency-Key': idempotencyKey } }
@@ -1688,6 +2030,31 @@ export async function designFlow(id: string, data: { query: string }): Promise<a
   const response = await apiClient.post<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.design(id),
     data,
+  );
+  return response.data.data;
+}
+
+export async function startDesignOperation(
+  id: string,
+  data: { query: string; idempotencyKey?: string },
+): Promise<DesignOperation> {
+  const response = await apiClient.post<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.designOperations(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getDesignOperation(id: string, operationId: string): Promise<DesignOperation> {
+  const response = await apiClient.get<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.designOperation(id, operationId),
+  );
+  return response.data.data;
+}
+
+export async function cancelDesignOperation(id: string, operationId: string): Promise<DesignOperation> {
+  const response = await apiClient.post<ApiResponse<DesignOperation>>(
+    API_ENDPOINTS.playbookFlows.cancelDesignOperation(id, operationId),
   );
   return response.data.data;
 }

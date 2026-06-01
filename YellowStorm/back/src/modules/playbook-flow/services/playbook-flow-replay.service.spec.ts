@@ -60,6 +60,7 @@ function createReplayServiceForTests(overrides?: {
         enforceOutputContract: true,
       },
       acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Task review.', outputPreview: 'original output' }],
+      hitlMemorySnapshots: [],
     }),
     buildOutputContractFromReplay: jest.fn().mockReturnValue({ type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' }),
     buildOutputContractHash: jest.fn().mockReturnValue('contract-hash'),
@@ -300,6 +301,17 @@ describe('PlaybookFlowReplayService', () => {
         inputContext: { query: 'hello' },
         snapshot: { nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }] },
         schemaVersion: 3,
+        hitlEvents: [{
+          interruptId: 'int-1',
+          nodeId: 'step-1',
+          iteration: 0,
+          status: 'answered',
+          type: 'clarification',
+          reasonCode: 'missing_document',
+          prompt: 'Which document?',
+          response: { action: 'reply', message: 'Use signed contract.', scope: 'downstream_run' },
+          downstreamNodeIds: ['step-2'],
+        }],
       }));
 
       taskResultModel.findOne.mockReturnValue(makeFindOneChain({
@@ -330,6 +342,7 @@ describe('PlaybookFlowReplayService', () => {
         referenceExecutionNumber: 2,
         inputContext: { query: 'hello' },
         flowSnapshot: { nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }] },
+        hitlEvents: expect.arrayContaining([expect.objectContaining({ interruptId: 'int-1' })]),
       }));
       expect(replayModel.create).toHaveBeenCalledWith([expect.objectContaining({
         referenceExecutionNumber: 2,
@@ -342,6 +355,7 @@ describe('PlaybookFlowReplayService', () => {
         toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence.', argumentShape: { query: 'string' }, required: true }],
         driftPolicy: expect.objectContaining({ requireSameIntent: true }),
         acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Task review.', outputPreview: 'original output' }],
+        hitlMemorySnapshots: [],
         toolCalls: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
         reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],

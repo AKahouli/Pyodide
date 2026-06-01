@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import { PlaybookFlowStreamGatewayService } from './playbook-flow-stream-gateway.service';
 import {
@@ -15,11 +16,13 @@ import type {
 export class PlaybookFlowStreamEventsService {
   private readonly logger = new Logger(PlaybookFlowStreamEventsService.name);
   private executionOwnerCache = new Map<string, string>();
+  private queuePositionEmissionCache = new Map<string, { position: number; emittedAt: number }>();
 
   constructor(
     private readonly streamGateway: PlaybookFlowStreamGatewayService,
     @InjectModel(FlowExecution.name)
     private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly configService: ConfigService,
   ) {}
 
   cacheOwner(executionId: string, ownerId: string): void {
@@ -263,6 +266,13 @@ export class PlaybookFlowStreamEventsService {
       result?: string;
       payloadJson?: string;
       resumableActions?: string[];
+      blockerRuleId?: string;
+      blockerKind?: string;
+      reasonCode?: string;
+      riskLevel?: string;
+      confidence?: number;
+      downstreamNodeIds?: string[];
+      feedbackScopeDefault?: string;
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
@@ -283,8 +293,81 @@ export class PlaybookFlowStreamEventsService {
         result: extra?.result,
         payloadJson: extra?.payloadJson,
         resumableActions: extra?.resumableActions,
+        blockerRuleId: extra?.blockerRuleId,
+        blockerKind: extra?.blockerKind,
+        reasonCode: extra?.reasonCode,
+        riskLevel: extra?.riskLevel,
+        confidence: extra?.confidence,
+        downstreamNodeIds: extra?.downstreamNodeIds,
+        feedbackScopeDefault: extra?.feedbackScopeDefault,
       },
     });
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_hitl_interrupt_created',
+      data: {
+        executionId,
+        taskId: nodeId,
+        type: extra?.interruptType ?? 'human_approval',
+        message: prompt,
+        iteration,
+        threadId: threadId ?? executionId,
+        interruptId: extra?.interruptId,
+        blockerRuleId: extra?.blockerRuleId,
+        blockerKind: extra?.blockerKind,
+        reasonCode: extra?.reasonCode,
+        riskLevel: extra?.riskLevel,
+        confidence: extra?.confidence,
+        downstreamNodeIds: extra?.downstreamNodeIds ?? [],
+        feedbackScopeDefault: extra?.feedbackScopeDefault,
+        resumableActions: extra?.resumableActions ?? [],
+      },
+    });
+  }
+
+  emitHitlInterruptResolved(
+    executionId: string,
+    interruptId: string,
+    payload: { action: string; taskId?: string; scope?: string; remember?: boolean },
+  ): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_hitl_interrupt_resolved',
+      data: {
+        executionId,
+        interruptId,
+        action: payload.action,
+        taskId: payload.taskId,
+        scope: payload.scope,
+        remember: payload.remember,
+      },
+    });
+  }
+
+  emitHitlInterruptUpdated(executionId: string, interruptId: string, payload: Record<string, unknown>): void {
+    this.sendHitlEvent(executionId, 'playbook_hitl_interrupt_updated', { executionId, interruptId, ...payload });
+  }
+
+  emitHitlMemorySuggested(executionId: string, payload: Record<string, unknown>): void {
+    this.sendHitlEvent(executionId, 'playbook_hitl_memory_suggested', { executionId, ...payload });
+  }
+
+  emitHitlMemorySaved(executionId: string, payload: Record<string, unknown>): void {
+    this.sendHitlEvent(executionId, 'playbook_hitl_memory_saved', { executionId, ...payload });
+  }
+
+  emitHitlBlockerDisabled(executionId: string, blockerId: string, payload: Record<string, unknown> = {}): void {
+    this.sendHitlEvent(executionId, 'playbook_hitl_blocker_disabled', { executionId, blockerId, ...payload });
+  }
+
+  emitHitlPolicyUpdated(executionId: string, payload: Record<string, unknown>): void {
+    this.sendHitlEvent(executionId, 'playbook_hitl_policy_updated', { executionId, ...payload });
+  }
+
+  emitReplayHitlSummaryUpdated(executionId: string, payload: Record<string, unknown>): void {
+    this.sendHitlEvent(executionId, 'playbook_replay_hitl_summary_updated', { executionId, ...payload });
   }
 
   async emitConnected(userId: string): Promise<void> {
@@ -337,6 +420,13 @@ export class PlaybookFlowStreamEventsService {
                 result: execution.pendingApproval.result ?? '',
                 payloadJson: execution.pendingApproval.payloadJson ?? '',
                 resumableActions: execution.pendingApproval.resumableActions ?? [],
+                blockerRuleId: execution.pendingApproval.blockerRuleId,
+                blockerKind: execution.pendingApproval.blockerKind,
+                reasonCode: execution.pendingApproval.reasonCode,
+                riskLevel: execution.pendingApproval.riskLevel,
+                confidence: execution.pendingApproval.confidence,
+                downstreamNodeIds: execution.pendingApproval.downstreamNodeIds ?? [],
+                feedbackScopeDefault: execution.pendingApproval.feedbackScopeDefault,
               }
             : null,
           waitingForHumanInput: execution.status === 'pending_approval',
@@ -373,6 +463,14 @@ export class PlaybookFlowStreamEventsService {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
 
+    const throttleMs = this.configService.get<number>('playbook-flow.queuePositionUpdateThrottleMs', 500);
+    const cached = this.queuePositionEmissionCache.get(executionId);
+    const now = Date.now();
+    if (cached && cached.position === queuePosition && now - cached.emittedAt < throttleMs) {
+      return;
+    }
+    this.queuePositionEmissionCache.set(executionId, { position: queuePosition, emittedAt: now });
+
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_execution_queue_update',
       data: { executionId, queuePosition },
@@ -390,5 +488,11 @@ export class PlaybookFlowStreamEventsService {
         status: 'cancelled',
       },
     });
+  }
+
+  private sendHitlEvent(executionId: string, type: string, data: Record<string, unknown>): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+    this.streamGateway.sendToUser(ownerId, { type, data });
   }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Dialog,
@@ -9,10 +9,19 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { usePlaybookStore, useCurrentExecution } from '../store';
-import type { InterruptPayload } from '../types';
+import type { HitlFeedbackScope, InterruptPayload } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 
 interface Props {
@@ -22,6 +31,14 @@ interface Props {
   iterationIndex?: number;
   iterationCount?: number;
 }
+
+const FEEDBACK_SCOPES: HitlFeedbackScope[] = [
+  'step_only',
+  'downstream_run',
+  'entire_run',
+  'future_node_runs',
+  'future_workflow_runs',
+];
 
 export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationIndex, iterationCount }: Props) {
   const { id } = useParams<{ id: string }>();
@@ -34,14 +51,17 @@ export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationI
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editedMessage, setEditedMessage] = useState('');
+  const [feedbackScope, setFeedbackScope] = useState<HitlFeedbackScope>('downstream_run');
+  const [rememberFeedback, setRememberFeedback] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(timeoutSeconds ?? 0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const pendingHistoryEntry = execution?.waitingForHumanInput
     ? execution.hitlHistory?.find((entry) => entry.status === 'pending' && entry.taskId === (execution.currentInterruptTaskId || entry.taskId))
     : undefined;
-  const interrupt = (execution?.interruptPayload || (pendingHistoryEntry
-    ? {
+  const interrupt = useMemo(() => (
+    execution?.interruptPayload || (pendingHistoryEntry
+      ? {
         type: pendingHistoryEntry.type,
         taskId: pendingHistoryEntry.taskId,
         taskTitle: pendingHistoryEntry.taskTitle,
@@ -53,8 +73,15 @@ export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationI
         resumableActions: pendingHistoryEntry.resumableActions,
         taskDescription: pendingHistoryEntry.taskDescription,
         result: pendingHistoryEntry.result,
+        blockerRuleId: pendingHistoryEntry.blockerRuleId,
+        blockerKind: pendingHistoryEntry.blockerKind,
+        reasonCode: pendingHistoryEntry.reasonCode,
+        riskLevel: pendingHistoryEntry.riskLevel,
+        downstreamNodeIds: pendingHistoryEntry.downstreamNodeIds,
+        feedbackScopeDefault: pendingHistoryEntry.feedbackScopeDefault ?? undefined,
       }
-    : null)) as InterruptPayload | null;
+      : null)
+  ) as InterruptPayload | null, [execution?.interruptPayload, execution?.threadId, pendingHistoryEntry]);
 
   useEffect(() => {
     if (timeoutSeconds && timeoutSeconds > 0) {
@@ -86,12 +113,17 @@ export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationI
     setResponse('');
     setEditMode(false);
     setEditedMessage(interrupt.message || '');
+    const isSensitiveApproval = interrupt.type === 'approval_request'
+      && (interrupt.riskLevel === 'high' || interrupt.riskLevel === 'critical');
+    setFeedbackScope(interrupt.feedbackScopeDefault ?? (isSensitiveApproval ? 'step_only' : 'downstream_run'));
+    setRememberFeedback(false);
   }, [open, interrupt, execution, id]);
 
   if (!interrupt || !execution || !id) return null;
 
   const isApproval = interrupt.type === 'approval_request';
   const isClarification = interrupt.type === 'clarification';
+  const canRememberFeedback = feedbackScope === 'future_node_runs' || feedbackScope === 'future_workflow_runs';
   const isTimedOut = timeoutSeconds ? remainingSeconds <= 0 : false;
   const showTimeout = timeoutSeconds && timeoutSeconds > 0;
   const showIteration = iterationCount != null && iterationCount > 1;
@@ -106,6 +138,8 @@ export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationI
         approved,
         reason: extra?.reason,
         feedback: extra?.feedback,
+        scope: feedbackScope,
+        remember: canRememberFeedback ? rememberFeedback : false,
       });
       onOpenChange(false);
       setResponse('');
@@ -155,6 +189,33 @@ export function InterruptDialog({ open, onOpenChange, timeoutSeconds, iterationI
               : t('interrupt.timeoutExpired')}
           </div>
         )}
+
+        <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+          <Label className="text-xs font-medium">{t('interrupt.scopeLabel')}</Label>
+          <Select value={feedbackScope} onValueChange={(value) => setFeedbackScope(value as HitlFeedbackScope)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FEEDBACK_SCOPES.map((scope) => (
+                <SelectItem key={scope} value={scope}>
+                  {t(`interrupt.scope.${scope}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="interrupt-remember-feedback"
+              checked={rememberFeedback}
+              disabled={!canRememberFeedback}
+              onCheckedChange={(checked) => setRememberFeedback(checked === true)}
+            />
+            <Label htmlFor="interrupt-remember-feedback" className="text-xs text-muted-foreground">
+              {t('interrupt.rememberFeedback')}
+            </Label>
+          </div>
+        </div>
 
         {isApproval ? (
           editMode ? (

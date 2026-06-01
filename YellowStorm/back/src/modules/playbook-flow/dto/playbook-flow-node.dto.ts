@@ -245,6 +245,11 @@ export class FlowNodeDto {
   @Type(() => RetryPolicyDto)
   retryPolicy?: RetryPolicyDto;
 
+  @ApiPropertyOptional({ description: 'Node-level Smart HITL policy override.' })
+  @IsOptional()
+  @IsObject()
+  hitlPolicy?: Record<string, unknown>;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

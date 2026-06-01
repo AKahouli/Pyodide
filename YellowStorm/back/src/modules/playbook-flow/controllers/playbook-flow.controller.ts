@@ -1,10 +1,13 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ConfigType } from '@nestjs/config';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowDesignService } from '../services/playbook-flow-design.service';
+import { PlaybookFlowDesignOperationService } from '../services/playbook-flow-design-operation.service';
 import { PlaybookFlowEvaluationService } from '../services/playbook-flow-evaluation.service';
 import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
+import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowQueryDto } from '../dto/playbook-flow-query.dto';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
@@ -12,17 +15,25 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
+import playbookFlowConfig from '@config/playbook-flow.config';
+import { BadRequestException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
 @Controller('playbooks')
 @UseGuards(PermissionsGuard)
 export class PlaybookFlowController {
+  private readonly logger = new Logger(PlaybookFlowController.name);
+
   constructor(
     private readonly playbookFlowService: PlaybookFlowService,
     private readonly designService: PlaybookFlowDesignService,
+    private readonly designOperationService: PlaybookFlowDesignOperationService,
     private readonly evaluationService: PlaybookFlowEvaluationService,
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
+    @Inject(playbookFlowConfig.KEY)
+    private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
 
   @Post()
@@ -60,8 +71,12 @@ export class PlaybookFlowController {
   async findOne(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
+    @Query('view') view?: 'base' | 'enriched',
   ) {
-    return this.playbookFlowService.findOne(id, userId);
+    if (view === 'base') {
+      return this.playbookFlowService.findOneBase(id, userId);
+    }
+    return this.playbookFlowService.findOneEnriched(id, userId);
   }
 
   @Patch(':id')
@@ -72,7 +87,26 @@ export class PlaybookFlowController {
     @Param('id') id: string,
     @Body() dto: UpdatePlaybookFlowDto,
   ) {
+    const payloadBytes = Buffer.byteLength(JSON.stringify(dto), 'utf8');
+    this.logger.log(`playbook_autosave_payload_bytes mode=full playbookId=${id} payloadBytes=${payloadBytes}`);
     return this.playbookFlowService.update(id, userId, dto);
+  }
+
+  @Patch(':id/delta')
+  @ApiOperation({ summary: 'Apply a delta patch to a playbook flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async patchDelta(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: PatchPlaybookFlowDeltaDto,
+  ) {
+    if (!this.playbookFlowSettings.deltaPatchEnabled) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook delta patch is disabled.');
+    }
+
+    const payloadBytes = Buffer.byteLength(JSON.stringify(dto), 'utf8');
+    this.logger.log(`playbook_autosave_payload_bytes mode=delta playbookId=${id} payloadBytes=${payloadBytes}`);
+    return this.playbookFlowService.applyDeltaPatch(id, userId, dto);
   }
 
   @Delete(':id')
@@ -114,6 +148,39 @@ export class PlaybookFlowController {
     @Body() body: { query: string },
   ) {
     return this.designService.designFlow(userId, id, body.query);
+  }
+
+  @Post(':id/design-operations')
+  @ApiOperation({ summary: 'Queue an asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async startDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { query: string; idempotencyKey?: string },
+  ) {
+    return this.designOperationService.enqueue(userId, id, body.query, body.idempotencyKey);
+  }
+
+  @Get(':id/design-operations/:operationId')
+  @ApiOperation({ summary: 'Get an asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.designOperationService.findOne(userId, id, operationId);
+  }
+
+  @Post(':id/design-operations/:operationId/cancel')
+  @ApiOperation({ summary: 'Cancel a queued asynchronous playbook design operation' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async cancelDesignOperation(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.designOperationService.cancel(userId, id, operationId);
   }
 
   @Post(':id/clone')

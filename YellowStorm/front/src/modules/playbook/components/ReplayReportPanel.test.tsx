@@ -48,6 +48,18 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.postRun.verdict.match': 'Match',
         'replayReport.postRun.verdict.minor_drift': 'Minor Drift',
         'replayReport.postRun.action.accept': 'Accept',
+        'replayReport.hitl.title': 'HITL replay summary',
+        'replayReport.hitl.baselineCount': 'Baseline pauses',
+        'replayReport.hitl.runtimeCount': 'Runtime pauses',
+        'replayReport.hitl.reusedMemoryCount': 'Reusable memories',
+        'replayReport.hitl.newClarificationCount': 'New clarifications',
+        'replayReport.hitl.approvalReaskedCount': 'Approvals re-asked',
+        'replayReport.hitl.contextDrift': 'HITL context drift was detected.',
+        'replayReport.hitl.finding.baselineReused': 'Baseline HITL was reused or no longer needed.',
+        'replayReport.hitl.finding.additionalRuntimeHitl': 'Replay needed additional HITL pauses.',
+        'replayReport.findingSeverity.info': 'Info',
+        'replayReport.findingSeverity.warning': 'Warning',
+        'replayReport.findingSeverity.fail': 'Fail',
         'replayReport.section.verdict': 'Replay verdict',
         'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.signalStatuses': 'Signal evaluation',
@@ -967,5 +979,47 @@ describe('ReplayReportPanel', () => {
     expect(screen.getByText('Replay Evaluation Synthesis')).toBeInTheDocument();
     expect(screen.getByText('Minor Drift')).toBeInTheDocument();
     expect(screen.getByText('The replay preserved the core meaning.')).toBeInTheDocument();
+  });
+
+  it('renders HITL replay summary counts and findings', async () => {
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: [{
+          id: 'report-hitl', executionId: 'exec-hitl', flowId: 'playbook-1', taskId: 'task-hitl', iteration: 0,
+          replayId: 'replay-hitl', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 94,
+          appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+          outputContractEvaluated: false, outputContractPassed: false, structuralDriftScore: null, toolPolicyScore: null,
+          verdict: 'warning', overallScore: 84, verdictReasons: [], structuralDriftReasons: [], semanticMatch: null,
+          hitlSummary: {
+            baselineHitlCount: 2,
+            runtimeHitlCount: 1,
+            reusedMemoryCount: 1,
+            newClarificationCount: 1,
+            approvalReaskedCount: 0,
+            hitlContextDrift: true,
+            findings: [
+              { severity: 'info', message: 'baseline_hitl_reused_or_not_needed', nodeId: 'task-hitl' },
+              { severity: 'warning', message: 'additional_runtime_hitl_required', nodeId: 'task-hitl' },
+            ],
+          },
+          createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
+        }],
+      },
+    });
+
+    render(<ReplayReportPanel playbookId="playbook-1" taskId="task-hitl" executionId="exec-hitl" iteration={0} />);
+    await flushAsyncWork();
+
+    expect(screen.getByText('HITL replay summary')).toBeInTheDocument();
+    expect(screen.getByText('Baseline pauses')).toBeInTheDocument();
+    expect(screen.getByText('Runtime pauses')).toBeInTheDocument();
+    expect(screen.getByText('Baseline pauses').parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Runtime pauses').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Reusable memories').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('New clarifications').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Approvals re-asked').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('HITL context drift was detected.')).toBeInTheDocument();
+    expect(screen.getByText('Baseline HITL was reused or no longer needed.')).toBeInTheDocument();
+    expect(screen.getByText('Replay needed additional HITL pauses.')).toBeInTheDocument();
   });
 });

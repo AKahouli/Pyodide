@@ -3,12 +3,82 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
+function getManualChunk(id: string): string | undefined {
+  if (!id.includes('node_modules')) {
+    return undefined;
+  }
+
+  if (
+    id.includes('/node_modules/react/')
+    || id.includes('/node_modules/react-dom/')
+    || id.includes('/node_modules/react-router/')
+    || id.includes('/node_modules/react-router-dom/')
+  ) {
+    return 'vendor-react';
+  }
+
+  if (id.includes('/node_modules/@xyflow/')) {
+    return 'vendor-flow';
+  }
+
+  if (
+    id.includes('/node_modules/shiki/')
+    || id.includes('/node_modules/@shikijs/')
+  ) {
+    return 'vendor-shiki';
+  }
+
+  if (
+    id.includes('/node_modules/streamdown/')
+    || id.includes('/node_modules/react-markdown/')
+    || id.includes('/node_modules/remark-')
+    || id.includes('/node_modules/rehype-')
+  ) {
+    return 'vendor-markdown';
+  }
+
+  if (id.includes('/node_modules/exceljs/')) {
+    return 'vendor-excel';
+  }
+
+  if (
+    id.includes('/node_modules/@embedpdf/')
+    || id.includes('/node_modules/pdfjs-dist/')
+  ) {
+    return 'vendor-pdf';
+  }
+
+  if (id.includes('/node_modules/@cyntler/react-doc-viewer/')) {
+    return 'vendor-doc-viewer';
+  }
+
+  if (
+    id.includes('/node_modules/monaco-editor/')
+  ) {
+    return 'vendor-editor';
+  }
+
+  if (
+    id.includes('/node_modules/ai/')
+    || id.includes('/node_modules/@anthropic-ai/')
+  ) {
+    return 'vendor-ai';
+  }
+
+  return undefined;
+}
+
 export default defineConfig(() => {
   return {
     base: '/',
     plugins: [react(), tailwindcss()],
     build: {
       target: 'es2022',
+      rollupOptions: {
+        output: {
+          manualChunks: getManualChunk,
+        },
+      },
     },
     server: {
       hmr: false,

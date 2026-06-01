@@ -18,6 +18,7 @@ export interface ReplayEligibilityInput {
   mode: ReplayMode;
   artifacts: ResolvedReplayArtifacts;
   currentFingerprints: FlowReplayFingerprints;
+  currentHitlContextFingerprints?: Record<string, string>;
   staleReasons?: string[];
   isStale?: boolean;
   eligibilityThreshold?: number;
