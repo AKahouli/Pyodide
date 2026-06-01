@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getConnectors, createConnector, updateConnector, deleteConnector, inspectMcp, importFromMcp } from '../../api';
 import type { ConnectorResponse, McpToolDefinition, McpInspectResult, ConnectorActionResponse } from '../../types';
 import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
+import { IconDisplay } from './IconDisplay';
 import type { ConnectorFormValues } from './connector-form-schema';
 
 const TRANSPORT_TYPES = [
@@ -85,6 +86,7 @@ export function ConnectorsPage() {
         description: data.description,
         icon: data.icon || undefined,
         color: data.color || undefined,
+        iconColor: data.iconColor || undefined,
         authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
@@ -230,11 +232,28 @@ export function ConnectorsPage() {
               <TableBody>
                 {connectors.length === 0 ? (
                   <TableRow><TableCell colSpan={6} className='h-24 text-center'>{search ? 'No connectors match your search.' : 'No connectors yet.'}</TableCell></TableRow>
-                ) : connectors.map((conn) => (
+                ) : connectors.map((conn) => {
+                  const iconTextColor = conn.iconColor === 'dark' ? 'text-black' : 'text-white';
+                  const initial = conn.name?.trim().charAt(0).toUpperCase() || '?';
+                  return (
                   <TableRow key={conn.id} className={!conn.isActive ? 'opacity-50' : undefined}>
                     <TableCell>
-                      <div className='font-medium'>{conn.name}</div>
-                      <div className='text-xs text-muted-foreground'>{conn.slug}</div>
+                      <div className='flex items-center gap-3'>
+                        <div
+                          className='flex h-8 w-8 shrink-0 items-center justify-center rounded-md'
+                          style={{ backgroundColor: conn.color || 'transparent' }}
+                        >
+                          {conn.icon ? (
+                            <IconDisplay icon={conn.icon} size={18} iconColor={conn.iconColor} />
+                          ) : (
+                            <span className={`text-xs font-bold ${iconTextColor}`}>{initial}</span>
+                          )}
+                        </div>
+                        <div>
+                          <div className='font-medium'>{conn.name}</div>
+                          <div className='text-xs text-muted-foreground'>{conn.slug}</div>
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell className='hidden md:table-cell max-w-[320px] truncate'>{conn.description}</TableCell>
                     <TableCell className='hidden lg:table-cell'>
@@ -260,7 +279,8 @@ export function ConnectorsPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

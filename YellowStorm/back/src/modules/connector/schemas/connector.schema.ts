@@ -109,6 +109,9 @@ export class Connector extends Document {
   @Prop({ default: '', maxlength: 64 })
   color!: string;
 
+  @Prop({ default: 'light', enum: ['light', 'dark'] })
+  iconColor!: 'light' | 'dark';
+
   @Prop({ required: true, enum: ConnectorAuthType, default: ConnectorAuthType.NONE })
   authType!: ConnectorAuthType;
 

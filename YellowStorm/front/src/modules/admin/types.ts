@@ -1368,6 +1368,7 @@ export interface ConnectorResponse {
   description: string;
   icon: string;
   color: string;
+  iconColor: 'light' | 'dark';
   authType: string;
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
@@ -1401,6 +1402,7 @@ export interface CreateConnectorRequest {
   description: string;
   icon?: string;
   color?: string;
+  iconColor?: 'light' | 'dark';
   authType?: string;
   authConfigSchema?: Record<string, unknown>;
   authSourceType?: string;

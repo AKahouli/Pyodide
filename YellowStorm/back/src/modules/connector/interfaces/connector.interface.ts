@@ -23,6 +23,7 @@ export interface IConnectorResponse {
   description: string;
   icon: string;
   color: string;
+  iconColor: 'light' | 'dark';
   authType: string;
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
