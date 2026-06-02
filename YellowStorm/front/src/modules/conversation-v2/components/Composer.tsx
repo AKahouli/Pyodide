@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { CheckIcon, PauseIcon, PlayIcon, SquareIcon } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { CheckIcon, PauseIcon, PlayIcon, SquareIcon, Cable, Loader2 } from 'lucide-react';
 import {
   PromptInput,
   PromptInputBody,
@@ -23,9 +23,20 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from '@/components/ai-elements/model-selector';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import {
+  PromptInputActionMenu,
+  PromptInputActionMenuContent,
+  PromptInputActionMenuSub,
+  PromptInputActionMenuSubContent,
+  PromptInputActionMenuSubTrigger,
+  PromptInputActionMenuTrigger,
+} from '@/components/ai-elements/prompt-input';
+import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { useChefs, useDefaultModel, useModels } from '@/modules/models';
 import { useConversationV2PointersStore, useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
+import { getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void;
@@ -39,6 +50,8 @@ export function Composer({ onSend }: ComposerProps) {
   const resume = useConversationV2Store((s) => s.resume);
   const selectedModelId = useConversationV2Store((s) => s.selectedModelId);
   const setSelectedModelId = useConversationV2Store((s) => s.setSelectedModelId);
+  const selectedConnectorRepo = useConversationV2Store((s) => s.selectedConnectorRepo);
+  const setSelectedConnectorRepo = useConversationV2Store((s) => s.setSelectedConnectorRepo);
   const pointerStatus = useConversationV2PointersStore((s) =>
     sessionId ? s.items.find((p) => p.sessionId === sessionId)?.status : undefined,
   );
@@ -48,6 +61,26 @@ export function Composer({ onSend }: ComposerProps) {
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+
+  const [connectors, setConnectors] = useState<ConnectorOption[]>([]);
+  const [connectorsLoading, setConnectorsLoading] = useState(false);
+  const [connectorDialogOpen, setConnectorDialogOpen] = useState(false);
+  const [selectedConnector, setSelectedConnector] = useState<ConnectorOption | null>(null);
+
+  useEffect(() => {
+    setConnectorsLoading(true);
+    getActiveConnectors()
+      .then((data) => setConnectors(data || []))
+      .catch((err) => console.error('Failed to fetch connectors:', err))
+      .finally(() => setConnectorsLoading(false));
+  }, []);
+
+  const handleRepositorySelect = useCallback(
+    (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
+      setSelectedConnectorRepo(repo);
+    },
+    [setSelectedConnectorRepo],
+  );
 
   // selectedModelId is null for fresh conversations → fall through to the
   // admin default. Both for the trigger label and for what we send on the
@@ -120,6 +153,51 @@ export function Composer({ onSend }: ComposerProps) {
                     </ModelSelectorContent>
                   </ModelSelector>
                 )}
+                <PromptInputActionMenu>
+                  <PromptInputActionMenuTrigger />
+                  <PromptInputActionMenuContent>
+                    <PromptInputActionMenuSub>
+                      <PromptInputActionMenuSubTrigger>
+                        <Cable className='mr-2 size-4' />
+                        {t('composer.connectors') || 'Connectors'}
+                      </PromptInputActionMenuSubTrigger>
+                      <PromptInputActionMenuSubContent>
+                        {connectorsLoading ? (
+                          <div className='flex items-center justify-center py-2 px-4'>
+                            <Loader2 className='size-4 animate-spin' />
+                          </div>
+                        ) : connectors.length === 0 ? (
+                          <div className='py-2 px-4 text-sm text-muted-foreground'>
+                            {t('composer.noConnectors') || 'No connectors available'}
+                          </div>
+                        ) : (
+                          connectors.map((connector) => (
+                            <DropdownMenuItem
+                              key={connector.id}
+                              onSelect={() => {
+                                setSelectedConnector(connector);
+                                setConnectorDialogOpen(true);
+                              }}
+                            >
+                              <div className='flex flex-col'>
+                                <span className='font-medium'>{connector.name}</span>
+                                {connector.description && (
+                                  <span className='text-xs text-muted-foreground'>{connector.description}</span>
+                                )}
+                              </div>
+                            </DropdownMenuItem>
+                          ))
+                        )}
+                      </PromptInputActionMenuSubContent>
+                    </PromptInputActionMenuSub>
+                  </PromptInputActionMenuContent>
+                </PromptInputActionMenu>
+                {selectedConnectorRepo && (
+                  <span className='inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground'>
+                    <Cable className='size-3' />
+                    {selectedConnectorRepo.repoName}
+                  </span>
+                )}
                 {streaming && (
                   <PromptInputButton type='button' onClick={() => void pause()}>
                     <PauseIcon className='size-4' />
@@ -143,6 +221,12 @@ export function Composer({ onSend }: ComposerProps) {
             </PromptInputFooter>
           </PromptInput>
         </PromptInputProvider>
+        <ConnectorReposDialog
+          open={connectorDialogOpen}
+          onOpenChange={setConnectorDialogOpen}
+          connector={selectedConnector}
+          onRepositorySelect={handleRepositorySelect}
+        />
       </div>
     </div>
   );

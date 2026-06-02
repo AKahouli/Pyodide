@@ -287,17 +287,30 @@ export class ConversationV2GrpcClientService
     sessionId: string,
     message: string,
     model?: string,
+    connectorRepo?: {
+      connectorId: string;
+      connectorName: string;
+      repoId: string;
+      repoName: string;
+      repoUrl?: string;
+    },
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
-      // The proto's `model` field is `optional` — only include it on the wire
-      // when the caller actually picked one, so the AI service falls back to
-      // its own default for unset selections.
       const request: Record<string, unknown> = {
         user_id: userId,
         session_id: sessionId,
         message,
       };
       if (model) request.model = model;
+      if (connectorRepo) {
+        request.connector_repo = {
+          connector_id: connectorRepo.connectorId,
+          connector_name: connectorRepo.connectorName,
+          repo_id: connectorRepo.repoId,
+          repo_name: connectorRepo.repoName,
+          repo_url: connectorRepo.repoUrl ?? '',
+        };
+      }
       const call = this.client.Chat(request);
       call.on('data', (raw: RawProtoEvent) => {
         try {

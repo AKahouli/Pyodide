@@ -557,8 +557,15 @@ export class AgentService {
     agentIds?: string[],
     sharedAgentIds?: string[],
     groupMembers?: any[],
+    selectedConnectorId?: string,
   ): Promise<IGrpcAgent[]> {
-    this.logger.log('Building agents for stream', { userId, fallbackModelId, agentIds, sharedAgentIds });
+    this.logger.log('Building agents for stream', {
+      userId,
+      fallbackModelId,
+      agentIds,
+      sharedAgentIds,
+      selectedConnectorId,
+    });
 
     // Fetch personal + default agents
     const userAgents = await this.getAgentsForUser(userId);
@@ -687,7 +694,12 @@ export class AgentService {
     }
 
     const allConnectorIds = [
-      ...new Set(filteredAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
+      ...new Set(
+        filteredAgents
+          .flatMap((agent) => agent.connectorIds || [])
+          .concat(selectedConnectorId ? [selectedConnectorId] : [])
+          .filter(Boolean) as string[],
+      ),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
 
@@ -707,7 +719,10 @@ export class AgentService {
       const effectiveModelId = agent.model || fallbackModelId || '';
       const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
-      const connectorBindings = await this.buildConnectorBindings(connectorsMap, agent.connectorIds || [], userId);
+      const effectiveConnectorIds = [
+        ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
+      ];
+      const connectorBindings = await this.buildConnectorBindings(connectorsMap, effectiveConnectorIds, userId);
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
@@ -757,7 +772,7 @@ export class AgentService {
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
           },
         },
-        connectorIds: agent.connectorIds || [],
+        connectorIds: effectiveConnectorIds,
       };
 
       this.logger.debug('Agent built for stream', {

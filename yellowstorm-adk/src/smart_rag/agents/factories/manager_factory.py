@@ -4,6 +4,10 @@ from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
 
 from src.logger.logging import get_logger
+from src.smart_rag.agents.factories.delegation_factory_helper import (
+    _append_connector_repo_context,
+    _get_connector_repo,
+)
 from src.smart_rag.agents.core import DocumentHelpers
 from src.smart_rag.infrastructure.processing import add_additional_context, add_timestamp_to_agent
 
@@ -153,6 +157,11 @@ class ManagerAgentFactory:
         if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
             # Add document tree info from all agents (without IDs) for manager context
             manager_instruction += self.document_helper._get_consolidated_document_tree_info_for_manager(self.config,self.agent_repository.get_all_agents())
+
+        manager_instruction = _append_connector_repo_context(
+            manager_instruction,
+            _get_connector_repo(self.config),
+        )
 
         # Add parallel execution instructions
         #manager_instruction += get_parallel_execution_prompt()

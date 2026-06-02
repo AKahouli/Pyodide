@@ -12,6 +12,8 @@
   "composer": {
     "placeholder": "Type a message…",
     "send": "Send",
+    "connectors": "Connectors",
+    "noConnectors": "No connectors available",
     "modelSelector": {
       "unset": "Default model",
       "search": "Search models…",
