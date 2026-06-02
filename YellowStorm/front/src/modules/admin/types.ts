@@ -1514,6 +1514,7 @@ export interface ConnectorCategoryResponse {
   id: string;
   name: string;
   description: string;
+  isSystem: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

@@ -1,21 +1,54 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConflictException, NotFoundException } from '../exceptions';
+import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { ConnectorCategory, ConnectorCategoryDocument } from './schemas/connector-category.schema';
 import { CreateConnectorCategoryDto } from './dto/create-connector-category.dto';
 import { UpdateConnectorCategoryDto } from './dto/update-connector-category.dto';
 import { IConnectorCategoryResponse } from './interfaces/connector.interface';
 
+/** Reserved built-in category. Connectors assigned to it are hidden from end users. */
+export const SYSTEM_CATEGORY_NAME = 'System';
+const SYSTEM_OWNER_ID = new Types.ObjectId('000000000000000000000000');
+
 @Injectable()
-export class ConnectorCategoryService {
+export class ConnectorCategoryService implements OnModuleInit {
   constructor(
     @InjectModel(ConnectorCategory.name)
     private readonly categoryModel: Model<ConnectorCategoryDocument>,
   ) {}
 
+  /** Ensure the reserved "System" category exists and is flagged, on every boot. */
+  async onModuleInit(): Promise<void> {
+    const existing = await this.categoryModel
+      .findOne({ name: { $regex: `^${SYSTEM_CATEGORY_NAME}$`, $options: 'i' } })
+      .exec();
+
+    if (existing) {
+      if (!existing.isSystem) {
+        existing.isSystem = true;
+        await existing.save();
+      }
+      return;
+    }
+
+    await this.categoryModel.create({
+      name: SYSTEM_CATEGORY_NAME,
+      description: 'Built-in connectors hidden from users.',
+      isSystem: true,
+      createdBy: SYSTEM_OWNER_ID,
+    });
+  }
+
   async create(createdBy: string, dto: CreateConnectorCategoryDto): Promise<IConnectorCategoryResponse> {
+    if (dto.name.trim().toLowerCase() === SYSTEM_CATEGORY_NAME.toLowerCase()) {
+      throw new ConflictException(
+        ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS,
+        `"${SYSTEM_CATEGORY_NAME}" is a reserved category name.`,
+      );
+    }
+
     const existing = await this.categoryModel
       .findOne({ name: dto.name, createdBy: new Types.ObjectId(createdBy) })
       .lean()
@@ -62,6 +95,20 @@ export class ConnectorCategoryService {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
 
+    if (current.isSystem) {
+      throw new ForbiddenException(
+        ErrorCode.FORBIDDEN,
+        `The "${SYSTEM_CATEGORY_NAME}" category cannot be modified.`,
+      );
+    }
+
+    if (dto.name && dto.name.trim().toLowerCase() === SYSTEM_CATEGORY_NAME.toLowerCase()) {
+      throw new ConflictException(
+        ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS,
+        `"${SYSTEM_CATEGORY_NAME}" is a reserved category name.`,
+      );
+    }
+
     if (dto.name && dto.name !== current.name) {
       const conflict = await this.categoryModel
         .findOne({ name: dto.name, createdBy: current.createdBy, _id: { $ne: current._id } })
@@ -86,10 +133,19 @@ export class ConnectorCategoryService {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
 
-    const result = await this.categoryModel.findByIdAndDelete(id).exec();
-    if (!result) {
+    const current = await this.categoryModel.findById(id).exec();
+    if (!current) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
+
+    if (current.isSystem) {
+      throw new ForbiddenException(
+        ErrorCode.FORBIDDEN,
+        `The "${SYSTEM_CATEGORY_NAME}" category cannot be deleted.`,
+      );
+    }
+
+    await current.deleteOne();
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,6 +154,7 @@ export class ConnectorCategoryService {
       id: doc._id?.toString() ?? doc.id,
       name: doc.name,
       description: doc.description ?? '',
+      isSystem: doc.isSystem ?? false,
       createdBy: doc.createdBy?.toString() ?? '',
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
