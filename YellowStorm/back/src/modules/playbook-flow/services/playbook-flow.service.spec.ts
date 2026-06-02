@@ -776,6 +776,51 @@ describe('PlaybookFlowService', () => {
     expect(idempotencyService.confirmSaveResult).toHaveBeenCalled();
   });
 
+  it('buildEditorStateHash handles circular flow graphs without recursion errors', async () => {
+    const flowId = '507f1f77bcf86cd799439011';
+    const sharedNode: Record<string, unknown> = { id: 'node-1' };
+    const circularFlow: Record<string, unknown> = {
+      _id: flowId,
+      ownerId: 'user-1',
+      definitionRevision: 1,
+      name: 'Saved',
+      description: 'Circular',
+      nodes: [sharedNode],
+      controlEdges: [],
+      dataBindings: [sharedNode],
+      workspaces: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+    sharedNode.parent = circularFlow;
+
+    const flowModel = { findById: jest.fn().mockResolvedValue(circularFlow) };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+
+    const hash = (service as any).buildEditorStateHash(circularFlow);
+
+    expect(hash).toContain('"nodes":[{');
+    expect(hash).toContain('"dataBindings":[{');
+    expect(hash).toContain('[Circular]');
+  });
+
   it('does not treat an unrelated revision bump as a successful duplicate full save', async () => {
     idempotencyService.reserveSave.mockResolvedValueOnce({
       type: 'duplicate-pending',

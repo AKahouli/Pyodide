@@ -5,6 +5,7 @@ import { Permissions } from '@modules/authorization/constants/permissions';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { RunFlowExecutionAdvisorDto } from '../dto/run-flow-execution-advisor.dto';
+import { PreviewAdvisorRemediationDto } from '../dto/preview-advisor-remediation.dto';
 import { PlaybookFlowExecutionAdvisorService } from '../services/advisor/playbook-flow-execution-advisor.service';
 
 @ApiTags('Playbook Flow Execution Advisor')
@@ -24,6 +25,17 @@ export class PlaybookFlowExecutionAdvisorController {
     @Query('taskId') taskId?: string,
   ) {
     return this.advisorService.getRemediations(executionId, userId, taskId);
+  }
+
+  @Post('playbooks/:flowId/advisor-remediations/preview')
+  @ApiOperation({ summary: 'Preview advisor remediation as a playbook intent suggestion' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async previewRemediation(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Body() dto: PreviewAdvisorRemediationDto,
+  ) {
+    return this.advisorService.previewRemediation(flowId, userId, dto);
   }
 
   @Post('executions/:executionId/tasks/:taskId/advisor-evaluation')

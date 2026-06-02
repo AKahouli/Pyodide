@@ -2026,8 +2026,24 @@ export interface AdvisorRemediationItem {
 export type AdvisorRemediationMode = 'optimize-step' | 'update-current' | 'generate-new';
 
 export interface AdvisorIntentApplyRequest {
-  intent: string;
+  mode: AdvisorRemediationMode;
+  executionId: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
   selectedTaskId?: string;
+}
+
+export interface AdvisorRemediationPreviewRequest {
+  executionId: string;
+  mode: AdvisorRemediationMode;
+  targetTaskId?: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
+}
+
+export interface AdvisorRemediationPreviewResponse {
+  suggestion: PlaybookIntentSuggestion;
+  suggestions: PlaybookIntentSuggestion[];
+  expectedDefinitionRevision: number;
+  intent: string;
 }
 
 // ===== Store =====
@@ -2231,6 +2247,7 @@ export interface PlaybookActions {
   deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
+  previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
   pendingRerunTaskId: string | null;
   setPendingRerunTaskId: (taskId: string | null) => void;

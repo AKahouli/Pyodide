@@ -571,6 +571,7 @@ function PlaybookCanvasInner() {
   const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
+  const previewAdvisorRemediation = usePlaybookStore((s) => s.previewAdvisorRemediation);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
   const addIntentSuggestionHistoryEntry = usePlaybookStore((s) => s.addIntentSuggestionHistoryEntry);
@@ -2918,10 +2919,9 @@ function PlaybookCanvasInner() {
     }
   }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, playbook, runIntentAnalysis, selectStep, selectedStepId, t]);
 
-  const handleApplyAdvisorIntent = useCallback(async ({ intent, selectedTaskId }: AdvisorIntentApplyRequest) => {
+  const handleApplyAdvisorIntent = useCallback(async ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => {
     if (!id || !playbook) return;
 
-    const normalizedIntent = intent.trim();
     if (selectedTaskId && !playbook.tasks.some((task) => task.id === selectedTaskId)) {
       const message = t('detail.remediation.targetMissing');
       setIntentError(message);
@@ -2933,24 +2933,24 @@ function PlaybookCanvasInner() {
     setIntentLoading(true);
     setIntentError('');
     try {
-      const analysis = await runIntentAnalysis(normalizedIntent, resolvedSelectedTaskId, { includeFallback: true });
-      if (!analysis) return;
-
-      const { expectedDefinitionRevision, suggestions, topSuggestion } = analysis;
-      if (!topSuggestion) {
-        setLastIntentSuggestions(suggestions);
-        setIntentSuggestions(suggestions);
+      const preview = await previewAdvisorRemediation(id, {
+        mode,
+        executionId,
+        items,
+        targetTaskId: resolvedSelectedTaskId,
+      });
+      if (mode === 'optimize-step' && (
+        preview.suggestion.kind !== 'single_change'
+        || preview.suggestion.operationType !== 'update_node'
+        || preview.suggestion.targetTaskId !== resolvedSelectedTaskId
+      )) {
+        setLastIntentSuggestions(preview.suggestions);
+        setIntentSuggestions(preview.suggestions);
         throw new Error(t('detail.remediation.noApplicableSuggestion'));
       }
 
-      if (!resolvedSelectedTaskId && topSuggestion.isDirectIntentFallback && topSuggestion.kind === 'single_change' && !topSuggestion.targetTaskId) {
-        setLastIntentSuggestions(suggestions);
-        setIntentSuggestions(suggestions);
-        throw new Error(t('detail.remediation.noApplicableSuggestion'));
-      }
-
-      addIntentSuggestionHistoryEntry(id, playbook.name, topSuggestion, normalizedIntent);
-        handleApplyIntentSuggestion(topSuggestion, { expectedDefinitionRevision });
+      addIntentSuggestionHistoryEntry(id, playbook.name, preview.suggestion, preview.intent);
+      handleApplyIntentSuggestion(preview.suggestion, { expectedDefinitionRevision: preview.expectedDefinitionRevision });
       setLastIntentSuggestions([]);
       setIntentSuggestions([]);
     } catch (error) {
@@ -2961,7 +2961,7 @@ function PlaybookCanvasInner() {
     } finally {
       setIntentLoading(false);
     }
-  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, playbook, runIntentAnalysis, t]);
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, playbook, previewAdvisorRemediation, t]);
 
   useEffect(() => {
     if (!autoIntentRef.current) return;

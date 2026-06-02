@@ -49,6 +49,7 @@ import type {
   UpsertPlaybookScheduleData,
   ToolBinding,
   RequestPlaybookIntentData,
+  AdvisorRemediationPreviewRequest,
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
@@ -4432,6 +4433,10 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
       requestPlaybookIntent: async (playbookId: string, data: RequestPlaybookIntentData) => {
         return api.requestPlaybookIntent(playbookId, data);
+      },
+
+      previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
+        return api.previewAdvisorRemediation(playbookId, data);
       },
 
       revertToSnapshot: async (playbookId, messageId) => {

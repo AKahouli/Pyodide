@@ -110,6 +110,8 @@ function createService() {
     emitStepJudgeUpdated: jest.fn(),
   };
   const mapper = new PlaybookFlowExecutionAdvisorMapper();
+  const flowService = { findOne: jest.fn() };
+  const intentService = { analyze: jest.fn() };
 
   return {
     service: new PlaybookFlowExecutionAdvisorService(
@@ -120,6 +122,8 @@ function createService() {
       mapper,
       heuristicEvaluator as any,
       llmEvaluator as any,
+      flowService as any,
+      intentService as any,
     ),
     executionModel,
     taskResultModel,
@@ -127,6 +131,8 @@ function createService() {
     outputFormatModel,
     heuristicEvaluator,
     llmEvaluator,
+    flowService,
+    intentService,
     streamEvents,
   };
 }
@@ -203,5 +209,66 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
       expect.objectContaining({ judgeStatus: 'failed', judgeError: 'llm failed', advisorScoringMode: 'llm' }),
       undefined,
     );
+  });
+
+  it('previews optimize-step remediation with the model suggestion instead of direct fallback', async () => {
+    const { service, executionModel, flowService, intentService } = createService();
+    (executionModel.findById as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          id: 'exec-1',
+          ownerId: 'user-1',
+          flowId: 'flow-1',
+        }),
+      }),
+    });
+    flowService.findOne.mockResolvedValue({
+      definitionRevision: 3,
+      nodes: [{ id: 'task-1', label: 'Generate PDF', description: 'Old description' }],
+    });
+    intentService.analyze.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'intent-fallback',
+          kind: 'single_change',
+          label: '',
+          summary: 'advisor prompt text',
+          reason: '',
+          confidence: 1,
+          operationType: 'update_node',
+          task: { title: 'advisor prompt text', description: 'advisor prompt text' },
+          targetTaskId: 'task-1',
+          isDirectIntentFallback: true,
+        },
+        {
+          id: 'intent-0',
+          kind: 'single_change',
+          label: 'Improve PDF generation',
+          summary: '',
+          reason: '',
+          confidence: 0.65,
+          operationType: 'update_node',
+          task: { title: 'Generate PDF', description: 'Improved description' },
+          targetTaskId: 'task-1',
+          isDirectIntentFallback: false,
+        },
+      ],
+      model: 'model',
+      settings: {},
+    });
+
+    const preview = await service.previewRemediation('flow-1', 'user-1', {
+      executionId: 'exec-1',
+      mode: 'optimize-step',
+      targetTaskId: 'task-1',
+      items: [{ id: 'item-1', category: 'prompt', description: 'Clarify output filename.' }],
+    });
+
+    expect(preview.suggestion.id).toBe('intent-0');
+    expect(preview.suggestion.kind).toBe('single_change');
+    if (preview.suggestion.kind === 'single_change') {
+      expect(preview.suggestion.task).toMatchObject({ description: 'Improved description' });
+    }
+    expect(preview.expectedDefinitionRevision).toBe(3);
   });
 });

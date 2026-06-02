@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -13,6 +13,8 @@ import { PlaybookFlowStreamEventsService } from '../playbook-flow-stream-events.
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './playbook-flow-heuristic-advisor-evaluator.service';
 import { PlaybookFlowLlmAdvisorEvaluatorService } from './playbook-flow-llm-advisor-evaluator.service';
+import { PlaybookFlowIntentService, type PlaybookFlowIntentResponse } from '../playbook-flow-intent.service';
+import { PlaybookFlowService } from '../playbook-flow.service';
 import type {
   FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
@@ -22,7 +24,15 @@ import type {
   AdvisorRemediationCategory,
 } from '../../interfaces/playbook-flow-execution-advisor.interface';
 import type { RunFlowExecutionAdvisorDto } from '../../dto/run-flow-execution-advisor.dto';
+import type { PreviewAdvisorRemediationDto } from '../../dto/preview-advisor-remediation.dto';
 import type { AdvisorScoringMode, FlowNode } from '../../schemas/playbook-flow.schema';
+
+export interface AdvisorRemediationPreviewResponse {
+  suggestion: PlaybookFlowIntentResponse['suggestions'][number];
+  suggestions: PlaybookFlowIntentResponse['suggestions'];
+  expectedDefinitionRevision: number;
+  intent: string;
+}
 
 @Injectable()
 export class PlaybookFlowExecutionAdvisorService {
@@ -39,6 +49,9 @@ export class PlaybookFlowExecutionAdvisorService {
     private readonly mapper: PlaybookFlowExecutionAdvisorMapper,
     private readonly heuristicEvaluator: PlaybookFlowHeuristicAdvisorEvaluatorService,
     private readonly llmEvaluator: PlaybookFlowLlmAdvisorEvaluatorService,
+    @Inject(forwardRef(() => PlaybookFlowService))
+    private readonly flowService: PlaybookFlowService,
+    private readonly intentService: PlaybookFlowIntentService,
   ) {}
 
   async getRemediations(executionId: string, ownerId: string, taskId?: string): Promise<AdvisorRemediationItem[]> {
@@ -95,6 +108,44 @@ export class PlaybookFlowExecutionAdvisorService {
     }
 
     return items;
+  }
+
+  async previewRemediation(
+    flowId: string,
+    ownerId: string,
+    dto: PreviewAdvisorRemediationDto,
+  ): Promise<AdvisorRemediationPreviewResponse> {
+    const execution = await this.executionModel.findById(dto.executionId).lean().exec();
+    if (!execution || String(execution.ownerId) !== String(ownerId) || String(execution.flowId) !== String(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
+    }
+
+    const flow = await this.flowService.findOne(flowId, ownerId) as any;
+    const targetNode = dto.targetTaskId
+      ? (flow.nodes || []).find((node: { id: string }) => node.id === dto.targetTaskId) || null
+      : null;
+
+    if (dto.mode === 'optimize-step' && (!dto.targetTaskId || !targetNode)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Playbook task not found');
+    }
+
+    const intent = this.buildRemediationIntent(dto, targetNode);
+    const analysis = await this.intentService.analyze(flowId, ownerId, {
+      intent,
+      selectedTaskId: dto.targetTaskId,
+    });
+    const suggestion = this.selectAdvisorSuggestion(analysis.suggestions, dto);
+
+    if (!suggestion) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Advisor remediation did not produce an applicable suggestion.');
+    }
+
+    return {
+      suggestion,
+      suggestions: analysis.suggestions,
+      expectedDefinitionRevision: flow.definitionRevision ?? 0,
+      intent,
+    };
   }
 
   async runTaskEvaluation(
@@ -239,6 +290,57 @@ export class PlaybookFlowExecutionAdvisorService {
     const metadata = (node.metadata ?? {}) as Record<string, unknown>;
     const value = metadata.expectedResult;
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+  }
+
+  private buildRemediationIntent(dto: PreviewAdvisorRemediationDto, targetNode: any | null): string {
+    const findings = dto.items
+      .map((item) => `- [${item.category}] ${item.description.trim()}`)
+      .join('\n');
+
+    if (dto.mode === 'optimize-step') {
+      return [
+        `Optimize only the selected step "${targetNode?.label || dto.targetTaskId}" based on these advisor findings.`,
+        'Return exactly one single_change suggestion with operationType "update_node" and targetTaskId equal to the selected task id.',
+        'Do not create, delete, reorder, or reconnect nodes. Do not modify unrelated steps, edges, ports, or data bindings unless strictly required to keep this selected step valid.',
+        'Prefer updating the selected task description. Preserve the existing title unless the findings explicitly require a title change.',
+        '',
+        'Current selected step:',
+        JSON.stringify({
+          id: targetNode?.id || dto.targetTaskId,
+          title: targetNode?.label || '',
+          description: targetNode?.description || targetNode?.metadata?.description || '',
+        }, null, 2),
+        '',
+        'Advisor findings:',
+        findings,
+      ].join('\n');
+    }
+
+    return [
+      dto.mode === 'generate-new'
+        ? 'Plan a broader optimization of the current playbook based on these structured advisor findings.'
+        : 'Optimize the current playbook based on these structured advisor findings.',
+      'Return a valid PlaybookIntentSuggestion. Preserve the user\'s original intent and keep the workflow valid.',
+      '',
+      'Advisor findings:',
+      findings,
+    ].join('\n');
+  }
+
+  private selectAdvisorSuggestion(
+    suggestions: PlaybookFlowIntentResponse['suggestions'],
+    dto: PreviewAdvisorRemediationDto,
+  ): PlaybookFlowIntentResponse['suggestions'][number] | null {
+    const ranked = suggestions
+      .filter((suggestion) => !suggestion.isDirectIntentFallback)
+      .sort((left, right) => right.confidence - left.confidence);
+    if (dto.mode !== 'optimize-step') {
+      return ranked[0] || null;
+    }
+
+    return ranked.find((suggestion) => suggestion.kind === 'single_change'
+      && suggestion.operationType === 'update_node'
+      && suggestion.targetTaskId === dto.targetTaskId) || null;
   }
 
   private async loadOutputFormatGuide(flowId: string, taskId: string): Promise<string | null> {
