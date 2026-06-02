@@ -14,6 +14,10 @@ export class ConnectorCategory extends Document {
   @Prop({ default: '', maxlength: 1024 })
   description!: string;
 
+  /** Reserved built-in category that cannot be edited or deleted. Connectors in it are hidden from users. */
+  @Prop({ default: false })
+  isSystem!: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   createdBy!: Types.ObjectId;
 

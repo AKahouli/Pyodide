@@ -25,6 +25,8 @@ export interface IConnectorResponse {
   color: string;
   iconColor: 'light' | 'dark';
   categoryId: string | null;
+  /** Resolved category name (populated by findAllActive); used by clients to exclude "System" connectors. */
+  categoryName?: string | null;
   authType: string;
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
@@ -58,6 +60,7 @@ export interface IConnectorCategoryResponse {
   id: string;
   name: string;
   description: string;
+  isSystem: boolean;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;

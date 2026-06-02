@@ -1,10 +1,11 @@
-import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuSub, PromptInputActionMenuSubContent, PromptInputActionMenuSubTrigger, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
+import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
 import { MentionPopup } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
+import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
 
-import { Pencil, Cable, Loader2 } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -126,6 +127,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [connectorsLoading, setConnectorsLoading] = useState(false);
   const [connectorDialogOpen, setConnectorDialogOpen] = useState(false);
   const [selectedConnector, setSelectedConnector] = useState<ConnectorOption | null>(null);
+  const [manageConnectorsOpen, setManageConnectorsOpen] = useState(false);
+  const { addRecent } = useRecentConnectors();
 
   // Fetch connectors
   useEffect(() => {
@@ -385,6 +388,14 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     setSelectedConnectorRepo(repo);
   }, [setSelectedConnectorRepo]);
 
+  // User picked a (connected) connector to use → record it as recent and open
+  // its repository picker. Covers both the recent menu and the manage modal.
+  const handleSelectConnector = useCallback((connector: ConnectorOption) => {
+    addRecent(connector.id);
+    setSelectedConnector(connector);
+    setConnectorDialogOpen(true);
+  }, [addRecent]);
+
   const derivedStatus = externalStatus ?? status;
 
   const handleSubmit = useCallback(
@@ -489,36 +500,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
                     <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>
-                  <PromptInputActionMenuSub>
-                    <PromptInputActionMenuSubTrigger>
-                      <Cable className='mr-2 size-4' /> {t('input.connectors') || 'Connectors'}
-                    </PromptInputActionMenuSubTrigger>
-                    <PromptInputActionMenuSubContent>
-                      {connectorsLoading ? (
-                        <div className='flex items-center justify-center py-2 px-4'>
-                          <Loader2 className='size-4 animate-spin' />
-                        </div>
-                      ) : connectors.length === 0 ? (
-                        <div className='py-2 px-4 text-sm text-muted-foreground'>
-                          {t('input.noConnectors') || 'No connectors available'}
-                        </div>
-                      ) : (
-                        connectors.map((connector) => (
-                          <DropdownMenuItem key={connector.id} onSelect={() => {
-                            setSelectedConnector(connector);
-                            setConnectorDialogOpen(true);
-                          }}>
-                            <div className='flex flex-col'>
-                              <span className='font-medium'>{connector.name}</span>
-                              {connector.description && (
-                                <span className='text-xs text-muted-foreground'>{connector.description}</span>
-                              )}
-                            </div>
-                          </DropdownMenuItem>
-                        ))
-                      )}
-                    </PromptInputActionMenuSubContent>
-                  </PromptInputActionMenuSub>
+                  <RecentConnectorsMenu
+                    connectors={connectors}
+                    loading={connectorsLoading}
+                    onSelectConnector={handleSelectConnector}
+                    onOpenManage={() => setManageConnectorsOpen(true)}
+                  />
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} />}
@@ -594,6 +581,14 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         onOpenChange={setConnectorDialogOpen}
         connector={selectedConnector}
         onRepositorySelect={handleRepositorySelect}
+      />
+
+      <ManageConnectorsDialog
+        open={manageConnectorsOpen}
+        onOpenChange={setManageConnectorsOpen}
+        connectors={connectors}
+        loading={connectorsLoading}
+        onUseConnector={handleSelectConnector}
       />
     </div>
   );
