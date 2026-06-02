@@ -13,6 +13,10 @@ class StepToolScope:
     code_interpreter_files: list[dict[str, str]]
     workspace_context_mode: str
     mounted_filenames: list[str]
+    # Ceph workspace paths ("user_id/workspace_name") that must be mounted into the
+    # sandbox VM. Derived from wired input documents' workspacePath plus any
+    # playbook-level __playbook_workspace_paths present in the input context.
+    workspace_ceph_paths: list[str]
 
 
 def build_step_tool_scope(
@@ -24,10 +28,27 @@ def build_step_tool_scope(
     file_names: list[str] = []
     code_interpreter_files: list[dict[str, str]] = []
     mounted_filenames: list[str] = []
+    workspace_ceph_paths: list[str] = []
+    seen_ceph_paths: set[str] = set()
     seen_doc_ids: set[str] = set()
     seen_files: set[tuple[str, str]] = set()
     seen_names: set[str] = set()
     has_port_sources = False
+
+    def _add_ceph_path(raw: Any) -> None:
+        path = str(raw or "").strip().strip("/")
+        # The mount script requires "user_id/workspace_name"; skip anything that
+        # is not a real two-segment Ceph path (e.g. bare names or empty values).
+        if "/" not in path or path in seen_ceph_paths:
+            return
+        seen_ceph_paths.add(path)
+        workspace_ceph_paths.append(path)
+
+    # Playbook-level workspace paths: dict {workspace_id: "user_id/workspace_name"}.
+    playbook_paths = input_context.get("__playbook_workspace_paths")
+    if isinstance(playbook_paths, dict):
+        for value in playbook_paths.values():
+            _add_ceph_path(value)
 
     for port_id, port_value in input_context.items():
         if str(port_id).startswith("__"):
@@ -42,6 +63,7 @@ def build_step_tool_scope(
         port_seen_doc_ids: set[str] = set()
         for ref in refs:
             ref = _hydrate_file_ref(ref, workspace_context)
+            _add_ceph_path(ref.get("workspace_path"))
             document_id = ref.get("document_id", "")
             file_name = ref.get("file_name") or ref.get("filename", "")
             search_file_name = file_name or document_id
@@ -79,6 +101,7 @@ def build_step_tool_scope(
         code_interpreter_files=code_interpreter_files,
         workspace_context_mode=workspace_context_mode,
         mounted_filenames=mounted_filenames,
+        workspace_ceph_paths=workspace_ceph_paths,
     )
 
 
@@ -207,6 +230,7 @@ def _file_ref_from_dict(value: dict[str, Any]) -> dict[str, str] | None:
         "filepath": filepath,
         "workspace_id": _workspace_id(value),
         "workspace_name": _workspace_name(value),
+        "workspace_path": _workspace_path(value),
     }
 
 
@@ -239,6 +263,7 @@ def _hydrate_file_ref(
                 "filepath": ref.get("filepath") or str(document.get("filepath") or "").strip(),
                 "workspace_id": ref.get("workspace_id") or str(document.get("workspace_id") or workspace.get("workspace_id") or "").strip(),
                 "workspace_name": ref.get("workspace_name") or str(document.get("workspace_name") or workspace.get("workspace_name") or "").strip(),
+                "workspace_path": ref.get("workspace_path") or _workspace_path(document),
             }
 
     return ref
@@ -311,6 +336,31 @@ def _document_id(value: dict[str, Any]) -> str:
         normalized = str(candidate or "").strip()
         if normalized:
             return normalized
+    return ""
+
+
+def _workspace_path(value: dict[str, Any]) -> str:
+    """Resolve the Ceph workspace directory ("user_id/workspace_name") for a document.
+
+    Prefers the explicit ``workspacePath`` field provided by the backend; otherwise
+    falls back to the directory portion of the document's storage path.
+    """
+    metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+    for candidate in (
+        value.get("workspacePath"),
+        value.get("workspace_path"),
+        metadata.get("workspacePath"),
+        metadata.get("workspace_path"),
+    ):
+        normalized = str(candidate or "").strip().strip("/")
+        if normalized:
+            return normalized
+
+    # Fallback: strip the filename off the storage path ("uid/name/file" -> "uid/name").
+    for candidate in (value.get("path"), _storage_filepath(value)):
+        normalized = str(candidate or "").strip().strip("/")
+        if "/" in normalized:
+            return normalized.rsplit("/", 1)[0]
     return ""
 
 

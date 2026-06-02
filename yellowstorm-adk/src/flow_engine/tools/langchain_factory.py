@@ -510,6 +510,7 @@ def create_langchain_tools(
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
     resolved_workspace_names: Optional[Dict[str, str]] = None,
+    workspace_ceph_paths: Optional[List[str]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -533,15 +534,23 @@ def create_langchain_tools(
     agent_params = agent_config.get("agent_params") or {}
     session_id = str(agent_params.get("session_id") or "")
     user_id = str(agent_params.get("user_id") or "")
-    workspace_paths = _collect_workspace_paths(
-        workspace_context, code_interpreter_files, user_id
-    )
+    # Prefer the authoritative Ceph paths ("user_id/workspace_name") resolved by the
+    # step node from the backend payload. Fall back to deriving them from document
+    # filepaths only when the backend did not supply explicit paths.
+    workspace_paths = list(workspace_ceph_paths or [])
+    workspace_paths_source = "backend"
+    if not workspace_paths:
+        workspace_paths = _collect_workspace_paths(
+            workspace_context, code_interpreter_files, user_id
+        )
+        workspace_paths_source = "derived"
     logger.info(
         "connector_workspace_paths_resolved session_id=%s user_id=%s workspace_paths=%s "
-        "code_interpreter_files=%s raw_workspace_context=%s",
+        "source=%s code_interpreter_files=%s raw_workspace_context=%s",
         session_id,
         user_id,
         workspace_paths,
+        workspace_paths_source,
         _log_payload(code_interpreter_files),
         _log_payload(workspace_context),
     )
@@ -1763,7 +1772,6 @@ def _create_connector_mcp_tools(
                 _wn: Optional[List[str]] = workspace_names,
                 _fn: Optional[List[str]] = file_names,
                 sid: str = session_id,
-                uid: str = user_id,
                 wsp: List[str] = list(workspace_paths or []),
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
@@ -1788,25 +1796,30 @@ def _create_connector_mcp_tools(
 
                         merged_params = {**fp, **params}
 
-                        # Build context headers for streamable_http transport
                         effective_auth_headers = dict(ah)
                         if tt == "streamable_http":
-                            # Always override user_id / workspace_name / file_name
-                            # with known-good values so LLM-guessed or fixed_params
-                            # values (ObjectIds) can't reach the backend.
                             if _uid:
                                 effective_auth_headers["user_id"] = _uid
                                 merged_params["user_id"] = _uid
+                            if sid:
+                                effective_auth_headers["x-conversation-id"] = sid
                             if _fn:
                                 effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
                             if _wn:
                                 effective_auth_headers["workspace_name"] = json.dumps(_wn) if len(_wn) > 1 else _wn[0]
                                 merged_params["workspace_name"] = _wn[0] if len(_wn) == 1 else _wn
+                            if wsp:
+                                effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             logger.info(
-                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_name=%s",
+                                "playbook_connector_mcp_context_headers connector_id=%s action_key=%s "
+                                "user_id=%s file_name=%s workspace_name=%s workspace_paths=%s sent_headers=%s",
+                                cid,
+                                ak,
                                 _uid,
                                 effective_auth_headers.get("file_name"),
                                 effective_auth_headers.get("workspace_name"),
+                                wsp,
+                                sorted(effective_auth_headers.keys()),
                             )
 
                         logger.info(
@@ -1817,17 +1830,6 @@ def _create_connector_mcp_tools(
                             _log_payload(merged_params),
                         )
                         _last_mcp_actual_args.set(dict(merged_params))
-                        extra_headers: Dict[str, str] = {}
-                        if sid:
-                            extra_headers["x-conversation-id"] = sid
-                        if uid:
-                            extra_headers["x-user-id"] = uid
-                        if wsp:
-                            extra_headers["x-workspace-paths"] = ",".join(wsp)
-                        logger.info(
-                            "connector_mcp_workspace_header connector_id=%s action_key=%s workspace_paths=%s",
-                            cid, ak, wsp,
-                        )
                         response = await call_mcp_tool(
                             tt,
                             su,

@@ -1331,6 +1331,21 @@ export class AgentService {
             });
           }
         }
+
+        if (connector?.dynamicHeaders?.length) {
+          try {
+            const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+              userId,
+              connector.dynamicHeaders,
+            );
+            binding.auth_headers = { ...binding.auth_headers, ...dynamicHeaders };
+          } catch (err) {
+            this.logger.warn('Failed to resolve dynamic headers for agent runtime', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
+        }
       }
     }
 
