@@ -1862,20 +1862,20 @@ def _create_connector_mcp_tools(
                                 else 0,
                                 _log_payload(response),
                             )
-                            if response.get("download_url"):
-                                filename = (response.get("path") or "").rstrip("/").split("/")[-1]
+                            if response.get("ceph_path"):
+                                ceph_path = response.get("ceph_path", "")
+                                filename = (response.get("path") or ceph_path).rstrip("/").split("/")[-1]
                                 artifact_kind = infer_artifact_kind(filename) or "document"
                                 logger.info(
-                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s download_url=%s",
+                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s",
                                     cid,
                                     ak,
                                     filename,
                                     artifact_kind,
-                                    response.get("ceph_path", ""),
-                                    response.get("download_url", ""),
+                                    ceph_path,
                                 )
                                 collector.add_component("artifact", {
-                                    "file_path": response.get("ceph_path", ""),
+                                    "file_path": ceph_path,
                                     "filename": filename,
                                     "artifact_kind": artifact_kind,
                                     "output_port_id": "",
