@@ -62,6 +62,13 @@ export interface SkillOption {
   id: string;
   name: string;
   description: string;
+  /** Presentation + category metadata returned by GET /skills/active (optional for backward compat). */
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
+  /** Resolved category name; used to exclude "System" skills. */
+  categoryName?: string | null;
 }
 
 export interface AgentState {

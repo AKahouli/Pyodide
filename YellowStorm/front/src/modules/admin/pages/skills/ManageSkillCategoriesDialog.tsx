@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Loader2, Lock, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -210,25 +210,37 @@ export function ManageSkillCategoriesDialog({ open, onOpenChange, onCategoriesCh
                       ) : (
                         <div className='flex items-start justify-between gap-3'>
                           <div className='min-w-0 flex-1'>
-                            <div className='font-medium'>{cat.name}</div>
+                            <div className='flex items-center gap-2'>
+                              <span className='font-medium'>{cat.name}</span>
+                              {cat.isSystem && (
+                                <span className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground'>
+                                  <Lock className='h-3 w-3' />
+                                  System
+                                </span>
+                              )}
+                            </div>
                             {cat.description && (
                               <p className='text-sm text-muted-foreground line-clamp-2'>{cat.description}</p>
                             )}
                           </div>
-                          <div className='flex gap-1'>
-                            <Button variant='ghost' size='icon' onClick={() => startEdit(cat)} aria-label='Edit category'>
-                              <Pencil className='h-4 w-4' />
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon'
-                              className='text-destructive'
-                              onClick={() => setDeleting(cat)}
-                              aria-label='Delete category'
-                            >
-                              <Trash2 className='h-4 w-4' />
-                            </Button>
-                          </div>
+                          {cat.isSystem ? (
+                            <p className='shrink-0 text-xs text-muted-foreground'>Built-in</p>
+                          ) : (
+                            <div className='flex gap-1'>
+                              <Button variant='ghost' size='icon' onClick={() => startEdit(cat)} aria-label='Edit category'>
+                                <Pencil className='h-4 w-4' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='text-destructive'
+                                onClick={() => setDeleting(cat)}
+                                aria-label='Delete category'
+                              >
+                                <Trash2 className='h-4 w-4' />
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </li>

@@ -4,6 +4,7 @@ import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
+import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills } from '@/modules/skill';
 
 import { Pencil } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
@@ -21,7 +22,8 @@ import { useAgents, useAgentStore } from '@/modules/agent';
 import type { Agent } from '@/modules/agent/types';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
 import { useModuleTranslation } from '@/modules/localization';
-import { getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
+import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -130,6 +132,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [manageConnectorsOpen, setManageConnectorsOpen] = useState(false);
   const { addRecent } = useRecentConnectors();
 
+  // Skills state (menu + manage modal; not yet applied to the conversation)
+  const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
+  const { addRecent: addRecentSkill } = useRecentSkills();
+
   // Fetch connectors
   useEffect(() => {
     setConnectorsLoading(true);
@@ -142,6 +150,21 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       })
       .finally(() => {
         setConnectorsLoading(false);
+      });
+  }, []);
+
+  // Fetch skills
+  useEffect(() => {
+    setSkillsLoading(true);
+    getActiveSkills()
+      .then((data) => {
+        setSkills(data || []);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch skills:', err);
+      })
+      .finally(() => {
+        setSkillsLoading(false);
       });
   }, []);
 
@@ -396,6 +419,11 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     setConnectorDialogOpen(true);
   }, [addRecent]);
 
+  // Skill selection is scaffolding for now — record it as recent; not yet applied to the conversation.
+  const handleSelectSkill = useCallback((skill: SkillOption) => {
+    addRecentSkill(skill.id);
+  }, [addRecentSkill]);
+
   const derivedStatus = externalStatus ?? status;
 
   const handleSubmit = useCallback(
@@ -506,6 +534,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                     onSelectConnector={handleSelectConnector}
                     onOpenManage={() => setManageConnectorsOpen(true)}
                   />
+                  <RecentSkillsMenu
+                    skills={skills}
+                    loading={skillsLoading}
+                    onSelectSkill={handleSelectSkill}
+                    onOpenManage={() => setManageSkillsOpen(true)}
+                  />
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} />}
@@ -589,6 +623,13 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         connectors={connectors}
         loading={connectorsLoading}
         onUseConnector={handleSelectConnector}
+      />
+
+      <ManageSkillsDialog
+        open={manageSkillsOpen}
+        onOpenChange={setManageSkillsOpen}
+        skills={skills}
+        loading={skillsLoading}
       />
     </div>
   );
