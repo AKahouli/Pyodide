@@ -33,4 +33,24 @@ export class SendMessageQueryDto {
   @IsString()
   @Matches(/^[0-9a-fA-F-]{36}$/, { message: 'clientEventId must be a UUID' })
   clientEventId?: string;
+
+  @IsOptional()
+  @IsString()
+  connectorId?: string;
+
+  @IsOptional()
+  @IsString()
+  connectorName?: string;
+
+  @IsOptional()
+  @IsString()
+  connectorRepoId?: string;
+
+  @IsOptional()
+  @IsString()
+  connectorRepoName?: string;
+
+  @IsOptional()
+  @IsString()
+  connectorRepoUrl?: string;
 }

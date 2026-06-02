@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Cable, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Zap } from 'lucide-react';
+import { AlertCircle, Cable, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -18,10 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { getConnectors, createConnector, updateConnector, deleteConnector, inspectMcp, importFromMcp } from '../../api';
-import type { ConnectorResponse, McpToolDefinition, McpInspectResult, ConnectorActionResponse } from '../../types';
+import { getConnectors, createConnector, updateConnector, deleteConnector, inspectMcp, importFromMcp, getConnectorCategories } from '../../api';
+import type { ConnectorResponse, ConnectorCategoryResponse, McpToolDefinition, McpInspectResult, ConnectorActionResponse } from '../../types';
 import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
+import { ManageCategoriesDialog } from './ManageCategoriesDialog';
+import { IconDisplay } from './IconDisplay';
 import type { ConnectorFormValues } from './connector-form-schema';
 
 const TRANSPORT_TYPES = [
@@ -30,19 +28,24 @@ const TRANSPORT_TYPES = [
   { value: 'stdio', label: 'Stdio (local command)' },
 ];
 
+const CARDS_PER_CATEGORY = 6;
+const UNCATEGORIZED_KEY = '__uncategorized__';
+
 export function ConnectorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [categories, setCategories] = useState<ConnectorCategoryResponse[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('__all__');
   const [showDialog, setShowDialog] = useState(false);
   const [editingConnector, setEditingConnector] = useState<ConnectorResponse | null>(null);
   const [deletingConnector, setDeletingConnector] = useState<ConnectorResponse | null>(null);
 
   const [showMcpDialog, setShowMcpDialog] = useState(false);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [mcpTransportType, setMcpTransportType] = useState('streamable_http');
   const [mcpServerUrl, setMcpServerUrl] = useState('');
   const [mcpInspecting, setMcpInspecting] = useState(false);
@@ -50,26 +53,74 @@ export function ConnectorsPage() {
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [mcpImporting, setMcpImporting] = useState(false);
 
-  const fetchConnectors = useCallback(async (searchValue?: string, pageValue?: number) => {
+  const fetchConnectors = useCallback(async (searchValue?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await getConnectors({ page: pageValue ?? page, limit: 10, search: searchValue ?? search });
+      const data = await getConnectors({ page: 1, limit: 1000, search: searchValue ?? search });
       setConnectors(data.data);
       setTotal(data.meta.total);
-      setTotalPages(data.meta.totalPages);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load connectors.');
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [search]);
 
-  useEffect(() => { fetchConnectors(); }, [fetchConnectors]);
+  const fetchCategories = useCallback(async () => {
+    try {
+      const data = await getConnectorCategories();
+      setCategories(data);
+    } catch {
+      setCategories([]);
+    }
+  }, []);
+
   useEffect(() => {
-    const timer = setTimeout(() => { setPage(1); fetchConnectors(search, 1); }, 300);
+    void fetchConnectors();
+    void fetchCategories();
+  }, [fetchConnectors, fetchCategories]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => { void fetchConnectors(search); }, 300);
     return () => clearTimeout(timer);
   }, [search, fetchConnectors]);
+
+  const toggleCategoryExpanded = (key: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const groupedConnectors = (() => {
+    const byCategory = new Map<string, ConnectorResponse[]>();
+    for (const conn of connectors) {
+      const key = conn.categoryId || UNCATEGORIZED_KEY;
+      const list = byCategory.get(key) ?? [];
+      list.push(conn);
+      byCategory.set(key, list);
+    }
+
+    const groups: Array<{ key: string; name: string; description: string; items: ConnectorResponse[] }> = [];
+    for (const cat of categories) {
+      const items = byCategory.get(cat.id);
+      if (items && items.length > 0) {
+        groups.push({ key: cat.id, name: cat.name, description: cat.description, items });
+      }
+    }
+    const uncategorized = byCategory.get(UNCATEGORIZED_KEY);
+    if (uncategorized && uncategorized.length > 0) {
+      groups.push({ key: UNCATEGORIZED_KEY, name: 'Uncategorized', description: '', items: uncategorized });
+    }
+    return groups;
+  })();
+
+  const visibleGroups = categoryFilter === '__all__'
+    ? groupedConnectors
+    : groupedConnectors.filter((group) => group.key === categoryFilter);
 
   const handleSave = async (data: ConnectorFormValues) => {
     try {
@@ -85,6 +136,8 @@ export function ConnectorsPage() {
         description: data.description,
         icon: data.icon || undefined,
         color: data.color || undefined,
+        iconColor: data.iconColor || undefined,
+        categoryId: data.categoryId ? data.categoryId : null,
         authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
@@ -194,87 +247,160 @@ export function ConnectorsPage() {
         </div>
         <div className='flex gap-2'>
           <Button onClick={() => fetchConnectors()} variant='outline' size='icon'><RefreshCw className='h-4 w-4' /></Button>
+          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
           <Button variant='outline' onClick={() => { setMcpTransportType('streamable_http'); setMcpServerUrl(''); setMcpTools([]); setMcpError(null); setShowMcpDialog(true); }}><Zap className='mr-2 h-4 w-4' />Inspect MCP</Button>
           <Button onClick={() => { setEditingConnector(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Connector</Button>
         </div>
       </div>
 
-      <div className='relative max-w-sm'>
-        <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-        <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+      <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
+        <div className='relative w-full sm:max-w-sm'>
+          <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
+          <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+        </div>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className='w-full sm:w-[220px]'>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value='__all__'>All categories</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+            ))}
+            <SelectItem value={UNCATEGORIZED_KEY}>Uncategorized</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-center gap-3'>
-            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Cable className='h-5 w-5' /></div>
-            <div>
-              <CardTitle>Connector Catalog</CardTitle>
-              <CardDescription>{total} connectors available</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className='rounded-md border'>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className='hidden md:table-cell'>Description</TableHead>
-                  <TableHead className='hidden lg:table-cell'>Auth</TableHead>
-                  <TableHead className='hidden lg:table-cell'>Actions</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className='text-right'>Operations</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {connectors.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className='h-24 text-center'>{search ? 'No connectors match your search.' : 'No connectors yet.'}</TableCell></TableRow>
-                ) : connectors.map((conn) => (
-                  <TableRow key={conn.id} className={!conn.isActive ? 'opacity-50' : undefined}>
-                    <TableCell>
-                      <div className='font-medium'>{conn.name}</div>
-                      <div className='text-xs text-muted-foreground'>{conn.slug}</div>
-                    </TableCell>
-                    <TableCell className='hidden md:table-cell max-w-[320px] truncate'>{conn.description}</TableCell>
-                    <TableCell className='hidden lg:table-cell'>
-                      <Badge variant='outline' className='text-xs'>{conn.authType}</Badge>
-                    </TableCell>
-                    <TableCell className='hidden lg:table-cell'>
-                      <Badge variant='secondary' className='text-xs'>{conn.actions.filter((a) => a.isEnabled).length}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Switch checked={conn.isActive} onCheckedChange={async (checked) => {
-                        try {
-                          const updated = await updateConnector(conn.id, { isActive: checked });
-                          setConnectors((prev) => prev.map((item) => item.id === updated.id ? updated : item));
-                        } catch (err) {
-                          toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });
-                        }
-                      }} />
-                    </TableCell>
-                    <TableCell className='text-right'>
-                      <div className='flex justify-end gap-2'>
-                        <Button variant='ghost' size='icon' onClick={() => { setEditingConnector(conn); setShowDialog(true); }}><Pencil className='h-4 w-4' /></Button>
-                        <Button variant='ghost' size='icon' className='text-destructive' onClick={() => setDeletingConnector(conn)}><Trash2 className='h-4 w-4' /></Button>
+      <div className='flex items-center gap-3'>
+        <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Cable className='h-5 w-5' /></div>
+        <div>
+          <h2 className='font-semibold'>Connector Catalog</h2>
+          <p className='text-sm text-muted-foreground'>{total} connectors available</p>
+        </div>
+      </div>
+
+      {connectors.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          {search ? 'No connectors match your search.' : 'No connectors yet.'}
+        </div>
+      ) : visibleGroups.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          No connectors in this category.
+        </div>
+      ) : (
+        <div className='space-y-8'>
+          {visibleGroups.map((group) => {
+            const isExpanded = expandedCategories.has(group.key);
+            const visible = isExpanded ? group.items : group.items.slice(0, CARDS_PER_CATEGORY);
+            const hasMore = group.items.length > CARDS_PER_CATEGORY;
+            return (
+              <section key={group.key} className='space-y-3'>
+                <div>
+                  <h3 className='text-lg font-semibold'>{group.name}</h3>
+                  {group.description && (
+                    <p className='text-sm text-muted-foreground'>{group.description}</p>
+                  )}
+                </div>
+                <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                  {visible.map((conn) => {
+                    const iconTextColor = conn.iconColor === 'dark' ? 'text-black' : 'text-white';
+                    const initial = conn.name?.trim().charAt(0).toUpperCase() || '?';
+                    return (
+                      <div
+                        key={conn.id}
+                        role='button'
+                        tabIndex={0}
+                        onClick={() => { setEditingConnector(conn); setShowDialog(true); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setEditingConnector(conn);
+                            setShowDialog(true);
+                          }
+                        }}
+                        className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!conn.isActive ? 'opacity-60' : ''}`}
+                      >
+                        <button
+                          type='button'
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const updated = await updateConnector(conn.id, { isActive: !conn.isActive });
+                              setConnectors((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+                            } catch (err) {
+                              toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });
+                            }
+                          }}
+                          className='absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+                          aria-label={conn.isActive ? 'Deactivate connector' : 'Activate connector'}
+                          aria-pressed={conn.isActive}
+                          title={conn.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
+                        >
+                          <span className={`h-2.5 w-2.5 rounded-full transition-colors ${conn.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
+                        </button>
+
+                        <div className='absolute top-2 right-9 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={(e) => { e.stopPropagation(); setEditingConnector(conn); setShowDialog(true); }}
+                            aria-label='Edit connector'
+                          >
+                            <Pencil className='h-3.5 w-3.5' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7 text-destructive'
+                            onClick={(e) => { e.stopPropagation(); setDeletingConnector(conn); }}
+                            aria-label='Delete connector'
+                          >
+                            <Trash2 className='h-3.5 w-3.5' />
+                          </Button>
+                        </div>
+
+                        <div className='flex items-start gap-3 pr-12'>
+                          <div
+                            className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
+                            style={{ backgroundColor: conn.color || 'transparent' }}
+                          >
+                            {conn.icon ? (
+                              <IconDisplay icon={conn.icon} size={22} iconColor={conn.iconColor} />
+                            ) : (
+                              <span className={`text-sm font-bold ${iconTextColor}`}>{initial}</span>
+                            )}
+                          </div>
+                          <div className='min-w-0 flex-1'>
+                            <div className='font-semibold truncate'>{conn.name}</div>
+                            <p className='text-sm text-muted-foreground line-clamp-2'>{conn.description}</p>
+                          </div>
+                        </div>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          {totalPages > 1 ? (
-            <div className='flex items-center justify-end gap-2 pt-4'>
-              <Button variant='outline' size='sm' disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); fetchConnectors(search, next); }}>Previous</Button>
-              <span className='text-sm text-muted-foreground'>Page {page} of {totalPages}</span>
-              <Button variant='outline' size='sm' disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); fetchConnectors(search, next); }}>Next</Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+                    );
+                  })}
+                </div>
+                {hasMore && (
+                  <div className='flex justify-end'>
+                    <Button variant='outline' size='sm' onClick={() => toggleCategoryExpanded(group.key)}>
+                      {isExpanded ? 'Show less' : `View all (${group.items.length})`}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
 
       <CreateEditConnectorDialog open={showDialog} onOpenChange={setShowDialog} connector={editingConnector} onSave={handleSave} />
+
+      <ManageCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={() => { void fetchCategories(); void fetchConnectors(); }}
+      />
 
       <AlertDialog open={!!deletingConnector} onOpenChange={() => setDeletingConnector(null)}>
         <AlertDialogContent>

@@ -1,6 +1,20 @@
+from types import SimpleNamespace
+
+import pytest
+
 import src.flow_engine.nodes.step_hitl_blockers as blockers
-from src.flow_engine.nodes.step_hitl import build_human_context_entry, extract_feedback_scope, needs_hitl
-from src.flow_engine.nodes.step_hitl_blockers import evaluate_hitl_blocker
+from src.flow_engine.nodes.step_hitl import (
+    build_blocker_judge_prompt,
+    build_human_context_entry,
+    extract_feedback_scope,
+    needs_hitl,
+    parse_blocker_judge_response,
+)
+from src.flow_engine.nodes.step_hitl_blockers import (
+    build_llm_judge_blocker_decision,
+    evaluate_hitl_blocker,
+    evaluate_llm_judge_blocker,
+)
 
 
 def test_evaluate_hitl_blocker_pauses_for_missing_required_input() -> None:
@@ -107,6 +121,135 @@ def test_evaluate_hitl_blocker_does_not_preempt_step_prompt_clarification_instru
     )
 
     assert decision is None
+
+
+def test_blocker_judge_prompt_includes_custom_blocker_definition() -> None:
+    prompt = build_blocker_judge_prompt(
+        label="Search agro leads",
+        node_description="Search leads in agro sector.",
+        input_context={"geography": "France"},
+        blockers=[{
+            "id": "custom-population-gender",
+            "kind": "custom",
+            "description": "population gender missing",
+            "action": "clarify",
+            "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+        }],
+    )
+
+    assert "population gender missing" in prompt
+    assert '"blocker_id"' in prompt
+    assert "Search agro leads" in prompt
+    assert "prefer block over clear" in prompt
+
+
+def test_parse_blocker_judge_response_extracts_block_decision() -> None:
+    parsed = parse_blocker_judge_response('{"decision":"block","blocker_id":"rule-1","message":"Which gender?"}')
+
+    assert parsed == {"blocker_id": "rule-1", "message": "Which gender?"}
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_judge_blocker_uses_model_decision(monkeypatch) -> None:
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            assert "population gender missing" in messages[0].content
+            return SimpleNamespace(content='{"decision":"block","blocker_id":"custom-population-gender","message":"Which population and gender should I target?"}')
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_settings", lambda: SimpleNamespace(LITELLM_API_BASE_URL="http://litellm", LITELLM_API_SECRET_KEY="secret"))
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_user", lambda: "test-user")
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai", SimpleNamespace(ChatOpenAI=_FakeChatOpenAI))
+
+    judgement = await evaluate_llm_judge_blocker(
+        node_config={"label": "Search agro leads", "metadata": {"description": "Search leads in agro sector."}},
+        input_context={"geography": "France"},
+        hitl_policy={"mode": "auto", "clarificationEnabled": True},
+        hitl_blockers=[{
+            "id": "custom-population-gender",
+            "enabled": True,
+            "kind": "custom",
+            "description": "population gender missing",
+            "action": "clarify",
+            "riskLevel": "medium",
+            "matcherType": "llm_judge",
+            "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+        }],
+        model_id="gpt-test",
+    )
+    decision = build_llm_judge_blocker_decision(judgement)
+
+    assert decision is not None
+    assert decision.interrupt_type == "clarification"
+    assert decision.message == "Which population and gender should I target?"
+    assert decision.blocker_rule_id == "custom-population-gender"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_judge_blocker_ignores_clarification_toggle(monkeypatch) -> None:
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            return SimpleNamespace(content='{"decision":"block","blocker_id":"custom-population-gender","message":"Which population and gender should I target?"}')
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_settings", lambda: SimpleNamespace(LITELLM_API_BASE_URL="http://litellm", LITELLM_API_SECRET_KEY="secret"))
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_user", lambda: "test-user")
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai", SimpleNamespace(ChatOpenAI=_FakeChatOpenAI))
+
+    judgement = await evaluate_llm_judge_blocker(
+        node_config={"label": "Search agro leads", "metadata": {"description": "Search leads in agro sector."}},
+        input_context={},
+        hitl_policy={"mode": "auto", "clarificationEnabled": False},
+        hitl_blockers=[{
+            "id": "custom-population-gender",
+            "enabled": True,
+            "kind": "custom",
+            "description": "population gender missing",
+            "action": "clarify",
+            "matcherType": "llm_judge",
+            "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+        }],
+        model_id="gpt-test",
+    )
+
+    assert judgement is not None
+    assert judgement["rule"]["id"] == "custom-population-gender"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_judge_blocker_returns_none_for_clear_response(monkeypatch) -> None:
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            return SimpleNamespace(content='{"decision":"clear"}')
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_settings", lambda: SimpleNamespace(LITELLM_API_BASE_URL="http://litellm", LITELLM_API_SECRET_KEY="secret"))
+    monkeypatch.setattr("src.flow_engine.nodes.step_hitl_blockers.get_user", lambda: "test-user")
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai", SimpleNamespace(ChatOpenAI=_FakeChatOpenAI))
+
+    judgement = await evaluate_llm_judge_blocker(
+        node_config={"label": "Search agro leads"},
+        input_context={},
+        hitl_policy={"mode": "auto"},
+        hitl_blockers=[{
+            "id": "custom-population-gender",
+            "enabled": True,
+            "kind": "custom",
+            "description": "population gender missing",
+            "action": "clarify",
+            "matcherType": "llm_judge",
+            "matcherConfig": {"naturalLanguageRule": "population gender missing"},
+        }],
+        model_id="gpt-test",
+    )
+
+    assert judgement is None
 
 
 def test_evaluate_hitl_blocker_pauses_for_destructive_action_rule() -> None:

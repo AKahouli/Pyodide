@@ -32,6 +32,27 @@ describe('buildGrpcNodeMetadata', () => {
       hitl_policy: { mode: 'off' },
     });
   });
+
+  it('maps HITL fields stored inside node metadata to ADK metadata keys', () => {
+    const metadata = buildGrpcNodeMetadata(
+      {
+        metadata: {
+          allowClarification: true,
+          clarificationPrompt: 'Ask before continuing.',
+          maxClarifications: 3,
+        },
+      },
+      { hitlPolicy: { mode: 'auto' } },
+    );
+
+    expect(metadata).toMatchObject({
+      allowClarification: true,
+      allow_clarification: true,
+      clarification_prompt: 'Ask before continuing.',
+      max_clarifications: 3,
+      hitl_policy: { mode: 'auto' },
+    });
+  });
 });
 
 describe('PlaybookFlowExecutionService start preflight', () => {

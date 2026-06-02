@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Brain, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, Brain, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { createSkill, deleteSkill, getSkills, importSkill, updateSkill } from '../api';
-import type { SkillListResponse, SkillResponse } from '../types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { createSkill, deleteSkill, getSkills, getSkillCategories, importSkill, updateSkill } from '../api';
+import type { SkillListResponse, SkillResponse, SkillCategoryResponse } from '../types';
 import { CreateEditSkillDialog } from './skills/CreateEditSkillDialog';
+import { ManageSkillCategoriesDialog } from './skills/ManageSkillCategoriesDialog';
+import { IconDisplay } from './connectors/IconDisplay';
 import type { SkillFormValues } from './skills/skill-form-schema';
+
+const CARDS_PER_CATEGORY = 6;
+const UNCATEGORIZED_KEY = '__uncategorized__';
 
 function parseMetadata(text: string): Record<string, string> {
   const trimmed = text.trim();
@@ -37,46 +45,90 @@ export function SkillsPage() {
   const [error, setError] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillResponse[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [categories, setCategories] = useState<SkillCategoryResponse[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('__all__');
   const [saving, setSaving] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
+  const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillResponse | null>(null);
   const [deletingSkill, setDeletingSkill] = useState<SkillResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchSkills = useCallback(async (searchValue?: string, pageValue?: number) => {
+  const fetchSkills = useCallback(async (searchValue?: string) => {
     setLoading(true);
     setError(null);
 
     try {
       const data: SkillListResponse = await getSkills({
-        page: pageValue ?? page,
-        limit: 10,
+        page: 1,
+        limit: 1000,
         search: searchValue ?? search,
       });
       setSkills(data.data);
       setTotal(data.meta.total);
-      setTotalPages(data.meta.totalPages);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills.');
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [search]);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const data = await getSkillCategories();
+      setCategories(data);
+    } catch {
+      setCategories([]);
+    }
+  }, []);
 
   useEffect(() => {
-    fetchSkills();
-  }, [fetchSkills]);
+    void fetchSkills();
+    void fetchCategories();
+  }, [fetchSkills, fetchCategories]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setPage(1);
-      fetchSkills(search, 1);
-    }, 300);
+    const timer = setTimeout(() => { void fetchSkills(search); }, 300);
     return () => clearTimeout(timer);
-  }, [fetchSkills, search]);
+  }, [search, fetchSkills]);
+
+  const toggleCategoryExpanded = (key: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const groupedSkills = (() => {
+    const byCategory = new Map<string, SkillResponse[]>();
+    for (const skill of skills) {
+      const key = skill.categoryId || UNCATEGORIZED_KEY;
+      const list = byCategory.get(key) ?? [];
+      list.push(skill);
+      byCategory.set(key, list);
+    }
+
+    const groups: Array<{ key: string; name: string; description: string; items: SkillResponse[] }> = [];
+    for (const cat of categories) {
+      const items = byCategory.get(cat.id);
+      if (items && items.length > 0) {
+        groups.push({ key: cat.id, name: cat.name, description: cat.description, items });
+      }
+    }
+    const uncategorized = byCategory.get(UNCATEGORIZED_KEY);
+    if (uncategorized && uncategorized.length > 0) {
+      groups.push({ key: UNCATEGORIZED_KEY, name: 'Uncategorized', description: '', items: uncategorized });
+    }
+    return groups;
+  })();
+
+  const visibleGroups = categoryFilter === '__all__'
+    ? groupedSkills
+    : groupedSkills.filter((group) => group.key === categoryFilter);
 
   const handleSave = async (data: SkillFormValues) => {
     setSaving(true);
@@ -84,6 +136,10 @@ export function SkillsPage() {
       const payload = {
         name: data.name,
         description: data.description,
+        icon: data.icon || undefined,
+        color: data.color || undefined,
+        iconColor: data.iconColor || undefined,
+        categoryId: data.categoryId ? data.categoryId : null,
         license: data.license || undefined,
         compatibility: data.compatibility || undefined,
         allowedTools: parseAllowedTools(data.allowedToolsText),
@@ -176,84 +232,160 @@ export function SkillsPage() {
         </div>
         <div className='flex gap-2'>
           <Button onClick={() => fetchSkills()} variant='outline' size='icon'><RefreshCw className='h-4 w-4' /></Button>
+          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
           <Button variant='outline' onClick={handleImportClick} disabled={saving}><Upload className='mr-2 h-4 w-4' />Import .md/.zip</Button>
           <Button onClick={() => { setEditingSkill(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Skill</Button>
         </div>
       </div>
 
-      <div className='relative max-w-sm'>
-        <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-        <Input placeholder='Search skills' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+      <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
+        <div className='relative w-full sm:max-w-sm'>
+          <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
+          <Input placeholder='Search skills' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+        </div>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className='w-full sm:w-[220px]'>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value='__all__'>All categories</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+            ))}
+            <SelectItem value={UNCATEGORIZED_KEY}>Uncategorized</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-center gap-3'>
-            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Brain className='h-5 w-5' /></div>
-            <div>
-              <CardTitle>Skill Catalog</CardTitle>
-              <CardDescription>{total} skills available</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className='rounded-md border'>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className='hidden md:table-cell'>Description</TableHead>
-                  <TableHead className='hidden lg:table-cell'>Files</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className='text-right'>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {skills.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className='h-24 text-center'>{search ? 'No skills match your search.' : 'No skills yet.'}</TableCell></TableRow>
-                ) : skills.map((skill) => (
-                  <TableRow key={skill.id} className={!skill.isActive ? 'opacity-50' : undefined}>
-                    <TableCell>
-                      <div className='font-medium'>{skill.name}</div>
-                      {skill.allowedTools.length > 0 ? <div className='mt-1 flex flex-wrap gap-1'>{skill.allowedTools.slice(0, 3).map((tool) => <Badge key={tool} variant='secondary' className='text-xs'>{tool}</Badge>)}</div> : null}
-                    </TableCell>
-                    <TableCell className='hidden md:table-cell max-w-[320px] truncate'>{skill.description}</TableCell>
-                    <TableCell className='hidden lg:table-cell'>
-                      <Badge variant='outline' className='text-xs'>{skill.files.length}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Switch checked={skill.isActive} onCheckedChange={async (checked) => {
-                        try {
-                          const updated = await updateSkill(skill.id, { isActive: checked });
-                          setSkills((prev) => prev.map((item) => item.id === updated.id ? updated : item));
-                        } catch (err) {
-                          toast.error('Failed to update skill status', { description: err instanceof Error ? err.message : 'Unknown error' });
-                        }
-                      }} />
-                    </TableCell>
-                    <TableCell className='text-right'>
-                      <div className='flex justify-end gap-2'>
-                        <Button variant='ghost' size='icon' onClick={() => { setEditingSkill(skill); setShowDialog(true); }}><Pencil className='h-4 w-4' /></Button>
-                        <Button variant='ghost' size='icon' className='text-destructive' onClick={() => setDeletingSkill(skill)}><Trash2 className='h-4 w-4' /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+      <div className='flex items-center gap-3'>
+        <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'><Brain className='h-5 w-5' /></div>
+        <div>
+          <h2 className='font-semibold'>Skill Catalog</h2>
+          <p className='text-sm text-muted-foreground'>{total} skills available</p>
+        </div>
+      </div>
 
-          {totalPages > 1 ? (
-            <div className='flex items-center justify-end gap-2 pt-4'>
-              <Button variant='outline' size='sm' disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); fetchSkills(search, next); }}>Previous</Button>
-              <span className='text-sm text-muted-foreground'>Page {page} of {totalPages}</span>
-              <Button variant='outline' size='sm' disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); fetchSkills(search, next); }}>Next</Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      {skills.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          {search ? 'No skills match your search.' : 'No skills yet.'}
+        </div>
+      ) : visibleGroups.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          No skills in this category.
+        </div>
+      ) : (
+        <div className='space-y-8'>
+          {visibleGroups.map((group) => {
+            const isExpanded = expandedCategories.has(group.key);
+            const visible = isExpanded ? group.items : group.items.slice(0, CARDS_PER_CATEGORY);
+            const hasMore = group.items.length > CARDS_PER_CATEGORY;
+            return (
+              <section key={group.key} className='space-y-3'>
+                <div>
+                  <h3 className='text-lg font-semibold'>{group.name}</h3>
+                  {group.description && (
+                    <p className='text-sm text-muted-foreground'>{group.description}</p>
+                  )}
+                </div>
+                <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                  {visible.map((skill) => {
+                    const iconTextColor = skill.iconColor === 'dark' ? 'text-black' : 'text-white';
+                    const initial = skill.name?.trim().charAt(0).toUpperCase() || '?';
+                    return (
+                      <div
+                        key={skill.id}
+                        role='button'
+                        tabIndex={0}
+                        onClick={() => { setEditingSkill(skill); setShowDialog(true); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setEditingSkill(skill);
+                            setShowDialog(true);
+                          }
+                        }}
+                        className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!skill.isActive ? 'opacity-60' : ''}`}
+                      >
+                        <button
+                          type='button'
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const updated = await updateSkill(skill.id, { isActive: !skill.isActive });
+                              setSkills((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+                            } catch (err) {
+                              toast.error('Failed to update skill status', { description: err instanceof Error ? err.message : 'Unknown error' });
+                            }
+                          }}
+                          className='absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+                          aria-label={skill.isActive ? 'Deactivate skill' : 'Activate skill'}
+                          aria-pressed={skill.isActive}
+                          title={skill.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
+                        >
+                          <span className={`h-2.5 w-2.5 rounded-full transition-colors ${skill.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
+                        </button>
+
+                        <div className='absolute top-2 right-9 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={(e) => { e.stopPropagation(); setEditingSkill(skill); setShowDialog(true); }}
+                            aria-label='Edit skill'
+                          >
+                            <Pencil className='h-3.5 w-3.5' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7 text-destructive'
+                            onClick={(e) => { e.stopPropagation(); setDeletingSkill(skill); }}
+                            aria-label='Delete skill'
+                          >
+                            <Trash2 className='h-3.5 w-3.5' />
+                          </Button>
+                        </div>
+
+                        <div className='flex items-start gap-3 pr-12'>
+                          <div
+                            className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
+                            style={{ backgroundColor: skill.color || 'transparent' }}
+                          >
+                            {skill.icon ? (
+                              <IconDisplay icon={skill.icon} size={22} iconColor={skill.iconColor} />
+                            ) : (
+                              <span className={`text-sm font-bold ${iconTextColor}`}>{initial}</span>
+                            )}
+                          </div>
+                          <div className='min-w-0 flex-1'>
+                            <div className='font-semibold truncate'>{skill.name}</div>
+                            <p className='text-sm text-muted-foreground line-clamp-2'>{skill.description}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {hasMore && (
+                  <div className='flex justify-end'>
+                    <Button variant='outline' size='sm' onClick={() => toggleCategoryExpanded(group.key)}>
+                      {isExpanded ? 'Show less' : `View all (${group.items.length})`}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
 
       <CreateEditSkillDialog open={showDialog} onOpenChange={setShowDialog} skill={editingSkill} onSave={handleSave} saving={saving} />
+
+      <ManageSkillCategoriesDialog
+        open={showCategoriesDialog}
+        onOpenChange={setShowCategoriesDialog}
+        onCategoriesChanged={() => { void fetchCategories(); void fetchSkills(); }}
+      />
 
       <AlertDialog open={!!deletingSkill} onOpenChange={() => setDeletingSkill(null)}>
         <AlertDialogContent>

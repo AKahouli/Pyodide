@@ -107,6 +107,7 @@ class RunAgentTeamRequest(BaseModel):
     brain_relations: Optional[Dict] = None
     search_web: Optional[bool] = False
     agent_mode: str
+    connector_repo: Optional[Dict[str, str]] = None
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

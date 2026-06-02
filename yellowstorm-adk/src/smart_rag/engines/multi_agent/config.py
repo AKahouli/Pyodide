@@ -7,7 +7,7 @@ Includes constants, tool descriptions, and the AgentTeamConfig dataclass.
 
 
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Dict
 from src.config.settings import get_settings
 # Langfuse initialization (Lazy-loaded to avoid hangs if host is unreachable)
 _langfuse_instance = None
@@ -121,6 +121,7 @@ class AgentTeamConfig:
         vectorstore_name (str): Name of the vector database to use, defaults to "default"
         attached_files (Optional[List[dict]]): Documents attached in this turn (being indexed)
         previous_attached_files (Optional[List[dict]]): Already-indexed files from previous turns
+        connector_repo (Optional[Dict[str, str]]): Conversation-level repo binding from connector picker
     """
     session_id: str
     user_id: str
@@ -133,6 +134,7 @@ class AgentTeamConfig:
     attached_files: Optional[List[dict]] = None
     attached_images: Optional[List[dict]] = None
     previous_attached_files: Optional[List[dict]] = None
+    connector_repo: Optional[Dict[str, str]] = None
 
     def __post_init__(self) -> None:
         if self.brain_ids is None and self.workspace_names is not None:

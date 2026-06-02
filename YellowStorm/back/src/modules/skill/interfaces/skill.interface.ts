@@ -9,6 +9,10 @@ export interface ISkillResponse {
   id: string;
   name: string;
   description: string;
+  icon: string;
+  color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string | null;
   license: string;
   compatibility: string;
   metadata: Record<string, string>;
@@ -17,6 +21,14 @@ export interface ISkillResponse {
   files: ISkillFileResponse[];
   isActive: boolean;
   createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ISkillCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
   createdAt: Date;
   updatedAt: Date;
 }

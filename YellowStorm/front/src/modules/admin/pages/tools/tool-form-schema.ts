@@ -6,6 +6,10 @@ type Translator = (key: ModuleTranslationKey<"admin">, params?: TranslationParam
 export type ToolFormValues = {
   name: string;
   description: string;
+  icon: string;
+  color: string;
+  iconColor: "light" | "dark";
+  categoryId: string;
   defaultAgentTypes: string[];
   attributes: {
     name: string;
@@ -89,6 +93,14 @@ export function createToolFormSchema(t: Translator) {
       .max(1000, t("defaultTools.form.validation.descriptionMax"))
       .optional()
       .default(""),
+    icon: z.string().max(64).default(""),
+    color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/)
+      .or(z.literal(""))
+      .default(""),
+    iconColor: z.enum(["light", "dark"]).default("light"),
+    categoryId: z.string().default(""),
     defaultAgentTypes: z.array(z.string()).default([]),
     requiredAppKey: z.string().default(""),
     attributes: z.array(attributeSchema).default([]),
@@ -99,6 +111,10 @@ export function createToolFormSchema(t: Translator) {
 export const defaultFormValues: ToolFormValues = {
   name: "",
   description: "",
+  icon: "",
+  color: "",
+  iconColor: "light",
+  categoryId: "",
   defaultAgentTypes: [],
   requiredAppKey: "",
   attributes: [],

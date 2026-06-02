@@ -1,20 +1,28 @@
-"""Deterministic Smart HITL blocker evaluation for step nodes."""
+"""Smart HITL blocker evaluation for step nodes."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+from structlog import get_logger
 from langgraph.types import interrupt
 
+from src.config.settings import get_settings
+from src.middleware.correlation import get_user
 from src.flow_engine.nodes.step_hitl import (
     StepHitlResult,
     _build_interrupt_payload,
+    build_blocker_judge_prompt,
     build_human_context_entry,
     extract_interrupt_message,
     normalize_interrupt_action,
+    parse_blocker_judge_response,
     should_proceed_without_more_clarification,
 )
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,77 @@ def evaluate_hitl_blocker(
             blocker_kind="explicit_human_request",
         )
     return None
+
+
+async def evaluate_llm_judge_blocker(
+    node_config: dict[str, Any],
+    input_context: dict[str, Any],
+    hitl_policy: dict[str, Any],
+    hitl_blockers: list[dict[str, Any]],
+    model_id: str,
+) -> dict[str, Any] | None:
+    if hitl_policy.get("mode") != "auto":
+        return None
+    rules = [rule for rule in hitl_blockers if _is_llm_judge_rule(rule)]
+    if not rules:
+        return None
+
+    from langchain_openai import ChatOpenAI
+
+    settings = get_settings()
+    prompt = build_blocker_judge_prompt(
+        label=str(node_config.get("label") or "step"),
+        node_description=_node_text(node_config),
+        input_context=input_context,
+        blockers=rules,
+    )
+    llm = ChatOpenAI(
+        base_url=settings.LITELLM_API_BASE_URL,
+        api_key=settings.LITELLM_API_SECRET_KEY,
+        model=model_id,
+        temperature=0.0,
+        model_kwargs={"user": get_user()},
+    )
+    try:
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+    except Exception as exc:
+        logger.warning("[hitl] LLM blocker judge failed", error=str(exc))
+        return None
+    response_text = getattr(response, "content", "")
+    judged = parse_blocker_judge_response(response_text)
+    if not judged:
+        logger.warning(
+            "[hitl] LLM blocker judge returned no blocking decision",
+            node_label=str(node_config.get("label") or "step"),
+            blocker_ids=[str(rule.get("id") or "") for rule in rules],
+            response=str(response_text)[:500],
+        )
+        return None
+    rule = next((item for item in rules if str(item.get("id") or "") == judged["blocker_id"]), None)
+    if not rule:
+        logger.warning(
+            "[hitl] LLM blocker judge returned unknown blocker",
+            blocker_id=judged["blocker_id"],
+            known_blocker_ids=[str(item.get("id") or "") for item in rules],
+        )
+        return None
+    return {"rule": rule, "message": judged["message"]}
+
+
+def build_llm_judge_blocker_decision(judgement: dict[str, Any] | None) -> HitlBlockerDecision | None:
+    if not judgement:
+        return None
+    rule = judgement.get("rule")
+    if not isinstance(rule, dict):
+        return None
+    return HitlBlockerDecision(
+        interrupt_type="clarification" if str(rule.get("action") or "clarify") == "clarify" else "approval_request",
+        message=str(judgement.get("message") or rule.get("promptTemplate") or rule.get("description") or "This step needs human input before continuing."),
+        reason_code=str(rule.get("reasonCode") or rule.get("reason_code") or rule.get("kind") or "custom_llm_judge"),
+        risk_level=str(rule.get("riskLevel") or rule.get("risk_level") or "medium"),
+        blocker_kind=str(rule.get("kind") or "custom"),
+        blocker_rule_id=str(rule.get("id") or "") or None,
+    )
 
 
 def handle_smart_hitl_blocker(
@@ -237,6 +316,14 @@ def _any_pattern_matches(text: str, patterns: Any) -> bool:
     if not isinstance(patterns, list):
         return False
     return any(str(pattern or "").strip().lower() in text for pattern in patterns if str(pattern or "").strip())
+
+
+def _is_llm_judge_rule(rule: dict[str, Any]) -> bool:
+    return (
+        rule.get("enabled", True) is not False
+        and str(rule.get("kind") or "") == "custom"
+        and str(rule.get("matcherType") or rule.get("matcher_type") or "") == "llm_judge"
+    )
 
 
 def _node_action_text(node_config: dict[str, Any]) -> str:

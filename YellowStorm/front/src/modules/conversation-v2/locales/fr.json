@@ -12,6 +12,8 @@
   "composer": {
     "placeholder": "Tapez un message…",
     "send": "Envoyer",
+    "connectors": "Connecteurs",
+    "noConnectors": "Aucun connecteur disponible",
     "modelSelector": {
       "unset": "Modèle par défaut",
       "search": "Rechercher des modèles…",
