@@ -146,11 +146,11 @@ def modify_suggested_agents(callback_context: CallbackContext) -> Optional[types
 
 _MCP_SEARCH_STATE_KEYS = {
     "_mcp_search_user_id",
-    "_mcp_search_workspace_name",
+    "_mcp_search_workspace_id",
     "_mcp_search_file_names",
 }
 
-_MCP_SEARCH_PARAMS = {"user_id", "file_name", "workspace_name"}
+_MCP_SEARCH_PARAMS = {"user_id", "file_name", "workspace_id"}
 
 
 def _get_mcp_tool_param_names(tool: BaseTool) -> set:
@@ -178,10 +178,10 @@ def _inject_mcp_search_context(
     if "user_id" in param_names and "user_id" not in args:
         args["user_id"] = state["_mcp_search_user_id"]
 
-    if "workspace_name" in param_names and "workspace_name" not in args:
-        val = state.get("_mcp_search_workspace_name")
+    if "workspace_id" in param_names and "workspace_id" not in args:
+        val = state.get("_mcp_search_workspace_id")
         if val:
-            args["workspace_name"] = val
+            args["workspace_id"] = val
 
     if "file_name" in param_names and "file_name" not in args:
         val = state.get("_mcp_search_file_names")

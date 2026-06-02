@@ -509,7 +509,6 @@ def create_langchain_tools(
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
-    resolved_workspace_names: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -534,36 +533,23 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        # Build workspace names list in priority order:
-        # 1. Pre-resolved names from backend lookup (ObjectId → actual name)
-        # 2. Actual names from workspace_context (set when fallback context available)
-        # 3. brain_ids as-is (may be ObjectIds — last resort)
+        # Use raw workspace IDs directly (brain_ids), with fallback to output_workspace_id
         raw_ids = agent_config.get("brain_ids") or []
-        name_map = resolved_workspace_names or {}
-        connector_workspace_names = (
-            [name_map.get(i, i) for i in raw_ids if name_map.get(i, i)]
-            if name_map else
-            [
-                wc.get("workspace_name") or wc.get("workspace_id")
+        connector_workspace_ids = (
+            raw_ids
+            or [
+                wc.get("workspace_id")
                 for wc in (workspace_context or [])
-                if isinstance(wc, dict) and (wc.get("workspace_name") or wc.get("workspace_id"))
-            ] or raw_ids
+                if isinstance(wc, dict) and wc.get("workspace_id")
+            ]
         )
-        # Fallback: when brain_ids is empty, use the resolved output workspace name
-        if not connector_workspace_names and output_workspace_id and name_map:
-            resolved_output_ws = name_map.get(output_workspace_id, "")
-            if resolved_output_ws and not _OBJECT_ID_RE.match(resolved_output_ws):
-                connector_workspace_names = [resolved_output_ws]
-                logger.info(
-                    "connector_workspace_names_fallback output_workspace_id=%s resolved_name=%s",
-                    output_workspace_id,
-                    resolved_output_ws,
-                )
+        if not connector_workspace_ids and output_workspace_id:
+            connector_workspace_ids = [output_workspace_id]
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
-            workspace_names=connector_workspace_names,
+            workspace_ids=connector_workspace_ids,
             file_names=effective_file_names,
             user_id=user_id,
         )
@@ -1575,7 +1561,7 @@ def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
     output_workspace_id: str = "",
-    workspace_names: Optional[List[str]] = None,
+    workspace_ids: Optional[List[str]] = None,
     file_names: Optional[List[str]] = None,
     user_id: Optional[str] = None,
 ) -> List[StructuredTool]:
@@ -1678,7 +1664,7 @@ def _create_connector_mcp_tools(
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
                 _uid: Optional[str] = user_id,
-                _wn: Optional[List[str]] = workspace_names,
+                _wi: Optional[List[str]] = workspace_ids,
                 _fn: Optional[List[str]] = file_names,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
@@ -1714,14 +1700,21 @@ def _create_connector_mcp_tools(
                                 merged_params["user_id"] = _uid
                             if _fn:
                                 effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
-                            if _wn:
-                                effective_auth_headers["workspace_name"] = json.dumps(_wn) if len(_wn) > 1 else _wn[0]
-                                merged_params["workspace_name"] = _wn[0] if len(_wn) == 1 else _wn
+                                merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
+                            else:
+                                # No explicit file binding — strip any LLM-guessed file_name (e.g. "*")
+                                merged_params.pop("file_name", None)
+                                effective_auth_headers.pop("file_name", None)
+                            if _wi:
+                                effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                merged_params.pop("workspace_name", None)
+                                effective_auth_headers.pop("workspace_name", None)
                             logger.info(
-                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_name=%s",
+                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_id=%s",
                                 _uid,
                                 effective_auth_headers.get("file_name"),
-                                effective_auth_headers.get("workspace_name"),
+                                effective_auth_headers.get("workspace_id"),
                             )
 
                         logger.info(
@@ -1794,7 +1787,7 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
-            workspace_names=workspace_names,
+            workspace_ids=workspace_ids,
             file_names=file_names,
         )
 

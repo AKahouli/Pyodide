@@ -209,28 +209,23 @@ def _build_mcp_context_note(config, agent_config: Dict[str, Any]) -> str:
         return ""
 
     user_id = getattr(config, "user_id", None) or ""
-    raw_docs = agent_config.get("brain_documents") or []
-    file_names = [
-        d.get("filename") for d in raw_docs
-        if isinstance(d, dict) and d.get("filename")
-    ]
-    workspace_names = list({
-        d.get("workspace_name") for d in raw_docs
-        if isinstance(d, dict) and d.get("workspace_name")
-    })
+    # Use only explicitly bound file_names (from input port bindings), not all brain_documents
+    explicit_file_names = agent_config.get("file_names") or []
+    # Use workspace IDs directly (brain_ids from config)
+    workspace_ids = list(getattr(config, "brain_ids", None) or [])
 
-    if not user_id and not file_names and not workspace_names:
+    if not user_id and not explicit_file_names and not workspace_ids:
         return ""
 
     lines = ["<mcp_tool_context>"]
     if user_id:
         lines.append(f'- user_id: "{user_id}"')
-    if file_names:
-        val = json.dumps(file_names) if len(file_names) > 1 else f'"{file_names[0]}"'
+    if explicit_file_names:
+        val = json.dumps(explicit_file_names) if len(explicit_file_names) > 1 else f'"{explicit_file_names[0]}"'
         lines.append(f"- file_name: {val}")
-    if workspace_names:
-        val = json.dumps(workspace_names) if len(workspace_names) > 1 else f'"{workspace_names[0]}"'
-        lines.append(f"- workspace_name: {val}")
+    if workspace_ids:
+        val = json.dumps(workspace_ids) if len(workspace_ids) > 1 else f'"{workspace_ids[0]}"'
+        lines.append(f"- workspace_id: {val}")
     lines.append("</mcp_tool_context>")
     return "\n".join(lines)
 
@@ -518,15 +513,10 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
     if transport_type != "streamable_http" or not server_url:
         return
 
-    raw_docs = agent_config.get("brain_documents") or []
-    file_names = [
-        d.get("filename") for d in raw_docs
-        if isinstance(d, dict) and d.get("filename")
-    ] or None
-    workspace_names = list({
-        d.get("workspace_name") for d in raw_docs
-        if isinstance(d, dict) and d.get("workspace_name")
-    }) or None
+    # Use only explicitly bound file_names (from input port bindings), not all brain_documents
+    explicit_file_names = agent_config.get("file_names") or None
+    # Use workspace IDs directly (brain_ids from config)
+    workspace_ids = list(getattr(config, "brain_ids", None) or []) or None
 
     try:
         toolsets = MCPHelper.create_toolsets([{
@@ -534,8 +524,8 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
             "transport_type": "streamable_http",
             "url": server_url,
             "user_id": config.user_id,
-            "file_names": file_names,
-            "workspace_names": workspace_names,
+            "file_names": explicit_file_names,
+            "workspace_ids": workspace_ids,
         }])
         if toolsets:
             if not hasattr(agent, "tools") or agent.tools is None:
@@ -550,19 +540,11 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
 
 
 def _attach_mcp_search_state(agent, config, agent_config: Dict[str, Any]) -> None:
-    raw_docs = agent_config.get("brain_documents", [])
-    file_names = [
-        d.get("filename") or d.get("nom")
-        for d in raw_docs
-        if isinstance(d, dict) and (d.get("filename") or d.get("nom"))
-    ]
     state = {"_mcp_search_user_id": config.user_id}
     if config.brain_ids:
-        state["_mcp_search_workspace_name"] = (
+        state["_mcp_search_workspace_id"] = (
             config.brain_ids[0] if len(config.brain_ids) == 1 else config.brain_ids
         )
-    if file_names:
-        state["_mcp_search_file_names"] = file_names
     agent._mcp_search_state = state
 
 
