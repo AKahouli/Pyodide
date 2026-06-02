@@ -48,6 +48,8 @@ class _FakeStepHitlResult:
         self.updated_description = updated_description
         self.error_msg = error_msg
         self.needs_reexec = needs_reexec
+        self.suppress_follow_up_clarification = False
+        self.human_context = []
 
 
 async def _fake_handle_hitl(*args, **kwargs):
@@ -56,6 +58,20 @@ async def _fake_handle_hitl(*args, **kwargs):
 
 fake_step_hitl.StepHitlResult = _FakeStepHitlResult
 fake_step_hitl.needs_hitl = lambda metadata: False
+fake_step_hitl._build_interrupt_payload = lambda interrupt_type, message, **kwargs: {
+    "type": interrupt_type,
+    "message": message,
+    **kwargs,
+}
+fake_step_hitl.extract_interrupt_message = lambda response: str((response or {}).get("message") or "")
+fake_step_hitl.normalize_interrupt_action = lambda response, interrupt_type: "approve"
+fake_step_hitl.should_proceed_without_more_clarification = lambda _message: False
+fake_step_hitl.extract_feedback_scope = lambda response, default_scope="step_only": (
+    response.get("scope") if isinstance(response, dict) and response.get("scope") else default_scope
+)
+fake_step_hitl.build_human_context_entry = lambda *args, **kwargs: None
+fake_step_hitl.build_blocker_judge_prompt = lambda *args, **kwargs: "judge prompt"
+fake_step_hitl.parse_blocker_judge_response = lambda _text: None
 fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_after = _fake_handle_hitl
@@ -70,6 +86,10 @@ fake_step_hitl_handlers.handle_interrupt_after = _fake_handle_hitl
 sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hitl_handlers)
 
 from src.flow_engine.nodes.step import run_step
+
+sys.modules.pop("src.flow_engine.nodes.step_hitl", None)
+sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
+sys.modules.pop("src.flow_engine.nodes.step_hitl_blockers", None)
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_result import finalize_step_result
 
@@ -135,6 +155,7 @@ class TestStepPrompt:
         assert '"output_port_id": "summary"' in prompt
         assert '"output_port_id": "report"' in prompt
         assert "reasoning_trace" in prompt
+        assert "Do not put reasoning steps inside `outputs`" in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" not in prompt
 
 
@@ -191,6 +212,107 @@ class TestStepResultReasoningTrace:
             response,
         )
         assert "reasoning_trace" not in result
+
+    def test_structured_response_accepts_outputs_dict(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": {
+                "summary": {"artifactKind": "text", "content": "done"},
+                "report": {"artifactKind": "document", "content": {"url": "https://example.com/f.pdf"}},
+            },
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert result["display_text"] == "Summary"
+        assert result["outputs"]["summary"]["content"] == "done"
+        assert result["outputs"]["report"]["ref"] == "https://example.com/f.pdf"
+
+    def test_structured_response_accepts_legacy_ports_list(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "ports": [
+                {"id": "summary", "artifact_kind": "text", "value": "done"},
+                {"id": "report", "artifact_kind": "document", "value": {"url": "https://example.com/f.pdf"}},
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert result["display_text"] == "Summary"
+        assert result["outputs"]["summary"]["content"] == "done"
+        assert result["outputs"]["report"]["ref"] == "https://example.com/f.pdf"
+
+    def test_structured_response_recovers_reasoning_trace_misplaced_in_outputs(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "lead_list", "artifact_kind": "data", "content": {"items": ["done"]}},
+                {
+                    "id": "step_1",
+                    "type": "observation",
+                    "label": "Read",
+                    "description": "Read the brief.",
+                    "confidence": 0.9,
+                },
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "lead_list", "type": "data"}]},
+            response,
+        )
+        assert result["outputs"]["lead_list"]["content"] == {"items": ["done"]}
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Read",
+                "description": "Read the brief.",
+                "confidence": 0.9,
+            }
+        ]
+
+    def test_structured_response_merges_top_level_and_recovered_reasoning_trace(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "lead_list", "artifact_kind": "data", "content": {"items": ["done"]}},
+                {
+                    "id": "step_2",
+                    "type": "observation",
+                    "label": "Recovered",
+                    "description": "Recovered from outputs.",
+                },
+            ],
+            "reasoning_trace": [
+                {
+                    "id": "step_1",
+                    "type": "observation",
+                    "label": "Explicit",
+                    "description": "Already present.",
+                }
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "lead_list", "type": "data"}]},
+            response,
+        )
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Explicit",
+                "description": "Already present.",
+            },
+            {
+                "id": "step_2",
+                "type": "observation",
+                "label": "Recovered",
+                "description": "Recovered from outputs.",
+            },
+        ]
 
 
 class _CalculatorArgs(BaseModel):
@@ -330,6 +452,203 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
+
+
+@pytest.mark.anyio
+async def test_run_step_hitl_policy_off_suppresses_legacy_clarification(monkeypatch):
+    handler_calls = []
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    async def _unexpected_clarification(*args, **kwargs):
+        handler_calls.append((args, kwargs))
+        return _FakeStepHitlResult()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.needs_hitl", lambda _metadata: True)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_before", _unexpected_clarification)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect input",
+            "metadata": {"allowClarification": True},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "hitl_policy": {"mode": "off"},
+        },
+    )
+
+    assert handler_calls == []
+    assert result["task_outputs"][("step-1", 0)]["output"] == "done"
+
+
+@pytest.mark.anyio
+async def test_run_step_invokes_post_exec_clarification_for_question_output(monkeypatch):
+    after_calls = []
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("What geography should I use?")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    async def _no_pre_exec_hitl(*args, **kwargs):
+        return _FakeStepHitlResult()
+
+    async def _post_exec_hitl(*args, **kwargs):
+        after_calls.append((args, kwargs))
+        return _FakeStepHitlResult(skipped=True)
+
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+    monkeypatch.setattr("src.flow_engine.nodes.step.needs_hitl", lambda _metadata: True)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_before", _no_pre_exec_hitl)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_after", _post_exec_hitl)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect input",
+            "metadata": {"allowClarification": True},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "hitl_policy": {"mode": "auto"},
+        },
+    )
+
+    assert after_calls
+    assert result["task_outputs"][("step-1", 0)]["status"] == "skipped"
+
+
+@pytest.mark.anyio
+async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(monkeypatch):
+    captured_execute: dict[str, object] = {}
+
+    async def _fake_execute_step(
+        node_id,
+        node_config,
+        state,
+        metadata,
+        input_context,
+        node_description,
+        output_contract,
+        model_id,
+        system_prompt,
+        structured_output,
+        agent_config,
+        connector_bindings,
+        iteration,
+        label,
+        writer,
+        hitl_policy,
+        hitl_blockers,
+        human_context,
+    ):
+        captured_execute["node_description"] = node_description
+        captured_execute["human_context"] = human_context
+        return "done", [], None
+
+    hitl_result = _FakeStepHitlResult(updated_description="Search leads.\n\nClarification from user: Use Germany.")
+    hitl_result.human_context = [{
+        "node_id": "step-1",
+        "task_title": "Collect country",
+        "interrupt_type": "clarification",
+        "message": "Use Germany.",
+        "scope": "downstream_run",
+        "remember": False,
+        "source_message": "Which country?",
+    }]
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_hitl_blocker", lambda *args, **kwargs: object())
+
+    def _fake_handle_smart_hitl_blocker(decision, *args, **kwargs):
+        return hitl_result if decision else _FakeStepHitlResult()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_smart_hitl_blocker", _fake_handle_smart_hitl_blocker)
+
+    async def _no_llm_judge(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_llm_judge_blocker", _no_llm_judge)
+    monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fake_execute_step)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect country",
+            "description": "Search leads.",
+            "metadata": {},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "human_context": [],
+            "hitl_policy": {"mode": "auto"},
+        },
+    )
+
+    assert captured_execute["node_description"] == "Search leads.\n\nClarification from user: Use Germany."
+    assert captured_execute["human_context"] == hitl_result.human_context
+    assert result["task_outputs"][("step-1", 0)]["output"] == "done"
 
 
 @pytest.mark.anyio
@@ -644,6 +963,125 @@ async def test_run_step_emits_structured_result_payload(monkeypatch):
     assert payload["outputs"]["summary"]["content"] == "Executive summary"
     assert payload["outputs"]["report"]["ref"] == "https://example.com/report.pdf"
     assert payload["artifacts"][1]["filename"] == "report.pdf"
+    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+
+
+@pytest.mark.anyio
+async def test_run_step_suppresses_token_stream_for_data_visualizer(monkeypatch):
+    events = []
+
+    def _writer(event):
+        events.append(event)
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token, model_extra=None))]
+
+    class _Stream:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def __aiter__(self):
+            self._iter = iter(self._chunks)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream([_Chunk("<html><body><h1>Chart</h1></body></html>")])
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Render chart",
+            "metadata": {
+                "agent_type": "visualizer",
+            },
+            "output": {"ports": [{"id": "default", "type": "text"}]},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+    )
+
+    assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
+    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+
+
+@pytest.mark.anyio
+async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
+    events = []
+    calls = []
+
+    def _writer(event):
+        events.append(event)
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("<html><body><h1>Chart</h1></body></html>")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Render chart",
+            "metadata": {
+                "agent_type": "visualizer",
+                "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+            },
+            "output": {"ports": [{"id": "default", "type": "text"}]},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+    )
+
+    assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
+    assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
 
 

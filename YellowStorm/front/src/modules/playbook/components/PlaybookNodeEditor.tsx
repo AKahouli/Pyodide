@@ -32,6 +32,8 @@ import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
 import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
 import { PlaybookHumanApprovalConfigSection } from './PlaybookHumanApprovalConfigSection';
 import { PlaybookDataFlowSection } from './PlaybookDataFlowSection';
+import { HitlBlockerCenter } from './HitlBlockerCenter';
+import { HitlPolicySummaryCard } from './HitlPolicySummaryCard';
 import { ReplayBaselineSettingsDialog, type ReplayBaselineSettingsDialogHandle } from './ReplayBaselineSettingsDialog';
 import type {
   PlaybookTask,
@@ -342,6 +344,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const originalCapturedRef = useRef(false);
   const [replayStaleDialogOpen, setReplayStaleDialogOpen] = useState(false);
   const [removingStaleReplay, setRemovingStaleReplay] = useState(false);
+  const [stepHitlDialogOpen, setStepHitlDialogOpen] = useState(false);
 
   useImperativeHandle(ref, () => ({
     flushSave: () => {
@@ -852,6 +855,18 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                       maxLength={10000}
                     />
                     <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
+                  </div>
+                </EditorSection>
+              )}
+
+              {playbookId && isStepLikeNodeType(draft.nodeType) && (
+                <EditorSection title={t('hitl.nodeEditor.title')} defaultOpen resetKey={`${task.id}:smart-hitl`}>
+                  <div className="space-y-3">
+                    <HitlPolicySummaryCard flowId={playbookId} nodeId={task.id} compact />
+                    <p className="text-xs text-muted-foreground">{t('hitl.nodeEditor.description')}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setStepHitlDialogOpen(true)}>
+                      {t('hitl.nodeEditor.configure')}
+                    </Button>
                   </div>
                 </EditorSection>
               )}
@@ -1371,6 +1386,18 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
           onReplayUpdated={handleReplayUpdated}
           onReplayRemoved={handleReplayRemoved}
         />
+      )}
+
+      {playbookId && task && (
+        <Dialog open={stepHitlDialogOpen} onOpenChange={setStepHitlDialogOpen}>
+          <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{t('hitl.nodeEditor.dialogTitle')}</DialogTitle>
+              <DialogDescription>{task.title || t('nodeEditor.stepTitlePlaceholder')}</DialogDescription>
+            </DialogHeader>
+            <HitlBlockerCenter flowId={playbookId} nodeId={task.id} showMemory={false} />
+          </DialogContent>
+        </Dialog>
       )}
 
       <Dialog open={baselineExecutionDialogOpen} onOpenChange={setBaselineExecutionDialogOpen}>

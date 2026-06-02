@@ -13,6 +13,7 @@ except ImportError:
 
 from src.grpc_server.chatbot_servicer import ChatbotServicer
 from src.dependencies import get_agent_team_service
+from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
 
 try:
     from src.grpc_generated import playbook_flow_pb2_grpc as pf_grpc
@@ -84,6 +85,7 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     logger.info("[gRPC] ChatbotServicer registered")
 
     if pf_grpc is not None and PlaybookFlowRuntimeServicer is not None:
+        await init_checkpointer()
         pf_servicer = PlaybookFlowRuntimeServicer()
         pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
         logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
@@ -108,6 +110,8 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/Run (streaming)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/Cancel (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeApproval (unary)")
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeFromStep (unary)")
+        logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
 
     # Keep the server running until terminated
     try:
@@ -115,6 +119,7 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     except asyncio.CancelledError:
         logger.info("[gRPC] Server shutdown requested")
         await server.stop(grace=5)
+        await close_checkpointer()
         logger.info("✅ [gRPC] Server stopped gracefully")
         raise
 

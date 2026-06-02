@@ -7,11 +7,12 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { AuthProvider } from '@/modules/auth';
 import { SettingsModalProvider } from '@/modules/profile';
-import { UsageProvider } from '@/modules/usage';
+import { UsageProvider } from '@/modules/usage/UsageContext';
 import { NotificationsProvider } from '@/modules/notifications';
 import { LocalizationProvider } from '@/modules/localization';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { getGlobalAppearanceSettings } from '@/modules/auth/api';
+import { PlaybookQueryProvider } from '@/modules/playbook/query/queryProvider';
 
 type CombinedProviderProps = Readonly<{
   children: ReactNode;
@@ -83,15 +84,17 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
     return (
       <LocalizationProvider>
         <AuthProvider>
-          <NotificationsProvider>
-            <UsageProvider>
-              <ThemeProvider
-                defaultColorTheme={appearanceSettings?.defaultColorTheme}
-                resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
-                <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
-              </ThemeProvider>
-            </UsageProvider>
-          </NotificationsProvider>
+          <PlaybookQueryProvider>
+            <NotificationsProvider>
+              <UsageProvider>
+                <ThemeProvider
+                  defaultColorTheme={appearanceSettings?.defaultColorTheme}
+                  resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
+                  <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
+                </ThemeProvider>
+              </UsageProvider>
+            </NotificationsProvider>
+          </PlaybookQueryProvider>
         </AuthProvider>
       </LocalizationProvider>
     );

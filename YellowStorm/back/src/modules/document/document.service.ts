@@ -226,16 +226,12 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
+      await this.headObjectWithRetry(objectKey);
       return true;
     } catch (error) {
       if (this.isNotFoundError(error)) {
         return false;
       }
-      // Log unexpected S3 errors before re-throwing — without this they
-      // bubble up as opaque 500 UnknownError responses with no context.
       const err = error as {
         name?: string;
         message?: string;
@@ -480,6 +476,31 @@ export class DocumentService {
       stream.on('error', reject);
       stream.on('end', () => resolve(Buffer.concat(chunks)));
     });
+  }
+
+  private async headObjectWithRetry(objectKey: string): Promise<void> {
+    try {
+      await this.getS3Client().send(
+        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
+    } catch (error) {
+      if (!this.isTransientS3Error(error)) throw error;
+
+      this.logger.warn('S3 HeadObject transient error, retrying once', {
+        objectKey,
+        bucket: this.getBucket(),
+        httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode,
+      });
+
+      await this.getS3Client().send(
+        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+      );
+    }
+  }
+
+  private isTransientS3Error(error: unknown): boolean {
+    const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+    return err?.$metadata?.httpStatusCode === 403 && err?.name === 'Unknown';
   }
 
   private isNotFoundError(error: unknown): boolean {

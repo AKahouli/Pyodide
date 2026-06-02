@@ -487,7 +487,11 @@ def _artifact_file_ref(
 ) -> Optional[Dict[str, Any]]:
     ref = artifact.get("ref") or {}
     filepath = str(
-        artifact.get("filepath")
+        artifact.get("object_key")
+        or artifact.get("objectKey")
+        or ref.get("object_key")
+        or ref.get("objectKey")
+        or artifact.get("filepath")
         or artifact.get("file_path")
         or artifact.get("url")
         or ref.get("filepath")

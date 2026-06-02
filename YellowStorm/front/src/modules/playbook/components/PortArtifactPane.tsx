@@ -5,12 +5,11 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import { getSafeArtifactUrl } from '../utils/safe-artifact-url';
+import { getArtifactDisplayContent, getArtifactPreviewContent } from '../utils/artifact-content';
 import type { TaskArtifact, ArtifactKind } from '../types';
 
 function getContentPreview(artifact: TaskArtifact): string | null {
-  const content = artifact.content ?? (artifact.metadata?.data as string | undefined);
-  if (typeof content !== 'string' || !content.trim()) return null;
-  return content.length > 500 ? content.slice(0, 500) + '...' : content;
+  return getArtifactPreviewContent(artifact);
 }
 
 function ArtifactRow({
@@ -26,7 +25,7 @@ function ArtifactRow({
 
   const handleDownload = () => {
     const safeUrl = getSafeArtifactUrl(artifact.url);
-    const content = artifact.content ?? (artifact.metadata?.data as string | undefined);
+    const content = getArtifactDisplayContent(artifact);
     if (!safeUrl && !content) return;
     if (typeof content === 'string') {
       const blob = new Blob([content], { type: artifact.mimeType || 'text/plain' });

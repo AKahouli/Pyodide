@@ -1341,16 +1341,24 @@ export function ExecutionStepDetail({
               <IteratorResultPanel step={step} />
             ) : (
               <>
-                {selectedStepExecutionText && (
-                  <div
-                    data-testid="step-result-markdown"
-                    className="rounded-lg bg-muted/50 p-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap"
-                  >
-                    <MessageProvider fileViewerDisplayMode="floating">
-                      <AIMessageContent parts={[{ type: 'text', content: selectedStepExecutionText }]} />
-                    </MessageProvider>
-                  </div>
-                )}
+                {selectedStepExecutionText && (() => {
+                  const isHtml = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(selectedStepExecutionText);
+                  return (
+                    <div
+                      data-testid="step-result-markdown"
+                      className={cn(
+                        'rounded-lg bg-muted/50 p-4',
+                        isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                      )}
+                    >
+                      <MessageProvider fileViewerDisplayMode="floating">
+                        <AIMessageContent
+                          parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]}
+                        />
+                      </MessageProvider>
+                    </div>
+                  );
+                })()}
                 {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
                   <div className="prose prose-sm max-w-none dark:prose-invert">
                     <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
@@ -1390,41 +1398,47 @@ export function ExecutionStepDetail({
                 <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
               </div>
             )}
-            {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
-              <div className="space-y-3">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.title' as any)}</div>
-                <div className="space-y-2">
-                  {groupedArtifacts.map((group) => (
-                    <PortArtifactPane
-                      key={group.portId}
-                      portId={group.portId}
-                      portName={group.portName}
-                      portKind={group.portKind}
-                      artifacts={group.artifacts}
-                      onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+            {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
+              <Collapsible defaultOpen className="rounded-lg border">
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-4 border-t px-4 py-3">
+                  {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+                    <div className="space-y-2">
+                      {groupedArtifacts.map((group) => (
+                        <PortArtifactPane
+                          key={group.portId}
+                          portId={group.portId}
+                          portName={group.portName}
+                          portKind={group.portKind}
+                          artifacts={group.artifacts}
+                          onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
+                        />
+                      ))}
+                    </div>
+                  )}
 
-            {inputPortEntries.length > 0 && (
-              <div className="space-y-3">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Input artifacts' as any)}</div>
-                <div className="space-y-2">
-                  {inputPortEntries.map((entry) => (
-                    <PortArtifactPane
-                      key={entry.portId}
-                      portId={entry.portId}
-                      portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
-                      portKind={entry.portKind}
-                      artifacts={entry.artifacts}
-                      defaultOpen={false}
-                      onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
-                    />
-                  ))}
-                </div>
-              </div>
+                  {inputPortEntries.length > 0 && (
+                    <div className="space-y-2">
+                      {inputPortEntries.map((entry) => (
+                        <PortArtifactPane
+                          key={entry.portId}
+                          portId={entry.portId}
+                          portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
+                          portKind={entry.portKind}
+                          artifacts={entry.artifacts}
+                          defaultOpen={false}
+                          onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
             )}
 
             <PortContentViewer

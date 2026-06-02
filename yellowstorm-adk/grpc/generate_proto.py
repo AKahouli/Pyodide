@@ -94,6 +94,7 @@ def main():
         print("Fixing imports in generated files...")
         print("=" * 60)
         fix_imports(OUTPUT_DIR / "chatbot_pb2_grpc.py")
+        fix_imports(OUTPUT_DIR / "playbook_flow_pb2_grpc.py")
 
         print("\n" + "=" * 60)
         print("All done! gRPC code is ready to use.")
@@ -120,8 +121,8 @@ def fix_imports(grpc_file: Path):
     """
     Fix import statements in generated gRPC file.
 
-    The generated chatbot_pb2_grpc.py has: import chatbot_pb2
-    We need to change it to: from src.grpc_generated import chatbot_pb2
+    The generated *_pb2_grpc.py has: import foo_pb2
+    We need to change it to: from src.grpc_generated import foo_pb2
 
     Args:
         grpc_file: Path to the generated gRPC file
@@ -131,14 +132,14 @@ def fix_imports(grpc_file: Path):
         return
 
     try:
-        # Read the file
         content = grpc_file.read_text()
+        stem = grpc_file.stem.replace("_pb2_grpc", "_pb2")
+        old_import = f"import {stem}"
+        new_import = f"from src.grpc_generated import {stem}"
 
-        # Replace the import
-        old_import = "import chatbot_pb2 as chatbot__pb2"
-        new_import = "from src.grpc_generated import chatbot_pb2 as chatbot__pb2"
-
-        if old_import in content:
+        if new_import in content:
+            print(f"No import fixes needed in {grpc_file.name}")
+        elif old_import in content:
             content = content.replace(old_import, new_import)
             grpc_file.write_text(content)
             print(f"Fixed imports in {grpc_file.name}")

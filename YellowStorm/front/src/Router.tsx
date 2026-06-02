@@ -8,7 +8,7 @@ import { ConversationPage } from './modules/conversation';
 import { ConversationV2Page, ConversationV2SessionPage, SharedConversationV2Page } from './modules/conversation-v2';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
-import { UpgradePage } from './modules/usage';
+import { UpgradePage } from './modules/usage/components/UpgradePage';
 import { RootGuard } from './modules/auth/components/RootGuard';
 import { PlaybookExecutionListPage as PlaybookExecutionListRoute } from './modules/playbook/components/PlaybookExecutionListPage';
 import { PlaybookExecutionComparePage as PlaybookExecutionCompareRoute } from './modules/playbook/components/PlaybookExecutionComparePage';

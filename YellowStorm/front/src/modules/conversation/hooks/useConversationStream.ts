@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { conversationStreamService } from '../stream';
 import { useConversationStore } from '../store';
 import { useAuth } from '@/modules/auth';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { normalizeChartComponentData } from '../utils';
 import type { StreamSSEEvent, StreamingComponent } from '../types';
 

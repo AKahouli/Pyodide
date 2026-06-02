@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '@/modules/conversation/hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import {

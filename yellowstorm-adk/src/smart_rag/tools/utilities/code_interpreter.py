@@ -6,15 +6,18 @@ the backend sandbox service instead of using MCP microsandbox.
 """
 
 import asyncio
-import base64
-import json
-import requests
 import logging
+import requests
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from src.logger.logging import get_logger
 from src.config.settings import get_settings
+from src.smart_rag.tools.utilities.code_interpreter_payload import (
+    _extract_workspace_name_from_filepath,
+    _extract_workspace_name_hint,
+    build_code_interpreter_payload_context,
+)
 
 logger = get_logger("api.smart_rag.python_tool")
 
@@ -84,7 +87,6 @@ async def python_interpreter(
     session_id = None
     brain_id = None
     user_id = None
-    file_paths_base64 = None
     resolved_workspace_id = None
 
     if tool_context:
@@ -97,12 +99,29 @@ async def python_interpreter(
         # Fix 4: Resolve workspace_id from brain_documents first (like connector tools do),
         # then fall back to the frozen conversation_brain_id.
         resolved_workspace_id = brain_id
+        resolved_workspace_name = ""
         if brain_documents:
             for doc in brain_documents:
                 ws_id = str(doc.get("workspace_id") or "").strip()
                 if ws_id:
                     resolved_workspace_id = ws_id
                     break
+            workspace_names = {
+                _extract_workspace_name_hint(str(doc.get("workspace_name") or "").strip())
+                or _extract_workspace_name_from_filepath(
+                    str(doc.get("filepath") or ""),
+                    workspace_id=str(doc.get("workspace_id") or "").strip(),
+                    owner_user_id=user_id,
+                )
+                for doc in brain_documents
+                if (
+                    str(doc.get("workspace_name") or "").strip()
+                    or str(doc.get("filepath") or "").strip()
+                )
+            }
+            workspace_names.discard("")
+            if len(workspace_names) == 1:
+                resolved_workspace_name = next(iter(workspace_names))
 
         if session_id:
             logger.info(f"[PYTHON TOOL] Using session_id from state: {session_id}")
@@ -111,8 +130,8 @@ async def python_interpreter(
         if user_id:
             logger.info(f"[PYTHON TOOL] Using user_id from state: {user_id}")
 
-        # Build file_paths from brain_documents + previously generated files
-        file_paths_list = []
+        # Build file_names from brain_documents + previously generated files
+        payload_files = []
         seen_filenames = set()
 
         # 1. Original brain documents
@@ -121,9 +140,11 @@ async def python_interpreter(
             filename = doc.get("filename", "")
 
             if azure_path and filename:
-                file_paths_list.append({
-                    "azure_path": azure_path,
-                    "filename": filename
+                payload_files.append({
+                    "filepath": azure_path,
+                    "filename": filename,
+                    "workspace_id": str(doc.get("workspace_id", "")).strip(),
+                    "workspace_name": str(doc.get("workspace_name", "")).strip(),
                 })
                 seen_filenames.add(filename)
 
@@ -132,33 +153,64 @@ async def python_interpreter(
             gf_filename = gf.get("filename", "")
             gf_azure_path = gf.get("azure_path", "")
             if gf_filename and gf_azure_path and gf_filename not in seen_filenames:
-                file_paths_list.append({
-                    "azure_path": gf_azure_path,
-                    "filename": gf_filename
+                payload_files.append({
+                    "filepath": gf_azure_path,
+                    "filename": gf_filename,
+                    "workspace_id": str(gf.get("workspace_id", "") or resolved_workspace_id or "").strip(),
+                    "workspace_name": str(gf.get("workspace_name", "")).strip(),
                 })
                 seen_filenames.add(gf_filename)
 
-        if file_paths_list:
-            file_paths_json = json.dumps(file_paths_list)
-            file_paths_base64 = base64.b64encode(file_paths_json.encode('utf-8')).decode('utf-8')
+        workspace_name, file_names, skipped_file_names, mixed_workspace_file_names = (
+            build_code_interpreter_payload_context(
+                payload_files,
+                fallback_workspace_name=resolved_workspace_name or resolved_workspace_id,
+                selected_workspace_id=resolved_workspace_id,
+                owner_user_id=user_id,
+            )
+        )
+
+        if mixed_workspace_file_names:
+            logger.warning(
+                "[PYTHON TOOL] Rejecting mixed-workspace file set: %s",
+                mixed_workspace_file_names,
+            )
+        if file_names:
             generated_count = sum(1 for gf in previously_generated if gf.get("filename") in seen_filenames)
-            logger.info(f"[PYTHON TOOL] Sending {len(file_paths_list)} file paths to backend v2 "
-                        f"({len(file_paths_list) - generated_count} original + {generated_count} previously generated)")
+            logger.info(f"[PYTHON TOOL] Sending {len(file_names)} file names to backend v2 "
+                        f"({len(file_names) - generated_count} original + {generated_count} previously generated)")
         else:
-            logger.warning("[PYTHON TOOL] No valid file paths to send (missing filepath or filename)")
+            logger.warning("[PYTHON TOOL] No valid file names to send (missing filepath or filename)")
+        if skipped_file_names:
+            logger.warning(
+                "[PYTHON TOOL] Dropping files without enough workspace context: %s",
+                skipped_file_names,
+            )
+    else:
+        workspace_name = ""
+        file_names = []
+        mixed_workspace_file_names = []
 
     try:
+        if mixed_workspace_file_names and not file_names:
+            joined = ", ".join(mixed_workspace_file_names)
+            error_msg = (
+                "❌ Error: Code interpreter cannot run with files from multiple workspaces. "
+                f"Conflicting files: {joined}"
+            )
+            return {"text": error_msg, "stdout": "", "stderr": error_msg}
+
         # Run sync request inside async tool
         response = await asyncio.to_thread(
             requests.post,
             f"{backend_url}/tool/python_interpreter_v2",
             json={
                 "user_id": user_id,
-                "workspace_id": resolved_workspace_id,
+                "workspace_name": workspace_name,
                 "session_id": session_id,
                 "code": code,
                 "timeout_seconds": timeout_seconds,
-                "file_paths": file_paths_base64
+                "file_names": file_names
             },
             timeout=timeout_seconds + 15
         )
@@ -197,9 +249,19 @@ async def python_interpreter(
             files_updated = 0
 
             for f in generated_files:
+                file_path = (
+                    f.get("azure_path")
+                    or f.get("file_path")
+                    or f.get("object_key")
+                    or ""
+                )
                 new_file = {
                     "filename": f["name"],
-                    "azure_path": f.get("azure_path"),
+                    "azure_path": file_path,
+                    "file_path": file_path,
+                    "object_key": f.get("object_key") or file_path,
+                    "workspace_id": resolved_workspace_id,
+                    "workspace_name": workspace_name or resolved_workspace_name,
                     "size": f.get("size", 0),
                     "content_type": f.get("content_type", "application/octet-stream")
                 }
@@ -228,12 +290,18 @@ async def python_interpreter(
             existing_doc_paths = {d.get("filepath") for d in current_brain_docs}
             docs_added = 0
             for f in generated_files:
-                azure_path = f.get("azure_path", "")
+                azure_path = (
+                    f.get("azure_path")
+                    or f.get("file_path")
+                    or f.get("object_key")
+                    or ""
+                )
                 if azure_path and azure_path not in existing_doc_paths:
                     current_brain_docs.append({
                         "filename": f["name"],
                         "filepath": azure_path,
                         "workspace_id": resolved_workspace_id or "",
+                        "workspace_name": workspace_name or resolved_workspace_name,
                     })
                     existing_doc_paths.add(azure_path)
                     docs_added += 1

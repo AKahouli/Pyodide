@@ -40,6 +40,7 @@ describe('PlaybookFlowObservabilityService', () => {
       outputSummary: 'result',
       status: 'completed',
       durationMs: 10,
+      purpose: null,
       error: null,
     }]);
     expect(payload.llmPromptTrace).toEqual([

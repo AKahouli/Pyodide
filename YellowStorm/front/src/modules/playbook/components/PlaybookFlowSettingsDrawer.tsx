@@ -4,8 +4,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useModuleTranslation } from '@/modules/localization';
 import type { FlowSettings } from '../types';
+import { HitlBlockerCenter } from './HitlBlockerCenter';
 
 interface Props {
+  playbookId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   settings: FlowSettings;
@@ -13,17 +15,18 @@ interface Props {
   isSaving?: boolean;
 }
 
-export function PlaybookFlowSettingsDrawer({ open, onOpenChange, settings, onSettingsChange, isSaving }: Props) {
+export function PlaybookFlowSettingsDrawer({ playbookId, open, onOpenChange, settings, onSettingsChange, isSaving }: Props) {
   const { t } = useModuleTranslation('playbook');
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[320px] sm:w-[400px]">
+      <SheetContent className="w-[340px] overflow-y-auto sm:w-[520px]">
         <SheetHeader>
           <SheetTitle>{t('flowSettings.title')}</SheetTitle>
           <SheetDescription>{t('flowSettings.description')}</SheetDescription>
         </SheetHeader>
         <div className="space-y-6 py-6">
+          <HitlBlockerCenter flowId={playbookId} />
           <div className="space-y-2">
             <Label htmlFor="flow-recursion-limit">{t('flowSettings.recursionLimit')}</Label>
             <p className="text-xs text-muted-foreground">{t('flowSettings.recursionLimitHint')}</p>

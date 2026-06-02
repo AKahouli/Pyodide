@@ -297,6 +297,48 @@ export class FlowReplayAcceptedExample {
   outputPreview?: string | null;
 }
 
+@Schema({ _id: false })
+export class FlowReplayHitlMemorySnapshot {
+  @Prop({ required: true, type: String })
+  interruptId!: string;
+
+  @Prop({ required: true, type: String })
+  nodeId!: string;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  iteration!: number;
+
+  @Prop({ required: true, type: String, enum: ['clarification', 'approval_request', 'review_request'] })
+  type!: 'clarification' | 'approval_request' | 'review_request';
+
+  @Prop({ required: false, type: String, default: null })
+  blockerKind?: string | null;
+
+  @Prop({ required: true, type: String })
+  reasonCode!: string;
+
+  @Prop({ required: true, type: String })
+  prompt!: string;
+
+  @Prop({ required: true, type: String })
+  responseAction!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  responseMessage?: string | null;
+
+  @Prop({ required: true, type: String, default: 'step_only' })
+  responseScope!: string;
+
+  @Prop({ required: false, type: [String], default: [] })
+  downstreamNodeIds!: string[];
+
+  @Prop({ required: true, type: Boolean, default: false })
+  reusableInReplay!: boolean;
+
+  @Prop({ required: true, type: String })
+  contextFingerprint!: string;
+}
+
 @Schema({ timestamps: true, collection: 'playbook_flow_validated_replays' })
 export class FlowValidatedReplay {
   @Prop({ required: true, type: String, index: true })
@@ -404,6 +446,9 @@ export class FlowValidatedReplay {
   @Prop({ required: false, type: [SchemaFactory.createForClass(FlowReplaySemanticChecklistItem)], default: [] })
   semanticChecklist!: ReplaySemanticChecklistItem[];
 
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowReplayHitlMemorySnapshot)], default: [] })
+  hitlMemorySnapshots!: FlowReplayHitlMemorySnapshot[];
+
   @Prop({ required: false, type: SchemaFactory.createForClass(FlowTaskUsage), default: null })
   referenceUsage?: FlowTaskUsage | null;
 
@@ -444,6 +489,7 @@ export interface ReplayFingerprintInput {
 
 export interface BuildValidatedReplayBaselineInput {
   taskId: string;
+  iteration?: number;
   taskTitle?: string | null;
   taskDescription?: string | null;
   referenceExecutionId: string;
@@ -458,6 +504,24 @@ export interface BuildValidatedReplayBaselineInput {
     reasoningChain?: FlowTaskPublicReasoningTraceItem[];
     judgeResult?: FlowTaskJudgeResult | null;
   };
+  hitlEvents?: Array<{
+    interruptId?: string;
+    nodeId?: string;
+    iteration?: number;
+    type?: string;
+    blockerKind?: string | null;
+    reasonCode?: string;
+    prompt?: string;
+    status?: string;
+    response?: {
+      action?: string;
+      message?: string | null;
+      feedback?: string | null;
+      scope?: string;
+      remember?: boolean;
+    } | null;
+    downstreamNodeIds?: string[];
+  }>;
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string | null;
 }
@@ -477,6 +541,7 @@ export interface ValidatedReplayBaselineFields {
   driftPolicy: ReplayDriftPolicy;
   acceptedExamples: ReplayAcceptedExample[];
   semanticChecklist: ReplaySemanticChecklistItem[];
+  hitlMemorySnapshots: FlowReplayHitlMemorySnapshot[];
 }
 
 export const FlowValidatedReplaySchema = SchemaFactory.createForClass(FlowValidatedReplay);

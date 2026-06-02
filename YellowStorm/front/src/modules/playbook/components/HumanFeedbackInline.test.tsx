@@ -76,6 +76,12 @@ describe('HumanFeedbackInline', () => {
     expect(screen.queryByText('interrupt.openCopilot')).not.toBeInTheDocument();
   });
 
+  it('renders scope and memory metadata for answered feedback', () => {
+    render(<HumanFeedbackInline data={{ ...answeredApproval, scope: 'future_workflow_runs', remember: true }} taskId="t1" />);
+    expect(screen.getByText('interrupt.scope.future_workflow_runs')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.rememberFeedback')).toBeInTheDocument();
+  });
+
   it('opens interrupt copilot for the current step', async () => {
     render(<HumanFeedbackInline data={pendingApproval} taskId="t1" />);
     await userEvent.click(screen.getByText('interrupt.openCopilot'));
@@ -103,5 +109,18 @@ describe('HumanFeedbackInline', () => {
   it('keeps clarification pending state read-only in the step detail', () => {
     render(<HumanFeedbackInline data={pendingClarification} taskId="t1" />);
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('renders pending interrupt scope and downstream metadata', () => {
+    render(<HumanFeedbackInline data={{
+      ...pendingClarification,
+      feedbackScopeDefault: 'downstream_run',
+      downstreamNodeIds: ['next-step'],
+      memoryCandidate: true,
+    }} taskId="t1" />);
+
+    expect(screen.getByText('interrupt.scope.downstream_run')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.downstreamImpact')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.rememberFeedback')).toBeInTheDocument();
   });
 });

@@ -10,6 +10,7 @@ import type { PaginationMeta, PlaybookQueryParams } from '../types';
 import { PlaybookCard } from './PlaybookCard';
 import { CreatePlaybookDialog } from './CreatePlaybookDialog';
 import { PlaybookBetaDisclaimer } from './PlaybookBetaDisclaimer';
+import { PlaybookExecutionKpiCards } from './PlaybookExecutionKpiCards';
 import { useModuleTranslation } from '@/modules/localization';
 
 const DEBOUNCE_MS = 200;
@@ -409,6 +410,13 @@ export function PlaybookListPage() {
           </Button>
         )}
       </div>
+
+      {/* KPI Cards */}
+      {!loading && playbooks.length > 0 && (
+        <div className="px-6 py-3 border-b">
+          <PlaybookExecutionKpiCards playbooks={playbooks} />
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">

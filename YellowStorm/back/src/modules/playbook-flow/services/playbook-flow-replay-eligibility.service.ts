@@ -72,6 +72,7 @@ export class PlaybookFlowReplayEligibilityService {
         invalidationReasons.push('replay_stale_high_risk');
       }
     }
+    this.collectHitlInvalidationReasons(params, invalidationReasons);
 
     const modeDefault = params.mode === 'replay_strict' ? 90 : params.mode === 'replay_flex' ? 70 : 40;
     const threshold = typeof params.eligibilityThreshold === 'number'
@@ -129,6 +130,9 @@ export class PlaybookFlowReplayEligibilityService {
         'model_config_mismatch',
         'tool_config_mismatch',
         'output_contract_mismatch',
+        'hitl_context_drift',
+        'hitl_context_fingerprint_missing',
+        'hitl_approval_requires_confirmation',
       ]);
       return reasons.filter((reason) => strictReasons.has(reason));
     }
@@ -139,6 +143,23 @@ export class PlaybookFlowReplayEligibilityService {
     }
 
     return reasons.filter((reason) => reason === 'missing_replay_baseline');
+  }
+
+  private collectHitlInvalidationReasons(params: ReplayEligibilityInput, invalidationReasons: string[]): void {
+    const snapshots = params.artifacts.hitlMemorySnapshots ?? [];
+    for (const snapshot of snapshots) {
+      if (snapshot.type === 'approval_request' && !snapshot.reusableInReplay) {
+        invalidationReasons.push('hitl_approval_requires_confirmation');
+      }
+      const currentFingerprint = params.currentHitlContextFingerprints?.[snapshot.interruptId];
+      if (!currentFingerprint) {
+        invalidationReasons.push('hitl_context_fingerprint_missing');
+        continue;
+      }
+      if (snapshot.contextFingerprint !== currentFingerprint) {
+        invalidationReasons.push('hitl_context_drift');
+      }
+    }
   }
 
   private resolveSections(params: ReplayEligibilityInput): ReplayPromptSection[] {

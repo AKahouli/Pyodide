@@ -76,23 +76,27 @@ def _collect_generated_artifacts(
         if not isinstance(comp, dict) or comp.get("type") != "artifact":
             continue
         data = comp.get("data") or {}
-        generated.append(
-            {
-                "file_path": str(
-                    data.get("file_path") or data.get("filePath") or ""
-                ).strip(),
-                "filename": str(data.get("filename") or "").strip(),
-                "artifact_kind": str(
-                    data.get("artifact_kind") or data.get("artifactKind") or ""
-                ).strip(),
-                "output_port_id": str(
-                    data.get("output_port_id") or data.get("outputPortId") or ""
-                ).strip(),
-                "mime_type": str(
-                    data.get("mime_type") or data.get("mimeType") or ""
-                ).strip(),
-            }
-        )
+        artifact = {
+            "file_path": str(
+                data.get("file_path") or data.get("filePath") or ""
+            ).strip(),
+            "filename": str(data.get("filename") or "").strip(),
+            "artifact_kind": str(
+                data.get("artifact_kind") or data.get("artifactKind") or ""
+            ).strip(),
+            "output_port_id": str(
+                data.get("output_port_id") or data.get("outputPortId") or ""
+            ).strip(),
+            "mime_type": str(
+                data.get("mime_type") or data.get("mimeType") or ""
+            ).strip(),
+        }
+        object_key = str(
+            data.get("object_key") or data.get("objectKey") or ""
+        ).strip()
+        if object_key:
+            artifact["object_key"] = object_key
+        generated.append(artifact)
     return generated
 
 
@@ -276,16 +280,18 @@ def _build_task_artifacts_from_structured_outputs(
             )
             continue
 
-        artifacts.append(
-            {
-                "port_id": str(port.get("id") or output_port_id),
-                "artifact_kind": output_kind
-                or str(matched_artifact.get("artifact_kind") or "document"),
-                "url": str(matched_artifact.get("file_path") or ""),
-                "filename": str(matched_artifact.get("filename") or ""),
-                "mime_type": str(matched_artifact.get("mime_type") or ""),
-            }
-        )
+        artifact = {
+            "port_id": str(port.get("id") or output_port_id),
+            "artifact_kind": output_kind
+            or str(matched_artifact.get("artifact_kind") or "document"),
+            "url": str(matched_artifact.get("file_path") or ""),
+            "filename": str(matched_artifact.get("filename") or ""),
+            "mime_type": str(matched_artifact.get("mime_type") or ""),
+        }
+        object_key = str(matched_artifact.get("object_key") or "").strip()
+        if object_key:
+            artifact["object_key"] = object_key
+        artifacts.append(artifact)
 
     return artifacts
 
@@ -350,16 +356,97 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 def _parse_structured_final_response(response_text: str) -> Dict[str, Any]:
     candidates = _extract_json_objects(response_text)
     for payload in reversed(candidates):
-        display_text = str(payload.get("display_text") or "").strip()
-        outputs = payload.get("outputs")
-        if display_text and isinstance(outputs, list):
-            return {
+        display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
+        outputs, recovered_trace = _normalize_structured_outputs(
+            payload.get("outputs") if payload.get("outputs") is not None else payload.get("ports")
+        )
+        if display_text and outputs is not None:
+            result = {
                 "display_text": display_text,
-                "outputs": [item for item in outputs if isinstance(item, dict)],
+                "outputs": outputs,
             }
+            raw_trace = payload.get("reasoning_trace") or payload.get("reasoningTrace")
+            reasoning_trace = [item for item in raw_trace if isinstance(item, dict)] if isinstance(raw_trace, list) else []
+            reasoning_trace.extend(recovered_trace)
+            if reasoning_trace:
+                result["reasoning_trace"] = reasoning_trace
+            return result
     if candidates:
-        raise ValueError("Structured final response must include display_text and an outputs list")
+        raise ValueError("Structured final response must include display_text and outputs")
     raise ValueError("Step did not return a JSON object")
+
+
+def _normalize_structured_output_entry(
+    item: Dict[str, Any], *, fallback_port_id: str = ""
+) -> Dict[str, Any]:
+    entry = dict(item)
+    if not (
+        entry.get("output_port_id")
+        or entry.get("outputPortId")
+        or entry.get("port_id")
+        or entry.get("portId")
+        or entry.get("id")
+    ):
+        normalized_port_id = str(fallback_port_id).strip()
+        if normalized_port_id:
+            entry["output_port_id"] = normalized_port_id
+    if not (entry.get("artifact_kind") or entry.get("artifactKind")):
+        legacy_kind = str(entry.get("type") or "").strip()
+        if legacy_kind:
+            entry["artifact_kind"] = legacy_kind
+    if "content" not in entry and "value" in entry:
+        entry["content"] = entry.get("value")
+    return entry
+
+
+def _normalize_structured_outputs(outputs: Any) -> tuple[Optional[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    if isinstance(outputs, list):
+        normalized: List[Dict[str, Any]] = []
+        recovered_trace: List[Dict[str, Any]] = []
+        for item in outputs:
+            if not isinstance(item, dict):
+                continue
+            if _is_reasoning_trace_entry(item):
+                recovered_trace.append(dict(item))
+                continue
+            normalized.append(_normalize_structured_output_entry(item))
+        return normalized, recovered_trace
+    if isinstance(outputs, dict):
+        normalized: List[Dict[str, Any]] = []
+        recovered_trace: List[Dict[str, Any]] = []
+        for port_id, value in outputs.items():
+            if not isinstance(value, dict):
+                continue
+            if _is_reasoning_trace_entry(value):
+                recovered_trace.append(dict(value))
+                continue
+            normalized.append(
+                _normalize_structured_output_entry(value, fallback_port_id=str(port_id))
+            )
+        return normalized, recovered_trace
+    return None, []
+
+
+def _is_reasoning_trace_entry(item: Dict[str, Any]) -> bool:
+    if any(
+        key in item
+        for key in (
+            "output_port_id",
+            "outputPortId",
+            "port_id",
+            "portId",
+            "artifact_kind",
+            "artifactKind",
+            "content",
+            "filename",
+            "filepath",
+            "file_path",
+            "ref",
+            "url",
+        )
+    ):
+        return False
+    return all(str(item.get(key) or "").strip() for key in ("id", "type", "label", "description"))
 
 
 def _build_plain_text_artifact(

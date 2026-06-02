@@ -181,6 +181,43 @@ export class FlowReplayPostRunEvaluation {
   failureReason!: string | null;
 }
 
+@Schema({ _id: false })
+export class FlowReplayHitlFinding {
+  @Prop({ required: true, type: String, enum: ['info', 'warning', 'fail'] })
+  severity!: 'info' | 'warning' | 'fail';
+
+  @Prop({ required: true, type: String })
+  message!: string;
+
+  @Prop({ required: true, type: String })
+  nodeId!: string;
+}
+
+@Schema({ _id: false })
+export class FlowReplayHitlSummary {
+  /** Replay reports need compact HITL counts without loading the full execution audit trail. */
+  @Prop({ required: true, type: Number, default: 0 })
+  baselineHitlCount!: number;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  runtimeHitlCount!: number;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  reusedMemoryCount!: number;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  newClarificationCount!: number;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  approvalReaskedCount!: number;
+
+  @Prop({ required: true, type: Boolean, default: false })
+  hitlContextDrift!: boolean;
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowReplayHitlFinding)], default: [] })
+  findings!: FlowReplayHitlFinding[];
+}
+
 @Schema({ timestamps: true, collection: 'playbook_flow_replay_run_reports' })
 export class FlowReplayRunReport {
   @Prop({ required: true, type: String, index: true })
@@ -320,6 +357,9 @@ export class FlowReplayRunReport {
 
   @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayPostRunEvaluation), default: null })
   postRunEvaluation?: FlowReplayPostRunEvaluation | null;
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayHitlSummary), default: null })
+  hitlSummary?: FlowReplayHitlSummary | null;
 }
 
 export const FlowReplayRunReportSchema = SchemaFactory.createForClass(FlowReplayRunReport);

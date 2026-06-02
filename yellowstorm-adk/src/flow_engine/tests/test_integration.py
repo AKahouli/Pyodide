@@ -242,6 +242,30 @@ def _human_approval_snapshot() -> pb.FlowSnapshot:
     )
 
 
+def _step_interrupt_snapshot() -> pb.FlowSnapshot:
+    snapshot = pb.FlowSnapshot(
+        nodes=[
+            pb.FlowNode(
+                id="step-1", kind="step", label="Needs Approval",
+                input=pb.FlowNodeInput(raw="", ports=[]),
+                output=pb.FlowNodeOutput(raw="", ports=[]),
+            ),
+            pb.FlowNode(
+                id="step-2", kind="step", label="Finish",
+                input=pb.FlowNodeInput(raw="", ports=[]),
+                output=pb.FlowNodeOutput(raw="", ports=[]),
+            ),
+        ],
+        control_edges=[
+            pb.ControlEdge(id="e1", kind="sequential", source="step-1", target="step-2"),
+        ],
+        data_bindings=[],
+        settings=pb.FlowSettings(recursion_limit=25, max_parallelism=5),
+    )
+    ParseDict({"interrupt_before": True}, snapshot.nodes[0].metadata)
+    return snapshot
+
+
 @pytest.mark.asyncio
 async def test_integration_cancel_during_human_approval(servicer):
     """Cancel during human approval — verifies cancellation flows through gRPC."""
@@ -288,6 +312,52 @@ async def test_integration_resume_approval_unknown(servicer):
     )
     response = await servicer.ResumeApproval(request, None)
     assert not response.resumed
+
+
+@pytest.mark.asyncio
+async def test_integration_resume_from_step_interrupt(servicer):
+    request = pb.RunRequest(
+        execution_id="int-test-step-resume-1",
+        flow_id="int-flow",
+        owner_id="user-1",
+        snapshot=_step_interrupt_snapshot(),
+        input_context=_make_struct({"x": "y"}),
+        settings=pb.RunSettings(recursion_limit=25, max_parallelism=5),
+    )
+
+    with patch(
+        "src.flow_engine.nodes.step.litellm.acompletion",
+        return_value=_MockAsyncStream(["mock"]),
+    ):
+        events: list[Any] = []
+        suspended = asyncio.Event()
+
+        async def _collect():
+            async for event in servicer.Run(request, None):
+                events.append(event)
+                if event.event_type == "NodeSuspended":
+                    suspended.set()
+
+        run_task = asyncio.create_task(_collect())
+        await suspended.wait()
+
+        response = await servicer.ResumeFromStep(
+            pb.ResumeFromStepRequest(
+                execution_id="int-test-step-resume-1",
+                node_id="step-1",
+                iteration=0,
+                interrupt_id="step-1:approval_request:1",
+                action="approve",
+            ),
+            None,
+        )
+        await run_task
+
+    assert response.resumed is True
+    event_types = [event.event_type for event in events]
+    assert "NodeSuspended" in event_types
+    assert "NodeCompleted" in event_types
+    assert "ExecutionCompleted" in event_types
 
 
 def _iterator_snapshot() -> pb.FlowSnapshot:

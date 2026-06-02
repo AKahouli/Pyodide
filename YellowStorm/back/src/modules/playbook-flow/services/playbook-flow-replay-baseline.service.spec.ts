@@ -228,4 +228,115 @@ describe('PlaybookFlowReplayBaselineService', () => {
     expect(current.flowSnapshotHash).toBe(baseline.fingerprints.flowSnapshotHash);
     expect(current.modelConfigHash).toBe(baseline.fingerprints.modelConfigHash);
   });
+
+  it('captures reusable HITL memory snapshots for the validated task iteration', () => {
+    const result = service.buildValidatedReplayBaseline({
+      taskId: 'task-1',
+      iteration: 2,
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 8,
+      mode: 'replay_flex',
+      inputContext: { contract: 'signed' },
+      nodeSnapshot: { id: 'task-1', metadata: { taskType: 'review' } },
+      taskResult: {
+        output: 'ok',
+        toolTrace: [],
+        reasoningChain: [],
+      },
+      hitlEvents: [
+        {
+          interruptId: 'int-1',
+          nodeId: 'task-1',
+          iteration: 2,
+          status: 'answered',
+          type: 'clarification',
+          blockerKind: 'missing_document',
+          reasonCode: 'missing_document',
+          prompt: 'Which contract should I use?',
+          response: { action: 'reply', message: 'Use the signed contract.', scope: 'downstream_run' },
+          downstreamNodeIds: ['task-2'],
+        },
+        {
+          interruptId: 'int-2',
+          nodeId: 'task-1',
+          iteration: 1,
+          type: 'clarification',
+          reasonCode: 'old_iteration',
+          prompt: 'Old question',
+          response: { action: 'reply', message: 'Old answer.', scope: 'downstream_run' },
+        },
+      ],
+      preserveOutputFormat: false,
+    });
+
+    expect(result.hitlMemorySnapshots).toEqual([
+      expect.objectContaining({
+        interruptId: 'int-1',
+        nodeId: 'task-1',
+        iteration: 2,
+        type: 'clarification',
+        blockerKind: 'missing_document',
+        reasonCode: 'missing_document',
+        responseAction: 'reply',
+        responseMessage: 'Use the signed contract.',
+        responseScope: 'downstream_run',
+        downstreamNodeIds: ['task-2'],
+        reusableInReplay: true,
+      }),
+    ]);
+    expect(result.hitlMemorySnapshots[0]?.contextFingerprint).toBeTruthy();
+  });
+
+  it('excludes unanswered and incomplete HITL events from replay snapshots', () => {
+    const result = service.buildValidatedReplayBaseline({
+      taskId: 'task-1',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 8,
+      taskResult: { output: 'ok', toolTrace: [], reasoningChain: [] },
+      hitlEvents: [
+        { interruptId: 'int-1', nodeId: 'task-2', status: 'answered', response: { action: 'reply' } },
+        { interruptId: 'int-2', nodeId: 'task-1', status: 'answered', response: null },
+        { nodeId: 'task-1', status: 'answered', response: { action: 'reply' } },
+        { interruptId: 'int-3', nodeId: 'task-1', status: 'answered', response: {} },
+        { interruptId: 'int-4', nodeId: 'task-1', status: 'cancelled', response: { action: 'reply' } },
+      ],
+      preserveOutputFormat: false,
+    });
+
+    expect(result.hitlMemorySnapshots).toEqual([]);
+  });
+
+  it('requires explicit future memory consent before approval snapshots become reusable', () => {
+    const base = {
+      taskId: 'task-1',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 8,
+      taskResult: { output: 'ok', toolTrace: [], reasoningChain: [] },
+      preserveOutputFormat: false,
+    };
+
+    const stepOnly = service.buildValidatedReplayBaseline({
+      ...base,
+      hitlEvents: [{
+        interruptId: 'approval-1',
+        nodeId: 'task-1',
+        status: 'answered',
+        type: 'approval_request',
+        response: { action: 'approve', scope: 'step_only', remember: true },
+      }],
+    });
+    const futureMemory = service.buildValidatedReplayBaseline({
+      ...base,
+      hitlEvents: [{
+        interruptId: 'approval-2',
+        nodeId: 'task-1',
+        status: 'answered',
+        type: 'approval_request',
+        response: { action: 'approve', scope: 'future_workflow_runs', remember: true },
+      }],
+    });
+
+    expect(stepOnly.hitlMemorySnapshots[0]?.reusableInReplay).toBe(false);
+    expect(futureMemory.hitlMemorySnapshots[0]?.reusableInReplay).toBe(true);
+  });
 });

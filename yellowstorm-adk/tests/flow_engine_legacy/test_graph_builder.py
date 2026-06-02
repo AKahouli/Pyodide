@@ -7,6 +7,7 @@ import src.flow_engine.legacy.graph_builder as graph_builder_module
 from src.flow_engine.legacy.graph_builder import (
     DynamicGraphBuilder,
     _extract_artifacts_from_components,
+    _build_limit_reached_description,
     _build_default_text_artifact,
     _build_execution_clarification_guidance,
     _get_clarification_context,
@@ -1204,6 +1205,14 @@ def test_build_execution_clarification_guidance_removes_clear_output_contract() 
     assert "If required information is genuinely missing, ask one concise clarification question" in guidance
     assert "If the task is clear, complete the task normally." in guidance
     assert "respond with exactly 'CLEAR'" not in guidance
+
+
+def test_build_limit_reached_description_forces_best_effort_completion() -> None:
+    description = _build_limit_reached_description("Find agro leads in France.")
+
+    assert "Find agro leads in France." in description
+    assert "Proceed with the available information" in description
+    assert "Do not ask another clarification question." in description
 
 
 def test_build_clarification_pre_prompt_includes_missing_requirement_guardrails() -> None:

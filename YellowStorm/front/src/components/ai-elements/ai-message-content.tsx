@@ -859,25 +859,29 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
   const { t: tCommon } = useModuleTranslation('common');
   // Auto-open during streaming or for the last AI message
   const shouldAutoOpen = useShouldAutoOpenPreview();
-  const [isOpen, setIsOpen] = useState(shouldAutoOpen);
+  const [isOpen, setIsOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the blob URL in a ref to ensure proper cleanup
   const blobUrlRef = useRef<string | null>(null);
 
-  // Generate blob URL only when open and content is available
-  // This avoids creating blob URLs that might get cleaned up before use
   const blobUrl = useMemo(() => {
-    // Revoke previous blob URL if it exists
     if (blobUrlRef.current) {
       URL.revokeObjectURL(blobUrlRef.current);
       blobUrlRef.current = null;
     }
 
-    // Only create blob URL when preview is open and we have content
     if (!isOpen || !content) return null;
 
-    const blob = new Blob([content], { type: 'text/html' });
+    const hasOwnScheme = /color-scheme/i.test(content);
+    const previewHtml = hasOwnScheme
+      ? content
+      : content.replace(
+          /<head([^>]*)>/i,
+          '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
+        );
+
+    const blob = new Blob([previewHtml], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     blobUrlRef.current = url;
     return url;
@@ -925,7 +929,7 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
 
   // Full preview when open
   return (
-    <WebPreview ref={containerRef} className={cn('my-2', isFullscreen ? 'h-screen' : 'h-[400px]')} defaultUrl={blobUrl || ''}>
+    <WebPreview ref={containerRef} className={cn('my-2', isFullscreen ? 'h-screen' : 'h-[600px]')} defaultUrl={blobUrl || ''}>
       <WebPreviewNavigation>
         <span className='flex-1 truncate px-2 text-sm text-muted-foreground'>{tCommon('ai.preview.title')}</span>
         <TooltipProvider>
