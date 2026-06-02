@@ -1304,6 +1304,10 @@ export interface SkillResponse {
   id: string;
   name: string;
   description: string;
+  icon: string;
+  color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string | null;
   license: string;
   compatibility: string;
   metadata: Record<string, string>;
@@ -1333,9 +1337,31 @@ export interface SkillFileInput {
   content?: string;
 }
 
+export interface SkillCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSkillCategoryRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateSkillCategoryRequest {
+  name?: string;
+  description?: string;
+}
+
 export interface CreateSkillRequest {
   name: string;
   description: string;
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
   license?: string;
   compatibility?: string;
   metadata?: Record<string, string>;
@@ -1348,6 +1374,10 @@ export interface CreateSkillRequest {
 export interface UpdateSkillRequest {
   name?: string;
   description?: string;
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  categoryId?: string | null;
   license?: string;
   compatibility?: string;
   metadata?: Record<string, string>;

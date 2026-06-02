@@ -170,18 +170,21 @@ export class MessageController {
         conversationId,
         userMessageId: userMessage.id,
         aiMessageId: aiMessage.id,
+        connectorId: dto.connectorRepo?.connectorId,
+        connectorRepoName: dto.connectorRepo?.repoName,
       });
 
       // Start streaming (non-blocking)
-      this.streamService
-        .startStream(user._id.toString(), conversationId, aiMessage.id, {
-          content: dto.content,
-          attachedFileIds: dto.attachedFileIds,
-          webSearchEnabled: dto.webSearchEnabled,
-          modelId: dto.modelId,
-          agentIds: dto.agentIds,
-        }, requestId, undefined, user.email)
-        .catch((err) => {
+       this.streamService
+         .startStream(user._id.toString(), conversationId, aiMessage.id, {
+           content: dto.content,
+           attachedFileIds: dto.attachedFileIds,
+           webSearchEnabled: dto.webSearchEnabled,
+           modelId: dto.modelId,
+           agentIds: dto.agentIds,
+           connectorRepo: dto.connectorRepo,
+         }, requestId, undefined, user.email)
+         .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,
             aiMessageId: aiMessage.id,

@@ -8,11 +8,41 @@ const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/components/ai-elements/input', () => ({
-  default: ({ onSubmit }: { onSubmit: (message: { text: string }, modelId: string, agentIds?: string[]) => Promise<void> }) => (
+  default: ({
+    onSubmit,
+  }: {
+    onSubmit: (
+      message: { text: string },
+      modelId: string,
+      agentIds?: string[],
+      memberIds?: string[],
+      workspaceIds?: string[],
+      connectorRepo?: {
+        connectorId: string;
+        connectorName: string;
+        repoId: string;
+        repoName: string;
+        repoUrl?: string;
+      },
+    ) => Promise<void>;
+  }) => (
     <button
       type='button'
       onClick={() => {
-        void onSubmit({ text: 'hello' }, 'model-1', ['agent-1']);
+        void onSubmit(
+          { text: 'hello' },
+          'model-1',
+          ['agent-1'],
+          undefined,
+          undefined,
+          {
+            connectorId: 'connector-1',
+            connectorName: 'GitHub',
+            repoId: 'repo-1',
+            repoName: 'org-name/repo-name',
+            repoUrl: 'https://github.com/org-name/repo-name',
+          },
+        );
       }}>
       submit-message
     </button>
@@ -35,15 +65,30 @@ vi.mock('../hooks/useConversationFileUpload', () => ({
   }),
 }));
 
+vi.mock('@/modules/auth/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'user-1' } }),
+}));
+
 vi.mock('../store', () => ({
   useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       sendMessage: sendMessageMock,
       stopStream: stopStreamMock,
+      clearReplyingTo: vi.fn(),
       isStreaming: false,
     }),
   useIsAwaitingFirstChunk: () => false,
   useInputDisabled: () => false,
+  useReplyingToMessage: () => null,
+  useSelectedWorkspaceIds: () => [],
+  useSelectedConnectorRepo: () => ({
+    connectorId: 'connector-1',
+    connectorName: 'GitHub',
+    repoId: 'repo-1',
+    repoName: 'org-name/repo-name',
+    repoUrl: 'https://github.com/org-name/repo-name',
+  }),
+  useSetSelectedConnectorRepo: () => vi.fn(),
 }));
 
 describe('ConversationInput', () => {
@@ -67,6 +112,13 @@ describe('ConversationInput', () => {
         ],
         modelId: 'model-1',
         agentIds: ['agent-1'],
+        connectorRepo: {
+          connectorId: 'connector-1',
+          connectorName: 'GitHub',
+          repoId: 'repo-1',
+          repoName: 'org-name/repo-name',
+          repoUrl: 'https://github.com/org-name/repo-name',
+        },
       });
       expect(clearAllMock).toHaveBeenCalled();
     });

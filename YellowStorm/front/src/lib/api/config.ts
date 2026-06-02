@@ -189,6 +189,10 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/skills/${id}`,
     import: '/admin/skills/import',
   },
+  adminSkillCategories: {
+    list: '/admin/skill-categories',
+    byId: (id: string) => `/admin/skill-categories/${id}`,
+  },
   adminConnectors: {
     list: '/admin/connectors',
     byId: (id: string) => `/admin/connectors/${id}`,
@@ -210,6 +214,7 @@ export const API_ENDPOINTS = {
     credentials: (connectorId: string) => `/connectors/${connectorId}/credentials`,
     credential: (id: string) => `/connectors/credentials/${id}`,
     validateCredential: (id: string) => `/connectors/credentials/${id}/validate`,
+    repositories: '/connectors/repositories',
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',

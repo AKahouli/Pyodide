@@ -39,6 +39,7 @@ export function ConnectorsPage() {
   const [categories, setCategories] = useState<ConnectorCategoryResponse[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('__all__');
   const [showDialog, setShowDialog] = useState(false);
   const [editingConnector, setEditingConnector] = useState<ConnectorResponse | null>(null);
   const [deletingConnector, setDeletingConnector] = useState<ConnectorResponse | null>(null);
@@ -116,6 +117,10 @@ export function ConnectorsPage() {
     }
     return groups;
   })();
+
+  const visibleGroups = categoryFilter === '__all__'
+    ? groupedConnectors
+    : groupedConnectors.filter((group) => group.key === categoryFilter);
 
   const handleSave = async (data: ConnectorFormValues) => {
     try {
@@ -248,9 +253,23 @@ export function ConnectorsPage() {
         </div>
       </div>
 
-      <div className='relative max-w-sm'>
-        <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-        <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+      <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
+        <div className='relative w-full sm:max-w-sm'>
+          <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
+          <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+        </div>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className='w-full sm:w-[220px]'>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value='__all__'>All categories</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+            ))}
+            <SelectItem value={UNCATEGORIZED_KEY}>Uncategorized</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className='flex items-center gap-3'>
@@ -265,9 +284,13 @@ export function ConnectorsPage() {
         <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
           {search ? 'No connectors match your search.' : 'No connectors yet.'}
         </div>
+      ) : visibleGroups.length === 0 ? (
+        <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
+          No connectors in this category.
+        </div>
       ) : (
         <div className='space-y-8'>
-          {groupedConnectors.map((group) => {
+          {visibleGroups.map((group) => {
             const isExpanded = expandedCategories.has(group.key);
             const visible = isExpanded ? group.items : group.items.slice(0, CARDS_PER_CATEGORY);
             const hasMore = group.items.length > CARDS_PER_CATEGORY;

@@ -155,6 +155,7 @@ export interface SendMessagePayload {
   agentIds?: string[];
   memberIds?: string[];
   parentMessageId?: string;
+  connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
 }
 
 export interface CreateReportPayload {
