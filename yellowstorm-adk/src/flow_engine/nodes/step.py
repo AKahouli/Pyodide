@@ -208,6 +208,14 @@ async def run_step(
     if not isinstance(metadata, dict):
         metadata = {}
 
+    logger.info(
+        "[step] node metadata received",
+        node_id=node_id,
+        metadata_keys=sorted(metadata.keys()),
+        brain_context=metadata.get("brain_context"),
+        full_metadata=metadata,
+    )
+
     agent_name = str(metadata.get("agent_name") or "")
     agent_description = str(metadata.get("agent_description") or "")
     agent_model = metadata.get("agent_model") or node_config.get("model_id")
@@ -254,6 +262,20 @@ async def run_step(
     })
 
     input_context = node_inputs if node_inputs is not None else state.get("inputs", {})
+    _state_inputs = state.get("inputs", {})
+    logger.info(
+        "[step] input_context received",
+        node_id=node_id,
+        source="node_inputs" if node_inputs is not None else "state.inputs",
+        input_context_keys=sorted(input_context.keys()) if isinstance(input_context, dict) else None,
+        playbook_workspace_ids=input_context.get("__playbook_workspace_ids") if isinstance(input_context, dict) else None,
+        playbook_default_workspace_id=input_context.get("__playbook_default_workspace_id") if isinstance(input_context, dict) else None,
+        full_input_context=input_context,
+        state_inputs_keys=sorted(_state_inputs.keys()) if isinstance(_state_inputs, dict) else None,
+        state_playbook_workspace_ids=_state_inputs.get("__playbook_workspace_ids") if isinstance(_state_inputs, dict) else None,
+        state_playbook_default_workspace_id=_state_inputs.get("__playbook_default_workspace_id") if isinstance(_state_inputs, dict) else None,
+        full_state_inputs=_state_inputs,
+    )
     hitl_policy = _resolve_hitl_policy(metadata, state)
     hitl_blockers = _resolve_hitl_blockers(metadata, state, node_id)
     hitl_active = needs_hitl(metadata) and hitl_policy.get("mode") != "off"

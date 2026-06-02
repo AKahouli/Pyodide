@@ -533,6 +533,18 @@ def create_langchain_tools(
     agent_params = agent_config.get("agent_params") or {}
     session_id = str(agent_params.get("session_id") or "")
     user_id = str(agent_params.get("user_id") or "")
+    workspace_paths = _collect_workspace_paths(
+        workspace_context, code_interpreter_files, user_id
+    )
+    logger.info(
+        "connector_workspace_paths_resolved session_id=%s user_id=%s workspace_paths=%s "
+        "code_interpreter_files=%s raw_workspace_context=%s",
+        session_id,
+        user_id,
+        workspace_paths,
+        _log_payload(code_interpreter_files),
+        _log_payload(workspace_context),
+    )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -571,6 +583,7 @@ def create_langchain_tools(
             user_id=user_id,
             external_ids=input_files,
             session_id=session_id,
+            workspace_paths=workspace_paths,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -755,6 +768,60 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _collect_workspace_paths(
+    workspace_context: Optional[list],
+    code_interpreter_files: Optional[List[Dict[str, str]]] = None,
+    user_id: Optional[str] = None,
+) -> List[str]:
+    """Derive the sandbox workspace folder names sent to the MCP connector.
+
+    Each workspace becomes a folder under /mnt/workspace/<name> inside the sandbox VM.
+    Names are derived from the document's workspace_name (or its filepath), matching the
+    convention used by the code interpreter. Both the resolved input-port files
+    (code_interpreter_files) and the playbook-level workspace_context are inspected,
+    since the active source depends on how the workspace was wired to the step.
+    """
+    names: List[str] = []
+    seen = set()
+
+    def _add(name: str) -> None:
+        name = (name or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    # 1) Resolved input-port files (resolved_inputs_only mode).
+    for doc in code_interpreter_files or []:
+        if not isinstance(doc, dict):
+            continue
+        _add(
+            _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
+            or _extract_workspace_name_from_filepath(
+                str(doc.get("filepath", "")),
+                workspace_id=str(doc.get("workspace_id", "")).strip(),
+                owner_user_id=user_id,
+            )
+        )
+
+    # 2) Playbook-level workspace context (fallback_playbook mode).
+    for wc in workspace_context or []:
+        if not isinstance(wc, dict):
+            continue
+        for doc in wc.get("documents", []):
+            if not isinstance(doc, dict):
+                continue
+            _add(
+                _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
+                or _extract_workspace_name_from_filepath(
+                    str(doc.get("filepath", "")),
+                    workspace_id=str(doc.get("workspace_id", "")).strip(),
+                    owner_user_id=user_id,
+                )
+            )
+
+    return names
 
 
 def _merge_brain_data(agent_config: dict, workspace_context: Optional[list]) -> tuple:
@@ -1586,7 +1653,7 @@ def _create_connector_mcp_tools(
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
-    user_id: str = "",
+    workspace_paths: Optional[List[str]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1697,6 +1764,7 @@ def _create_connector_mcp_tools(
                 _fn: Optional[List[str]] = file_names,
                 sid: str = session_id,
                 uid: str = user_id,
+                wsp: List[str] = list(workspace_paths or []),
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1749,6 +1817,17 @@ def _create_connector_mcp_tools(
                             _log_payload(merged_params),
                         )
                         _last_mcp_actual_args.set(dict(merged_params))
+                        extra_headers: Dict[str, str] = {}
+                        if sid:
+                            extra_headers["x-conversation-id"] = sid
+                        if uid:
+                            extra_headers["x-user-id"] = uid
+                        if wsp:
+                            extra_headers["x-workspace-paths"] = ",".join(wsp)
+                        logger.info(
+                            "connector_mcp_workspace_header connector_id=%s action_key=%s workspace_paths=%s",
+                            cid, ak, wsp,
+                        )
                         response = await call_mcp_tool(
                             tt,
                             su,
