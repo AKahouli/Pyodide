@@ -1381,7 +1381,10 @@ class ChatbotServicer(
                     text_source=chatbot_pb2.TextSourceData(
                         type=str(text_source_data.get("type", "text")),
                         source=str(text_source_data.get("source", "")),
-                        file_name=str(text_source_data.get("file_name", "")),
+                        external_id=str(
+                            text_source_data.get("external_id")
+                            or text_source_data.get("file_name", "")
+                        ),
                         page=str(text_source_data.get("page", "")),
                         page_content=str(text_source_data.get("page_content", "")),
                         workspace_id=str(text_source_data.get("workspace_id", "")),
@@ -1401,7 +1404,11 @@ class ChatbotServicer(
                         path=str(image_source_data.get("path", "")),
                         page=str(image_source_data.get("page", "")),
                         file_name=str(image_source_data.get("file_name", "")),
-                        workspace_name=str(image_source_data.get("workspace_name", "")),
+                        external_id=str(
+                            image_source_data.get("external_id")
+                            or image_source_data.get("workspace_name")
+                            or image_source_data.get("file_name", "")
+                        ),
                         workspace_id=str(image_source_data.get("workspace_id", "")),
                         height=str(image_source_data.get("height", "")),
                         width=str(image_source_data.get("width", "")),
@@ -3079,7 +3086,7 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
             citation_kwargs["text_source"] = chatbot_pb2.TextSourceData(
                 type=str(ts.get("type", "text")),
                 source=str(ts.get("source", "")),
-                file_name=str(ts.get("file_name", "")),
+                external_id=str(ts.get("external_id") or ts.get("file_name", "")),
                 page=str(ts.get("page", "")),
                 page_content=str(ts.get("page_content", "")),
                 workspace_id=str(ts.get("workspace_id", "")),
@@ -3092,7 +3099,11 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
                 path=str(img.get("path", "")),
                 page=str(img.get("page", "")),
                 file_name=str(img.get("file_name", "")),
-                workspace_name=str(img.get("workspace_name", "")),
+                external_id=str(
+                    img.get("external_id")
+                    or img.get("workspace_name")
+                    or img.get("file_name", "")
+                ),
                 workspace_id=str(img.get("workspace_id", "")),
                 height=str(img.get("height", "")),
                 width=str(img.get("width", "")),

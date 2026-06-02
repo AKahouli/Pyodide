@@ -30,6 +30,14 @@ def _log_payload(value: Any) -> str:
         return str(value)
 
 
+def _normalize_connector_action_description(description: str) -> str:
+    return (
+        description.replace("workspace names", "workspace IDs")
+        .replace("Workspace name", "Workspace ID")
+        .replace("workspace name", "workspace ID")
+    )
+
+
 def _build_connector_source_signature(source: Dict[str, Any]) -> str:
     source_type = str(source.get("type") or "text")
     if source_type == "image":
@@ -510,7 +518,7 @@ _PLURAL_LEGACY_WORKSPACE_PARAMS = (
 )
 
 
-def _resolve_default_workspace_name(
+def _resolve_default_workspace_id(
     workspace_names: Optional[List[str]], workspace_id: Optional[str]
 ) -> Optional[str]:
     for value in workspace_names or []:
@@ -523,9 +531,9 @@ def _resolve_default_workspace_name(
 
 def _relax_bound_workspace_requirements(
     parameter_schema: Dict[str, Any],
-    default_workspace_name: Optional[str],
+    default_workspace_id: Optional[str],
 ) -> Dict[str, Any]:
-    if not default_workspace_name or not isinstance(parameter_schema, dict):
+    if not default_workspace_id or not isinstance(parameter_schema, dict):
         return parameter_schema
 
     properties = parameter_schema.get("properties")
@@ -582,10 +590,10 @@ def _with_default_workspace_params(
     workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
 ) -> Dict[str, Any]:
-    default_workspace_name = _resolve_default_workspace_name(
+    default_workspace_id = _resolve_default_workspace_id(
         workspace_names, workspace_id
     )
-    if not default_workspace_name:
+    if not default_workspace_id:
         return params
 
     merged_params = dict(params)
@@ -596,23 +604,31 @@ def _with_default_workspace_params(
     )
 
     # Generic connector schemas expose a free-form `params` object, so bind the
-    # canonical workspace_name there. Explicit schemas only receive declared fields.
+    # canonical workspace_id there. Explicit schemas only receive declared fields.
     if not isinstance(properties, dict) or not properties:
-        merged_params.setdefault("workspace_name", default_workspace_name)
+        merged_params.setdefault("workspace_id", default_workspace_id)
         return merged_params
 
-    for name in (*_SINGULAR_WORKSPACE_NAME_PARAMS, *_SINGULAR_LEGACY_WORKSPACE_PARAMS):
+    for name in _SINGULAR_LEGACY_WORKSPACE_PARAMS:
         if name in properties and not merged_params.get(name):
-            merged_params[name] = default_workspace_name
+            merged_params[name] = default_workspace_id
 
-    available_workspace_names = [
+    for name in _SINGULAR_WORKSPACE_NAME_PARAMS:
+        if name in properties and not merged_params.get(name):
+            merged_params[name] = default_workspace_id
+
+    available_workspace_ids = [
         str(value).strip()
         for value in (workspace_names or [])
         if str(value or "").strip()
-    ] or [default_workspace_name]
-    for name in (*_PLURAL_WORKSPACE_NAME_PARAMS, *_PLURAL_LEGACY_WORKSPACE_PARAMS):
+    ] or [default_workspace_id]
+    for name in _PLURAL_LEGACY_WORKSPACE_PARAMS:
         if name in properties and not merged_params.get(name):
-            merged_params[name] = available_workspace_names
+            merged_params[name] = available_workspace_ids
+
+    for name in _PLURAL_WORKSPACE_NAME_PARAMS:
+        if name in properties and not merged_params.get(name):
+            merged_params[name] = available_workspace_ids
 
     return merged_params
 
@@ -790,21 +806,17 @@ def create_connector_tools(
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"
             ).strip()
+            description = _normalize_connector_action_description(description)
             description = (
                 f"{description} Use this tool to search, browse, or inspect remote items first. "
                 "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
             )
-            default_workspace_name = _resolve_default_workspace_name(
+            default_workspace_id = _resolve_default_workspace_id(
                 effective_workspace_names, workspace_id
             )
             parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
-                default_workspace_name,
-            default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
-            parameter_schema = action.get("parameter_schema") or {}
-            parameter_schema = _relax_bound_brain_id_requirements(
-                parameter_schema,
-                default_brain_id,
+                default_workspace_id,
             )
             parameter_schema = _relax_fixed_param_requirements(
                 parameter_schema,

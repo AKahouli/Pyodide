@@ -14,6 +14,7 @@ from src.flow_engine.tools.langchain_factory import (
     _collect_connector_response_components,
     _create_code_interpreter_tool,
     _create_connector_mcp_tools,
+    _create_search_tools,
     _select_generated_artifact_output_port,
     _format_search_result,
 )
@@ -42,6 +43,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                 "page": "2",
                 "page_content": "Quarterly revenue increased by 18%.",
                 "workspace_id": "workspace-1",
+                "workspace_name": "",
                 "reference": "",
             }
         ],
@@ -52,6 +54,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
 
     assert "Use citation [1]" in updated["text"]
     assert updated["citation_sources"][0]["reference"] == "[1]"
+    assert updated["citation_sources"][0]["workspace_name"] == "workspace-1"
     assert components == [
         {
             "type": "sources",
@@ -75,11 +78,54 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
+                    "workspace_name": "workspace-1",
                     "reference": "[1]",
                 },
             },
         },
     ]
+
+
+def test_playbook_filtered_search_uses_qdrant_metadata_filters(monkeypatch) -> None:
+    captured_filters = []
+
+    def capture_payload(self, query, filter_params, vectorstore, top_k, search_type, user_id=None):
+        captured_filters.append(dict(filter_params))
+        return {"filter": filter_params}
+
+    async def post_vectorstore(self, token, payload):
+        return []
+
+    monkeypatch.setattr(
+        "src.smart_rag.tools.infrastructure.common_helpers.CommonHelpers.create_search_payload",
+        capture_payload,
+    )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.infrastructure.common_helpers.CommonHelpers.post_vectorstore",
+        post_vectorstore,
+    )
+
+    tools = _create_search_tools(
+        tool_configs=[{"name": "search"}],
+        doc_tree=[],
+        brain_tree=[],
+        workspace_names=["workspace-1"],
+        top_k=4,
+        collector=ToolResultCollector(),
+        file_names=["report.pdf"],
+        user_id="user-1",
+    )
+
+    search_tool = next(tool for tool in tools if tool.name == "perform_filtered_search")
+    asyncio.run(search_tool.ainvoke({"query": "revenue"}))
+
+    assert captured_filters
+    assert all(item["workspace_id"] == ["workspace-1"] for item in captured_filters)
+    assert all(item["file_name"] == "report.pdf" for item in captured_filters)
+    assert all(item["user_id"] == "user-1" for item in captured_filters)
+    assert all("workspace_name" not in item for item in captured_filters)
+    assert all("brain_id" not in item for item in captured_filters)
+    assert all("external_id" not in item for item in captured_filters)
 
 
 def test_format_search_result_includes_search_tool_citation_reference() -> None:
@@ -819,6 +865,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
                     "page": "2",
                     "page_content": "Quarterly revenue increased by 18%.",
                     "workspace_id": "workspace-1",
+                    "workspace_name": "workspace-1",
                     "reference": "[1]",
                 },
             },

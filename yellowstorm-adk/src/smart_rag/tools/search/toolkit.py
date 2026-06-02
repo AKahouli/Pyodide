@@ -679,25 +679,29 @@ class SearchToolkit:
                 if not self.workspace_name:
                     return {"content": []}
                 text_filter = {
-                    "workspace_name": self.workspace_name,
+                    "workspace_id": self.workspace_name,
                     "image": False,
                     "ids": list(self.ids) if self.ids else [""]
                 }
+                if self.user_id:
+                    text_filter["user_id"] = self.user_id
                 text_payload = self.common_helpers.create_search_payload(
                     query, text_filter, self.vectorstore, self.top_k, self.search_type,
                     user_id=self.user_id)
                 text_payloads.append(text_payload)
             else:
-                # Filtered search by file names - include workspace_name only if available
+                # Filtered search by file names - include workspace_id only if available
                 for file_name in filtered_filenames:
                     text_filter = {
                         "image": False,
                         "ids": list(self.ids) if self.ids else [""],
                         "file_name": file_name
                     }
-                    # Only include workspace_name if it's not empty
+                    # Only include workspace_id if it's not empty
                     if self.workspace_name:
-                        text_filter["workspace_name"] = self.workspace_name
+                        text_filter["workspace_id"] = self.workspace_name
+                    if self.user_id:
+                        text_filter["user_id"] = self.user_id
 
                     text_payload = self.common_helpers.create_search_payload(
                         query, text_filter, self.vectorstore, self.top_k, self.search_type,
@@ -768,26 +772,30 @@ class SearchToolkit:
                 if not self.workspace_name:
                     return {"wrapped_images": [], "image_references": []}
                 image_filter = {
-                    "workspace_name": self.workspace_name,
+                    "workspace_id": self.workspace_name,
                     "image": True,
                     "ids": list(self.ids) if self.ids else [""]
                 }
+                if self.user_id:
+                    image_filter["user_id"] = self.user_id
                 image_payload = self.common_helpers.create_search_payload(
                     query, image_filter, self.vectorstore, self.top_k, self.search_type,
                     user_id=self.user_id)
                 image_payloads.append(image_payload)
 
             else :
-                # Filtered search by file names - include workspace_name only if available
+                # Filtered search by file names - include workspace_id only if available
                 for file_name in filtered_filenames:
                     image_filter = {
                         "image": True,
                         "ids": list(self.ids) if self.ids else [""],
                         "file_name": file_name
                     }
-                    # Only include workspace_name if it's not empty
+                    # Only include workspace_id if it's not empty
                     if self.workspace_name:
-                        image_filter["workspace_name"] = self.workspace_name
+                        image_filter["workspace_id"] = self.workspace_name
+                    if self.user_id:
+                        image_filter["user_id"] = self.user_id
 
                     image_payload = self.common_helpers.create_search_payload(
                         query, image_filter, self.vectorstore, self.top_k, self.search_type,

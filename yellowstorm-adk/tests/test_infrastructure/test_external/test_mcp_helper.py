@@ -64,6 +64,30 @@ class TestMCPHelper:
         # Should return None due to JSON serialization error when the circular reference is in a minimal field
         assert result is None
 
+    def test_create_mcp_context_headers_uses_workspace_id(self):
+        result = MCPHelper.create_mcp_context_headers(
+            user_id="user123",
+            file_names=["contract.pdf"],
+            workspace_ids=["workspace-1"],
+        )
+
+        assert result == {
+            "user_id": "user123",
+            "file_name": "contract.pdf",
+            "workspace_id": "workspace-1",
+        }
+
+    def test_create_mcp_context_headers_uses_workspace_id_for_legacy_names(self):
+        result = MCPHelper.create_mcp_context_headers(
+            user_id="user123",
+            workspace_names=["workspace-1", "workspace-2"],
+        )
+
+        assert result == {
+            "user_id": "user123",
+            "workspace_id": '["workspace-1", "workspace-2"]',
+        }
+
     @pytest.mark.asyncio
     async def test_upload_files_to_datalake_success(self):
         """Test successful file upload to datalake."""

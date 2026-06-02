@@ -53,10 +53,32 @@ def test_normalize_mcp_response_extracts_sources_and_citations_from_inline_text(
             "file_name": "item-123",
             "page": "",
             "page_content": "Quarterly revenue increased by 18%.",
+            "workspace_id": "",
             "workspace_name": "",
             "reference": "",
         }
     ]
+
+
+def test_normalize_mcp_response_uses_workspace_id_as_text_workspace_name():
+    payload = [
+        {
+            "workspace_id": "699ec209f4340d089727f766",
+            "file_name": "30-recettes-preferees-des-francais.pdf",
+            "source": "30-recettes-preferees-des-francais.pdf",
+            "content": "1 verre a the d'huile d'olive",
+            "page_number": 10,
+        }
+    ]
+
+    normalized = _normalize_mcp_response(
+        payload,
+        fallback_text=str(payload),
+        action_key="searchv2_search_document_blocks",
+    )
+
+    assert normalized["citation_sources"][0]["workspace_id"] == "699ec209f4340d089727f766"
+    assert normalized["citation_sources"][0]["workspace_name"] == "699ec209f4340d089727f766"
 
 
 @pytest.mark.skipif(

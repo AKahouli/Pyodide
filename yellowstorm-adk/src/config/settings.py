@@ -34,6 +34,26 @@ class Settings(BaseSettings):
     AZURE_STORAGE_ACCOUNT_KEY: str
     AZURE_DATALAKE_CONNECTION_STRING: str
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str
+    CEPH_ENDPOINT: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("CEPH_ENDPOINT", "CEPH_S3_ENDPOINT"),
+    )
+    CEPH_REGION: str = Field(
+        default="us-east-1",
+        validation_alias=AliasChoices("CEPH_REGION", "CEPH_S3_REGION"),
+    )
+    CEPH_BUCKET_NAME: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("CEPH_BUCKET_NAME", "CEPH_S3_BUCKET"),
+    )
+    CEPH_ACCESS_KEY_ID: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("CEPH_ACCESS_KEY_ID", "CEPH_S3_ACCESS_KEY_ID"),
+    )
+    CEPH_SECRET_ACCESS_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("CEPH_SECRET_ACCESS_KEY", "CEPH_S3_SECRET_ACCESS_KEY"),
+    )
     DATABASE_URL: str
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str

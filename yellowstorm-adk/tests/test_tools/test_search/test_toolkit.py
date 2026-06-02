@@ -190,6 +190,56 @@ class TestSearchToolkitAsync:
         assert "list_of_filenames" in result
         assert "response_id" in result
 
+    async def test_text_search_filters_by_workspace_id(self):
+        """Test text search sends workspace ids to vector search."""
+        captured_payloads = []
+        toolkit = SearchToolkit(
+            task_order="test",
+            workspace_name=["workspace-1"],
+            user_id="user-1",
+        )
+
+        def capture_payload(query, filter_params, vectorstore, top_k, search_type, user_id=None):
+            captured_payloads.append(filter_params)
+            return {"filter": filter_params}
+
+        async def post_vectorstore(token, payload):
+            return []
+
+        toolkit.common_helpers.create_search_payload = capture_payload
+        toolkit.common_helpers.post_vectorstore = post_vectorstore
+
+        await toolkit._search_text_documents("revenue")
+
+        assert captured_payloads[0]["workspace_id"] == ["workspace-1"]
+        assert captured_payloads[0]["user_id"] == "user-1"
+        assert "workspace_name" not in captured_payloads[0]
+
+    async def test_filtered_image_search_filters_by_workspace_id(self):
+        """Test filtered image search sends workspace ids to vector search."""
+        captured_payloads = []
+        toolkit = SearchToolkit(
+            task_order="test",
+            workspace_name=["workspace-1"],
+            user_id="user-1",
+        )
+
+        def capture_payload(query, filter_params, vectorstore, top_k, search_type, user_id=None):
+            captured_payloads.append(filter_params)
+            return {"filter": filter_params}
+
+        async def post_vectorstore(token, payload):
+            return []
+
+        toolkit.common_helpers.create_search_payload = capture_payload
+        toolkit.common_helpers.post_vectorstore = post_vectorstore
+
+        await toolkit._search_image_documents("chart", filtered_filenames=["report.pdf"])
+
+        assert captured_payloads[0]["workspace_id"] == ["workspace-1"]
+        assert captured_payloads[0]["user_id"] == "user-1"
+        assert "workspace_name" not in captured_payloads[0]
+
     async def test_perform_in_memory_extraction_no_filename(self):
         """Test in-memory extraction with no filename."""
         toolkit = SearchToolkit(task_order="test")

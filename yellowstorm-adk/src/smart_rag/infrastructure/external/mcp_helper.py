@@ -135,16 +135,22 @@ class MCPHelper:
         user_id: str,
         file_names: Optional[List[str]] = None,
         workspace_names: Optional[List[str]] = None,
+        workspace_ids: Optional[List[str]] = None,
     ) -> Optional[Dict]:
-        """Create MCP context headers (user_id, file_name, workspace_name)."""
+        """Create MCP context headers (user_id, file_name, workspace_id)."""
         try:
             headers: Dict[str, str] = {"user_id": user_id}
+            effective_workspace_ids = workspace_ids or workspace_names
 
             if file_names:
                 headers["file_name"] = json.dumps(file_names) if len(file_names) > 1 else file_names[0]
 
-            if workspace_names:
-                headers["workspace_name"] = json.dumps(workspace_names) if len(workspace_names) > 1 else workspace_names[0]
+            if effective_workspace_ids:
+                headers["workspace_id"] = (
+                    json.dumps(effective_workspace_ids)
+                    if len(effective_workspace_ids) > 1
+                    else effective_workspace_ids[0]
+                )
 
             logger.debug(f"MCP context headers: {headers}")
             return headers
@@ -176,6 +182,7 @@ class MCPHelper:
                     headers = MCPHelper.create_mcp_context_headers(
                         user_id=user_id,
                         file_names=kwargs.get('file_names'),
+                        workspace_ids=kwargs.get('workspace_ids'),
                         workspace_names=kwargs.get('workspace_names'),
                     ) or {}
                 return StreamableHTTPConnectionParams(url=url, headers=headers)

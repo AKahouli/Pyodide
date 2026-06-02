@@ -6,9 +6,14 @@ Provides shared utility functions used across different tools.
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import os
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Set
+from urllib.parse import quote, urlsplit
 import aiofiles
+import aiohttp
 from azure.storage.filedatalake.aio import DataLakeFileClient as FileClient
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
@@ -37,8 +42,112 @@ class CommonHelpers:
         self.api_url = settings.API_URL
         self.azure_connection_string = settings.AZURE_DATALAKE_CONNECTION_STRING
         self.azure_file_system_name = settings.AZURE_DATALAKE_FILE_SYSTEM_NAME
+        self.ceph_endpoint = settings.CEPH_ENDPOINT
+        self.ceph_region = settings.CEPH_REGION
+        self.ceph_bucket_name = settings.CEPH_BUCKET_NAME
+        self.ceph_access_key_id = settings.CEPH_ACCESS_KEY_ID
+        self.ceph_secret_access_key = settings.CEPH_SECRET_ACCESS_KEY
 
-    
+    def _has_ceph_config(self) -> bool:
+        return all([
+            self.ceph_endpoint,
+            self.ceph_bucket_name,
+            self.ceph_access_key_id,
+            self.ceph_secret_access_key,
+        ])
+
+    def _normalize_ceph_object_key(self, file_path: str) -> str:
+        text = (file_path or "").strip()
+        bucket = self.ceph_bucket_name or ""
+        if text.startswith("s3://"):
+            parts = text.removeprefix("s3://").split("/", 1)
+            return parts[1] if len(parts) == 2 and parts[0] == bucket else text
+
+        endpoint = (self.ceph_endpoint or "").rstrip("/")
+        if endpoint and text.startswith(f"{endpoint}/"):
+            path = urlsplit(text).path.lstrip("/")
+            prefix = f"{bucket}/"
+            return path[len(prefix):] if path.startswith(prefix) else path
+
+        prefix = f"{bucket}/"
+        return text[len(prefix):] if text.startswith(prefix) else text
+
+    def _build_ceph_get_headers(self, object_key: str) -> Dict[str, str]:
+        endpoint = (self.ceph_endpoint or "").rstrip("/")
+        host = urlsplit(endpoint).netloc
+        now = datetime.now(timezone.utc)
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = now.strftime("%Y%m%d")
+        canonical_uri = f"/{quote(self.ceph_bucket_name or '', safe='')}/{quote(object_key, safe='/')}"
+        canonical_headers = f"host:{host}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:{amz_date}\n"
+        signed_headers = "host;x-amz-content-sha256;x-amz-date"
+        canonical_request = "\n".join([
+            "GET",
+            canonical_uri,
+            "",
+            canonical_headers,
+            signed_headers,
+            "UNSIGNED-PAYLOAD",
+        ])
+        credential_scope = f"{date_stamp}/{self.ceph_region}/s3/aws4_request"
+        string_to_sign = "\n".join([
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ])
+        signature = hmac.new(
+            self._get_signature_key(date_stamp),
+            string_to_sign.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return {
+            "Authorization": (
+                "AWS4-HMAC-SHA256 "
+                f"Credential={self.ceph_access_key_id}/{credential_scope}, "
+                f"SignedHeaders={signed_headers}, Signature={signature}"
+            ),
+            "Host": host,
+            "x-amz-content-sha256": "UNSIGNED-PAYLOAD",
+            "x-amz-date": amz_date,
+        }
+
+    def _get_signature_key(self, date_stamp: str) -> bytes:
+        secret = f"AWS4{self.ceph_secret_access_key}".encode("utf-8")
+        date_key = hmac.new(secret, date_stamp.encode("utf-8"), hashlib.sha256).digest()
+        region_key = hmac.new(date_key, self.ceph_region.encode("utf-8"), hashlib.sha256).digest()
+        service_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+        return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+    async def async_download_from_ceph_s3(self, file_path: str) -> str:
+        """
+        Download a file from Ceph S3 asynchronously.
+        """
+        if not self._has_ceph_config():
+            raise RuntimeError("Ceph S3 credentials are not configured")
+
+        object_key = self._normalize_ceph_object_key(file_path)
+        endpoint = (self.ceph_endpoint or "").rstrip("/")
+        url = f"{endpoint}/{quote(self.ceph_bucket_name or '', safe='')}/{quote(object_key, safe='/')}"
+        output_path = os.path.join(self.file_path, os.path.basename(object_key))
+        os.makedirs(self.file_path, exist_ok=True)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self._build_ceph_get_headers(object_key)) as response:
+                    response.raise_for_status()
+                    async with aiofiles.open(output_path, "wb") as my_file:
+                        await my_file.write(await response.read())
+            return output_path
+        except Exception as e:
+            logger.error(f"Failed to download file {file_path} from Ceph S3: {str(e)}")
+            raise
+
+    async def async_download_from_storage(self, file_path: str) -> str:
+        if self._has_ceph_config():
+            return await self.async_download_from_ceph_s3(file_path)
+        return await self.async_download_from_azure_datalake(file_path)
+
     async def async_download_from_azure_datalake(self, file_path: str) -> str:
         """
         Download a file from Azure Data Lake asynchronously.
@@ -177,7 +286,7 @@ class CommonHelpers:
             Tuple of (downloaded_image_paths, list_of_filenames)
         """
         download_and_encode_tasks = [
-            self.async_download_from_azure_datalake(i[0]["metadata"].get("image_path"))
+            self.async_download_from_storage(i[0]["metadata"].get("image_path"))
             for i in response_json_image if i[0]["metadata"].get("image_path")
         ]
         downloaded_image_paths = await asyncio.gather(*download_and_encode_tasks)

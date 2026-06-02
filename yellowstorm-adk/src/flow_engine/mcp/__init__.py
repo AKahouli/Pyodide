@@ -114,7 +114,7 @@ def _normalize_search_result_blocks(
         page_number = block.get("page_number")
         page = str(page_number + 1) if isinstance(page_number, int) else str(page_number or "").strip()
         workspace_id = str(block.get("workspace_id") or block.get("brain_id") or "").strip()
-        workspace_name = str(block.get("workspace_name") or "").strip()
+        workspace_name = str(block.get("workspace_name") or workspace_id).strip()
         source = str(
             _display_source_name(
                 block.get("source")
@@ -168,7 +168,7 @@ def _normalize_blocks_list(
         page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
         block_file_name = str(block.get("file_name") or block.get("external_id") or file_name).strip()
         block_workspace_id = str(block.get("workspace_id") or block.get("brain_id") or workspace_id).strip()
-        block_workspace_name = str(block.get("workspace_name") or "").strip()
+        block_workspace_name = str(block.get("workspace_name") or block_workspace_id).strip()
         source = str(_display_source_name(block.get("source") or source_label)).strip()
 
         signature = (source, block_file_name, page, content)
@@ -289,6 +289,13 @@ def _normalize_mcp_response(
         content_mode = str(response.get("contentMode") or "").strip().lower()
         inline_text = response.get("text")
         if content_mode == "inline_text" and isinstance(inline_text, str) and inline_text.strip():
+            item_workspace_id = str(
+                item.get("workspace_id")
+                or item.get("brain_id")
+                or response.get("workspace_id")
+                or response.get("brain_id")
+                or ""
+            ).strip()
             response["citation_sources"] = [
                 {
                     "type": "text",
@@ -301,7 +308,12 @@ def _normalize_mcp_response(
                     "file_name": str(item.get("itemId") or item.get("id") or ""),
                     "page": "",
                     "page_content": inline_text,
-                    "workspace_name": "",
+                    "workspace_id": item_workspace_id,
+                    "workspace_name": str(
+                        item.get("workspace_name")
+                        or response.get("workspace_name")
+                        or item_workspace_id
+                    ).strip(),
                     "reference": "",
                 }
             ]

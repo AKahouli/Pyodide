@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 
 class ChunkRetrievalService:
-    """Service for retrieving chunks from Qdrant by external_id."""
+    """Service for retrieving chunks from Qdrant by file_name."""
 
     def __init__(self, collection_name: str, username: str):
         """
@@ -28,18 +28,18 @@ class ChunkRetrievalService:
         self.client = get_qdrant_client()
         self.logger = get_logger(__name__)
 
-    def get_chunks_content_by_external_id(
+    def get_chunks_content_by_file_name(
         self,
-        external_id: str,
+        file_name: str,
         include_images: bool = False,
         chunk_filter: Optional[Dict[str, Any]] = None,
         sheet_name: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Retrieve chunk content directly by external_id.
+        Retrieve chunk content directly by file_name.
 
         Args:
-            external_id: External ID of the document
+            file_name: File name of the document
             include_images: Whether to include image chunks
             chunk_filter: Optional filters for specific chunks
             sheet_name: Optional sheet name to filter chunks by (for spreadsheet documents)
@@ -53,15 +53,15 @@ class ChunkRetrievalService:
                 }
 
         Raises:
-            ValueError: If no chunks found for external_id
+            ValueError: If no chunks found for file_name
             Exception: If Qdrant query fails
         """
         try:
             # Build filter conditions
             filter_conditions = [
                 FieldCondition(
-                    key="external_id",
-                    match=MatchValue(value=external_id),
+                    key="metadata.file_name",
+                    match=MatchValue(value=file_name),
                 )
             ]
 
@@ -100,7 +100,7 @@ class ChunkRetrievalService:
             if chunk_filter:
                 qdrant_filter = self._build_custom_filter(qdrant_filter, chunk_filter)
 
-            self.logger.info(f"Retrieving chunks for external_id: {external_id}")
+            self.logger.info(f"Retrieving chunks for file_name: {file_name}")
             self.logger.info(f"Filter: {qdrant_filter}")
 
             # Execute scroll to get matching points
@@ -120,27 +120,27 @@ class ChunkRetrievalService:
                     "metadata": result.payload.get("metadata", {}),
                 }
 
-            self.logger.info(f"Retrieved {len(chunks_data)} chunks for external_id: {external_id}")
+            self.logger.info(f"Retrieved {len(chunks_data)} chunks for file_name: {file_name}")
 
             if not chunks_data:
-                raise ValueError(f"No chunks found for external_id: {external_id}")
+                raise ValueError(f"No chunks found for file_name: {file_name}")
 
             return chunks_data
 
         except Exception as e:
-            self.logger.error(f"Error retrieving chunks for external_id {external_id}: {str(e)}")
+            self.logger.error(f"Error retrieving chunks for file_name {file_name}: {str(e)}")
             raise
 
-    def get_chunk_ids_by_external_id(
+    def get_chunk_ids_by_file_name(
         self,
-        external_id: str,
+        file_name: str,
         include_images: bool = False,
     ) -> List[str]:
         """
         Get only chunk IDs (when needed for compatibility).
 
         Args:
-            external_id: External ID of the document
+            file_name: File name of the document
             include_images: Whether to include image chunks
 
         Returns:
@@ -149,8 +149,8 @@ class ChunkRetrievalService:
         try:
             filter_conditions = [
                 FieldCondition(
-                    key="external_id",
-                    match=MatchValue(value=external_id),
+                    key="metadata.file_name",
+                    match=MatchValue(value=file_name),
                 )
             ]
 
@@ -176,24 +176,24 @@ class ChunkRetrievalService:
             )
 
             chunk_ids = [str(result.id) for result in results]
-            self.logger.info(f"Found {len(chunk_ids)} chunk IDs for external_id: {external_id}")
+            self.logger.info(f"Found {len(chunk_ids)} chunk IDs for file_name: {file_name}")
 
             return chunk_ids
 
         except Exception as e:
-            self.logger.error(f"Error retrieving chunk IDs for external_id {external_id}: {str(e)}")
+            self.logger.error(f"Error retrieving chunk IDs for file_name {file_name}: {str(e)}")
             raise
 
-    def get_chunks_count_by_external_id(
+    def get_chunks_count_by_file_name(
         self,
-        external_id: str,
+        file_name: str,
         include_images: bool = False,
     ) -> int:
         """
-        Get count of chunks for external_id.
+        Get count of chunks for file_name.
 
         Args:
-            external_id: External ID of the document
+            file_name: File name of the document
             include_images: Whether to include image chunks
 
         Returns:
@@ -202,8 +202,8 @@ class ChunkRetrievalService:
         try:
             filter_conditions = [
                 FieldCondition(
-                    key="external_id",
-                    match=MatchValue(value=external_id),
+                    key="metadata.file_name",
+                    match=MatchValue(value=file_name),
                 )
             ]
 
@@ -228,12 +228,12 @@ class ChunkRetrievalService:
             )
 
             chunk_count = count.count
-            self.logger.info(f"Found {chunk_count} chunks for external_id: {external_id}")
+            self.logger.info(f"Found {chunk_count} chunks for file_name: {file_name}")
 
             return chunk_count
 
         except Exception as e:
-            self.logger.error(f"Error getting chunk count for external_id {external_id}: {str(e)}")
+            self.logger.error(f"Error getting chunk count for file_name {file_name}: {str(e)}")
             return 0
 
     def _build_custom_filter(
@@ -254,19 +254,27 @@ class ChunkRetrievalService:
         if not base_filter.must:
             base_filter.must = []
 
-        if "language" in chunk_filter:
+        if "file_name" in chunk_filter:
             base_filter.must.append(
                 FieldCondition(
-                    key="language",
-                    match=MatchValue(value=chunk_filter["language"]),
+                    key="metadata.file_name",
+                    match=MatchValue(value=chunk_filter["file_name"]),
                 )
             )
 
-        if "brain_id" in chunk_filter:
+        if "workspace_id" in chunk_filter:
             base_filter.must.append(
                 FieldCondition(
-                    key="metadata.brain_id",
-                    match=MatchValue(value=chunk_filter["brain_id"]),
+                    key="metadata.workspace_id",
+                    match=MatchValue(value=chunk_filter["workspace_id"]),
+                )
+            )
+
+        if "user_id" in chunk_filter:
+            base_filter.must.append(
+                FieldCondition(
+                    key="metadata.user_id",
+                    match=MatchValue(value=chunk_filter["user_id"]),
                 )
             )
 

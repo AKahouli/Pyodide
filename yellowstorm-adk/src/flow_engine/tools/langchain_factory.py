@@ -222,6 +222,11 @@ def _component_to_connector_citation_source(
             "page": str(text_source.get("page") or ""),
             "page_content": str(text_source.get("page_content") or ""),
             "workspace_id": str(text_source.get("workspace_id") or ""),
+            "workspace_name": str(
+                text_source.get("workspace_name")
+                or text_source.get("workspace_id")
+                or ""
+            ),
             "reference": str(text_source.get("reference") or ""),
         }
 
@@ -330,6 +335,12 @@ def _collect_connector_response_components(
             continue
 
         source = dict(raw_source)
+        source_type = str(source.get("type") or "text")
+        if source_type != "image":
+            workspace_id = str(source.get("workspace_id") or "").strip()
+            source["workspace_name"] = str(
+                source.get("workspace_name") or workspace_id
+            ).strip()
         signature = _build_connector_citation_signature(source)
         reference = collector._connector_source_signatures.get(signature)
         is_new_source = reference is None
@@ -364,7 +375,6 @@ def _collect_connector_response_components(
         if not is_new_source:
             continue
 
-        source_type = str(source.get("type") or "text")
         if source_type == "image":
             component_payload = {
                 "parent_id": "",
@@ -394,6 +404,11 @@ def _collect_connector_response_components(
                     "page": str(source.get("page") or ""),
                     "page_content": str(source.get("page_content") or ""),
                     "workspace_id": str(source.get("workspace_id") or ""),
+                    "workspace_name": str(
+                        source.get("workspace_name")
+                        or source.get("workspace_id")
+                        or ""
+                    ),
                     "reference": reference,
                 },
             }
@@ -626,6 +641,7 @@ def create_langchain_tools(
             collector,
             file_names=effective_file_names,
             documents_by_port=documents_by_port,
+            user_id=user_id,
         )
         tools.extend(search_tools)
 
@@ -983,6 +999,7 @@ def _create_search_tools(
     collector: ToolResultCollector,
     file_names: Optional[List[str]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
+    user_id: Optional[str] = None,
 ) -> List[StructuredTool]:
     """Create document-search and brain-search LangChain tools.
 
@@ -1026,6 +1043,7 @@ def _create_search_tools(
         attribute_mapping=attribute_mapping or {},
         brain_attribute_mapping=brain_attribute_mapping or {},
         search_web="off",
+        user_id=user_id,
     )
 
     # Track how many sources we've already collected so we only emit new ones
