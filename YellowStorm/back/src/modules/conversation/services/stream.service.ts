@@ -41,6 +41,13 @@ interface StreamRequest {
   webSearchEnabled?: boolean;
   modelId?: string;
   agentIds?: string[];
+  connectorRepo?: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  };
 }
 
 // Log every Nth chunk to avoid overwhelming logs
@@ -592,7 +599,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     const [workspaceContexts, agents] = await Promise.all([
       this.buildWorkspaceContexts(conversationId, logOpts, conversation),
-      this.agentService.buildAgentsForStream(userId, request.modelId, request.agentIds, sharedAgentIds, groupMembers),
+      this.agentService.buildAgentsForStream(
+        userId,
+        request.modelId,
+        request.agentIds,
+        sharedAgentIds,
+        groupMembers,
+        request.connectorRepo?.connectorId,
+      ),
     ]);
 
     // Resolve agent brain contexts, current-turn attached files, and previous files in parallel
@@ -614,6 +628,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       agent_mode: 'manual',
       attached_files: attachedFiles,
       previous_attached_files: previousAttachedFiles,
+      ...(request.connectorRepo
+        ? {
+            connector_repo: {
+              connector_id: request.connectorRepo.connectorId,
+              connector_name: request.connectorRepo.connectorName,
+              repo_id: request.connectorRepo.repoId,
+              repo_name: request.connectorRepo.repoName,
+              repo_url: request.connectorRepo.repoUrl ?? '',
+            },
+          }
+        : {}),
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);

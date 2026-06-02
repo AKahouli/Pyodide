@@ -550,6 +550,31 @@ def _relax_bound_workspace_requirements(
     relaxed_schema["required"] = [name for name in required if name not in bound_names]
     return relaxed_schema
 
+def _relax_fixed_param_requirements(
+    parameter_schema: Dict[str, Any],
+    fixed_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(parameter_schema, dict) or not isinstance(fixed_params, dict):
+        return parameter_schema
+
+    properties = parameter_schema.get("properties")
+    required = parameter_schema.get("required")
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return parameter_schema
+
+    fixed_names = {
+        name
+        for name, value in fixed_params.items()
+        if name in properties and value not in (None, "", [], {})
+    }
+    if not fixed_names:
+        return parameter_schema
+
+    relaxed_schema = dict(parameter_schema)
+    relaxed_schema["required"] = [name for name in required if name not in fixed_names]
+    return relaxed_schema
+
+
 
 def _with_default_workspace_params(
     params: Dict[str, Any],
@@ -775,6 +800,15 @@ def create_connector_tools(
             parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
                 default_workspace_name,
+            default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
+            parameter_schema = action.get("parameter_schema") or {}
+            parameter_schema = _relax_bound_brain_id_requirements(
+                parameter_schema,
+                default_brain_id,
+            )
+            parameter_schema = _relax_fixed_param_requirements(
+                parameter_schema,
+                fixed_params,
             )
             schema = _build_function_schema(tool_name, description, parameter_schema)
             signature = _build_signature(parameter_schema)

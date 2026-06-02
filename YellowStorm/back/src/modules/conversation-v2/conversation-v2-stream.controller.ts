@@ -278,8 +278,31 @@ export class ConversationV2StreamController {
         });
       }
 
+      const isRepoBound = !!(query.connectorId && query.connectorRepoId);
+      const gRpcMessage = isRepoBound
+        ? `[system] The user has selected the GitHub repository "${
+            query.connectorRepoName
+          }" (${query.connectorRepoUrl ?? query.connectorRepoId}) for this conversation. Use the GitHub MCP tools scoped to this repository for any repository-level actions (issues, PRs, commits, branches, etc). Do NOT ask the user which repo to use — it has already been selected.\n\n${
+            query.message
+          }`
+        : query.message;
+
       chatSub = this.grpcClient
-        .chat(user.id, aiSessionId, query.message, query.model)
+        .chat(
+          user.id,
+          aiSessionId,
+          gRpcMessage,
+          query.model,
+          isRepoBound
+            ? {
+                connectorId: query.connectorId!,
+                connectorName: query.connectorName!,
+                repoId: query.connectorRepoId!,
+                repoName: query.connectorRepoName!,
+                repoUrl: query.connectorRepoUrl,
+              }
+            : undefined,
+        )
         .subscribe({
           next: (event) => {
             pending = pending.then(() => processEvent(event));

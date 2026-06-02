@@ -70,6 +70,8 @@ fake_step_hitl.extract_feedback_scope = lambda response, default_scope="step_onl
     response.get("scope") if isinstance(response, dict) and response.get("scope") else default_scope
 )
 fake_step_hitl.build_human_context_entry = lambda *args, **kwargs: None
+fake_step_hitl.build_blocker_judge_prompt = lambda *args, **kwargs: "judge prompt"
+fake_step_hitl.parse_blocker_judge_response = lambda _text: None
 fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_before = _fake_handle_hitl
 fake_step_hitl.handle_clarification_after = _fake_handle_hitl
@@ -506,6 +508,146 @@ async def test_run_step_hitl_policy_off_suppresses_legacy_clarification(monkeypa
     )
 
     assert handler_calls == []
+    assert result["task_outputs"][("step-1", 0)]["output"] == "done"
+
+
+@pytest.mark.anyio
+async def test_run_step_invokes_post_exec_clarification_for_question_output(monkeypatch):
+    after_calls = []
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("What geography should I use?")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    async def _no_pre_exec_hitl(*args, **kwargs):
+        return _FakeStepHitlResult()
+
+    async def _post_exec_hitl(*args, **kwargs):
+        after_calls.append((args, kwargs))
+        return _FakeStepHitlResult(skipped=True)
+
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+    monkeypatch.setattr("src.flow_engine.nodes.step.needs_hitl", lambda _metadata: True)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_before", _no_pre_exec_hitl)
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_clarification_after", _post_exec_hitl)
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect input",
+            "metadata": {"allowClarification": True},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "hitl_policy": {"mode": "auto"},
+        },
+    )
+
+    assert after_calls
+    assert result["task_outputs"][("step-1", 0)]["status"] == "skipped"
+
+
+@pytest.mark.anyio
+async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(monkeypatch):
+    captured_execute: dict[str, object] = {}
+
+    async def _fake_execute_step(
+        node_id,
+        node_config,
+        state,
+        metadata,
+        input_context,
+        node_description,
+        output_contract,
+        model_id,
+        system_prompt,
+        structured_output,
+        agent_config,
+        connector_bindings,
+        iteration,
+        label,
+        writer,
+        hitl_policy,
+        hitl_blockers,
+        human_context,
+    ):
+        captured_execute["node_description"] = node_description
+        captured_execute["human_context"] = human_context
+        return "done", [], None
+
+    hitl_result = _FakeStepHitlResult(updated_description="Search leads.\n\nClarification from user: Use Germany.")
+    hitl_result.human_context = [{
+        "node_id": "step-1",
+        "task_title": "Collect country",
+        "interrupt_type": "clarification",
+        "message": "Use Germany.",
+        "scope": "downstream_run",
+        "remember": False,
+        "source_message": "Which country?",
+    }]
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_hitl_blocker", lambda *args, **kwargs: object())
+
+    def _fake_handle_smart_hitl_blocker(decision, *args, **kwargs):
+        return hitl_result if decision else _FakeStepHitlResult()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.handle_smart_hitl_blocker", _fake_handle_smart_hitl_blocker)
+
+    async def _no_llm_judge(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_llm_judge_blocker", _no_llm_judge)
+    monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fake_execute_step)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Collect country",
+            "description": "Search leads.",
+            "metadata": {},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "human_context": [],
+            "hitl_policy": {"mode": "auto"},
+        },
+    )
+
+    assert captured_execute["node_description"] == "Search leads.\n\nClarification from user: Use Germany."
+    assert captured_execute["human_context"] == hitl_result.human_context
     assert result["task_outputs"][("step-1", 0)]["output"] == "done"
 
 

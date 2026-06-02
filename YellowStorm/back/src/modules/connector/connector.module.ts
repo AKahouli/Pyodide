@@ -2,11 +2,13 @@ import { ConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConnectorService } from './connector.service';
+import { ConnectorCategoryService } from './connector-category.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorAuthServiceImpl } from './connector-auth.service';
 import { ConnectorTransferService } from './connector-transfer.service';
 import { M365TransferAdapter } from './adapters/m365-transfer.adapter';
 import { Connector, ConnectorSchema } from './schemas/connector.schema';
+import { ConnectorCategory, ConnectorCategorySchema } from './schemas/connector-category.schema';
 import { ConnectorCredential, ConnectorCredentialSchema } from './schemas/connector-credential.schema';
 import { AdminConnectorAuth, AdminConnectorAuthSchema } from './schemas/admin-connector-auth.schema';
 import {
@@ -14,9 +16,11 @@ import {
   AdminConnectorOAuthStateSchema,
 } from './schemas/admin-connector-oauth-state.schema';
 import { AdminConnectorController } from './admin-connector.controller';
+import { AdminConnectorCategoryController } from './admin-connector-category.controller';
 import { AdminConnectorAuthCallbackController } from './admin-connector-auth-callback.controller';
 import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-callback.controller';
 import { ConnectorController } from './connector.controller';
+import { ConnectorUserService } from './connector-user.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import {
@@ -34,6 +38,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     ConfigModule,
     MongooseModule.forFeature([
       { name: Connector.name, schema: ConnectorSchema },
+      { name: ConnectorCategory.name, schema: ConnectorCategorySchema },
       { name: ConnectorCredential.name, schema: ConnectorCredentialSchema },
       { name: AdminConnectorAuth.name, schema: AdminConnectorAuthSchema },
       { name: AdminConnectorOAuthState.name, schema: AdminConnectorOAuthStateSchema },
@@ -45,15 +50,23 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     UserModule,
     LoggerModule,
   ],
-  controllers: [AdminConnectorController, AdminConnectorAuthCallbackController, UnifiedOAuthCallbackController, ConnectorController],
+  controllers: [
+    AdminConnectorController,
+    AdminConnectorCategoryController,
+    AdminConnectorAuthCallbackController,
+    UnifiedOAuthCallbackController,
+    ConnectorController,
+  ],
   providers: [
     CryptoService,
     ConnectorService,
+    ConnectorCategoryService,
     ConnectorAdminAuthService,
     ConnectorCredentialService,
     ConnectorAuthServiceImpl,
     ConnectorTransferService,
     M365TransferAdapter,
+    ConnectorUserService,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,

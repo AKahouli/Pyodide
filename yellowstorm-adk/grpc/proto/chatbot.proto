@@ -139,6 +139,14 @@ message UserContext {
     string username = 2;
 }
 
+message ConnectorRepo {
+    string connector_id = 1;
+    string connector_name = 2;
+    string repo_id = 3;
+    string repo_name = 4;
+    string repo_url = 5;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -148,6 +156,7 @@ message RunAgentTeamRequest {
     string agent_mode = 9;
     repeated AttachedFile attached_files = 10;                   // Files attached in this turn (images + documents)
     repeated Document previous_attached_files = 11;  // Already-indexed files from previous turns
+    ConnectorRepo connector_repo = 12;
 }
 
 message GenerateConversationNameRequest {

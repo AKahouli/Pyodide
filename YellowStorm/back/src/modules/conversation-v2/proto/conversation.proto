@@ -50,6 +50,18 @@ message ChatRequest {
   optional string event_id = 4;
   optional int64  timestamp = 5;
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
+  ConnectorRepo connector_repo = 7;
+}
+
+// Identifies a repository scoped under a connector. When present on a
+// ChatRequest, tools bound to that connector SHOULD operate within this
+// repository context rather than prompting the user for a target.
+message ConnectorRepo {
+  string connector_id = 1;
+  string connector_name = 2;
+  string repo_id = 3;
+  string repo_name = 4;
+  string repo_url = 5;
 }
 
 message Event {

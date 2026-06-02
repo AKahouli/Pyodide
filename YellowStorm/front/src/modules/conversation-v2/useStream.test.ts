@@ -45,6 +45,31 @@ describe('useConversationV2Stream', () => {
     expect(es.url).toMatch(/clientEventId=[0-9a-fA-F-]{36}/);
   });
 
+  it('forwards the selected connector repo in the stream query string', () => {
+    const { result } = renderHook(() => useConversationV2Stream());
+    act(() => {
+      useConversationV2Store.getState().setSessionId('s1');
+      useConversationV2Store.getState().setSelectedConnectorRepo({
+        connectorId: 'connector-1',
+        connectorName: 'GitHub',
+        repoId: 'repo-1',
+        repoName: 'org-name/repo-name',
+        repoUrl: 'https://github.com/org-name/repo-name',
+      });
+    });
+
+    act(() => result.current.send('create a task'));
+
+    const es = MockEventSource.instances.at(-1)!;
+    expect(es.url).toContain('connectorId=connector-1');
+    expect(es.url).toContain('connectorName=GitHub');
+    expect(es.url).toContain('connectorRepoId=repo-1');
+    expect(es.url).toContain('connectorRepoName=org-name%2Frepo-name');
+    expect(es.url).toContain(
+      'connectorRepoUrl=https%3A%2F%2Fgithub.com%2Forg-name%2Frepo-name',
+    );
+  });
+
   it('optimistically echoes the user message and then upserts via SSE without duplicating', () => {
     const { result } = renderHook(() => useConversationV2Stream());
     act(() => useConversationV2Store.getState().setSessionId('s1'));

@@ -36,6 +36,18 @@ export class Skill extends Document {
   @Prop({ required: true, trim: true, minlength: 1, maxlength: 1024 })
   description!: string;
 
+  @Prop({ default: '', maxlength: 64 })
+  icon!: string;
+
+  @Prop({ default: '', maxlength: 64 })
+  color!: string;
+
+  @Prop({ default: 'light', enum: ['light', 'dark'] })
+  iconColor!: 'light' | 'dark';
+
+  @Prop({ type: Types.ObjectId, ref: 'SkillCategory', default: null, index: true })
+  categoryId?: Types.ObjectId | null;
+
   @Prop({ default: '', maxlength: 255 })
   license!: string;
 

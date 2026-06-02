@@ -180,10 +180,18 @@ export const API_ENDPOINTS = {
     list: '/admin/tools',
     byId: (id: string) => `/admin/tools/${id}`,
   },
+  adminToolCategories: {
+    list: '/admin/tool-categories',
+    byId: (id: string) => `/admin/tool-categories/${id}`,
+  },
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,
     import: '/admin/skills/import',
+  },
+  adminSkillCategories: {
+    list: '/admin/skill-categories',
+    byId: (id: string) => `/admin/skill-categories/${id}`,
   },
   adminConnectors: {
     list: '/admin/connectors',
@@ -196,12 +204,17 @@ export const API_ENDPOINTS = {
     oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
     oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
   },
+  adminConnectorCategories: {
+    list: '/admin/connector-categories',
+    byId: (id: string) => `/admin/connector-categories/${id}`,
+  },
   connectors: {
     list: '/connectors',
     byId: (id: string) => `/connectors/${id}`,
     credentials: (connectorId: string) => `/connectors/${connectorId}/credentials`,
     credential: (id: string) => `/connectors/credentials/${id}`,
     validateCredential: (id: string) => `/connectors/credentials/${id}/validate`,
+    repositories: '/connectors/repositories',
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',

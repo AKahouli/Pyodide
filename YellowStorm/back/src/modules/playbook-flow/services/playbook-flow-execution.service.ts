@@ -116,11 +116,21 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
   // Keep HITL contract data inside metadata until the runtime proto carries first-class flow-node fields.
   return {
     ...metadata,
-    ...(node.interruptBefore !== undefined ? { interrupt_before: Boolean(node.interruptBefore) } : {}),
-    ...(node.interruptAfter !== undefined ? { interrupt_after: Boolean(node.interruptAfter) } : {}),
-    ...(node.allowClarification !== undefined ? { allow_clarification: Boolean(node.allowClarification) } : {}),
-    ...(typeof node.clarificationPrompt === 'string' ? { clarification_prompt: node.clarificationPrompt } : {}),
-    ...(node.maxClarifications !== undefined ? { max_clarifications: Number(node.maxClarifications) || 0 } : {}),
+    ...(node.interruptBefore !== undefined || metadata.interruptBefore !== undefined
+      ? { interrupt_before: Boolean(node.interruptBefore ?? metadata.interruptBefore) }
+      : {}),
+    ...(node.interruptAfter !== undefined || metadata.interruptAfter !== undefined
+      ? { interrupt_after: Boolean(node.interruptAfter ?? metadata.interruptAfter) }
+      : {}),
+    ...(node.allowClarification !== undefined || metadata.allowClarification !== undefined
+      ? { allow_clarification: Boolean(node.allowClarification ?? metadata.allowClarification) }
+      : {}),
+    ...(typeof (node.clarificationPrompt ?? metadata.clarificationPrompt) === 'string'
+      ? { clarification_prompt: node.clarificationPrompt ?? metadata.clarificationPrompt }
+      : {}),
+    ...(node.maxClarifications !== undefined || metadata.maxClarifications !== undefined
+      ? { max_clarifications: Number(node.maxClarifications ?? metadata.maxClarifications) || 0 }
+      : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
     ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
   };

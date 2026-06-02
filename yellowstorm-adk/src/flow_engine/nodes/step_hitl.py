@@ -182,6 +182,66 @@ def build_clarification_pre_prompt(
     return "\n\n".join(blocks)
 
 
+def build_blocker_judge_prompt(
+    label: str,
+    node_description: str,
+    input_context: dict[str, Any],
+    blockers: list[dict[str, Any]],
+) -> str:
+    blocker_lines = []
+    for blocker in blockers:
+        matcher_config = blocker.get("matcherConfig") or blocker.get("matcher_config") or {}
+        natural_rule = matcher_config.get("naturalLanguageRule") or matcher_config.get("natural_language_rule") if isinstance(matcher_config, dict) else ""
+        blocker_lines.append(json.dumps({
+            "id": blocker.get("id"),
+            "kind": blocker.get("kind"),
+            "action": blocker.get("action"),
+            "label": blocker.get("label"),
+            "description": blocker.get("description"),
+            "naturalLanguageRule": natural_rule,
+            "promptTemplate": blocker.get("promptTemplate") or blocker.get("prompt_template"),
+        }, ensure_ascii=False))
+    return "\n\n".join([
+        "Must always Evaluate whether any configured human-in-the-loop blocker applies regarding the given task description and ask for clarification or approval if needed.",
+        "Return exactly one JSON object and no markdown.",
+        "If no blocker applies, return {\"decision\":\"clear\"}.",
+        "If a blocker applies, return {\"decision\":\"block\",\"blocker_id\":\"...\",\"message\":\"one concise question or approval request for the user\"}.",
+        "Do not invent missing user requirements. Judge only from the task, current inputs, and blocker definitions.",
+        "When a blocker describes missing or ambiguous criteria that are still not provided, prefer block over clear.",
+        "For clarify actions, the message must be one direct user-facing question asking only for the missing information.",
+        "For approval actions, the message must be one concise approval request.",
+        f"Task title: {label}",
+        f"Task description:\n{node_description}",
+        f"Current inputs/context:\n{json.dumps(input_context, ensure_ascii=False, default=str)}",
+        "Blocker definitions:\n" + "\n".join(blocker_lines),
+    ])
+
+
+def parse_blocker_judge_response(text: Any) -> dict[str, str] | None:
+    if not isinstance(text, str) or not text.strip():
+        return None
+    raw = text.strip()
+    if raw.upper() == "CLEAR":
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict) or str(parsed.get("decision") or "").lower() != "block":
+        return None
+    blocker_id = str(parsed.get("blocker_id") or parsed.get("blockerId") or "").strip()
+    message = str(parsed.get("message") or "").strip()
+    if not blocker_id or not message:
+        return None
+    return {"blocker_id": blocker_id, "message": message}
+
+
 def extract_feedback_scope(response: Any, default_scope: str = "step_only") -> str:
     if not isinstance(response, dict):
         return default_scope

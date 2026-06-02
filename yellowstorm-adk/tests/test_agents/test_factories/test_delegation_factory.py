@@ -4,6 +4,10 @@ import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from src.smart_rag.agents.factories.delegation_factory import AgentDelegationFactory
+from src.smart_rag.agents.factories.delegation_factory_helper import (
+    _append_connector_repo_context,
+    _inject_connector_repo_into_bindings,
+)
 
 
 class TestAgentDelegationFactory:
@@ -158,3 +162,44 @@ class TestAgentDelegationFactory:
 
             assert callable(delegate_func)
             assert "Agent not found" in delegate_func.__doc__
+
+    def test_inject_connector_repo_adds_github_aliases(self):
+        bindings = [{"connector_id": "connector-1", "fixed_params": {"existing": "value"}}]
+
+        augmented = _inject_connector_repo_into_bindings(
+            bindings,
+            {
+                "connector_id": "connector-1",
+                "repo_id": "repo-1",
+                "repo_name": "org-name/repo-name",
+                "repo_url": "https://github.com/org-name/repo-name",
+            },
+        )
+
+        assert augmented[0]["fixed_params"] == {
+            "existing": "value",
+            "repo_id": "repo-1",
+            "repo_name": "org-name/repo-name",
+            "repo_url": "https://github.com/org-name/repo-name",
+            "repository": "org-name/repo-name",
+            "full_name": "org-name/repo-name",
+            "owner": "org-name",
+            "repo_owner": "org-name",
+            "repo": "repo-name",
+            "repository_name": "repo-name",
+        }
+
+    def test_append_connector_repo_context_instructs_selected_repo(self):
+        prompt = _append_connector_repo_context(
+            "Base prompt",
+            {
+                "connector_name": "GitHub",
+                "repo_name": "org-name/repo-name",
+                "repo_url": "https://github.com/org-name/repo-name",
+            },
+        )
+
+        assert "Base prompt" in prompt
+        assert "Connector: GitHub" in prompt
+        assert "Repository: org-name/repo-name" in prompt
+        assert "Do not ask the user which repository to use." in prompt

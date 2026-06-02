@@ -205,6 +205,12 @@ class MCPHelper:
                     raise ValueError("DATAVIZ_MCP_URL is not configured")
                 return SseServerParams(url=url, timeout=180.0)
 
+            elif mcp_type == 'github':
+                url = kwargs.get('url')
+                if not url:
+                    raise ValueError("URL is required for github MCP type")
+                return StreamableHTTPConnectionParams(url=url)
+
             else:
                 raise ValueError(f"Unsupported MCP type: {mcp_type}")
 

@@ -11,11 +11,12 @@ const EVENT_TYPES: AgentEvent['type'][] = [
 
 export function useConversationV2Stream() {
   const esRef = useRef<EventSource | null>(null);
-  const { sessionId, handleEvent, setStreaming } = useConversationV2Store(
+  const { sessionId, handleEvent, setStreaming, selectedConnectorRepo } = useConversationV2Store(
     useShallow((s) => ({
       sessionId: s.sessionId,
       handleEvent: s.handleEvent,
       setStreaming: s.setStreaming,
+      selectedConnectorRepo: s.selectedConnectorRepo,
     })),
   );
 
@@ -117,6 +118,16 @@ export function useConversationV2Stream() {
       // service uses its own default. Match SendMessageQueryDto on the backend.
       if (model) params.set('model', model);
       params.set('clientEventId', clientEventId);
+
+      // Forward connector repository context if one is selected.
+      const repo = selectedConnectorRepo;
+      if (repo) {
+        params.set('connectorId', repo.connectorId);
+        params.set('connectorName', repo.connectorName);
+        params.set('connectorRepoId', repo.repoId);
+        params.set('connectorRepoName', repo.repoName);
+        if (repo.repoUrl) params.set('connectorRepoUrl', repo.repoUrl);
+      }
       const url = `${API_CONFIG.baseURL}/conversation-v2/sessions/${sessionId}/stream?${params.toString()}`;
       const es = new EventSource(url);
       esRef.current = es;
@@ -126,7 +137,7 @@ export function useConversationV2Stream() {
         esRef.current = null;
       });
     },
-    [sessionId, handleEvent, setStreaming, attachListeners],
+    [sessionId, handleEvent, setStreaming, attachListeners, selectedConnectorRepo],
   );
 
   const openLive = useCallback(() => {

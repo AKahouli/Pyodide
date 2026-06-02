@@ -1,5 +1,29 @@
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+class ConnectorRepoDto {
+  @ApiProperty()
+  @IsString()
+  connectorId!: string;
+
+  @ApiProperty()
+  @IsString()
+  connectorName!: string;
+
+  @ApiProperty()
+  @IsString()
+  repoId!: string;
+
+  @ApiProperty()
+  @IsString()
+  repoName!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  repoUrl?: string;
+}
 
 export class SendMessageDto {
   @ApiProperty({ maxLength: 50000 })
@@ -39,4 +63,10 @@ export class SendMessageDto {
   @IsOptional()
   @IsMongoId()
   parentMessageId?: string;
+
+  @ApiPropertyOptional({ description: 'Selected connector repository for GitHub-scoped actions', type: ConnectorRepoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ConnectorRepoDto)
+  connectorRepo?: ConnectorRepoDto;
 }

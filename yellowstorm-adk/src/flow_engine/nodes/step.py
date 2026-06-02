@@ -32,7 +32,9 @@ from src.flow_engine.nodes.step_hitl_handlers import (
     handle_interrupt_before,
 )
 from src.flow_engine.nodes.step_hitl_blockers import (
+    build_llm_judge_blocker_decision,
     evaluate_hitl_blocker,
+    evaluate_llm_judge_blocker,
     handle_smart_hitl_blocker,
 )
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
@@ -162,6 +164,10 @@ def _as_record_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def _merge_human_context(state: ExecutionState, new_human_context: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [*_as_record_list(state.get("human_context")), *new_human_context]
+
+
 def _next_clarification_round(node_id: str, *contexts: list[dict[str, Any]]) -> int:
     count = 0
     for context in contexts:
@@ -289,6 +295,31 @@ async def run_step(
         if early:
             return _with_human_context(early, new_human_context)
 
+        llm_judgement = await evaluate_llm_judge_blocker(
+            node_config,
+            input_context if isinstance(input_context, dict) else {},
+            hitl_policy,
+            hitl_blockers,
+            model_id,
+        )
+        hitl = handle_smart_hitl_blocker(
+            build_llm_judge_blocker_decision(llm_judgement),
+            node_id,
+            label,
+            node_description,
+            iteration,
+            writer,
+            hitl_policy,
+        )
+        early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
+        new_human_context.extend(context_updates)
+        suppress_follow_up_clarification = (
+            suppress_follow_up_clarification
+            or hitl.suppress_follow_up_clarification
+        )
+        if early:
+            return _with_human_context(early, new_human_context)
+
     if hitl_active and not has_checkpoint:
         hitl = await handle_clarification_before(
             node_id, label, node_description, metadata, model_id, writer,
@@ -316,6 +347,7 @@ async def run_step(
                 node_description, output_contract, model_id, system_prompt,
                 structured_output, agent_config, connector_bindings,
                 iteration, label, writer, hitl_policy, hitl_blockers,
+                _merge_human_context(state, new_human_context),
             )
         except Exception as exc:
             logger.error("[step] LLM call failed", node_id=node_id, error=str(exc))
@@ -329,17 +361,6 @@ async def run_step(
                 "errors": [{"node_id": node_id, "iteration": iteration, "message": f"LLM error: {exc}"}],
                 "iterations": {node_id: iteration + 1},
             }
-
-        if hitl_active:
-            return _with_human_context({"hitl_checkpoint": {
-                "node_id": node_id,
-                "llm_output": full_output,
-                "components": components,
-                "updated_description": node_description,
-                "needs_reexec": False,
-                "suppress_follow_up_clarification": suppress_follow_up_clarification,
-                "phase": "post_exec",
-            }}, new_human_context)
 
     else:
         full_output = checkpoint.get("llm_output", "")
@@ -429,6 +450,7 @@ async def _execute_step(
     writer: Any,
     hitl_policy: dict[str, Any],
     hitl_blockers: list[dict[str, Any]],
+    human_context: list[dict[str, Any]],
 ) -> str:
     trigger_context = state.get("inputs", {})
     prompt_input_context = build_prompt_input_context(
@@ -453,7 +475,7 @@ async def _execute_step(
         trigger_context=trigger_context if isinstance(trigger_context, dict) else None,
         hitl_policy=hitl_policy,
         hitl_blockers=hitl_blockers,
-        human_context=_as_record_list(state.get("human_context")),
+        human_context=human_context,
         hitl_memory=_as_record_list(state.get("hitl_memory")),
     )
     sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)

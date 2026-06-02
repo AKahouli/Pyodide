@@ -18,7 +18,7 @@ export class PlaybookFlowHitlPromptService {
   async getPolicy(flowId: string, ownerId: string): Promise<HitlPolicy> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
     const compatiblePolicy = this.applyLegacyCompatibility(
-      (flow.hitlPolicy as unknown as Record<string, unknown>) ?? {},
+      this.toPolicyRecord(flow.hitlPolicy),
       flow as unknown as Record<string, unknown>,
     );
     return { ...this.buildPolicyDefaults(), ...compatiblePolicy } as HitlPolicy;
@@ -27,7 +27,7 @@ export class PlaybookFlowHitlPromptService {
   async updatePolicy(flowId: string, ownerId: string, patch: Partial<HitlPolicy>): Promise<HitlPolicy> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
     const compatiblePolicy = this.applyLegacyCompatibility(
-      (flow.hitlPolicy as unknown as Record<string, unknown>) ?? {},
+      this.toPolicyRecord(flow.hitlPolicy),
       flow as unknown as Record<string, unknown>,
     );
     const nextPolicy = { ...this.buildPolicyDefaults(), ...compatiblePolicy, ...patch };
@@ -38,12 +38,12 @@ export class PlaybookFlowHitlPromptService {
 
   async getNodePolicy(flowId: string, ownerId: string, nodeId: string): Promise<HitlPolicy> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
-    const node = this.findNode(flow, nodeId);
+    const { node } = this.findNode(flow, nodeId);
     return {
       ...this.buildPolicyDefaults(),
       inheritedFromWorkflow: true,
       ...this.applyLegacyCompatibility(
-        (node.hitlPolicy as Record<string, unknown> | undefined) ?? {},
+        this.toPolicyRecord(node.hitlPolicy),
         node,
       ),
     } as HitlPolicy;
@@ -51,17 +51,17 @@ export class PlaybookFlowHitlPromptService {
 
   async updateNodePolicy(flowId: string, ownerId: string, nodeId: string, patch: Partial<HitlPolicy>): Promise<HitlPolicy> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
-    const node = this.findNode(flow, nodeId);
+    const { node, index } = this.findNode(flow, nodeId);
     const nextPolicy = {
       ...this.buildPolicyDefaults(),
       inheritedFromWorkflow: true,
       ...this.applyLegacyCompatibility(
-        (node.hitlPolicy as Record<string, unknown> | undefined) ?? {},
+        this.toPolicyRecord(node.hitlPolicy),
         node,
       ),
       ...patch,
     };
-    node.hitlPolicy = nextPolicy as HitlPolicy;
+    flow.set(`nodes.${index}.hitlPolicy`, nextPolicy);
     await flow.save();
     return nextPolicy as HitlPolicy;
   }
@@ -83,10 +83,11 @@ export class PlaybookFlowHitlPromptService {
     return flow;
   }
 
-  private findNode(flow: FlowDocument, nodeId: string): Record<string, unknown> {
-    const node = (flow.nodes as unknown as Array<Record<string, unknown>>).find((item) => item.id === nodeId);
+  private findNode(flow: FlowDocument, nodeId: string): { node: Record<string, unknown>; index: number } {
+    const index = (flow.nodes as unknown as Array<Record<string, unknown>>).findIndex((item) => item.id === nodeId);
+    const node = index >= 0 ? (flow.nodes as unknown as Array<Record<string, unknown>>)[index] : undefined;
     if (!node) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Playbook node not found');
-    return node;
+    return { node, index };
   }
 
   private applyLegacyCompatibility(policy: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
@@ -95,6 +96,16 @@ export class PlaybookFlowHitlPromptService {
       return { ...policy, mode: 'manual', disabledReason: undefined };
     }
     return policy;
+  }
+
+  private toPolicyRecord(policy: unknown): Record<string, unknown> {
+    if (!policy || typeof policy !== 'object') {
+      return {};
+    }
+    if (typeof (policy as { toObject?: () => unknown }).toObject === 'function') {
+      return (policy as { toObject: () => Record<string, unknown> }).toObject();
+    }
+    return { ...(policy as Record<string, unknown>) };
   }
 
   private hasLegacyManualMode(source: Record<string, unknown>): boolean {

@@ -879,6 +879,18 @@ class ChatbotServicer(
             )
             raise ValueError("No Manager agent was found")
 
+        connector_repo = None
+        if getattr(pb_request, "connector_repo", None):
+            repo_name = str(getattr(pb_request.connector_repo, "repo_name", "") or "").strip()
+            if repo_name:
+                connector_repo = {
+                    "connector_id": str(getattr(pb_request.connector_repo, "connector_id", "") or "").strip(),
+                    "connector_name": str(getattr(pb_request.connector_repo, "connector_name", "") or "").strip(),
+                    "repo_id": str(getattr(pb_request.connector_repo, "repo_id", "") or "").strip(),
+                    "repo_name": repo_name,
+                    "repo_url": str(getattr(pb_request.connector_repo, "repo_url", "") or "").strip(),
+                }
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
@@ -906,6 +918,7 @@ class ChatbotServicer(
             brain_relations=None,  # V2 removed this field
             search_web=False,  # V2 removed this field, default to False
             agent_mode=pb_request.agent_mode,
+            connector_repo=connector_repo,
         )
 
     def _get_vectorstores_token(self) -> str:
