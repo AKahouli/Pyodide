@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw, MessageSquare } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -33,6 +33,7 @@ import type {
   RemediationCategory,
   TaskArtifact,
   TaskResult,
+  HitlHistoryEntry,
   ValidatedTaskReplay,
 } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -418,7 +419,12 @@ function buildCurrentStepExecution(step: TaskResult) {
     totalTokens: step.totalTokens ?? null,
     modelName: step.modelName ?? null,
     artifacts: step.artifacts || [],
+    hitlHistory: step.hitlHistory || [],
   };
+}
+
+function getHitlResponseText(entry: HitlHistoryEntry) {
+  return entry.responseMessage || entry.responseFeedback || entry.responseReason || '';
 }
 
 export function ExecutionStepDetail({
@@ -995,6 +1001,8 @@ export function ExecutionStepDetail({
 
   const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
   const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
+  const selectedHitlHistory = ((selectedStepExecution as { hitlHistory?: HitlHistoryEntry[] } | null)?.hitlHistory || [])
+    .filter((entry) => entry.taskId === step?.taskId && entry.round === (step?.iteration ?? 0));
 
   const groupedArtifacts = useMemo(() => {
     const artifacts = selectedStepExecution?.artifacts || [];
@@ -1341,6 +1349,36 @@ export function ExecutionStepDetail({
               <IteratorResultPanel step={step} />
             ) : (
               <>
+                {selectedHitlHistory.length > 0 && (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                    <div className="mb-3 flex items-center gap-2 font-medium">
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                      {t('detail.hitlFeedback.title')}
+                    </div>
+                    <div className="space-y-3">
+                      {selectedHitlHistory.map((entry) => {
+                        const responseText = getHitlResponseText(entry);
+                        return (
+                          <div key={entry.interruptId} className="space-y-2 rounded-md border bg-background/60 p-3">
+                            <div className="text-xs text-muted-foreground">
+                              {entry.respondedAt ? formatDateTimeCompact(entry.respondedAt) : formatDateTimeCompact(entry.createdAt)}
+                            </div>
+                            <div>
+                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.agent')}</div>
+                              <p className="mt-1 whitespace-pre-wrap">{entry.message}</p>
+                            </div>
+                            {responseText && (
+                              <div>
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.user')}</div>
+                                <p className="mt-1 whitespace-pre-wrap">{responseText}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 {selectedStepExecutionText && (() => {
                   const isHtml = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(selectedStepExecutionText);
                   return (

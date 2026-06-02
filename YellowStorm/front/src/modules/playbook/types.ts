@@ -1022,6 +1022,7 @@ export interface StepExecutionHistoryEntry {
   totalTokens?: number | null;
   modelName?: string | null;
   artifacts?: TaskArtifact[];
+  hitlHistory?: HitlHistoryEntry[];
 }
 
 export interface IteratorChildResult {
@@ -1169,6 +1170,7 @@ export interface TaskResult {
   invalidatedByTaskId?: string | null;
   iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
+  hitlHistory?: HitlHistoryEntry[];
 }
 
 export interface PlaybookExecution {
@@ -1228,6 +1230,7 @@ export interface PlaybookExecution {
   currentInterruptId?: string | null;
   currentInterruptTaskId?: string | null;
   hitlHistory?: HitlHistoryEntry[];
+  hitlEvents?: HitlEventLog[];
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;

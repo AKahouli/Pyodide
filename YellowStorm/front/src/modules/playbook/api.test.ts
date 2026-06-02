@@ -1148,6 +1148,60 @@ describe('clonePlaybook', () => {
 });
 
 describe('getExecution', () => {
+  it('normalizes persisted HITL events into execution and task feedback history', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-hitl',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            iteration: 0,
+          }],
+          hitlEvents: [{
+            id: 'event-1',
+            nodeId: 'task-1',
+            iteration: 0,
+            interruptId: 'interrupt-1',
+            type: 'clarification',
+            reasonCode: 'missing_required_input',
+            riskLevel: 'medium',
+            prompt: 'Which region should I search?',
+            payload: { taskTitle: 'Lead search' },
+            status: 'answered',
+            response: { action: 'reply', message: 'France', scope: 'downstream_run', remember: false },
+            downstreamNodeIds: [],
+            createdAt: '2026-06-02T08:46:00.000Z',
+            respondedAt: '2026-06-02T08:47:00.000Z',
+          }],
+          routerDecisions: [],
+          createdAt: '2026-06-02T08:45:00.000Z',
+          updatedAt: '2026-06-02T08:48:00.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-hitl');
+
+    expect(execution.hitlHistory).toEqual([
+      expect.objectContaining({
+        interruptId: 'interrupt-1',
+        taskId: 'task-1',
+        message: 'Which region should I search?',
+        responseMessage: 'France',
+      }),
+    ]);
+    expect(execution.taskResults[0].hitlHistory).toEqual(execution.hitlHistory);
+  });
+
   it('normalizes displayText and snake_case artifacts from flow execution details', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({

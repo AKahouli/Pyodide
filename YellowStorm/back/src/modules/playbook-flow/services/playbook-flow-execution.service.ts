@@ -1490,6 +1490,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .find({ executionId })
       .sort({ decidedAt: 1 })
       .lean();
+    const hitlEvents = execution.hitlEvents ?? [];
 
       return {
         ...(execution.toJSON() as unknown as IFlowExecutionResponse),
@@ -1522,6 +1523,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           judgeResult: (r as any).judgeResult ?? null,
           judgeError: (r as any).judgeError ?? null,
           judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
+          hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
         };
       }),
       routerDecisions: routerDecisions.map((r) => ({

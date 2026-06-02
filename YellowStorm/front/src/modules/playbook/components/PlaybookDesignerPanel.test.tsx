@@ -1,28 +1,35 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
-import type { HitlFeedbackScope, InterruptType, PlaybookExecution } from '../types';
+import type { HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution } from '../types';
 
 type StoreSnapshot = {
+  currentPlaybook: Playbook | null;
   currentExecution: PlaybookExecution | null;
   copilotMode: 'design' | 'interrupt';
   designerOpen: boolean;
   resumeExecution: ReturnType<typeof vi.fn>;
   disableHitlBlocker: ReturnType<typeof vi.fn>;
   selectStep: ReturnType<typeof vi.fn>;
+  setDesignerOpen: ReturnType<typeof vi.fn>;
+  setCopilotMode: ReturnType<typeof vi.fn>;
 };
 
 const createHitlBlockerMock = vi.fn();
 const updateNodeHitlPolicyMock = vi.fn();
 
 const storeState: StoreSnapshot = {
+  currentPlaybook: null,
   currentExecution: null,
   copilotMode: 'interrupt',
   designerOpen: true,
   resumeExecution: vi.fn(),
   disableHitlBlocker: vi.fn(),
   selectStep: vi.fn(),
+  setDesignerOpen: vi.fn(),
+  setCopilotMode: vi.fn(),
 };
 
 vi.mock('@/modules/localization', () => ({
@@ -65,6 +72,13 @@ vi.mock('@/components/ui/checkbox', () => ({
   ),
 }));
 
+vi.mock('@/components/ui/tooltip', () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
 vi.mock('../store', () => ({
   usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
     fetchDesignMessages: vi.fn(),
@@ -72,8 +86,8 @@ vi.mock('../store', () => ({
     revertToSnapshot: vi.fn(),
     resumeExecution: storeState.resumeExecution,
     disableHitlBlocker: storeState.disableHitlBlocker,
-    setDesignerOpen: vi.fn(),
-    setCopilotMode: vi.fn(),
+    setDesignerOpen: storeState.setDesignerOpen,
+    setCopilotMode: storeState.setCopilotMode,
     selectStep: storeState.selectStep,
     stopExecution: vi.fn(),
     isStopping: false,
@@ -84,6 +98,7 @@ vi.mock('../store', () => ({
   useDesignerOpen: () => storeState.designerOpen,
   useCopilotMode: () => storeState.copilotMode,
   useCurrentExecution: () => storeState.currentExecution,
+  useCurrentPlaybook: () => storeState.currentPlaybook,
   useLatestExecutionForPlaybook: () => storeState.currentExecution,
   useSelectedStep: () => 'task-1',
   useIsDirty: () => false,
@@ -159,27 +174,94 @@ function buildExecution(options: {
   };
 }
 
+function buildPlaybook(): Playbook {
+  return {
+    id: 'playbook-1',
+    name: 'Test playbook',
+    description: '',
+    designSettings: {
+      inferenceModelId: null,
+      nodeSuggestionsMode: 'manual',
+      approvalSuggestionMode: 'manual',
+    },
+    effectiveDesignSettings: {
+      inferenceModelId: null,
+      resolvedInferenceModelId: null,
+      nodeSuggestionsMode: 'manual',
+      approvalSuggestionMode: 'manual',
+    },
+    tasks: [{
+      id: 'task-1',
+      title: 'Lead search',
+      description: 'Search agro leads.',
+      assignedAgentId: null,
+      executionOrder: 0,
+      positionX: 0,
+      positionY: 0,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: true,
+      clarificationPrompt: '',
+      maxClarifications: 3,
+      inputKeys: [],
+      outputKey: '',
+      notifyOnComplete: false,
+      notifyEmails: [],
+      inputFiles: [],
+    }],
+    edges: [],
+    reflectionEnabled: false,
+    workspaces: [],
+    createdBy: 'user-1',
+    isFavorite: false,
+    isActive: true,
+    executionSchedule: null,
+    triggers: [],
+    automatedTriggerType: null,
+    createdAt: '2026-05-31T00:00:00.000Z',
+    updatedAt: '2026-05-31T00:00:00.000Z',
+  };
+}
+
 async function renderInterruptPanel(execution: PlaybookExecution) {
   storeState.currentExecution = execution;
   render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeInTheDocument());
+}
+
+async function openInterruptOptions(user = userEvent.setup()) {
+  await user.click(screen.getByRole('button', { name: 'interrupt.options' }));
   await waitFor(() => expect(screen.getByLabelText('interrupt.scopeLabel')).toBeInTheDocument());
+  return user;
+}
+
+function createDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
 
 describe('PlaybookDesignerPanel HITL feedback scope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    storeState.currentPlaybook = buildPlaybook();
     storeState.currentExecution = null;
     storeState.copilotMode = 'interrupt';
     storeState.designerOpen = true;
     storeState.resumeExecution = vi.fn().mockResolvedValue(undefined);
     storeState.disableHitlBlocker = vi.fn().mockResolvedValue(undefined);
     storeState.selectStep = vi.fn();
+    storeState.setDesignerOpen = vi.fn();
+    storeState.setCopilotMode = vi.fn();
     createHitlBlockerMock.mockResolvedValue({ id: 'blocker-2' });
     updateNodeHitlPolicyMock.mockResolvedValue({ mode: 'off' });
   });
 
   it('defaults sensitive approvals to step-only feedback without memory', async () => {
     await renderInterruptPanel(buildExecution({ type: 'approval_request', riskLevel: 'critical' }));
+    await openInterruptOptions();
 
     expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('step_only');
     expect(screen.getByLabelText('interrupt.rememberFeedback')).not.toBeChecked();
@@ -187,6 +269,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
   it('defaults non-sensitive clarification to downstream run feedback', async () => {
     await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium' }));
+    await openInterruptOptions();
 
     expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('downstream_run');
     expect(screen.getByLabelText('interrupt.rememberFeedback')).not.toBeChecked();
@@ -198,6 +281,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       riskLevel: 'medium',
       feedbackScopeDefault: 'future_workflow_runs',
     }));
+    await openInterruptOptions();
 
     expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('future_workflow_runs');
   });
@@ -215,13 +299,15 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium' }));
 
     expect(screen.getAllByText('interrupt.clarificationTitle').length).toBeGreaterThan(0);
-    expect(screen.getByLabelText('interrupt.scopeLabel')).toBeInTheDocument();
+    expect(screen.queryByLabelText('interrupt.scopeLabel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeInTheDocument();
     expect(screen.queryByText('designer.empty')).not.toBeInTheDocument();
   });
 
   it('submits the selected scope and memory consent', async () => {
     const user = userEvent.setup();
     await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium' }));
+    await openInterruptOptions(user);
 
     fireEvent.change(screen.getByLabelText('interrupt.scopeLabel'), { target: { value: 'future_node_runs' } });
     await user.click(screen.getByLabelText('interrupt.rememberFeedback'));
@@ -243,6 +329,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
   it('disables the active blocker without changing scope or memory consent', async () => {
     const user = userEvent.setup();
     await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium', blockerRuleId: 'blocker-1' }));
+    await openInterruptOptions(user);
 
     fireEvent.change(screen.getByLabelText('interrupt.scopeLabel'), { target: { value: 'future_node_runs' } });
     await user.click(screen.getByLabelText('interrupt.rememberFeedback'));
@@ -256,16 +343,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
   it('offers the run-mode blocker quick actions', async () => {
     const user = userEvent.setup();
     await renderInterruptPanel(buildExecution({ type: 'clarification', riskLevel: 'medium', blockerRuleId: 'blocker-1' }));
-
-    await user.click(screen.getByRole('button', { name: 'interrupt.disableForRun' }));
-
-    expect(storeState.resumeExecution).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
-      executionId: 'execution-1',
-      interruptId: 'interrupt-1',
-      action: 'reply',
-      scope: 'entire_run',
-      remember: false,
-    }));
+    await openInterruptOptions(user);
 
     await user.click(screen.getByRole('button', { name: 'interrupt.disableSmartForNode' }));
     expect(updateNodeHitlPolicyMock).toHaveBeenCalledWith('playbook-1', 'task-1', expect.objectContaining({ mode: 'off' }));
@@ -275,6 +353,16 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       scope: 'workflow',
       nodeId: null,
       action: 'clarify',
+    }));
+
+    await user.click(screen.getByRole('button', { name: 'interrupt.disableForRun' }));
+
+    expect(storeState.resumeExecution).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+      executionId: 'execution-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      scope: 'entire_run',
+      remember: false,
     }));
   });
 
@@ -315,7 +403,211 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     expect(await screen.findByText('Which country should I search?')).toBeInTheDocument();
     expect(screen.getByText('France')).toBeInTheDocument();
-    expect(screen.getByText('interrupt.threadIdleTitle')).toBeInTheDocument();
+    expect(screen.queryByText('interrupt.threadIdleTitle')).not.toBeInTheDocument();
     expect(screen.queryByText('copilot.empty')).not.toBeInTheDocument();
+  });
+
+  it('keeps task context out of the visible chat transcript', async () => {
+    const execution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    execution.interruptPayload = {
+      ...execution.interruptPayload!,
+      message: 'How many leads should I search for?',
+      taskDescription: 'Search agro leads in France.',
+    };
+
+    await renderInterruptPanel(execution);
+
+    expect(screen.getByText('How many leads should I search for?')).toBeInTheDocument();
+    expect(screen.queryByText('interrupt.taskDescription')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('interrupt.contextTooltip')).toBeInTheDocument();
+  });
+
+  it('renders embedded prior clarification feedback as a user bubble', async () => {
+    const execution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    execution.taskResults[0].nodeTitle = '';
+    execution.interruptPayload = {
+      ...execution.interruptPayload!,
+      taskTitle: 'Interrupted step',
+      message: 'How many agro sector leads should I search for?',
+      taskDescription: 'need to search leads in agro sector\nClarification from user: france',
+    };
+
+    await renderInterruptPanel(execution);
+
+    expect(screen.getByText('interrupt.assistantInbox')).toBeInTheDocument();
+    expect(screen.getByText('Lead search')).toBeInTheDocument();
+    expect(screen.getByText('france')).toBeInTheDocument();
+    expect(screen.getByText('How many agro sector leads should I search for?')).toBeInTheDocument();
+    expect(screen.queryByText('interrupt.taskDescription')).not.toBeInTheDocument();
+  });
+
+  it('does not duplicate legacy embedded feedback when structured history already has the response', async () => {
+    const execution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    execution.interruptPayload = {
+      ...execution.interruptPayload!,
+      interruptId: 'interrupt-2',
+      message: 'How many agro sector leads should I search for?',
+      taskDescription: 'Clarification from user: france',
+    };
+    execution.hitlHistory = [{
+      interruptId: 'interrupt-1',
+      taskId: execution.interruptPayload.taskId,
+      type: 'clarification',
+      taskTitle: 'Lead search',
+      message: 'Which region should I search?',
+      taskDescription: '',
+      result: '',
+      round: 0,
+      payloadJson: '',
+      resumableActions: [],
+      status: 'answered',
+      responseAction: 'reply',
+      responseMessage: 'france',
+      responseApproved: null,
+      responseReason: null,
+      responseFeedback: null,
+      responseScope: 'downstream_run',
+      responseRemember: false,
+      respondedBy: null,
+      respondedAt: '2026-06-02T08:47:00.000Z',
+      createdAt: '2026-06-02T08:46:00.000Z',
+    }];
+
+    await renderInterruptPanel(execution);
+
+    expect(screen.getAllByText('france')).toHaveLength(1);
+    expect(screen.getByText('How many agro sector leads should I search for?')).toBeInTheDocument();
+  });
+
+  it('preserves the visible HITL thread after submitting and resuming execution', async () => {
+    const user = userEvent.setup();
+    const activeExecution = buildExecution({ type: 'clarification', riskLevel: 'medium', blockerRuleId: 'blocker-1' });
+    activeExecution.interruptPayload = {
+      ...activeExecution.interruptPayload!,
+      message: 'Which region should I search?',
+    };
+    storeState.currentExecution = activeExecution;
+
+    const { rerender } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    await user.type(screen.getByRole('textbox'), 'France');
+    await user.click(screen.getByRole('button', { name: 'interrupt.submit' }));
+
+    storeState.currentExecution = {
+      ...activeExecution,
+      status: 'running',
+      interruptPayload: null,
+      pendingInterrupts: [],
+      waitingForHumanInput: false,
+      currentInterruptId: null,
+      currentInterruptTaskId: null,
+      hitlHistory: [],
+    };
+    rerender(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    expect(screen.getByText('France')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('interrupt.thinking')).not.toBeInTheDocument());
+    expect(screen.getByText('interrupt.runningWithFeedback')).toBeInTheDocument();
+    expect(screen.queryByText('copilot.empty')).not.toBeInTheDocument();
+    expect(screen.queryByText('interrupt.threadIdleTitle')).not.toBeInTheDocument();
+  });
+
+  it('keeps the composer visible and disabled while the assistant is thinking', async () => {
+    const user = userEvent.setup();
+    const deferred = createDeferred();
+    storeState.resumeExecution = vi.fn().mockReturnValue(deferred.promise);
+    const activeExecution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    activeExecution.interruptPayload = {
+      ...activeExecution.interruptPayload!,
+      message: 'Which region should I search?',
+    };
+
+    await renderInterruptPanel(activeExecution);
+    await openInterruptOptions(user);
+    await user.type(screen.getByRole('textbox'), 'France');
+    await user.click(screen.getByRole('button', { name: 'interrupt.submit' }));
+
+    expect(screen.getByText('France')).toBeInTheDocument();
+    expect(screen.getAllByText('interrupt.thinking').length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText('interrupt.waitingPlaceholder')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'interrupt.disableForRun' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'interrupt.disableForStep' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'interrupt.disableSmartForNode' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'interrupt.saveWorkflowRule' })).toBeDisabled();
+  });
+
+  it('re-enables the composer and restores the draft when interrupt resume fails', async () => {
+    const user = userEvent.setup();
+    storeState.resumeExecution = vi.fn().mockRejectedValue(new Error('resume failed'));
+    const activeExecution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    activeExecution.interruptPayload = {
+      ...activeExecution.interruptPayload!,
+      message: 'Which region should I search?',
+    };
+
+    await renderInterruptPanel(activeExecution);
+    await openInterruptOptions(user);
+    await user.selectOptions(screen.getByLabelText('interrupt.scopeLabel'), 'future_node_runs');
+    await waitFor(() => expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('future_node_runs'));
+    await user.click(screen.getByLabelText('interrupt.rememberFeedback'));
+    await user.type(screen.getByRole('textbox'), 'France');
+    await user.click(screen.getByRole('button', { name: 'interrupt.submit' }));
+
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled());
+    expect(screen.getByRole('textbox')).toHaveValue('France');
+    expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeEnabled();
+    expect(screen.getByLabelText('interrupt.scopeLabel')).toHaveValue('future_node_runs');
+    expect(screen.getByLabelText('interrupt.rememberFeedback')).toBeChecked();
+    expect(screen.queryByText('interrupt.thinking')).not.toBeInTheDocument();
+  });
+
+  it('appends a follow-up interrupt without losing earlier feedback history', async () => {
+    const user = userEvent.setup();
+    const firstExecution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+    firstExecution.interruptPayload = {
+      ...firstExecution.interruptPayload!,
+      message: 'Which region should I search?',
+    };
+    storeState.currentExecution = firstExecution;
+
+    const { rerender } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    await user.type(screen.getByRole('textbox'), 'France');
+    await user.click(screen.getByRole('button', { name: 'interrupt.submit' }));
+
+    storeState.currentExecution = {
+      ...firstExecution,
+      interruptPayload: {
+        ...firstExecution.interruptPayload!,
+        interruptId: 'interrupt-2',
+        message: 'How many leads should I search for?',
+      },
+      currentInterruptId: 'interrupt-2',
+      pendingInterrupts: [{
+        ...firstExecution.pendingInterrupts![0],
+        interruptId: 'interrupt-2',
+        message: 'How many leads should I search for?',
+      }],
+      hitlHistory: [],
+    };
+    rerender(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    expect(screen.getByText('France')).toBeInTheDocument();
+    expect(screen.getByText('How many leads should I search for?')).toBeInTheDocument();
+  });
+
+  it('shows a reopen control when the HITL assistant is collapsed', async () => {
+    const user = userEvent.setup();
+    storeState.designerOpen = false;
+    storeState.currentExecution = buildExecution({ type: 'clarification', riskLevel: 'medium' });
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'interrupt.reopenAssistant' }));
+
+    expect(storeState.setCopilotMode).toHaveBeenCalledWith('interrupt');
+    expect(storeState.setDesignerOpen).toHaveBeenCalledWith(true);
   });
 });

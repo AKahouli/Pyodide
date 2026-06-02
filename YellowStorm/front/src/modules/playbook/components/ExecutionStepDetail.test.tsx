@@ -168,6 +168,41 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
   });
 
+  it('renders persisted HITL feedback for the selected node result', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          hitlHistory: [{
+            interruptId: 'interrupt-1',
+            taskId: 't1',
+            type: 'clarification',
+            taskTitle: 'Analyze Data',
+            message: 'Which region should I search?',
+            taskDescription: '',
+            result: '',
+            round: 0,
+            payloadJson: '',
+            resumableActions: [],
+            status: 'answered',
+            responseAction: 'reply',
+            responseMessage: 'France',
+            responseApproved: null,
+            responseReason: null,
+            responseFeedback: null,
+            respondedBy: null,
+            respondedAt: '2026-06-02T08:47:00.000Z',
+            createdAt: '2026-06-02T08:46:00.000Z',
+          }],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('detail.hitlFeedback.title')).toBeInTheDocument();
+    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    expect(screen.getByText('France')).toBeInTheDocument();
+  });
+
   it('renders replay flex planning details when available on the execution', () => {
     render(
       <ExecutionStepDetail

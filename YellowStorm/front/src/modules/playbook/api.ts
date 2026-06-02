@@ -799,8 +799,60 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     staleReason: toNullableString(raw.staleReason),
     invalidatedByTaskId: toNullableString(raw.invalidatedByTaskId),
     artifacts: normalizeTaskArtifacts(raw.artifacts),
+    hitlHistory: Array.isArray(raw.hitlHistory)
+      ? raw.hitlHistory.map((entry: any) => entry?.interruptId ? entry : normalizeHitlEvent(entry as HitlEventLog))
+      : [],
     iteratorIterations: normalizeIteratorIterations(raw),
   };
+}
+
+function normalizeHitlEvent(event: HitlEventLog): import('./types').HitlHistoryEntry {
+  const payload = event.payload || {};
+  const response = event.response || null;
+  return {
+    interruptId: event.interruptId,
+    taskId: event.nodeId,
+    type: event.type,
+    taskTitle: toNullableString(payload.task_title ?? payload.taskTitle) ?? '',
+    message: event.prompt,
+    taskDescription: toNullableString(payload.task_description ?? payload.taskDescription) ?? '',
+    result: toNullableString(payload.result) ?? '',
+    round: event.iteration,
+    payloadJson: toNullableString(payload.conversation_json ?? payload.payloadJson) ?? '',
+    resumableActions: Array.isArray(payload.resumable_actions)
+      ? payload.resumable_actions as string[]
+      : Array.isArray(payload.resumableActions)
+        ? payload.resumableActions as string[]
+        : [],
+    status: event.status === 'answered' ? 'answered' : 'pending',
+    responseAction: response?.action ?? null,
+    responseMessage: response?.message ?? null,
+    responseApproved: response?.approved ?? null,
+    responseReason: response?.reason ?? null,
+    responseFeedback: response?.feedback ?? null,
+    responseScope: response?.scope ?? null,
+    responseRemember: response?.remember ?? null,
+    blockerRuleId: event.blockerRuleId ?? null,
+    blockerKind: event.blockerKind ?? null,
+    reasonCode: event.reasonCode ?? null,
+    riskLevel: event.riskLevel ?? null,
+    downstreamNodeIds: event.downstreamNodeIds ?? [],
+    feedbackScopeDefault: (payload.feedback_scope_default ?? payload.feedbackScopeDefault) as HitlFeedbackScope | undefined,
+    memoryCandidate: false,
+    respondedBy: null,
+    respondedAt: event.respondedAt ?? null,
+    createdAt: event.createdAt,
+  };
+}
+
+function mergeHitlHistory(
+  primary: import('./types').HitlHistoryEntry[],
+  fallback: import('./types').HitlHistoryEntry[],
+) {
+  const entries = new Map<string, import('./types').HitlHistoryEntry>();
+  for (const entry of fallback) entries.set(entry.interruptId, entry);
+  for (const entry of primary) entries.set(entry.interruptId, entry);
+  return Array.from(entries.values()).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
 function normalizeExecutionSummary(
@@ -831,6 +883,11 @@ function normalizeExecutionSummary(
 
 function normalizeExecution(raw: any): PlaybookExecution {
   const summary = normalizeExecutionSummary(raw);
+  const hitlEvents = Array.isArray(raw.hitlEvents) ? raw.hitlEvents as HitlEventLog[] : [];
+  const normalizedHitlHistory = mergeHitlHistory(
+    Array.isArray(raw.hitlHistory) ? raw.hitlHistory : [],
+    hitlEvents.map(normalizeHitlEvent),
+  );
   const stepExecutionModes = raw.stepExecutionModes ?? raw.step_execution_modes;
   const replayPlanningByTask = raw.replayPlanningByTask;
   const isTerminal = summary.status === 'completed' || summary.status === 'failed' || summary.status === 'cancelled';
@@ -865,14 +922,24 @@ function normalizeExecution(raw: any): PlaybookExecution {
       stepExecutionModes && typeof stepExecutionModes === 'object'
         ? stepExecutionModes
         : undefined,
-    taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
+    taskResults: Array.isArray(raw.taskResults)
+      ? raw.taskResults.map((result: any, index: number) => {
+          const taskResult = normalizeTaskResult(result, index);
+          const taskIteration = taskResult.iteration ?? 0;
+          return {
+            ...taskResult,
+            hitlHistory: normalizedHitlHistory.filter((entry) => entry.taskId === taskResult.taskId && entry.round === taskIteration),
+          };
+        })
+      : [],
     threadId: toNullableString(raw.threadId),
     interruptPayload,
     pendingInterrupts: isTerminal ? [] : pendingInterrupts,
     waitingForHumanInput: isTerminal ? false : Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
     currentInterruptId: isTerminal ? null : toNullableString(raw.currentInterruptId),
     currentInterruptTaskId: isTerminal ? null : toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
-    hitlHistory: Array.isArray(raw.hitlHistory) ? raw.hitlHistory : [],
+    hitlHistory: normalizedHitlHistory,
+    hitlEvents,
     playbookSnapshot: raw.playbookSnapshot ?? null,
     totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
     totalOutputTokens: toNullableNumber(raw.totalOutputTokens) ?? 0,
