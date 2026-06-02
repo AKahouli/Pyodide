@@ -175,7 +175,7 @@ def _inject_mcp_search_context(
     if not _MCP_SEARCH_PARAMS & param_names:
         return
 
-    if "user_id" in param_names and "user_id" not in args:
+    if "user_id" in param_names:
         args["user_id"] = state["_mcp_search_user_id"]
 
     if "workspace_id" in param_names and "workspace_id" not in args:
