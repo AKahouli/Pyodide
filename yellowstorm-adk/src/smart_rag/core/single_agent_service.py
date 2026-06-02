@@ -366,14 +366,6 @@ class SingleAgentService:
                 agent._mcp_search_state["_mcp_search_workspace_name"] = (
                     agent_config.brain_ids[0] if len(agent_config.brain_ids) == 1 else agent_config.brain_ids
                 )
-            raw_docs = agent_config.brain_documents or []
-            file_names = [
-                d.get("filename") or d.get("nom")
-                for d in raw_docs
-                if isinstance(d, dict) and (d.get("filename") or d.get("nom"))
-            ]
-            if file_names:
-                agent._mcp_search_state["_mcp_search_file_names"] = file_names
 
             return agent
 
