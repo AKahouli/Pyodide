@@ -1865,12 +1865,12 @@ function PlaybookCanvasInner() {
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
-    options?: { replaceAll?: boolean; expectedUpdatedAt?: string },
+    options?: { replaceAll?: boolean; expectedDefinitionRevision?: number },
   ) => {
     if (!playbook) return;
 
     const suggestionApplicationKey = createIntentSuggestionApplicationKey(playbook.id, suggestion);
-    const suggestionBaseUpdatedAt = options?.expectedUpdatedAt ?? playbook.updatedAt;
+    const suggestionBaseDefinitionRevision = options?.expectedDefinitionRevision ?? playbook.definitionRevision;
 
     const resolveAssignedAgentId = (agentSlug?: string | null): string | null => {
       if (!agentSlug) {
@@ -2643,7 +2643,7 @@ function PlaybookCanvasInner() {
         deleteTaskAndBridgeEdges(targetTask.id);
         commitGraph(nextTasks, nextEdges, nextDataBindings);
         void saveCurrentPlaybook({
-          expectedUpdatedAt: suggestionBaseUpdatedAt,
+          expectedDefinitionRevision: suggestionBaseDefinitionRevision,
           clientMutationId: suggestionApplicationKey,
         });
         return;
@@ -2660,7 +2660,7 @@ function PlaybookCanvasInner() {
         changedNodeIds.add(targetTask.id);
         commitGraph(nextTasks, nextEdges, nextDataBindings);
         void saveCurrentPlaybook({
-          expectedUpdatedAt: suggestionBaseUpdatedAt,
+          expectedDefinitionRevision: suggestionBaseDefinitionRevision,
           clientMutationId: suggestionApplicationKey,
         });
         return;
@@ -2689,7 +2689,7 @@ function PlaybookCanvasInner() {
 
       commitGraph(nextTasks, nextEdges, nextDataBindings);
       void saveCurrentPlaybook({
-        expectedUpdatedAt: suggestionBaseUpdatedAt,
+        expectedDefinitionRevision: suggestionBaseDefinitionRevision,
         clientMutationId: suggestionApplicationKey,
       });
       return;
@@ -2803,7 +2803,7 @@ function PlaybookCanvasInner() {
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     void saveCurrentPlaybook({
-      expectedUpdatedAt: suggestionBaseUpdatedAt,
+      expectedDefinitionRevision: suggestionBaseDefinitionRevision,
       clientMutationId: suggestionApplicationKey,
     });
   }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, saveCurrentPlaybook, selectStep, selectedStepId, setEdges, setNodes, t, updateDataBindings, updateEdges, updateTasks]);
@@ -2860,10 +2860,10 @@ function PlaybookCanvasInner() {
   const runIntentAnalysis = useCallback(async (intent: string, selectedTaskId?: string, options?: { includeFallback?: boolean }) => {
     if (!id || !playbook) return null;
 
-    let expectedUpdatedAt = playbook.updatedAt;
+    let expectedDefinitionRevision = playbook.definitionRevision;
     if (isDirty) {
       await saveNow();
-      expectedUpdatedAt = usePlaybookStore.getState().currentPlaybook?.updatedAt || expectedUpdatedAt;
+      expectedDefinitionRevision = usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? expectedDefinitionRevision;
     }
 
     const result = await requestPlaybookIntent(id, {
@@ -2873,7 +2873,7 @@ function PlaybookCanvasInner() {
     const suggestions = result.suggestions || [];
 
     return {
-      expectedUpdatedAt,
+      expectedDefinitionRevision,
       suggestions,
       topSuggestion: getTopIntentSuggestion(suggestions, options),
     };
@@ -2899,10 +2899,10 @@ function PlaybookCanvasInner() {
       const analysis = await runIntentAnalysis(normalizedIntent, resolvedSelectedTaskId);
       if (!analysis) return;
 
-      const { expectedUpdatedAt, suggestions: newSuggestions, topSuggestion } = analysis;
+      const { expectedDefinitionRevision, suggestions: newSuggestions, topSuggestion } = analysis;
       if (intentAutoApply && topSuggestion && topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) {
         addIntentSuggestionHistoryEntry(id, playbook?.name ?? '', topSuggestion, normalizedIntent);
-        handleApplyIntentSuggestion(topSuggestion, { expectedUpdatedAt });
+        handleApplyIntentSuggestion(topSuggestion, { expectedDefinitionRevision });
         setLastIntentSuggestions([]);
         setIntentSuggestions([]);
       } else {
@@ -2936,7 +2936,7 @@ function PlaybookCanvasInner() {
       const analysis = await runIntentAnalysis(normalizedIntent, resolvedSelectedTaskId, { includeFallback: true });
       if (!analysis) return;
 
-      const { expectedUpdatedAt, suggestions, topSuggestion } = analysis;
+      const { expectedDefinitionRevision, suggestions, topSuggestion } = analysis;
       if (!topSuggestion) {
         setLastIntentSuggestions(suggestions);
         setIntentSuggestions(suggestions);
@@ -2950,7 +2950,7 @@ function PlaybookCanvasInner() {
       }
 
       addIntentSuggestionHistoryEntry(id, playbook.name, topSuggestion, normalizedIntent);
-      handleApplyIntentSuggestion(topSuggestion, { expectedUpdatedAt });
+        handleApplyIntentSuggestion(topSuggestion, { expectedDefinitionRevision });
       setLastIntentSuggestions([]);
       setIntentSuggestions([]);
     } catch (error) {

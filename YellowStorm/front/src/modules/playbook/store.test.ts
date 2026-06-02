@@ -110,6 +110,7 @@ describe('playbook store', () => {
     apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
       id: 'p1',
       name: 'Queued save',
+      definitionRevision: 1,
       updatedAt: '2026-05-29T20:30:00.000Z',
     }));
 
@@ -134,7 +135,7 @@ describe('playbook store', () => {
     await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
 
     expect(usePlaybookStore.getState().pendingAutosaveAfterCurrent).toBe(true);
-    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', updatedAt: '2026-05-29T20:29:00.000Z' }));
+    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', definitionRevision: 1, updatedAt: '2026-05-29T20:29:00.000Z' }));
     await firstSave;
     await Promise.resolve();
 
@@ -175,6 +176,7 @@ describe('playbook store', () => {
     }) as any);
     apiMock.updatePlaybook.mockResolvedValueOnce({
       ...playbook,
+      definitionRevision: 1,
       updatedAt: '2026-05-30T00:30:00.000Z',
     });
 
@@ -222,7 +224,7 @@ describe('playbook store', () => {
       ],
     };
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
-    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z' });
+    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z', definitionRevision: 1, applied: true, patchSummary: { scalarFields: 0, nodesUpserted: 0, nodesDeleted: 0, edgeChanges: 1, dataBindingChanges: 0, positionUpdates: 0 } });
 
     await usePlaybookStore.getState().fetchPlaybook('p1');
     usePlaybookStore.setState({
@@ -235,6 +237,7 @@ describe('playbook store', () => {
     await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
 
     expect(apiMock.patchFlowDelta).toHaveBeenCalledWith('p1', expect.objectContaining({
+      expectedDefinitionRevision: 0,
       patch: expect.objectContaining({
         controlEdges: [
           expect.objectContaining({
@@ -246,6 +249,7 @@ describe('playbook store', () => {
       }),
     }));
     expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().currentPlaybook?.definitionRevision).toBe(1);
   });
 
   it('keeps autosave dirty when the backend rejects an invalid delta', async () => {
@@ -298,6 +302,98 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe(playbook.updatedAt);
     expect(usePlaybookStore.getState().isDirty).toBe(true);
     expect(usePlaybookStore.getState().autosaveBackoffUntil).toEqual(expect.any(Number));
+  });
+
+  it('rebases autosave conflicts once when server changes do not overlap local edits', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Original', description: 'Original', definitionRevision: 0 });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.updatePlaybook
+      .mockRejectedValueOnce({ isAxiosError: true })
+      .mockResolvedValueOnce(makePlaybook({
+        id: 'p1',
+        name: 'Server renamed',
+        description: 'Locally changed',
+        definitionRevision: 2,
+        updatedAt: '2026-05-30T00:31:00.000Z',
+      }));
+    apiMock.getFlow.mockResolvedValueOnce({
+      ...makePlaybook({
+        id: 'p1',
+        name: 'Server renamed',
+        description: 'Original',
+        definitionRevision: 1,
+        updatedAt: '2026-05-30T00:30:00.000Z',
+      }),
+      activeReplays: {},
+    } as any);
+    parseApiErrorMock.mockImplementationOnce(() => ({
+      code: 'ERR_1005',
+      message: 'Conflict',
+      statusCode: 409,
+      requiresReAuth: false,
+      raw: null,
+    }));
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: { ...playbook, description: 'Locally changed' },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook).toHaveBeenLastCalledWith('p1', expect.objectContaining({
+      name: 'Server renamed',
+      description: 'Locally changed',
+      expectedDefinitionRevision: 1,
+    }));
+    expect(usePlaybookStore.getState().lastSavedRequestBodyByPlaybookId.p1).toMatchObject({
+      name: 'Server renamed',
+      description: 'Locally changed',
+    });
+    expect(usePlaybookStore.getState().currentPlaybook?.definitionRevision).toBe(2);
+    expect(usePlaybookStore.getState().currentPlaybook?.name).toBe('Server renamed');
+    expect(usePlaybookStore.getState().currentPlaybook?.description).toBe('Locally changed');
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+  });
+
+  it('does not retry autosave conflicts when server and local edits overlap', async () => {
+    const playbook = makePlaybook({ id: 'p1', description: 'Original', definitionRevision: 0 });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.updatePlaybook.mockRejectedValueOnce({ isAxiosError: true });
+    apiMock.getFlow.mockResolvedValueOnce({
+      ...makePlaybook({
+        id: 'p1',
+        description: 'Server changed',
+        definitionRevision: 1,
+        updatedAt: '2026-05-30T00:30:00.000Z',
+      }),
+      activeReplays: {},
+    } as any);
+    parseApiErrorMock.mockImplementationOnce(() => ({
+      code: 'ERR_1005',
+      message: 'Conflict',
+      statusCode: 409,
+      requiresReAuth: false,
+      raw: null,
+    }));
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: { ...playbook, description: 'Local changed' },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(apiMock.getFlow).toHaveBeenCalledWith('p1', { view: 'base' });
+    expect(usePlaybookStore.getState().isDirty).toBe(true);
   });
 
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {

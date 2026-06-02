@@ -246,6 +246,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
   };
@@ -283,6 +284,7 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
   };
@@ -302,6 +304,7 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.expectedDefinitionRevision !== undefined) body.expectedDefinitionRevision = sanitized.expectedDefinitionRevision;
   if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
   if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
 
@@ -322,6 +325,21 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
   if (data.dataBindings !== undefined) {
     body.dataBindings = data.dataBindings;
   }
+
+  return body;
+}
+
+export function buildPlaybookBaselineRequestBody(data: UpdatePlaybookData): Record<string, unknown> {
+  const {
+    expectedDefinitionRevision: _expectedDefinitionRevision,
+    expectedUpdatedAt: _expectedUpdatedAt,
+    clientMutationId: _clientMutationId,
+    ...body
+  } = buildPlaybookUpdateRequestBody(data) as Record<string, unknown> & {
+    expectedDefinitionRevision?: number;
+    expectedUpdatedAt?: string;
+    clientMutationId?: string;
+  };
 
   return body;
 }
@@ -426,7 +444,7 @@ export function buildPlaybookDeltaPatch(
   previous: UpdateFlowData,
   current: UpdateFlowData,
   options: {
-    expectedUpdatedAt: string;
+    expectedDefinitionRevision: number;
     payloadHash?: string;
     basePayloadHash?: string;
     clientMutationId?: string;
@@ -444,7 +462,7 @@ export function buildPlaybookDeltaPatch(
   }
 
   return {
-    expectedUpdatedAt: options.expectedUpdatedAt,
+    expectedDefinitionRevision: options.expectedDefinitionRevision,
     ...(options.payloadHash ? { payloadHash: options.payloadHash } : {}),
     ...(options.basePayloadHash ? { basePayloadHash: options.basePayloadHash } : {}),
     ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
@@ -458,7 +476,7 @@ export function buildPlaybookDeltaPatch(
 }
 
 export function getPlaybookUpdateTelemetry(data: UpdatePlaybookData): { payloadBytes: number; payloadHash: string } {
-  const body = buildPlaybookUpdateRequestBody(data);
+  const body = buildPlaybookBaselineRequestBody(data);
   return {
     payloadBytes: measureSerializedBytes(body),
     payloadHash: stableHash(body),

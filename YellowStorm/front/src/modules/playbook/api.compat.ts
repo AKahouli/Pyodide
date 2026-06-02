@@ -249,6 +249,7 @@ export function normalizePlaybook(raw: any): Playbook {
 
   return {
     ...raw,
+    definitionRevision: typeof raw.definitionRevision === 'number' ? raw.definitionRevision : 0,
     tasks: normalizePlaybookTasks(raw, activeReplays),
     edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
     triggers: triggerFields.triggers,

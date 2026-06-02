@@ -508,7 +508,7 @@
   "hitl.blockers.risk.high": "High",
   "hitl.blockers.risk.critical": "Critical",
   "hitl.editor.title": "Add blocker",
-  "hitl.editor.description": "Describe the condition in business language. The backend will normalize it into a structured blocker rule.",
+  "hitl.editor.description": "Describe the condition in business language.",
   "hitl.editor.ruleLabel": "When should the workflow pause?",
   "hitl.editor.placeholder": "Ask before sending anything to a customer.",
   "hitl.editor.save": "Save blocker",

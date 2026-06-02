@@ -138,11 +138,13 @@ describe('buildPlaybookUpdateRequestBody', () => {
     const body = buildPlaybookUpdateRequestBody({
       nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
       controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+      expectedDefinitionRevision: 3,
     });
 
     expect(body).toMatchObject({
       nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
       controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+      expectedDefinitionRevision: 3,
     });
   });
 });
@@ -159,11 +161,11 @@ describe('buildPlaybookDeltaPatch', () => {
       {
         name: 'New name',
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         fields: { name: 'New name' },
       },
@@ -223,11 +225,11 @@ describe('buildPlaybookDeltaPatch', () => {
           constantValue: 'hello',
         }],
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         nodes: {
           upserts: [
@@ -266,11 +268,11 @@ describe('buildPlaybookDeltaPatch', () => {
       {
         nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 15, positionY: 25, description: 'same' } }],
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         nodes: {
           positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
@@ -804,12 +806,12 @@ describe('updatePlaybook', () => {
     await updatePlaybook('playbook-1', {
       name: 'Playbook',
       description: 'Description',
-      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      expectedDefinitionRevision: 5,
       clientMutationId: 'intent-abc123',
     });
 
     expect(apiClientMock.patch).toHaveBeenCalledWith('/playbooks/playbook-1', expect.objectContaining({
-      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      expectedDefinitionRevision: 5,
       clientMutationId: 'intent-abc123',
     }));
   });

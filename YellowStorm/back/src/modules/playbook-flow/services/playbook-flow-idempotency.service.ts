@@ -100,6 +100,56 @@ export class PlaybookFlowIdempotencyService {
     }
   }
 
+  async reserveSave<T>(
+    ownerId: string,
+    idempotencyKey: string,
+    body: unknown,
+  ): Promise<
+    | { type: 'reserved' }
+    | { type: 'duplicate'; responseBody: T }
+    | { type: 'duplicate-pending'; expectedStateHash?: string; expectedDefinitionRevision?: number }
+  > {
+    const payloadHash = this.createPayloadHash(body);
+    const expiresAt = new Date(Date.now() + this.ttlHours * 60 * 60 * 1000);
+
+    try {
+      await this.idempotencyModel.create({
+        ownerId,
+        idempotencyKey,
+        payloadHash,
+        expiresAt,
+      });
+      return { type: 'reserved' };
+    } catch (err: any) {
+      if (err.code !== 11000) {
+        throw err;
+      }
+
+      const existing = await this.idempotencyModel.findOne({ ownerId, idempotencyKey }).lean();
+      if (!existing) {
+        this.logger.warn(`Idempotency record disappeared for key ${idempotencyKey}, retrying as reserved`);
+        return this.reserveSave(ownerId, idempotencyKey, body);
+      }
+
+      if (existing.payloadHash !== payloadHash) {
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'Idempotency key already used with different input. Use a new key or retry with matching input.',
+        );
+      }
+
+      if (existing.responseBody) {
+        return { type: 'duplicate', responseBody: existing.responseBody as T };
+      }
+
+      return {
+        type: 'duplicate-pending',
+        expectedStateHash: existing.expectedStateHash,
+        expectedDefinitionRevision: existing.expectedDefinitionRevision,
+      };
+    }
+  }
+
   /**
    * Link the reserved idempotency record to the real execution id after execution creation.
    */
@@ -107,6 +157,25 @@ export class PlaybookFlowIdempotencyService {
     await this.idempotencyModel.updateOne(
       { ownerId, idempotencyKey },
       { $set: { executionId } },
+    ).exec();
+  }
+
+  async confirmSaveResult(ownerId: string, idempotencyKey: string, responseBody: unknown): Promise<void> {
+    await this.idempotencyModel.updateOne(
+      { ownerId, idempotencyKey },
+      { $set: { responseBody } },
+    ).exec();
+  }
+
+  async recordExpectedSaveState(
+    ownerId: string,
+    idempotencyKey: string,
+    expectedStateHash: string,
+    expectedDefinitionRevision: number,
+  ): Promise<void> {
+    await this.idempotencyModel.updateOne(
+      { ownerId, idempotencyKey },
+      { $set: { expectedStateHash, expectedDefinitionRevision } },
     ).exec();
   }
 

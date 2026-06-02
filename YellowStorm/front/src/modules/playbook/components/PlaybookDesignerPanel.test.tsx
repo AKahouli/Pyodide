@@ -179,6 +179,7 @@ function buildPlaybook(): Playbook {
     id: 'playbook-1',
     name: 'Test playbook',
     description: '',
+    definitionRevision: 0,
     designSettings: {
       inferenceModelId: null,
       nodeSuggestionsMode: 'manual',

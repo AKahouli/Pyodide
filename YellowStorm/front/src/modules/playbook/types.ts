@@ -814,6 +814,7 @@ export interface PlaybookSummary {
   id: string;
   name: string;
   description: string;
+  definitionRevision?: number;
   taskCount: number;
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
@@ -846,6 +847,7 @@ export interface Playbook {
   id: string;
   name: string;
   description: string;
+  definitionRevision: number;
   designSettings: PlaybookDesignSettings;
   effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTask[];
@@ -1906,6 +1908,7 @@ export interface UpdatePlaybookData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
 }
@@ -2516,6 +2519,7 @@ export interface Flow {
   id: string;
   ownerId: string;
   schemaVersion: number;
+  definitionRevision: number;
   name: string;
   description?: string;
   triggerConfig?: FlowTriggerConfig;
@@ -2540,6 +2544,7 @@ export interface FlowSummary {
   id: string;
   name: string;
   description: string;
+  definitionRevision?: number;
   nodeCount: number;
   scheduleEnabled: boolean;
   executionStatus?: ExecutionStatus | null;
@@ -2577,6 +2582,7 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
 }
@@ -2607,7 +2613,8 @@ export interface PlaybookDeltaPatchFields {
 }
 
 export interface PatchPlaybookFlowDeltaData {
-  expectedUpdatedAt: string;
+  expectedDefinitionRevision: number;
+  expectedUpdatedAt?: string;
   payloadHash?: string;
   basePayloadHash?: string;
   clientMutationId?: string;
@@ -2622,6 +2629,7 @@ export interface PatchPlaybookFlowDeltaData {
 export interface PatchPlaybookFlowDeltaResult {
   id: string;
   updatedAt: string;
+  definitionRevision: number;
   payloadHash?: string;
   applied: true;
   patchSummary: {
@@ -2635,6 +2643,7 @@ export interface PatchPlaybookFlowDeltaResult {
 }
 
 export interface SavePlaybookOptions {
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
   reason?: 'autosave' | 'manual' | 'route-leave';
