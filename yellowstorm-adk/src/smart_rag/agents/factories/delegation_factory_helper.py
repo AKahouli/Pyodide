@@ -629,6 +629,7 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
             "user_id": config.user_id,
             "file_names": explicit_file_names,
             "workspace_ids": workspace_ids,
+            "auth_headers": mcp.get("auth_headers") or {},
         }])
         if toolsets:
             if not hasattr(agent, "tools") or agent.tools is None:

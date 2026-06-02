@@ -246,6 +246,30 @@ class TestMCPHelper:
             mock_stream_params.assert_called_once_with(url="https://localhost:8081")
             assert result == mock_params
 
+    def test_create_mcp_config_streamable_http_merges_auth_headers(self):
+        with patch('src.smart_rag.infrastructure.external.mcp_helper.StreamableHTTPConnectionParams') as mock_stream_params:
+            mock_params = MagicMock()
+            mock_stream_params.return_value = mock_params
+
+            result = MCPHelper.create_mcp_config(
+                'mcp',
+                transport_type='streamable_http',
+                url='http://localhost:8045/http',
+                user_id='user-1',
+                workspace_ids=['workspace-1'],
+                auth_headers={'X-User-Id': 'user-1'},
+            )
+
+            mock_stream_params.assert_called_once_with(
+                url='http://localhost:8045/http',
+                headers={
+                    'user_id': 'user-1',
+                    'workspace_id': 'workspace-1',
+                    'X-User-Id': 'user-1',
+                },
+            )
+            assert result == mock_params
+
     def test_create_mcp_config_unsupported_type(self):
         """Test creating MCP config with unsupported type."""
         with pytest.raises(ValueError, match="Unsupported MCP type: unknown"):

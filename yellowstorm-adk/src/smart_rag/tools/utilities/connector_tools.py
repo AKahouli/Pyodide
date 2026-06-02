@@ -516,17 +516,28 @@ _PLURAL_LEGACY_WORKSPACE_PARAMS = (
     "workspace_ids",
     "workspaceIds",
 )
+_WORKSPACE_PLACEHOLDER_VALUES = {"default"}
+
+
+def _is_workspace_placeholder(value: Any) -> bool:
+    return str(value or "").strip().lower() in _WORKSPACE_PLACEHOLDER_VALUES
+
+
+def _needs_workspace_binding(value: Any) -> bool:
+    return not str(value or "").strip() or _is_workspace_placeholder(value)
 
 
 def _resolve_default_workspace_id(
     workspace_names: Optional[List[str]], workspace_id: Optional[str]
 ) -> Optional[str]:
+    normalized_workspace_id = str(workspace_id or "").strip()
+    if normalized_workspace_id:
+        return normalized_workspace_id
     for value in workspace_names or []:
         normalized = str(value or "").strip()
         if normalized:
             return normalized
-    normalized_workspace_id = str(workspace_id or "").strip()
-    return normalized_workspace_id or None
+    return None
 
 
 def _relax_bound_workspace_requirements(
@@ -606,15 +617,16 @@ def _with_default_workspace_params(
     # Generic connector schemas expose a free-form `params` object, so bind the
     # canonical workspace_id there. Explicit schemas only receive declared fields.
     if not isinstance(properties, dict) or not properties:
-        merged_params.setdefault("workspace_id", default_workspace_id)
+        if _needs_workspace_binding(merged_params.get("workspace_id")):
+            merged_params["workspace_id"] = default_workspace_id
         return merged_params
 
     for name in _SINGULAR_LEGACY_WORKSPACE_PARAMS:
-        if name in properties and not merged_params.get(name):
+        if name in properties and _needs_workspace_binding(merged_params.get(name)):
             merged_params[name] = default_workspace_id
 
     for name in _SINGULAR_WORKSPACE_NAME_PARAMS:
-        if name in properties and not merged_params.get(name):
+        if name in properties and _needs_workspace_binding(merged_params.get(name)):
             merged_params[name] = default_workspace_id
 
     available_workspace_ids = [
@@ -852,6 +864,7 @@ def create_connector_tools(
                     else kwargs
                 )
                 merged_params = {**_fixed_params, **params}
+                merged_params.pop("user_id", None)
                 merged_params = _with_default_workspace_params(
                     merged_params,
                     _parameter_schema,
@@ -859,10 +872,11 @@ def create_connector_tools(
                     workspace_id,
                 )
                 logger.info(
-                    "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
+                    "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s auth_header_names=%s request_payload=%s",
                     _connector_id,
                     _action_key,
                     _tool_name,
+                    sorted(_auth_headers.keys()),
                     _log_payload(merged_params),
                 )
                 response = await call_mcp_tool(
@@ -904,10 +918,10 @@ def create_connector_tools(
                 return registered_response
 
             logger.info(
-                "connector_tool_created tool_name=%s action_key=%s auth_headers=%s",
+                "connector_tool_created tool_name=%s action_key=%s auth_header_names=%s",
                 tool_name,
                 action_key,
-                binding_auth_headers,
+                sorted(binding_auth_headers.keys()),
             )
 
             _connector_tool.__name__ = tool_name

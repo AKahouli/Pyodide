@@ -929,6 +929,61 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
     assert captured["auth_headers"] == {"Authorization": "Bearer token"}
 
 
+def test_connector_mcp_tools_strip_user_id_from_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    collector = ToolResultCollector()
+    tools = _create_connector_mcp_tools(
+        [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "SharePoint",
+                "connector_slug": "sharepoint",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "fixed_params": {"user_id": "fixed-user"},
+                "auth_headers": {
+                    "Authorization": "Bearer token",
+                },
+                "actions": [
+                    {
+                        "action_key": "searchv2_search_document_blocks",
+                        "label": "Search",
+                        "description": "Search documents",
+                    }
+                ],
+            }
+        ],
+        collector,
+        user_id="agent-user",
+    )
+
+    search_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "sharepoint_searchv2_search_document_blocks"
+    )
+    result = asyncio.run(
+        search_tool.ainvoke({"params": {"query": "revenue", "user_id": "llm-user"}})
+    )
+
+    assert result == {"text": "ok"}
+    assert captured["params"] == {"query": "revenue"}
+    assert captured["auth_headers"] == {"Authorization": "Bearer token"}
+
+
 def test_connector_mcp_tools_preserve_explicit_auth_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

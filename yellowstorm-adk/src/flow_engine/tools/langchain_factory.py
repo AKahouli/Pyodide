@@ -1729,16 +1729,13 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
+                        merged_params.pop("user_id", None)
 
                         # Build context headers for streamable_http transport
                         effective_auth_headers = dict(ah)
                         if tt == "streamable_http":
-                            # Always override user_id / workspace_name / file_name
-                            # with known-good values so LLM-guessed or fixed_params
-                            # values (ObjectIds) can't reach the backend.
-                            if _uid:
-                                effective_auth_headers["user_id"] = _uid
-                                merged_params["user_id"] = _uid
+                            # Always override workspace_name / file_name with known-good
+                            # values so LLM-guessed or fixed_params values can't reach the backend.
                             if _fn:
                                 effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
                                 merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
@@ -1752,8 +1749,7 @@ def _create_connector_mcp_tools(
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
                             logger.info(
-                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_id=%s",
-                                _uid,
+                                "playbook_connector_mcp_context_headers file_name=%s workspace_id=%s",
                                 effective_auth_headers.get("file_name"),
                                 effective_auth_headers.get("workspace_id"),
                             )
