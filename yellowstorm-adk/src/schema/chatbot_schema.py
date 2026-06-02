@@ -89,6 +89,7 @@ class RunAgentTeamRequest(BaseModel):
     brain_relations: Optional[Dict] = None
     search_web: Optional[bool] = False
     agent_mode: str
+    connector_repo: Optional[Dict[str, str]] = None
 
 class UserContext(BaseModel):
     """Schema for user context (user_id + username together)."""

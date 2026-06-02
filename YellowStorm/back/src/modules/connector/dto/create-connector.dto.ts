@@ -102,11 +102,26 @@ export class CreateConnectorDto {
   @MaxLength(64)
   icon?: string;
 
-  @ApiPropertyOptional({ description: 'Brand color hex' })
+  @ApiPropertyOptional({ description: 'Brand color hex', example: '#4285f4' })
   @IsOptional()
   @IsString()
   @MaxLength(64)
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'Color must be a valid hex color' })
   color?: string;
+
+  @ApiPropertyOptional({
+    description: 'Icon color for contrast against background',
+    enum: ['light', 'dark'],
+    default: 'light',
+  })
+  @IsOptional()
+  @IsEnum(['light', 'dark'])
+  iconColor?: 'light' | 'dark';
+
+  @ApiPropertyOptional({ description: 'Optional connector category ID' })
+  @IsOptional()
+  @IsString()
+  categoryId?: string | null;
 
   @ApiPropertyOptional({ enum: ConnectorAuthType, description: 'Authentication type' })
   @IsOptional()

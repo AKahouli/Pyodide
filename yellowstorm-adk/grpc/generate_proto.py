@@ -35,15 +35,15 @@ def main():
 
     # Verify proto file exists
     if not PROTO_FILE.exists():
-        print(f"❌ ERROR: Proto file not found: {PROTO_FILE}")
-        print(f"   Please create the proto file first.")
+        print(f"ERROR: Proto file not found: {PROTO_FILE}")
+        print("   Please create the proto file first.")
         sys.exit(1)
 
-    print(f"✓ Found proto file: {PROTO_FILE}")
+    print(f"Found proto file: {PROTO_FILE}")
 
     # Create output directory if it doesn't exist
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"✓ Output directory: {OUTPUT_DIR}")
+    print(f"Output directory: {OUTPUT_DIR}")
 
     # Build protoc command
     cmd = [
@@ -71,7 +71,7 @@ def main():
             cwd=PROJECT_ROOT
         )
 
-        print("✅ Protobuf code generation successful!")
+        print("Protobuf code generation successful!")
 
         # List generated files
         generated_files = [
@@ -85,18 +85,19 @@ def main():
         for file in generated_files:
             if file.exists():
                 size = file.stat().st_size
-                print(f"✓ {file.relative_to(PROJECT_ROOT)} ({size:,} bytes)")
+                print(f"OK {file.relative_to(PROJECT_ROOT)} ({size:,} bytes)")
             else:
-                print(f"✗ {file.relative_to(PROJECT_ROOT)} (NOT FOUND)")
+                print(f"MISSING {file.relative_to(PROJECT_ROOT)}")
 
         # Fix imports in generated files
         print("\n" + "=" * 60)
         print("Fixing imports in generated files...")
         print("=" * 60)
         fix_imports(OUTPUT_DIR / "chatbot_pb2_grpc.py")
+        fix_imports(OUTPUT_DIR / "playbook_flow_pb2_grpc.py")
 
         print("\n" + "=" * 60)
-        print("✅ All done! gRPC code is ready to use.")
+        print("All done! gRPC code is ready to use.")
         print("=" * 60)
         print("\nNext steps:")
         print("  1. Install dependencies: pip install -r requirements.txt")
@@ -104,7 +105,7 @@ def main():
         print("  3. gRPC will be available on port 50051")
 
     except subprocess.CalledProcessError as e:
-        print(f"❌ ERROR: Protoc command failed!")
+        print("ERROR: Protoc command failed!")
         print(f"   Return code: {e.returncode}")
         if e.stdout:
             print(f"   stdout: {e.stdout}")
@@ -112,7 +113,7 @@ def main():
             print(f"   stderr: {e.stderr}")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ ERROR: {str(e)}")
+        print(f"ERROR: {str(e)}")
         sys.exit(1)
 
 
@@ -120,33 +121,33 @@ def fix_imports(grpc_file: Path):
     """
     Fix import statements in generated gRPC file.
 
-    The generated chatbot_pb2_grpc.py has: import chatbot_pb2
-    We need to change it to: from src.grpc_generated import chatbot_pb2
+    The generated *_pb2_grpc.py has: import foo_pb2
+    We need to change it to: from src.grpc_generated import foo_pb2
 
     Args:
         grpc_file: Path to the generated gRPC file
     """
     if not grpc_file.exists():
-        print(f"⚠ Warning: File not found: {grpc_file}")
+        print(f"Warning: File not found: {grpc_file}")
         return
 
     try:
-        # Read the file
         content = grpc_file.read_text()
+        stem = grpc_file.stem.replace("_pb2_grpc", "_pb2")
+        old_import = f"import {stem}"
+        new_import = f"from src.grpc_generated import {stem}"
 
-        # Replace the import
-        old_import = "import chatbot_pb2 as chatbot__pb2"
-        new_import = "from src.grpc_generated import chatbot_pb2 as chatbot__pb2"
-
-        if old_import in content:
+        if new_import in content:
+            print(f"No import fixes needed in {grpc_file.name}")
+        elif old_import in content:
             content = content.replace(old_import, new_import)
             grpc_file.write_text(content)
-            print(f"✓ Fixed imports in {grpc_file.name}")
+            print(f"Fixed imports in {grpc_file.name}")
         else:
-            print(f"⚠ No import fixes needed in {grpc_file.name}")
+            print(f"No import fixes needed in {grpc_file.name}")
 
     except Exception as e:
-        print(f"⚠ Warning: Could not fix imports in {grpc_file}: {e}")
+        print(f"Warning: Could not fix imports in {grpc_file}: {e}")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ import {
   ModelSelectorTrigger,
 } from '@/components/ai-elements/model-selector';
 import { cn } from '@/lib/utils';
+import { useUsage } from '@/modules/usage/UsageContext';
 import {
   useConversationStore,
   useInputDisabled,
@@ -37,8 +38,8 @@ import {
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useUsage } from '@/modules/usage';
 import { GroupChatButton } from './components/GroupChatButton';
+import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
@@ -145,7 +146,20 @@ export function NewConversationPage() {
     }
   };
 
-  const handleSubmit = async (message: PromptInputMessage, modelId: string, agentIds?: string[], workspaceIds?: string[]) => {
+  const handleSubmit = async (
+    message: PromptInputMessage,
+    modelId: string,
+    agentIds?: string[],
+    _memberIds?: string[],
+    workspaceIds?: string[],
+    connectorRepo?: {
+      connectorId: string;
+      connectorName: string;
+      repoId: string;
+      repoName: string;
+      repoUrl?: string;
+    },
+  ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
 
@@ -181,6 +195,7 @@ export function NewConversationPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
+        connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
       });
 
       clearAll();
@@ -225,6 +240,7 @@ export function NewConversationPage() {
                   }
                 />
                 <GroupChatButton />
+                <SelectedConnectorRepo />
               </>
             ) : (
               <AgentInput onSubmit={handleAgentSubmit} disabled={isSending} />

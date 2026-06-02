@@ -15,6 +15,9 @@ import { FlowDesignMessage, FlowDesignMessageDocument } from '../schemas/playboo
 import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { mapGrpcResponseToFlow } from './playbook-flow-design-mapper';
+import { PlaybookDesignSummaryService } from '../design/playbook-design-summary.service';
+import { PlaybookDesignRequestBuilderService } from '../design/playbook-design-request-builder.service';
+import { PlaybookDesignResultApplierService } from '../design/playbook-design-result-applier.service';
 
 const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
   'You rewrite workflow prompts for a playbook builder.',
@@ -35,6 +38,9 @@ export class PlaybookFlowDesignService {
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly settingsService: PlaybookFlowSettingsService,
     private readonly usageService: UsageService,
+    private readonly designSummaryService: PlaybookDesignSummaryService,
+    private readonly designRequestBuilder: PlaybookDesignRequestBuilderService,
+    private readonly designResultApplier: PlaybookDesignResultApplierService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowDesignService'); }
 
@@ -51,12 +57,16 @@ export class PlaybookFlowDesignService {
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
-    const response = await this.grpcService.generatePlaybook({
-      user_context: { user_id: userId, username: userId },
-      query: prompt, available_agents: grpcAgents,
-      workspace_context: workspaceContexts, existing_playbook: null,
-      model: modelId, prompt_overrides: promptOverrides,
-    });
+    const response = await this.grpcService.generatePlaybook(
+      this.designRequestBuilder.buildGenerateRequest({
+        userId,
+        query: prompt,
+        modelId,
+        grpcAgents,
+        workspaceContexts,
+        promptOverrides,
+      }),
+    );
 
     const { nodes, controlEdges, dataBindings } = mapGrpcResponseToFlow(response);
     if (!nodes.length) throw new BadRequestException(ErrorCode.PLAYBOOK_GENERATE_FAILED);
@@ -94,34 +104,29 @@ export class PlaybookFlowDesignService {
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     try {
-      const response = await this.grpcService.generatePlaybook({
-        user_context: { user_id: userId, username: userId },
-        query, available_agents: grpcAgents,
-        workspace_context: workspaceContexts,
-        existing_playbook: {
-          nodes: (flow.nodes || []).map((n: any) => ({
-            id: n.id,
-            title: n.label || n.id,
-            description: n.description || n.metadata?.description || '',
-            assigned_agent_id: n.metadata?.assignedAgentId || '', execution_order: 0,
-          })),
-          edges: (flow.controlEdges || []).map((e: any) => ({
-            source_id: e.source, target_id: e.target,
-            source_output_port_id: e.sourceOutputPortId || e.routerLabel || 'default',
-            target_input_port_id: e.targetInputPortId || 'default',
-          })),
-        },
-        model: modelId, prompt_overrides: promptOverrides,
-      });
+      const response = await this.grpcService.generatePlaybook(
+        this.designRequestBuilder.buildDesignRequest({
+          userId,
+          query,
+          modelId,
+          grpcAgents,
+          workspaceContexts,
+          promptOverrides,
+          flow,
+        }),
+      );
 
-      const { nodes, controlEdges, dataBindings } = mapGrpcResponseToFlow(response);
+      const { nodes, controlEdges, dataBindings } = this.designResultApplier.applyToSnapshot(
+        response,
+        snapshotBefore,
+      );
       const updatedFlow = await this.playbookFlowService.updateNodesAndEdges(flowId, {
         nodes,
         controlEdges,
-        dataBindings: dataBindings.length > 0 ? dataBindings : snapshotBefore.dataBindings,
+        dataBindings,
       });
 
-      const aiSummary = this.generateDesignSummary(
+      const aiSummary = this.designSummaryService.summarizeStructuralChanges(
         snapshotBefore.nodes, snapshotBefore.controlEdges, nodes, controlEdges,
       );
 
@@ -173,25 +178,6 @@ export class PlaybookFlowDesignService {
   private normalizeRewritePrompt(text: string): string {
     return text.replace(/^```(?:text)?\s*/i, '').replace(/\s*```$/i, '')
       .replace(/^(rewritten prompt|rewrite|prompt rewrite)\s*:\s*/i, '').trim();
-  }
-
-  private generateDesignSummary(
-    oldNodes: any[], oldEdges: any[], newNodes: any[], newEdges: any[],
-  ): string {
-    const oldIds = new Set(oldNodes.map((n) => n.id));
-    const newIds = new Set(newNodes.map((n) => n.id));
-    const added = newNodes.filter((n) => !oldIds.has(n.id)).length;
-    const removed = oldNodes.filter((n) => !newIds.has(n.id)).length;
-    const parts: string[] = [];
-    if (added > 0) parts.push(`Added ${added} node${added > 1 ? 's' : ''}`);
-    if (removed > 0) parts.push(`Removed ${removed} node${removed > 1 ? 's' : ''}`);
-    const oldEdgeKeys = new Set(oldEdges.map((e) => `${e.source}->${e.target}`));
-    const newEdgeKeys = new Set(newEdges.map((e) => `${e.source}->${e.target}`));
-    const edgesAdded = [...newEdgeKeys].filter((k) => !oldEdgeKeys.has(k)).length;
-    const edgesRemoved = [...oldEdgeKeys].filter((k) => !newEdgeKeys.has(k)).length;
-    if (edgesAdded > 0) parts.push(`Added ${edgesAdded} connection${edgesAdded > 1 ? 's' : ''}`);
-    if (edgesRemoved > 0) parts.push(`Removed ${edgesRemoved} connection${edgesRemoved > 1 ? 's' : ''}`);
-    return parts.length > 0 ? parts.join(', ') : 'No structural changes';
   }
 
   async getDesignMessages(flowId: string, userId: string): Promise<any[]> {

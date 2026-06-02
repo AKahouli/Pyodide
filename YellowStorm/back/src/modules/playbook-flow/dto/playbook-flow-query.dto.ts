@@ -32,4 +32,9 @@ export class PlaybookFlowQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({ enum: ['base', 'enriched'] })
+  @IsOptional()
+  @IsIn(['base', 'enriched'])
+  view?: 'base' | 'enriched';
 }

@@ -1,10 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { ControlEdge, DataBinding } from './playbook-flow-graph.schema';
+import { DEFAULT_HITL_POLICY, HitlBlockerRule, HitlPolicy } from './playbook-flow-hitl.schema';
 
 export type FlowDocument = HydratedDocument<Flow>;
 
 export const ADVISOR_SCORING_MODES = ['llm', 'heuristic'] as const;
 export type AdvisorScoringMode = (typeof ADVISOR_SCORING_MODES)[number];
+export { ControlEdge, DataBinding } from './playbook-flow-graph.schema';
 
 @Schema({ _id: false })
 export class FlowTriggerConfig {
@@ -161,74 +164,14 @@ export class FlowNode {
   @Prop({ required: false, type: RetryPolicy })
   retryPolicy?: RetryPolicy;
 
+  @Prop({ required: false, type: HitlPolicy })
+  hitlPolicy?: HitlPolicy;
+
   @Prop({ required: false, type: String })
   modelId?: string;
 
   @Prop({ required: false, type: Object })
   metadata?: Record<string, unknown>;
-}
-
-@Schema({ _id: false })
-export class ControlEdge {
-  @Prop({ required: true, type: String })
-  id!: string;
-
-  @Prop({ required: true, type: String, enum: ['sequential', 'conditional'] })
-  kind!: string;
-
-  @Prop({ required: true, type: String })
-  source!: string;
-
-  @Prop({ required: true, type: String })
-  target!: string;
-
-  @Prop({ required: false, type: String })
-  routerLabel?: string;
-
-  @Prop({ required: false, type: String })
-  sourceOutputPortId?: string;
-
-  @Prop({ required: false, type: String })
-  targetInputPortId?: string;
-
-  @Prop({ required: false, type: Number, default: 0 })
-  priority?: number;
-}
-
-@Schema({ _id: false })
-export class DataBinding {
-  @Prop({ required: true, type: String })
-  id!: string;
-
-  @Prop({ required: true, type: String })
-  targetNode!: string;
-
-  @Prop({ required: true, type: String })
-  targetPort!: string;
-
-  @Prop({ required: true, type: String, enum: ['node-output', 'trigger', 'state', 'constant', 'expression'] })
-  sourceKind!: string;
-
-  @Prop({ required: false, type: String })
-  sourceNode?: string;
-
-  @Prop({ required: false, type: String })
-  sourcePort?: string;
-
-  @Prop({ required: false, type: String, enum: ['current', 'previous'], default: 'current' })
-  iteration?: string;
-
-  @Prop({ required: false, type: String })
-  triggerPath?: string;
-
-  @Prop({ required: false, type: String })
-  statePath?: string;
-
-  @Prop({ required: false, type: Object })
-  constantValue?: unknown;
-
-  @Prop({ required: false, type: String })
-  expression?: string;
 }
 
 @Schema({ timestamps: true })
@@ -250,6 +193,12 @@ export class Flow {
 
   @Prop({ required: true, type: FlowSettings, default: () => ({ recursionLimit: 25, maxParallelism: 5 }) })
   settings!: FlowSettings;
+
+  @Prop({ required: true, type: HitlPolicy, default: () => ({ ...DEFAULT_HITL_POLICY }) })
+  hitlPolicy!: HitlPolicy;
+
+  @Prop({ required: true, type: [HitlBlockerRule], default: [] })
+  hitlBlockers!: HitlBlockerRule[];
 
   @Prop({ required: true, type: [FlowNode], default: [] })
   nodes!: FlowNode[];

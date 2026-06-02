@@ -32,7 +32,7 @@ import { DocumentStatus } from '../../workspace/schemas/workspace-document.schem
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 interface StreamRequest {
   content: string;
@@ -40,6 +40,13 @@ interface StreamRequest {
   webSearchEnabled?: boolean;
   modelId?: string;
   agentIds?: string[];
+  connectorRepo?: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  };
 }
 
 // Log every Nth chunk to avoid overwhelming logs
@@ -235,7 +242,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_id: workspaceId,
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
-            filename: doc.originalName,
+            filename: doc.filename || '',
             filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
@@ -281,7 +288,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_id: wsId,
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
-            filename: doc.originalName,
+            filename: doc.filename || '',
             filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
@@ -365,7 +372,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           type: 'document',
           document: {
             filepath: doc.path || '',
-            filename: doc.originalName,
+            filename: doc.filename || '',
             external_id: doc.id,
             workspace_id: doc.workspaceId,
             source: doc.path || '',
@@ -429,7 +436,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       return previousDocs.map((doc) => ({
         _id: doc.id,
-        filename: doc.originalName,
+        filename: doc.filename || '',
         filepath: doc.path || '',
         in_memory: false,
         language: doc.detected_language || 'fr',
@@ -572,7 +579,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     const [workspaceContexts, agents] = await Promise.all([
       this.buildWorkspaceContexts(conversationId, logOpts, conversation),
-      this.agentService.buildAgentsForStream(userId, request.modelId, request.agentIds, sharedAgentIds, groupMembers),
+      this.agentService.buildAgentsForStream(
+        userId,
+        request.modelId,
+        request.agentIds,
+        sharedAgentIds,
+        groupMembers,
+        request.connectorRepo?.connectorId,
+      ),
     ]);
 
     // Resolve agent brain contexts, current-turn attached files, and previous files in parallel
@@ -594,6 +608,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       agent_mode: 'manual',
       attached_files: attachedFiles,
       previous_attached_files: previousAttachedFiles,
+      ...(request.connectorRepo
+        ? {
+            connector_repo: {
+              connector_id: request.connectorRepo.connectorId,
+              connector_name: request.connectorRepo.connectorName,
+              repo_id: request.connectorRepo.repoId,
+              repo_name: request.connectorRepo.repoName,
+              repo_url: request.connectorRepo.repoUrl ?? '',
+            },
+          }
+        : {}),
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);

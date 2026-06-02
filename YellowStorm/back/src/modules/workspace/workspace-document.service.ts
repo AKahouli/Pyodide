@@ -136,7 +136,7 @@ export class WorkspaceDocumentService {
     // Probe ' (n)' suffix until a free slot is found. Cap to avoid runaway loops on
     // pathological cases — 9999 collisions in one workspace is already broken.
     for (let n = 1; n <= 9999; n++) {
-      const candidate = `${base} (${n})${ext}`;
+      const candidate = `${base}_(${n})${ext}`;
       const taken = await this.documentModel
         .exists({ workspaceId: workspaceObjectId, originalName: candidate, isFolder: false })
         .lean();

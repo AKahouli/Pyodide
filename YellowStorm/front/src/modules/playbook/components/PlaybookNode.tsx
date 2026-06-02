@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -32,6 +32,7 @@ import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
+import { createCompatibleInputPort } from '../utils/port-compatibility';
 import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference, ValidatedTaskReplay } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
@@ -88,11 +89,13 @@ export interface NodeContextMenuActions {
   onToggleEnabled: (nodeId: string) => void;
   onExecuteStep: (nodeId: string) => void;
   onResumeFromStep: (nodeId: string) => void;
+  onRunFromStep: (nodeId: string) => void;
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
+  canRunFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
   canSaveBaseline: (nodeId: string) => boolean;
   onCopySelection?: () => void;
@@ -347,6 +350,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
   const bindResourceToInputPort = usePlaybookStore((s) => s.bindResourceToInputPort);
+  const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
   const openPortInspection = usePlaybookStore((s) => s.openPortInspection);
 
   const [isDragOver, setIsDragOver] = useState(false);
@@ -580,9 +584,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
     const resourceKind = (payload.kind || payload.type) as PlaybookResourceReference['kind'];
     const workspaceId = payload.workspaceId || payload.metadata?.workspaceId || '';
+    const isResource = resourceKind === 'document' || resourceKind === 'folder' || resourceKind === 'workspace';
 
-    const resolvePortId = (): string | undefined => {
-      if (inputPorts.length <= 1) return inputPorts.length === 1 ? inputPorts[0].id : undefined;
+    const resolveHitPortId = (): string | undefined => {
+      if (inputPorts.length <= 1) return undefined;
       const nodeEl = e.currentTarget as HTMLDivElement;
       const rect = nodeEl.getBoundingClientRect();
       const offsetY = e.clientY - rect.top;
@@ -591,9 +596,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       return hit?.port.id;
     };
 
-    const portId = resolvePortId();
+    let portId = resolveHitPortId();
 
-    if (workspaceId && portId && (resourceKind === 'document' || resourceKind === 'folder' || resourceKind === 'workspace')) {
+    if (workspaceId && isResource && !portId && nodeDataActions?.updateNodeData) {
+      const newPort = createCompatibleInputPort(payload.name || payload.id, 'document');
+      const updatedInputPorts = [...inputPorts, newPort];
+      nodeDataActions.updateNodeData(id, { inputPorts: updatedInputPorts });
+      portId = newPort.id;
+    }
+
+    if (workspaceId && portId && isResource) {
       const resource: PlaybookResourceReference = {
         kind: resourceKind,
         id: payload.id,
@@ -612,6 +624,45 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const handleRemoveInputFile = (fileId: string) => {
     removeInputFileFromTask(id, fileId);
   };
+
+  const handleDeleteInputPort = useCallback(
+    (portId: string) => {
+      if (!nodeDataActions?.updateNodeData) return;
+      const updatedInputPorts = inputPorts.filter((p) => p.id !== portId);
+      nodeDataActions.updateNodeData(id, { inputPorts: updatedInputPorts });
+
+      const currentBindings = dataBindings;
+      const updatedBindings = currentBindings.filter(
+        (b) => !(b.targetNode === id && b.targetPort === portId),
+      );
+      if (updatedBindings.length !== currentBindings.length) {
+        updateDataBindings(updatedBindings);
+      }
+
+      const portFiles = inputFiles.filter((f) => f.portId === portId);
+      for (const f of portFiles) {
+        removeInputFileFromTask(id, f.id);
+      }
+    },
+    [id, inputPorts, dataBindings, inputFiles, nodeDataActions, updateDataBindings, removeInputFileFromTask],
+  );
+
+  const handleDeleteOutputPort = useCallback(
+    (portId: string) => {
+      if (!nodeDataActions?.updateNodeData) return;
+      const updatedOutputPorts = outputPorts.filter((p) => p.id !== portId);
+      nodeDataActions.updateNodeData(id, { outputPorts: updatedOutputPorts });
+
+      const currentBindings = dataBindings;
+      const updatedBindings = currentBindings.filter(
+        (b) => !(b.sourceNode === id && b.sourcePort === portId),
+      );
+      if (updatedBindings.length !== currentBindings.length) {
+        updateDataBindings(updatedBindings);
+      }
+    },
+    [id, outputPorts, dataBindings, nodeDataActions, updateDataBindings],
+  );
 
   return (
     <ContextMenu>
@@ -681,6 +732,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   warning={port.required && unboundRequiredPortIds.has(port.id)}
                   warningTooltip={t('node.unboundRequiredPort')}
                   onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: true })}
+                  onDelete={() => handleDeleteInputPort(port.id)}
                 />
                 {port.required && hasMultiplePorts && (
                   <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
@@ -707,6 +759,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               />
               <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
                 onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
+                onDelete={() => handleDeleteOutputPort(port.id)}
               />
             </div>
           ))}
@@ -1041,6 +1094,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem disabled={!actions?.canSkipStep(id)} onClick={() => actions?.onSkipStep(id)}>
           <SkipForward className="h-4 w-4" />
           {t('node.skip')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.canRunFromStep(id)} onClick={() => actions?.onRunFromStep(id)}>
+          <FastForward className="h-4 w-4" />
+          {t('node.runFromStep')}
         </ContextMenuItem>
         <ContextMenuItem disabled={!actions?.canSaveBaseline(id)} onClick={() => actions?.onSaveBaseline(id)}>
           <FileText className="h-4 w-4" />

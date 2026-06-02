@@ -36,6 +36,16 @@ workflow_plan requires: kind="workflow_plan", label, summary, reason, confidence
 - delete_edge
 - create_data_binding
 - delete_data_binding
+- update_hitl_policy
+- create_blocker_rule
+- update_blocker_rule
+- delete_blocker_rule
+- create_hitl_memory
+
+# Smart HITL Rules
+- Suggest HITL policy or blocker changes when the user asks for approval, review, safety, missing-data handling, compliance, external sends, destructive actions, or repeated clarification behavior.
+- Default new workflows and new nodes to Smart HITL auto/balanced unless the user explicitly disables human involvement.
+- Do not add manual interrupt flags when a business-friendly blocker rule captures the same intent.
 
 For create_node include:
 - nodeRef
@@ -186,8 +196,8 @@ Must always consider all the workflow structure (including edges) before evaluat
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
     description: 'System preprompt for the playbook autobuilder.',
-    systemTemplate: 'You are an expert playbook architect. Produce a valid, actionable DAG that respects the user request and the available agents.',
-    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'You are an expert playbook architect. Produce a valid, actionable DAG that respects the user request, available agents, and Smart HITL defaults. Include blocker hints when the workflow may need missing data clarification, approval before risky side effects, or human review for sensitive outputs.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',
@@ -197,8 +207,8 @@ Must always consider all the workflow structure (including edges) before evaluat
   {
     key: 'task.system', title: 'Task system prompt', category: 'task',
     description: 'Base system prompt for every playbook task execution.',
-    systemTemplate: 'You are {{agentName}}.\n\nYour instructions:\n{{agentInstructions}}\n\nYou are working on a task as part of a playbook execution.',
-    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'You are {{agentName}}.\n\nYour instructions:\n{{agentInstructions}}\n\nYou are working on a task as part of a playbook execution.\n\nSmart HITL: continue automatically when safe. Pause instead of guessing when required information is missing, instructions are ambiguous, confidence is too low, or the next action is destructive, external, sensitive, expensive, or explicitly requires approval.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'task.user.footer', title: 'Task user footer', category: 'task',
@@ -222,22 +232,22 @@ Must always consider all the workflow structure (including edges) before evaluat
   {
     key: 'task.clarification', title: 'Clarification prompt', category: 'task',
     description: 'Fallback clarification prompt.',
-    systemTemplate: 'Review the task. If you need clarification, respond with one clear question. If clear, respond "CLEAR".',
-    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'Review the task against Smart HITL blocker rules. If missing data, missing documents, ambiguity, low confidence, or conflicting human guidance would make the result unreliable, respond with one concise clarification question. If clear, respond "CLEAR".',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'replay.final_synthesis', title: 'Replay final synthesis', category: 'replay',
     description: 'Prompt for replay flex/adaptive final synthesis.',
-    systemTemplate: 'You are {{agentName}}.\n\nYour instructions:\n{{agentInstructions}}',
-    userTemplate: 'Use replayed tool results to produce the final answer.\n\n{{synthesisContext}}',
-    enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'You are {{agentName}}.\n\nYour instructions:\n{{agentInstructions}}\n\nRespect HITL memory and human context captured during replay. Do not reuse unsafe approvals unless the replay policy explicitly allows it and the context still matches.',
+    userTemplate: 'Use replayed tool results and any applicable HITL memory/context to produce the final answer.\n\n{{synthesisContext}}',
+    enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'replay.adaptive_tool_args', title: 'Adaptive replay tool args', category: 'replay',
     description: 'Prompt for rewriting tool arguments during adaptive replay.',
-    systemTemplate: 'You rewrite tool arguments for adaptive replay. Keep same intent and JSON shape. Return JSON only.',
+    systemTemplate: 'You rewrite tool arguments for adaptive replay. Keep same intent and JSON shape. Respect reusable HITL memory, but never silently reuse approvals for destructive or external side effects. Return JSON only.',
     userTemplate: 'Tool: {{toolName}}\nOriginal args:\n{{originalArgsJson}}\nCurrent task: {{taskTitle}} — {{taskDescription}}\nReturn adapted args as JSON.',
-    enabled: true, isBuiltIn: true, version: 1,
+    enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'evaluation.task.system', title: 'Evaluation task system prompt', category: 'evaluation',
@@ -261,7 +271,7 @@ Must always consider all the workflow structure (including edges) before evaluat
   {
     key: 'judge.node_reflection', title: 'Playbook Advisor step analysis', category: 'judge',
     description: 'Per-step Playbook Advisor analysis prompt.',
-    systemTemplate: 'You are a strict Playbook Advisor. Evaluate step output against task contract, upstream context, and tool quality. Score every dimension 0-100. Return strict JSON only with ALL fields listed.',
+    systemTemplate: 'You are a strict Playbook Advisor. Evaluate step output against task contract, upstream context, tool quality, and whether the step should have paused for HITL clarification, approval, or review. Score every dimension 0-100. Return strict JSON only with ALL fields listed.',
     userTemplate: `Task: {{taskTitle}} — {{taskDescription}}
 Workflow goal: {{workflowGoal}}
 Expected result: {{expectedResult}}
@@ -307,21 +317,21 @@ Actionable outcome:
 - "safeAutoFixType": "optimize_step" if a safe automatic rewrite would improve this step, otherwise "none"
 - "recommendation": "update_current_playbook" | "generate_new_optimized_playbook" | "none"
 - "reason": concise justification for the overallScore and recommendation`,
-    enabled: true, isBuiltIn: true, version: 2,
+    enabled: true, isBuiltIn: true, version: 3,
   },
   {
     key: 'judge.execution_summary', title: 'Playbook Advisor execution summary', category: 'judge',
     description: 'Aggregates step-level Advisor findings into workflow-level recommendation.',
-    systemTemplate: 'You aggregate Playbook Advisor findings. Focus on workflow coherence, structural issues, and highest-impact recommendations. Return strict JSON only.',
-    userTemplate: 'Workflow goal: {{workflowGoal}}\nExecution summary: {{executionSummaryJson}}\nFindings: {{nodeFindingsJson}}\nReturn JSON with overallScore, structuralIssues, recommendation.',
-    enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'You aggregate Playbook Advisor findings. Focus on workflow coherence, structural issues, HITL value, missed blockers, reusable memory opportunities, and highest-impact recommendations. Return strict JSON only.',
+    userTemplate: 'Workflow goal: {{workflowGoal}}\nExecution summary: {{executionSummaryJson}}\nFindings: {{nodeFindingsJson}}\nReturn JSON with overallScore, structuralIssues, hitlFindings, blockerSuggestions, memorySuggestions, recommendation.',
+    enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'judge.optimize_step', title: 'Advisor optimize playbook step', category: 'judge',
     description: 'Prompt for optimizing a single playbook step while preserving the workflow graph.',
-    systemTemplate: 'You optimize a single playbook step in place. Preserve workflow graph and step id. Improve contract, wording, actionability. Return strict JSON only.',
+    systemTemplate: 'You optimize a single playbook step in place. Preserve workflow graph, step id, HITL policy, and blocker hints unless improving them is the requested optimization. Improve contract, wording, actionability. Return strict JSON only.',
     userTemplate: 'Original playbook: {{playbookJson}}\nSelected task: {{taskJson}}\nJudge summary: {{judgeSummaryJson}}\nReturn optimized task JSON.',
-    enabled: true, isBuiltIn: true, version: 1,
+    enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'output_format.guide', title: 'Output format guide extraction', category: 'output_format',
@@ -338,7 +348,63 @@ Actionable outcome:
   {
     key: 'playbook.generation_new', title: 'Playbook generation (new engine)', category: 'design',
     description: 'System prompt for the new engine playbook generation endpoint.',
-    systemTemplate: 'You are an expert playbook architect.\nProduce a valid, actionable workflow as a FlowSnapshot.\nUse only the provided agents. Do not invent agent names or tool names.',
-    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: 'You are an expert playbook architect.\nProduce a valid, actionable workflow as a FlowSnapshot.\nUse only the provided agents. Do not invent agent names or tool names.\nDefault to Smart HITL auto/balanced and include blocker policy metadata when missing data, external sends, destructive writes, sensitive domains, or explicit approval requirements are likely.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 2,
+  },
+  {
+    key: 'hitl.blocker.detect', title: 'HITL blocker detection', category: 'hitl',
+    description: 'Decides whether a node should pause before continuing.',
+    systemTemplate: 'You decide whether Smart HITL should interrupt a playbook node. Return JSON only with shouldInterrupt, type, reasonCode, riskLevel, confidence, message, suggestedChoices, downstreamImpact, and memoryCandidate. Interrupt only for missing required information, missing documents, ambiguity, risky side effects, external sends, sensitive domains, low confidence, high cost/runtime risk, or explicit approval instructions.',
+    userTemplate: 'Node: {{nodeTitle}} â€” {{nodeDescription}}\nResolved inputs:\n{{resolvedInputsJson}}\nOutput contract:\n{{outputContractJson}}\nTool/action request:\n{{toolActionJson}}\nBlocker catalog:\n{{blockerCatalogJson}}\nActive memories:\n{{activeMemoriesJson}}\nReplay mode: {{replayMode}}\nSensitivity: {{sensitivity}}\nReturn the blocker decision JSON.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.blocker.normalize', title: 'HITL blocker normalization', category: 'hitl',
+    description: 'Converts a natural language blocker rule into a structured blocker rule draft.',
+    systemTemplate: 'Normalize a business-user blocker request into a HitlBlockerRule draft. Return JSON only. Prefer deterministic or tool_action matchers when the condition is concrete; use llm_judge for semantic conditions.',
+    userTemplate: 'Flow context:\n{{flowContextJson}}\nNatural language blocker:\n{{ruleText}}\nReturn the structured blocker rule draft.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.interrupt.explain', title: 'HITL interrupt explanation', category: 'hitl',
+    description: 'Explains why a run paused and what will happen after the user answers.',
+    systemTemplate: 'Explain a HITL interrupt in business-friendly language. Include why the workflow paused, what is needed, downstream impact, and what happens next. Do not imply approval is automatic for high-risk actions.',
+    userTemplate: 'Interrupt payload:\n{{interruptPayloadJson}}\nWorkflow context:\n{{workflowContextJson}}\nReturn concise markdown.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.resume.normalize', title: 'HITL resume normalization', category: 'hitl',
+    description: 'Maps a free-text human reply into a typed resume payload.',
+    systemTemplate: 'Normalize a HITL human reply. Return JSON only with action, message, approved, reason, feedback, scope, and remember. Default clarification scope to downstream_run; default destructive/external approval scope to step_only.',
+    userTemplate: 'Interrupt payload:\n{{interruptPayloadJson}}\nHuman reply:\n{{humanReply}}\nReturn normalized resume JSON.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.memory.extract', title: 'HITL memory extraction', category: 'hitl',
+    description: 'Proposes reusable memory candidates from human feedback.',
+    systemTemplate: 'Extract a reusable memory candidate from HITL feedback only when it is stable, non-sensitive, and useful for future runs. Return JSON only with shouldRemember, memoryType, title, normalizedInstruction, appliesTo, and sensitivity.',
+    userTemplate: 'HITL response:\n{{hitlResponseJson}}\nNode context:\n{{nodeContextJson}}\nReturn memory candidate JSON.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.memory.summarize', title: 'HITL memory summary', category: 'hitl',
+    description: 'Summarizes active HITL memories for prompt injection.',
+    systemTemplate: 'Summarize active HITL memories into concise operational guidance. Preserve scope and sensitivity. Return markdown bullets only.',
+    userTemplate: 'Memories:\n{{memoriesJson}}',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.replay.reuse_policy', title: 'HITL replay reuse policy', category: 'hitl',
+    description: 'Decides whether replay can reuse prior HITL feedback.',
+    systemTemplate: 'Decide whether prior HITL feedback can be reused in replay. Strict replay requires matching context fingerprints. Never silently reuse destructive or external approvals unless explicitly reusable and context still matches. Return JSON only.',
+    userTemplate: 'Replay mode: {{replayMode}}\nPrior HITL snapshot:\n{{hitlSnapshotJson}}\nCurrent context fingerprint: {{currentContextFingerprint}}\nReturn reuse decision JSON.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'hitl.post_run.suggestions', title: 'HITL post-run suggestions', category: 'hitl',
+    description: 'Suggests blocker, memory, or design improvements after a HITL-assisted run.',
+    systemTemplate: 'Review HITL events after a run and suggest only high-value blocker rules, memory candidates, or design changes. Return JSON only.',
+    userTemplate: 'Execution HITL events:\n{{hitlEventsJson}}\nExecution summary:\n{{executionSummaryJson}}\nReturn post-run suggestions JSON.',
+    enabled: true, isBuiltIn: true, version: 1,
   },
 ];

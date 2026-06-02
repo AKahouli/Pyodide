@@ -17,7 +17,11 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
-- 200 lines that should be 50 → rewrite.
+
+**File & Script Limits:**
+   - Maximum of 400 lines of code per file.
+   - Maximum of 10 functions per file.
+   - If a script exceeds these limits, you must refactor and modularize the code by breaking it into separate files/modules.
 
 
 ## Non-Negotiable Principles
@@ -229,7 +233,7 @@ Applies to all agents (`build`, `plan`, `reviewer`, `frontend-qa`). Skipping is 
 
 The main agent implements. Sub-agents provide bounded specialist work. Their local agent files are authoritative for execution details; this file only routes work and defines blocking gates.
 
-- `explore`: read-only codebase discovery, dependency tracing, and file search.
+- `explore`: read-only obsidian vault, read-only codebase discovery, dependency tracing, and file search.
 - `plan`: read-only implementation planning for ambiguous, risky, multi-file, cross-module, API/schema/architecture, or contract work.
 - `frontend-qa`: browser QA gate for frontend-visible UI, runtime, interaction, responsive, accessibility, console, or network changes.
 - `reviewer`: final quality gate for non-trivial code changes.
@@ -345,7 +349,7 @@ Skip when:
 Before editing:
 
 1. Classify the task tier.
-2. Must almways search the Obsidian vault for module boundaries, imports, and dependencies relevant to the task. Use Fragment Search Strategies (`strategy: "semantic"`).
+2. Must almways search the Obsidian through the `explore` agent for module boundaries, imports, and dependencies relevant to the task. Use Fragment Search Strategies (`strategy: "semantic"`).
 3. Read relevant guideline file per Mandatory Guideline Loading table.
 4. Inspect relevant code directly.
 5. Use `explore` if ownership, call paths, or dependencies are unclear.

@@ -23,6 +23,8 @@ export interface IConnectorResponse {
   description: string;
   icon: string;
   color: string;
+  iconColor: 'light' | 'dark';
+  categoryId: string | null;
   authType: string;
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
@@ -48,6 +50,15 @@ export interface IConnectorCredentialResponse {
   lastValidatedAt: Date | null;
   expiresAt: Date | null;
   userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IConnectorCategoryResponse {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }

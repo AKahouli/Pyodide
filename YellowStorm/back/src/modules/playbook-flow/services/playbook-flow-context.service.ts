@@ -34,7 +34,7 @@ export class PlaybookFlowContextService {
           instruction: settings?.instruction,
           tag: settings?.tag,
           workspace_documents: result.documents.map((doc: any) => ({
-            _id: doc.id, filename: doc.originalName, filepath: doc.path,
+            _id: doc.id, filename: doc.filename || '', filepath: doc.path,
             in_memory: false, language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200, workspace_id: wsId,
             createdAt: doc.createdAt,
@@ -62,7 +62,7 @@ export class PlaybookFlowContextService {
         chunks: settings?.chunks, hybrid_search: settings?.hybridSearch,
         instruction: settings?.instruction, tag: settings?.tag,
         workspace_documents: result.documents.map((doc: any) => ({
-          _id: doc.id, filename: doc.originalName, filepath: doc.path,
+          _id: doc.id, filename: doc.filename || '', filepath: doc.path,
           in_memory: false, language: doc.detected_language || 'fr',
           indexing_token: doc.chunk_size || 1200, workspace_id: wsId, createdAt: doc.createdAt,
         })),

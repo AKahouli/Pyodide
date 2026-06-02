@@ -40,6 +40,10 @@ export class SkillService {
     const skill = await this.skillModel.create({
       name: dto.name,
       description: dto.description,
+      icon: dto.icon ?? '',
+      color: dto.color ?? '',
+      iconColor: dto.iconColor ?? 'light',
+      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
       license: dto.license ?? '',
       compatibility: dto.compatibility ?? '',
       metadata: dto.metadata ?? {},
@@ -141,6 +145,9 @@ export class SkillService {
         mimeType: file.mimeType ?? '',
         content: file.content ?? '',
       }));
+    }
+    if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
+      updateData.categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
     }
 
     const updated = await this.skillModel
@@ -271,6 +278,10 @@ export class SkillService {
       id: (doc._id as { toString(): string }).toString(),
       name: doc.name as string,
       description: (doc.description as string) || '',
+      icon: (doc.icon as string) || '',
+      color: (doc.color as string) || '',
+      iconColor: ((doc.iconColor as 'light' | 'dark') || 'light'),
+      categoryId: doc.categoryId ? (doc.categoryId as { toString(): string }).toString() : null,
       license: (doc.license as string) || '',
       compatibility: (doc.compatibility as string) || '',
       metadata: (doc.metadata as Record<string, string>) || {},

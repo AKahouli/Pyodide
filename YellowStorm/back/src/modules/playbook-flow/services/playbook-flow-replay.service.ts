@@ -174,6 +174,7 @@ export class PlaybookFlowReplayService {
     const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution);
     const baseline = this.replayBaselineService.buildValidatedReplayBaseline({
       taskId,
+      iteration,
       taskTitle,
       taskDescription,
       referenceExecutionId: executionId,
@@ -188,6 +189,7 @@ export class PlaybookFlowReplayService {
         reasoningChain: (taskResult as any).reasoningChain ?? [],
         judgeResult: taskResult.judgeResult ?? null,
       },
+      hitlEvents: execution.hitlEvents ?? [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
       outputFormatGuide: undefined,
     });
@@ -219,6 +221,7 @@ export class PlaybookFlowReplayService {
       contextVariableSchema: baseline.contextVariableSchema,
       toolTraceTemplate: baseline.toolTraceTemplate,
       semanticChecklist: baseline.semanticChecklist,
+      hitlMemorySnapshots: baseline.hitlMemorySnapshots,
       driftPolicy: baseline.driftPolicy,
       acceptedExamples: baseline.acceptedExamples,
       referenceUsage: taskResult.usage ?? null,

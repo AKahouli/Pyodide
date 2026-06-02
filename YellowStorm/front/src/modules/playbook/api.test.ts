@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildPlaybookDeltaPatch,
+  buildPlaybookUpdateRequestBody,
   clonePlaybook,
   executePlaybook,
   getFlowNodeTemplates,
@@ -17,6 +19,7 @@ import {
   getPlaybook,
   getReplayReports,
   getTaskReplays,
+  getPlaybookUpdateTelemetry,
   updatePlaybook,
   validateTaskReplay,
 } from './api';
@@ -105,6 +108,175 @@ describe('sanitizePlaybookUpdate', () => {
         humanApprovalConfig: { promptTemplate: 'Please approve', timeoutSeconds: 900 },
       }),
     ]);
+  });
+});
+
+describe('getPlaybookUpdateTelemetry', () => {
+  it('is deterministic across key-order differences', () => {
+    const first = getPlaybookUpdateTelemetry({
+      name: 'Playbook',
+      description: 'Description',
+      designSettings: { approvalSuggestionMode: 'manual', nodeSuggestionsMode: 'auto', inferenceModelId: 'model-1' },
+      settings: { maxParallelism: 2, recursionLimit: 4 },
+      workspaces: ['w1'],
+    } as any);
+    const second = getPlaybookUpdateTelemetry({
+      name: 'Playbook',
+      description: 'Description',
+      designSettings: { inferenceModelId: 'model-1', nodeSuggestionsMode: 'auto', approvalSuggestionMode: 'manual' },
+      settings: { recursionLimit: 4, maxParallelism: 2 },
+      workspaces: ['w1'],
+    } as any);
+
+    expect(first.payloadHash).toBe(second.payloadHash);
+    expect(first.payloadBytes).toBe(second.payloadBytes);
+  });
+});
+
+describe('buildPlaybookUpdateRequestBody', () => {
+  it('preserves first-class flow graph fields when callers send them directly', () => {
+    const body = buildPlaybookUpdateRequestBody({
+      nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
+      controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+    });
+
+    expect(body).toMatchObject({
+      nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
+      controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+    });
+  });
+});
+
+describe('buildPlaybookDeltaPatch', () => {
+  it('keeps omitted graph fields unchanged for partial scalar saves', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        name: 'Old name',
+        nodes: [{ id: 'task-1', kind: 'step', label: 'Task' }],
+        controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+        dataBindings: [{ id: 'binding-1', targetNode: 'task-1', targetPort: 'default', sourceKind: 'constant' }],
+      },
+      {
+        name: 'New name',
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        fields: { name: 'New name' },
+      },
+    });
+  });
+
+  it('builds structural node, edge, and binding delta patches', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        name: 'Playbook',
+        nodes: [
+          {
+            id: 'task-1',
+            kind: 'step',
+            label: 'Draft',
+            metadata: { positionX: 10, positionY: 20, description: 'old' },
+          },
+          {
+            id: 'task-2',
+            kind: 'step',
+            label: 'Keep',
+            metadata: { positionX: 30, positionY: 40 },
+          },
+        ],
+        controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+        dataBindings: [{
+          id: 'binding-1',
+          targetNode: 'task-2',
+          targetPort: 'input',
+          sourceKind: 'node-output',
+          sourceNode: 'task-1',
+          sourcePort: 'output',
+        }],
+      },
+      {
+        name: 'Playbook',
+        nodes: [
+          {
+            id: 'task-1',
+            kind: 'step',
+            label: 'Draft revised',
+            metadata: { positionX: 11, positionY: 21, description: 'new' },
+          },
+          {
+            id: 'task-3',
+            kind: 'step',
+            label: 'Added',
+            metadata: { positionX: 50, positionY: 60 },
+          },
+        ],
+        controlEdges: [{ id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' }],
+        dataBindings: [{
+          id: 'binding-2',
+          targetNode: 'task-3',
+          targetPort: 'input',
+          sourceKind: 'constant',
+          constantValue: 'hello',
+        }],
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          upserts: [
+            {
+              id: 'task-1',
+              kind: 'step',
+              label: 'Draft revised',
+              metadata: { positionX: 11, positionY: 21, description: 'new' },
+            },
+            {
+              id: 'task-3',
+              kind: 'step',
+              label: 'Added',
+              metadata: { positionX: 50, positionY: 60 },
+            },
+          ],
+          deleteIds: ['task-2'],
+        },
+        controlEdges: [{ id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' }],
+        dataBindings: [{
+          id: 'binding-2',
+          targetNode: 'task-3',
+          targetPort: 'input',
+          sourceKind: 'constant',
+          constantValue: 'hello',
+        }],
+      },
+    });
+  });
+
+  it('keeps pure node drags on the position-only path', () => {
+    const patch = buildPlaybookDeltaPatch(
+      {
+        nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 10, positionY: 20, description: 'same' } }],
+      },
+      {
+        nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 15, positionY: 25, description: 'same' } }],
+      },
+      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+    );
+
+    expect(patch).toEqual({
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
+        },
+      },
+    });
   });
 });
 
@@ -799,6 +971,48 @@ describe('updatePlaybook', () => {
 });
 
 describe('getPlaybook', () => {
+  it('normalizes flow-shaped tasks from the backend into legacy playbook tasks', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          tasks: [{
+            id: 'node-1',
+            kind: 'step',
+            label: 'Flow node',
+            metadata: {
+              description: 'Flow description',
+              executionOrder: 2,
+              positionX: 10,
+              positionY: 20,
+              nodeType: 'agent',
+            },
+          }],
+          controlEdges: [],
+          dataBindings: [],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    const playbook = await getPlaybook('playbook-1');
+
+    expect(playbook.tasks).toEqual([
+      expect.objectContaining({
+        id: 'node-1',
+        title: 'Flow node',
+        description: 'Flow description',
+        executionOrder: 2,
+        positionX: 10,
+        positionY: 20,
+      }),
+    ]);
+  });
+
   it('restores saved control-edge port ids into legacy edge handles', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({
@@ -1183,6 +1397,117 @@ describe('getExecution', () => {
       'task-1': 'replay_flex',
       'task-2': 'live',
     });
+  });
+
+  it('normalizes replay source from execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-replay',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'running',
+          replaySource: {
+            executionId: 'source-exec',
+            taskId: 'task-9',
+            iteration: 2,
+          },
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-replay');
+
+    expect(execution.replaySource).toEqual({
+      executionId: 'source-exec',
+      taskId: 'task-9',
+      iteration: 2,
+    });
+  });
+
+  it('hydrates clarification interrupt payloads from pendingApproval', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-clarification',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'pending_approval',
+          threadId: 'thread-1',
+          pendingApproval: {
+            nodeId: 'task-1',
+            iteration: 2,
+            prompt: 'Which country did you mean?',
+            interruptType: 'clarification',
+            interruptId: 'task-1:clarification:2',
+            taskTitle: 'GDP Analysis',
+            taskDescription: 'Need a target country',
+            result: '',
+            payloadJson: '[]',
+            resumableActions: ['reply', 'skip'],
+          },
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-clarification');
+
+    expect(execution.interruptPayload).toEqual(expect.objectContaining({
+      type: 'clarification',
+      taskId: 'task-1',
+      taskTitle: 'GDP Analysis',
+      message: 'Which country did you mean?',
+      threadId: 'thread-1',
+      interruptId: 'task-1:clarification:2',
+      round: 2,
+      taskDescription: 'Need a target country',
+      payloadJson: '[]',
+      resumableActions: ['reply', 'skip'],
+    }));
+    expect(execution.waitingForHumanInput).toBe(true);
+  });
+
+  it('maps legacy human_approval pendingApproval type to approval_request', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-approval',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'pending_approval',
+          threadId: 'thread-1',
+          pendingApproval: {
+            nodeId: 'task-1',
+            iteration: 0,
+            prompt: 'Approve?',
+            interruptType: 'human_approval',
+          },
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-approval');
+
+    expect(execution.interruptPayload?.type).toBe('approval_request');
   });
 
   it('uses the execution advisor endpoint and normalizes the returned task result', async () => {

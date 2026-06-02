@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsEnum,
   IsObject,
   IsOptional,
   IsString,
@@ -48,6 +49,33 @@ export class CreateSkillDto {
   @IsString()
   @MaxLength(1024)
   description!: string;
+
+  @ApiPropertyOptional({ description: 'Icon name (react-icons style, e.g. FaSearch)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  icon?: string;
+
+  @ApiPropertyOptional({ description: 'Brand color in hex', example: '#4285f4' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'Color must be a valid hex color' })
+  color?: string;
+
+  @ApiPropertyOptional({
+    description: 'Icon color for contrast against background',
+    enum: ['light', 'dark'],
+    default: 'light',
+  })
+  @IsOptional()
+  @IsEnum(['light', 'dark'])
+  iconColor?: 'light' | 'dark';
+
+  @ApiPropertyOptional({ description: 'Optional skill category ID' })
+  @IsOptional()
+  @IsString()
+  categoryId?: string | null;
 
   @ApiPropertyOptional({ description: 'License string or bundled license reference' })
   @IsOptional()

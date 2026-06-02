@@ -168,6 +168,15 @@ function formatDriftFindingReason(value: string, t: Translate): string {
   return keys[value] ? t(keys[value]) : formatReplayReason(value, t);
 }
 
+function formatHitlFindingMessage(value: string, t: Translate): string {
+  const keys: Record<string, string> = {
+    baseline_hitl_reused_or_not_needed: 'replayReport.hitl.finding.baselineReused',
+    hitl_context_drift: 'replayReport.hitl.finding.contextDrift',
+    additional_runtime_hitl_required: 'replayReport.hitl.finding.additionalRuntimeHitl',
+  };
+  return keys[value] ? t(keys[value]) : humanizeFallback(value);
+}
+
 function formatObjectPreview(value: Record<string, unknown> | null | undefined): string {
   if (!value || Object.keys(value).length === 0) {
     return '-';
@@ -529,10 +538,41 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
   const toolCallComparisons = report.toolCallComparisons ?? [];
   const showToolCallEvidence = (report.expectedToolSteps?.length ?? 0) > 0 || toolCallComparisons.length > 0;
   const postRunEvaluation = report.postRunEvaluation;
+  const hitlSummary = report.hitlSummary ?? null;
 
   return (
     <div className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
       <div className="font-medium">{t('replayReport.title' as any)}</div>
+
+      {hitlSummary && (
+        <div className="space-y-2 rounded-md border bg-background p-3">
+          <div className="font-medium">{t('replayReport.hitl.title' as any)}</div>
+          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-5">
+            <div><div className="font-medium">{t('replayReport.hitl.baselineCount' as any)}</div><div className="mt-1 text-sm text-foreground">{hitlSummary.baselineHitlCount}</div></div>
+            <div><div className="font-medium">{t('replayReport.hitl.runtimeCount' as any)}</div><div className="mt-1 text-sm text-foreground">{hitlSummary.runtimeHitlCount}</div></div>
+            <div><div className="font-medium">{t('replayReport.hitl.reusedMemoryCount' as any)}</div><div className="mt-1 text-sm text-foreground">{hitlSummary.reusedMemoryCount}</div></div>
+            <div><div className="font-medium">{t('replayReport.hitl.newClarificationCount' as any)}</div><div className="mt-1 text-sm text-foreground">{hitlSummary.newClarificationCount}</div></div>
+            <div><div className="font-medium">{t('replayReport.hitl.approvalReaskedCount' as any)}</div><div className="mt-1 text-sm text-foreground">{hitlSummary.approvalReaskedCount}</div></div>
+          </div>
+          {hitlSummary.hitlContextDrift && (
+            <Badge variant="outline" className="bg-amber-100 text-amber-700">
+              {t('replayReport.hitl.contextDrift' as any)}
+            </Badge>
+          )}
+          {hitlSummary.findings.length > 0 && (
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {hitlSummary.findings.map((finding, index) => (
+                <div key={`${finding.nodeId}-${index}`} className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className={findingTone(finding.severity)}>
+                    {t(`replayReport.findingSeverity.${finding.severity}` as any)}
+                  </Badge>
+                  <span>{formatHitlFindingMessage(finding.message, translate)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {postRunEvaluation ? (
         <div className="space-y-3 rounded-md border bg-background p-3">

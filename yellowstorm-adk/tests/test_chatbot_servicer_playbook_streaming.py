@@ -1,8 +1,30 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from src.grpc_server.chatbot_servicer import _put_progress_event, ChatbotServicer
+
+
+def test_dict_to_stream_chunk_artifact_uses_object_key_fallback() -> None:
+    servicer = ChatbotServicer(agent_team_service=None)
+
+    chunk = servicer._dict_to_stream_chunk(
+        {
+            "action": "add",
+            "component": {
+                "id": "component-1",
+                "type": "artifact",
+                "data": {
+                    "filename": "report.xlsx",
+                    "object_key": "user/session/report.xlsx",
+                },
+            },
+            "metadata": {"message_id": "message-1"},
+        }
+    )
+
+    assert chunk.component.artifact.file_path == "user/session/report.xlsx"
 
 
 @pytest.mark.asyncio
@@ -51,9 +73,7 @@ async def test_put_progress_event_replaces_progress_with_terminal_update() -> No
 
 
 @pytest.mark.asyncio
-async def test_put_progress_event_prefers_latest_interrupt_over_older_interrupt() -> (
-    None
-):
+async def test_put_progress_event_prefers_latest_interrupt_over_older_interrupt() -> None:
     queue: asyncio.Queue = asyncio.Queue(maxsize=1)
 
     older_interrupt = {
@@ -95,9 +115,7 @@ async def test_stream_playbook_queue_raises_background_exception() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_playbook_queue_raises_cancelled_error_for_cancelled_task() -> (
-    None
-):
+async def test_stream_playbook_queue_raises_cancelled_error_for_cancelled_task() -> None:
     queue: asyncio.Queue = asyncio.Queue()
     servicer = ChatbotServicer(agent_team_service=None)
 
@@ -107,3 +125,51 @@ async def test_stream_playbook_queue_raises_cancelled_error_for_cancelled_task()
     with pytest.raises(asyncio.CancelledError):
         async for _ in servicer._stream_playbook_queue(queue, bg_task, "thread-1"):
             pass
+
+
+@pytest.mark.asyncio
+async def test_convert_agent_team_request_v2_preserves_connector_repo() -> None:
+    servicer = ChatbotServicer(agent_team_service=None)
+
+    manager_agent = SimpleNamespace(
+        agent_type="manager",
+        id="agent-1",
+        name="Manager",
+        description="Manager agent",
+        prompt="Manager prompt",
+        tools=[],
+        brain_context=[],
+        agent_params=SimpleNamespace(params={}),
+        save_memory=False,
+        skills=[],
+        chatbot=SimpleNamespace(model="anthropic/claude-sonnet-4-5"),
+        HasField=lambda field: field in {"chatbot", "agent_params"},
+    )
+
+    pb_request = SimpleNamespace(
+        workspace_context=[],
+        attached_files=[],
+        previous_attached_files=[],
+        agents=[manager_agent],
+        user_context=SimpleNamespace(user_id="user-1"),
+        conversation_id="conv-1",
+        query="create a pull request",
+        agent_mode="manual",
+        connector_repo=SimpleNamespace(
+            connector_id="connector-1",
+            connector_name="GitHub",
+            repo_id="repo-1",
+            repo_name="org-name/repo-name",
+            repo_url="https://github.com/org-name/repo-name",
+        ),
+    )
+
+    converted = await servicer._convert_agent_team_request_v2(pb_request)
+
+    assert converted.connector_repo == {
+        "connector_id": "connector-1",
+        "connector_name": "GitHub",
+        "repo_id": "repo-1",
+        "repo_name": "org-name/repo-name",
+        "repo_url": "https://github.com/org-name/repo-name",
+    }

@@ -42,6 +42,12 @@ def get_checkpointer() -> Optional[AsyncSqliteSaver]:
     return _checkpointer
 
 
+async def ensure_checkpointer(db_path: Optional[str] = None) -> AsyncSqliteSaver:
+    if _checkpointer is not None:
+        return _checkpointer
+    return await init_checkpointer(db_path)
+
+
 def _default_checkpoint_path() -> str:
     import tempfile
     from pathlib import Path

@@ -671,7 +671,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const updateNodeData = useCallback(
     (nodeId: string, data: Partial<PlaybookTask>) => {
       setNodes((nds) => {
-        const tasks = nodesToTasks(nds);
+        const tasks = playbook?.tasks ?? nodesToTasks(nds);
         const prevTask = tasks.find((t) => t.id === nodeId);
         const nextParentId = data.containerConfig
           ? data.containerConfig.parentIteratorId ?? null
@@ -700,11 +700,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
           nds,
         );
         captureSnapshot();
-        updateTasks(nodesToTasks(updated));
+        updateTasks(patched);
         return updated;
       });
     },
-    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType, playbook?.tasks],
   );
 
   const setIteratorNodeSize = useCallback(

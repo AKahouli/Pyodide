@@ -37,6 +37,14 @@ interface State {
   selectedModelId: string | null;
   /** Highest sequence number seen from live SSE events. Used to discard stale/duplicate events. */
   lastSequence: number;
+  /** Selected connector repository for the current session. */
+  selectedConnectorRepo: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  } | null;
 }
 
 interface Actions {
@@ -68,6 +76,8 @@ interface Actions {
   hydrateSelectedModelForSession: (sessionId: string) => void;
   setWorkspaceIds: (ids: string[]) => void;
   clearTypewriter: () => void;
+  /** Set the selected connector repository for the session. */
+  setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
   /** Optimistic rename of the current session. Updates title and pointer list. */
   renameCurrent: (title: string) => Promise<void>;
   /** Delete the current session. Resolves once removed from pointer list. */
@@ -89,8 +99,9 @@ const initial: State = {
   lastSequence: 0,
   systemWorkspaceId: null,
   workspaceIds: [],
-  typewriterSessionId: null,
-  typewriterName: null,
+      typewriterSessionId: null,
+      typewriterName: null,
+      selectedConnectorRepo: null,
 };
 
 export const useConversationV2Store = create<State & Actions>()(
@@ -122,6 +133,8 @@ export const useConversationV2Store = create<State & Actions>()(
           false,
           'clearTypewriter',
         ),
+      setSelectedConnectorRepo: (repo) =>
+        set({ selectedConnectorRepo: repo }, false, 'setSelectedConnectorRepo'),
       renameCurrent: async (title) => {
         const id = get().sessionId;
         if (!id) return;

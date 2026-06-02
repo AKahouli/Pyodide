@@ -2,16 +2,34 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import Any, List
 
 import litellm
+from langgraph.types import interrupt
 from structlog import get_logger
+
+from src.flow_engine.nodes.step_hitl import (
+    _build_interrupt_payload,
+    extract_interrupt_message,
+    normalize_interrupt_action,
+)
 
 logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 10
 MAX_IMAGES_PER_ITERATION = 50
 MAX_IMAGES_TOTAL = 50
+
+
+@dataclass(frozen=True)
+class ToolHitlApprovalContext:
+    hitl_policy: dict[str, Any]
+    hitl_blockers: list[dict[str, Any]]
+    node_id: str
+    label: str
+    iteration: int
+    writer: Any
 
 
 def _parse_tool_result(result: Any) -> Any:
@@ -111,6 +129,7 @@ def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "name": str(metadata.get("agent_name") or ""),
+        "type": str(metadata.get("agent_type") or metadata.get("type") or ""),
         "tools": [tool for tool in agent_tools if isinstance(tool, dict)],
         "agent_params": agent_params,
         "brain_ids": _extract_brain_ids(metadata.get("brain_context")),
@@ -147,6 +166,7 @@ async def run_step_with_tools(
     tools: list[Any],
     on_progress: Any = None,
     trace_collector: Any = None,
+    hitl_approval: ToolHitlApprovalContext | None = None,
 ) -> str:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -195,6 +215,19 @@ async def run_step_with_tools(
 
             raw_arguments = function_payload.get("arguments") or "{}"
             tool_arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            skip_content = _resolve_tool_hitl_approval(
+                tool_name=tool_name,
+                tool_arguments=tool_arguments if isinstance(tool_arguments, dict) else {},
+                context=hitl_approval,
+            )
+            if skip_content is not None:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", ""),
+                    "name": tool_name,
+                    "content": skip_content,
+                })
+                continue
             started_at = time.perf_counter()
             try:
                 tool_result = await tool.ainvoke(tool_arguments)
@@ -246,6 +279,75 @@ async def run_step_with_tools(
         messages = _cap_images_in_messages(messages)
 
     raise RuntimeError("Max tool iterations reached without a final response")
+
+
+def _resolve_tool_hitl_approval(
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    context: ToolHitlApprovalContext | None,
+) -> str | None:
+    if context is None:
+        return None
+    if context.hitl_policy.get("mode") != "auto" or _policy_disabled(context.hitl_policy, "approvalEnabled"):
+        return None
+    blocker = _matching_tool_blocker(tool_name, tool_arguments, context.hitl_blockers)
+    if blocker is None:
+        return None
+    payload = _build_interrupt_payload(
+        "approval_request",
+        str(blocker.get("message") or f"Tool '{tool_name}' needs approval before it runs."),
+        node_id=context.node_id,
+        label=context.label or context.node_id,
+        node_description=f"Tool call: {tool_name}",
+        round_number=context.iteration + 1,
+        resumable_actions=["approve", "reject", "skip"],
+        reason_code=str(blocker.get("reasonCode") or blocker.get("reason_code") or blocker.get("kind") or "tool_approval_required"),
+        risk_level=str(blocker.get("riskLevel") or blocker.get("risk_level") or "critical"),
+        feedback_scope_default="step_only",
+        blocker_rule_id=str(blocker.get("id") or "") or None,
+        blocker_kind=str(blocker.get("kind") or "tool_action"),
+    )
+    if context.writer is not None:
+        context.writer({"type": "NodeSuspended", "node_id": context.node_id, "iteration": context.iteration, "payload": payload})
+    response = interrupt(payload)
+    action = normalize_interrupt_action(response, "approval_request")
+    if action == "approve":
+        return None
+    if action == "skip":
+        return json.dumps({"status": "skipped_by_human", "tool": tool_name})
+    message = extract_interrupt_message(response) or f"Tool '{tool_name}' rejected by human"
+    raise PermissionError(message)
+
+
+def _policy_disabled(hitl_policy: dict[str, Any], key: str) -> bool:
+    legacy_key = "approvalsEnabled" if key == "approvalEnabled" else key
+    value = hitl_policy.get(key, hitl_policy.get(legacy_key))
+    return value is False
+
+
+def _matching_tool_blocker(
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    hitl_blockers: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    tool_text = " ".join([tool_name, json.dumps(tool_arguments, default=str)]).lower()
+    for blocker in hitl_blockers:
+        if blocker.get("enabled") is False:
+            continue
+        if str(blocker.get("kind") or "") not in {"destructive_action", "external_send", "workspace_write"}:
+            continue
+        if _matches_any(tool_text, blocker.get("appliesToConnectorActions")):
+            return blocker
+        matcher_config = blocker.get("matcherConfig") or blocker.get("matcher_config")
+        if isinstance(matcher_config, dict) and _matches_any(tool_text, matcher_config.get("verbs")):
+            return blocker
+    return None
+
+
+def _matches_any(text: str, patterns: Any) -> bool:
+    if not isinstance(patterns, list):
+        return False
+    return any(str(pattern or "").strip().lower() in text for pattern in patterns if str(pattern or "").strip())
 
 
 def _extract_brain_ids(brain_context: Any) -> list[str]:
