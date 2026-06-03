@@ -1,23 +1,109 @@
 import { ComponentType } from '../interfaces/message.interface';
 
+const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
+  { field: 'text', type: 'text' },
+  { field: 'reasoning', type: 'reasoning' },
+  { field: 'code', type: 'code' },
+  { field: 'error', type: 'error' },
+  { field: 'plan', type: 'plan' },
+  { field: 'queue', type: 'queue' },
+  { field: 'checkpoint', type: 'checkpoint' },
+  { field: 'chart', type: 'chart' },
+  { field: 'task', type: 'task' },
+  { field: 'sources', type: 'sources' },
+  { field: 'sandbox', type: 'sandbox' },
+  { field: 'web_preview', type: 'webPreview' },
+  { field: 'artifact', type: 'artifact' },
+  { field: 'citation', type: 'citation' },
+];
+
+const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
+  text: 'text',
+  code: 'code',
+  reasoning: 'reasoning',
+  plan: 'plan',
+  queue: 'queue',
+  checkpoint: 'checkpoint',
+  chart: 'chart',
+  task: 'task',
+  error: 'error',
+  sources: 'sources',
+  sandbox: 'sandbox',
+  web_preview: 'webPreview',
+  webPreview: 'webPreview',
+  artifact: 'artifact',
+  citation: 'citation',
+};
+
+function normalizeLegacyType(raw: string): ComponentType {
+  return LEGACY_TYPE_MAP[raw] ?? 'text';
+}
+
+function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unknown>): boolean {
+  switch (type) {
+    case 'text':
+    case 'reasoning':
+    case 'code':
+    case 'webPreview':
+      return typeof payload.content === 'string' && payload.content.length > 0;
+    case 'error':
+      return (
+        (typeof payload.title === 'string' && payload.title.length > 0) ||
+        (typeof payload.content === 'string' && payload.content.length > 0)
+      );
+    case 'sandbox':
+      return (
+        (typeof payload.output === 'string' && payload.output.length > 0) ||
+        (typeof payload.code === 'string' && payload.code.length > 0)
+      );
+    case 'plan':
+      return Array.isArray(payload.steps) && payload.steps.length > 0;
+    case 'queue':
+      return Array.isArray(payload.items) && payload.items.length > 0;
+    case 'task':
+      return Array.isArray(payload.items) && payload.items.length > 0;
+    case 'sources':
+      return Array.isArray(payload.sources) && payload.sources.length > 0;
+    case 'checkpoint':
+      return typeof payload.label === 'string' && payload.label.length > 0;
+    case 'chart':
+      return typeof payload.title === 'string' && payload.title.length > 0;
+    case 'artifact':
+      return (
+        (typeof payload.filename === 'string' && payload.filename.length > 0) ||
+        (typeof payload.file_path === 'string' && payload.file_path.length > 0)
+      );
+    case 'citation':
+      return Boolean(payload.text_source || payload.image_source);
+    default:
+      return false;
+  }
+}
+
 /**
- * Determines component type from the oneof field set in the proto Component message.
+ * Determines component type from the proto Component oneof (or legacy type/data shape).
+ * With proto-loader `defaults: true`, empty oneof branches are still truthy objects — pick the branch that has content.
  */
 export function getComponentType(comp: any): ComponentType {
-  if (comp.text) return 'text';
-  if (comp.code) return 'code';
-  if (comp.reasoning) return 'reasoning';
-  if (comp.plan) return 'plan';
-  if (comp.queue) return 'queue';
-  if (comp.checkpoint) return 'checkpoint';
-  if (comp.chart) return 'chart';
-  if (comp.task) return 'task';
-  if (comp.error) return 'error';
-  if (comp.sources) return 'sources';
-  if (comp.sandbox) return 'sandbox';
-  if (comp.web_preview) return 'webPreview';
-  if (comp.artifact) return 'artifact';
-  if (comp.citation) return 'citation';
+  if (!comp || typeof comp !== 'object') return 'text';
+
+  if (typeof comp.type === 'string' && comp.data && typeof comp.data === 'object') {
+    return normalizeLegacyType(comp.type);
+  }
+
+  for (const { field, type } of ONEOF_FIELD_TYPES) {
+    const payload = comp[field];
+    if (payload && typeof payload === 'object' && oneofPayloadHasContent(type, payload as Record<string, unknown>)) {
+      return type;
+    }
+  }
+
+  for (const { field, type } of ONEOF_FIELD_TYPES) {
+    if (comp[field] && typeof comp[field] === 'object') {
+      return type;
+    }
+  }
+
   return 'text';
 }
 
@@ -26,6 +112,15 @@ export function getComponentType(comp: any): ComponentType {
  * Handles the proto oneof structure where the type is determined by which field is set.
  */
 export function extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
+  if (!comp || typeof comp !== 'object') {
+    return { type: 'text', data: { content: '' } };
+  }
+
+  if (typeof comp.type === 'string' && comp.data && typeof comp.data === 'object') {
+    const type = normalizeLegacyType(comp.type);
+    return { type, data: { ...(comp.data as Record<string, unknown>) } };
+  }
+
   const type = getComponentType(comp);
 
   const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
@@ -245,4 +340,28 @@ export function mapTaskStatus(status: string | undefined): string {
   };
 
   return statusMap[status] || 'pending';
+}
+
+/** Merges text/reasoning/code/error content from streamed components for plain-text consumers (widget, telegram). */
+export function aggregateTextFromComponents(
+  components: Array<{ type: ComponentType | string; data: Record<string, unknown> }>,
+): string {
+  let replyText = '';
+  for (const component of components) {
+    if ((component.type === 'text' || component.type === 'reasoning') && typeof component.data.content === 'string') {
+      replyText += component.data.content;
+      continue;
+    }
+    if (component.type === 'code' && typeof component.data.content === 'string') {
+      replyText += component.data.content;
+      continue;
+    }
+    if (component.type === 'error') {
+      const title = typeof component.data.title === 'string' ? component.data.title : '';
+      const content = typeof component.data.content === 'string' ? component.data.content : '';
+      const combined = [title, content].filter(Boolean).join(': ');
+      if (combined) replyText += combined;
+    }
+  }
+  return replyText;
 }

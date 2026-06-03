@@ -33,6 +33,14 @@ export class WidgetSseStreamRegistry {
     return this.activeStreams.get(sessionId);
   }
 
+  /** Clears accumulated components before a new gRPC run on the same session. */
+  resetStreamBuffer(sessionId: string): void {
+    const stream = this.activeStreams.get(sessionId);
+    if (stream) {
+      stream.buffer.clear();
+    }
+  }
+
   emit(sessionId: string, event: WidgetStreamEvent): void {
     this.ensureSession(sessionId);
     const stream = this.activeStreams.get(sessionId)!;
