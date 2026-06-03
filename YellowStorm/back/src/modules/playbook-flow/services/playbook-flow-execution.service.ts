@@ -1425,9 +1425,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }),
         })),
       };
-    console.log(
-      `[Playbook gRPC] Data bindings for execution ${executionId}:\n${JSON.stringify((request as any).snapshot?.data_bindings, null, 2)}`,
-    );
     const call = this.runRuntime(request);
     let finalized = false;
     let completionEmitted = false;
@@ -1441,9 +1438,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const waitForHandledEvents = async () => {
       await lastHandlePromise;
     };
-    console.log(
-    `[Playbook gRPC] Run request for execution ${executionId}:\n${JSON.stringify(request, null, 2)}`,
-    );
     call.on('data', (event: Record<string, unknown>) => {
       lastHandlePromise = lastHandlePromise
         .then(() => this.getEventHandler().handleRunEvent({
@@ -2511,9 +2505,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       target_iteration: targetIteration,
     };
 
-    console.log(
-      `[Playbook gRPC] Data bindings for checkpoint replay execution ${executionId}:\n${JSON.stringify((request as any).snapshot?.data_bindings, null, 2)}`,
-    );
     const call = this.runFromCheckpointRuntime(request);
     this.executionLeaseService?.startHeartbeat(executionId);
     let finalized = false;

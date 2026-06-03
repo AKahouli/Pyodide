@@ -538,22 +538,10 @@ def create_langchain_tools(
     # step node from the backend payload. Fall back to deriving them from document
     # filepaths only when the backend did not supply explicit paths.
     workspace_paths = list(workspace_ceph_paths or [])
-    workspace_paths_source = "backend"
     if not workspace_paths:
         workspace_paths = _collect_workspace_paths(
             workspace_context, code_interpreter_files, user_id
         )
-        workspace_paths_source = "derived"
-    logger.info(
-        "connector_workspace_paths_resolved session_id=%s user_id=%s workspace_paths=%s "
-        "source=%s code_interpreter_files=%s raw_workspace_context=%s",
-        session_id,
-        user_id,
-        workspace_paths,
-        workspace_paths_source,
-        _log_payload(code_interpreter_files),
-        _log_payload(workspace_context),
-    )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -1686,12 +1674,6 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
-        logger.info(
-            "connector_binding_headers connector_id=%s auth_headers=%s server_config_headers=%s",
-            connector_id,
-            binding_auth_headers,
-            (server_config or {}).get("headers", {}),
-        )
         if (
             connector_id
             and output_workspace_id
@@ -1811,15 +1793,10 @@ def _create_connector_mcp_tools(
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             logger.info(
-                                "playbook_connector_mcp_context_headers connector_id=%s action_key=%s "
-                                "user_id=%s file_name=%s workspace_name=%s workspace_paths=%s sent_headers=%s",
-                                cid,
-                                ak,
+                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_name=%s",
                                 _uid,
                                 effective_auth_headers.get("file_name"),
                                 effective_auth_headers.get("workspace_name"),
-                                wsp,
-                                sorted(effective_auth_headers.keys()),
                             )
 
                         logger.info(

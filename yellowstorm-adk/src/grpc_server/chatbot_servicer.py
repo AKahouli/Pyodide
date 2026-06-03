@@ -1771,16 +1771,6 @@ class ChatbotServicer(
                 always_print_fields_with_no_presence=True,
             ),
         )
-        logger.info(
-            "[RunPlaybookWorkflow] workspace_context received",
-            playbook_id=request.playbook_id,
-            raw_workspace_count=len(request.workspace_context),
-            raw_workspace_context=str(request.workspace_context),
-            parsed_workspace_context=_proto_workspace_context(request.workspace_context),
-            agent_brain_context={
-                a.id: str(a.brain_context) for a in request.agents
-            },
-        )
 
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
@@ -1876,23 +1866,6 @@ class ChatbotServicer(
             task_id=request.task_id,
             username=username,
         )
-        logger.info(
-            "[ResumePlaybookWorkflow] Request payload",
-            request_payload=MessageToDict(
-                request,
-                preserving_proto_field_name=True,
-                always_print_fields_with_no_presence=True,
-            ),
-        )
-        _resume_workspace_context = getattr(request, "workspace_context", None)
-        if _resume_workspace_context is not None:
-            logger.info(
-                "[ResumePlaybookWorkflow] workspace_context received",
-                playbook_id=request.playbook_id,
-                raw_workspace_count=len(_resume_workspace_context),
-                raw_workspace_context=str(_resume_workspace_context),
-                parsed_workspace_context=_proto_workspace_context(_resume_workspace_context),
-            )
 
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
@@ -2104,13 +2077,6 @@ class ChatbotServicer(
             )
 
             workspace_context = _proto_workspace_context(request.workspace_context)
-            logger.info(
-                "[RunStep] workspace_context received",
-                task_id=task_id,
-                raw_workspace_count=len(request.workspace_context),
-                raw_workspace_context=str(request.workspace_context),
-                parsed_workspace_context=workspace_context,
-            )
             trigger_context = (
                 _struct_to_dict(request.trigger_context)
                 if _has_struct_payload(getattr(request, "trigger_context", None))

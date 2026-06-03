@@ -130,43 +130,8 @@ class PlaybookFlowRuntimeServicer:
 
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
-        logger.info(
-            "[grpc] Run request payload",
-            execution_id=execution_id,
-            flow_id=flow_id,
-            input_context_keys=sorted(input_context.keys()) if isinstance(input_context, dict) else None,
-            input_context=input_context,
-            snapshot_node_workspaces=[
-                {
-                    "node_id": n.get("id"),
-                    "agent_name": (n.get("metadata") or {}).get("agent_name"),
-                    "brain_context": (n.get("metadata") or {}).get("brain_context"),
-                }
-                for n in snapshot.get("nodes", [])
-                if isinstance(n, dict)
-            ],
-        )
-        logger.info(
-            "[grpc] Run node metadata",
-            execution_id=execution_id,
-            flow_id=flow_id,
-            node_metadata=[
-                {"node_id": n.get("id"), "metadata": n.get("metadata")}
-                for n in snapshot.get("nodes", [])
-                if isinstance(n, dict)
-            ],
-        )
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
-        logger.info(
-            "[grpc] Run extracted context",
-            execution_id=execution_id,
-            flow_id=flow_id,
-            workspace_ids=input_context.get("__playbook_workspace_ids"),
-            default_workspace_id=input_context.get("__playbook_default_workspace_id"),
-            has_resume_input=initial_resume_input is not None,
-            hitl_memory_count=len(hitl_memory),
-        )
 
         graph = None
         active = None
@@ -292,11 +257,7 @@ class PlaybookFlowRuntimeServicer:
 
     async def Cancel(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
         execution_id = request.execution_id
-        logger.info(
-            "[grpc] Cancel request received",
-            execution_id=execution_id,
-            raw_request=str(request),
-        )
+        logger.info("[grpc] Cancel request received", execution_id=execution_id)
         active = self._active_executions.get(execution_id)
         cancelled = active.cancel() if active is not None else False
         return pb.CancelResponse(cancelled=cancelled)
@@ -306,12 +267,7 @@ class PlaybookFlowRuntimeServicer:
         decision = request.decision
         payload = struct_to_dict(request.payload)
 
-        logger.info(
-            "[grpc] ResumeApproval request received",
-            execution_id=execution_id,
-            decision=decision,
-            payload=payload,
-        )
+        logger.info("[grpc] ResumeApproval request received", execution_id=execution_id, decision=decision)
         active = self._active_executions.get(execution_id)
         if active is None:
             if pb is None:
@@ -336,7 +292,6 @@ class PlaybookFlowRuntimeServicer:
             node_id=node_id,
             iteration=iteration,
             interrupt_id=interrupt_id,
-            payload=payload,
         )
         active = self._active_executions.get(execution_id)
         if active is None:
@@ -377,21 +332,6 @@ class PlaybookFlowRuntimeServicer:
 
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
-        logger.info(
-            "[grpc] RunFromCheckpoint request payload",
-            execution_id=execution_id,
-            input_context_keys=sorted(input_context.keys()) if isinstance(input_context, dict) else None,
-            input_context=input_context,
-            snapshot_node_workspaces=[
-                {
-                    "node_id": n.get("id"),
-                    "agent_name": (n.get("metadata") or {}).get("agent_name"),
-                    "brain_context": (n.get("metadata") or {}).get("brain_context"),
-                }
-                for n in snapshot.get("nodes", [])
-                if isinstance(n, dict)
-            ],
-        )
         hitl_memory = _pop_runtime_hitl_memory(input_context)
 
         active = None
