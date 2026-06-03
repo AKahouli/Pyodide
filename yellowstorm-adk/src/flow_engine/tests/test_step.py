@@ -19,7 +19,11 @@ fake_structlog.get_logger = lambda *args, **kwargs: SimpleNamespace(
     warning=lambda *a, **k: None,
     error=lambda *a, **k: None,
 )
+fake_structlog_types = types.ModuleType("structlog.types")
+fake_structlog_types.EventDict = dict
+fake_structlog_types.Processor = object
 sys.modules.setdefault("structlog", fake_structlog)
+sys.modules.setdefault("structlog.types", fake_structlog_types)
 
 fake_langgraph = types.ModuleType("langgraph")
 fake_langgraph_config = types.ModuleType("langgraph.config")
@@ -70,6 +74,7 @@ fake_step_hitl.extract_feedback_scope = lambda response, default_scope="step_onl
     response.get("scope") if isinstance(response, dict) and response.get("scope") else default_scope
 )
 fake_step_hitl.build_human_context_entry = lambda *args, **kwargs: None
+fake_step_hitl.append_hitl_transcript_block = lambda base_text, transcript: base_text
 fake_step_hitl.build_blocker_judge_prompt = lambda *args, **kwargs: "judge prompt"
 fake_step_hitl.parse_blocker_judge_response = lambda _text: None
 fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
@@ -619,7 +624,15 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         captured_execute["human_context"] = human_context
         return "done", [], None
 
-    hitl_result = _FakeStepHitlResult(updated_description="Search leads.\n\nClarification from user: Use Germany.")
+    hitl_result = _FakeStepHitlResult(
+        updated_description=(
+            "Search leads.\n\n"
+            "<HITL_Transcript>\n"
+            "Assistant question 1: Which country?\n"
+            "User answer 1: Use Germany.\n"
+            "</HITL_Transcript>"
+        )
+    )
     hitl_result.human_context = [{
         "node_id": "step-1",
         "task_title": "Collect country",
@@ -665,7 +678,9 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         },
     )
 
-    assert captured_execute["node_description"] == "Search leads.\n\nClarification from user: Use Germany."
+    assert "<HITL_Transcript>" in captured_execute["node_description"]
+    assert "Assistant question 1: Which country?" in captured_execute["node_description"]
+    assert "User answer 1: Use Germany." in captured_execute["node_description"]
     assert captured_execute["human_context"] == hitl_result.human_context
     assert result["task_outputs"][("step-1", 0)]["output"] == "done"
 

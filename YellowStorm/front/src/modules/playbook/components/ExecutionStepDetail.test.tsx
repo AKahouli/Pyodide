@@ -16,6 +16,13 @@ const mapComponentsToContentPartsMock = vi.hoisted(() => vi.fn((items: any[]) =>
       content: item?.data?.content ?? item?.data?.text ?? '',
     };
   }
+  if (item?.type === 'artifact') {
+    return {
+      type: 'artifact',
+      filePath: item?.data?.filePath ?? item?.data?.file_path ?? '',
+      filename: item?.data?.filename ?? '',
+    };
+  }
   return item;
 })));
 const storeState = vi.hoisted(() => ({
@@ -111,6 +118,39 @@ const baseStep: TaskResult = {
 };
 
 describe('ExecutionStepDetail', () => {
+  it('shows generated artifact view and download actions in the result card', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{
+        id: 't1',
+        title: 'Analyze Data',
+        outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'document' }],
+      }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: 'PDF generated successfully',
+          components: [{
+            type: 'artifact',
+            data: {
+              filePath: 'generated/intelligence_artificielle.pdf',
+              filename: 'intelligence_artificielle.pdf',
+            },
+          } as any],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('intelligence_artificielle.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'actionView' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'actionDownload' })).toBeInTheDocument();
+
+    storeState.currentPlaybook = null;
+  });
+
   it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
     const onOpenOutputFormatEditor = vi.fn();
     storeState.currentPlaybook = {

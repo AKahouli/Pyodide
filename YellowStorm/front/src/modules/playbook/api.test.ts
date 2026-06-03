@@ -109,6 +109,29 @@ describe('sanitizePlaybookUpdate', () => {
       }),
     ]);
   });
+
+  it('preserves node-level hitlPolicy through sanitization', () => {
+    const sanitized = sanitizePlaybookUpdate({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+        }),
+        makeTask({ id: 'task-2' }),
+      ],
+    });
+
+    expect(sanitized.tasks).toEqual([
+      expect.objectContaining({
+        id: 'task-1',
+        hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+      }),
+      expect.objectContaining({
+        id: 'task-2',
+        hitlPolicy: null,
+      }),
+    ]);
+  });
 });
 
 describe('getPlaybookUpdateTelemetry', () => {
@@ -146,6 +169,29 @@ describe('buildPlaybookUpdateRequestBody', () => {
       controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
       expectedDefinitionRevision: 3,
     });
+  });
+
+  it('round-trips node-level hitlPolicy from tasks through compat mapping', () => {
+    const body = buildPlaybookUpdateRequestBody({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+        hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+        }),
+        makeTask({ id: 'task-2' }),
+      ],
+      expectedDefinitionRevision: 5,
+    });
+
+    const nodes = body.nodes as Record<string, unknown>[];
+    expect(nodes).toBeDefined();
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toMatchObject({
+      id: 'task-1',
+      hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+    });
+    expect(nodes[1]).toMatchObject({ id: 'task-2' });
+    expect((nodes[1] as Record<string, unknown>).hitlPolicy).toBeUndefined();
   });
 });
 

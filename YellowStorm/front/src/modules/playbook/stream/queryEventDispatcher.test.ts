@@ -238,4 +238,33 @@ describe('query-backed playbook stream dispatcher', () => {
       message: 'Which final signed contract should I use?',
     });
   });
+
+  it('preserves node-scoped HITL policy across execution churn events', () => {
+    const nodePolicy: HitlPolicy = {
+      mode: 'off',
+      sensitivity: 'minimal',
+      clarificationEnabled: false,
+      approvalEnabled: false,
+      reviewEnabled: false,
+      propagateFeedbackDefault: false,
+      defaultFeedbackScope: 'downstream_run',
+    };
+    queryClient.setQueryData(playbookKeys.hitlPolicy('playbook-1', 'task-1'), nodePolicy);
+    queryClient.setQueryData(playbookKeys.execution('exec-1'), makeExecution());
+
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_step_start',
+      data: { executionId: 'exec-1', taskId: 'task-1', status: 'running' },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_step_update',
+      data: { executionId: 'exec-1', taskId: 'task-1', status: 'running', output: 'partial' },
+    }, { queryClient });
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_step_complete',
+      data: { executionId: 'exec-1', taskId: 'task-1', status: 'completed', output: 'final' },
+    }, { queryClient });
+
+    expect(queryClient.getQueryData(playbookKeys.hitlPolicy('playbook-1', 'task-1'))).toEqual(nodePolicy);
+  });
 });

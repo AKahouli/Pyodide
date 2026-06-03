@@ -221,6 +221,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
             delayMs: task.retryPolicy.delayMs,
           }
         : null,
+      hitlPolicy: task.hitlPolicy ?? null,
       modelId: task.modelId ?? null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,

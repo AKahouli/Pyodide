@@ -867,7 +867,13 @@ def test_clarification_context_round_trips_through_state() -> None:
         {"role": "assistant", "content": "Need scope details?"},
         {"role": "user", "content": "Cybersécurité des PME — France — 90 jours"},
     ]
-    description = "Base task description\n\nClarification from user: Cybersécurité des PME — France — 90 jours"
+    description = (
+        "Base task description\n\n"
+        "<HITL_Transcript>\n"
+        "Assistant question 1: Need scope details?\n"
+        "User answer 1: Cybersécurité des PME — France — 90 jours\n"
+        "</HITL_Transcript>"
+    )
 
     _store_clarification_context(state, "task-1", transcript, description)
 
@@ -1808,7 +1814,13 @@ def test_workflow_task_node_skips_reasking_after_user_clarification(monkeypatch)
                     ]
                 },
                 "task_description_overrides_by_task": {
-                    "task-1": "desc\n\nClarification from user: Use the latest quarter."
+                    "task-1": (
+                        "desc\n\n"
+                        "<HITL_Transcript>\n"
+                        "Assistant question 1: Which scope?\n"
+                        "User answer 1: Use the latest quarter.\n"
+                        "</HITL_Transcript>"
+                    )
                 },
             },
             {},

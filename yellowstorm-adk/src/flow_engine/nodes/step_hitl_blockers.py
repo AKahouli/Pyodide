@@ -14,6 +14,7 @@ from src.middleware.correlation import get_user
 from src.flow_engine.nodes.step_hitl import (
     StepHitlResult,
     _build_interrupt_payload,
+    append_hitl_transcript_block,
     build_blocker_judge_prompt,
     build_human_context_entry,
     extract_interrupt_message,
@@ -181,8 +182,12 @@ async def handle_llm_judge_blocker(
             return result
 
     if feedback_history:
+        transcript_description = append_hitl_transcript_block(
+            current_description,
+            _feedback_history_to_transcript(feedback_history),
+        )
         result.updated_description = (
-            f"{current_description}\n\n"
+            f"{transcript_description}\n\n"
             "Clarification from system: The HITL round limit was reached. Proceed with the available information."
         )
         result.suppress_follow_up_clarification = True
@@ -237,7 +242,12 @@ def _record_blocker_reply(
         return node_description
     feedback_history.append({"question": decision.message, "answer": message})
     _append_context_entry(result, response, decision, node_id, label, hitl_policy)
-    return _append_feedback_to_description(node_description, decision.interrupt_type, message)
+    return _append_feedback_to_description(
+        node_description,
+        decision.interrupt_type,
+        message,
+        feedback_history,
+    )
 
 
 def _finish_on_terminal_action(result: StepHitlResult, action: str, response: Any) -> bool:
@@ -271,9 +281,30 @@ def _append_context_entry(
         result.human_context.append(context_entry)
 
 
-def _append_feedback_to_description(node_description: str, interrupt_type: str, message: str) -> str:
-    label = "Clarification from user" if interrupt_type == "clarification" else "Human Feedback"
-    return f"{node_description}\n\n{label}: {message}"
+def _append_feedback_to_description(
+    node_description: str,
+    interrupt_type: str,
+    message: str,
+    feedback_history: list[dict[str, str]] | None = None,
+) -> str:
+    if interrupt_type == "clarification":
+        return append_hitl_transcript_block(
+            node_description,
+            _feedback_history_to_transcript(feedback_history or []),
+        )
+    return f"{node_description}\n\nHuman Feedback: {message}"
+
+
+def _feedback_history_to_transcript(feedback_history: list[dict[str, str]]) -> list[dict[str, str]]:
+    transcript: list[dict[str, str]] = []
+    for entry in feedback_history:
+        question = str(entry.get("question") or "").strip()
+        answer = str(entry.get("answer") or "").strip()
+        if question:
+            transcript.append({"role": "assistant", "content": question})
+        if answer:
+            transcript.append({"role": "user", "content": answer})
+    return transcript
 
 
 def _build_bypass_instruction(node_description: str) -> str:
@@ -356,7 +387,13 @@ def handle_smart_hitl_blocker(
             )
             result.suppress_follow_up_clarification = True
             return result
-        result.updated_description = f"{node_description}\n\nClarification from user: {message}"
+        result.updated_description = append_hitl_transcript_block(
+            node_description,
+            [
+                {"role": "assistant", "content": decision.message},
+                {"role": "user", "content": message},
+            ],
+        )
         context_entry = build_human_context_entry(
             response,
             node_id=node_id,

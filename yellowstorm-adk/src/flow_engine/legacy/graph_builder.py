@@ -36,6 +36,7 @@ from src.flow_engine.legacy.step_executor import (
     _determine_output_mode,
     _finalize_task_outputs,
 )
+from src.flow_engine.nodes.step_hitl import append_hitl_transcript_block
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind as _infer_artifact_kind,
     normalize_port_id as _normalize_port_id,
@@ -1388,7 +1389,10 @@ class DynamicGraphBuilder:
                         clarification_transcript.append(
                             {"role": "user", "content": user_reply}
                         )
-                        task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                        task_description = append_hitl_transcript_block(
+                            task_for_execution["description"],
+                            clarification_transcript,
+                        )
                         task_for_execution = {
                             **task_for_execution,
                             "description": task_description,
@@ -2049,7 +2053,10 @@ class DynamicGraphBuilder:
                             clarification_transcript.append(
                                 {"role": "user", "content": user_reply}
                             )
-                            task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                            task_description = append_hitl_transcript_block(
+                                task_for_execution["description"],
+                                clarification_transcript,
+                            )
                             task_for_execution = {
                                 **task_for_execution,
                                 "description": task_description,

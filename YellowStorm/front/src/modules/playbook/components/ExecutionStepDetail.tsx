@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw, MessageSquare } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, Eye, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw, MessageSquare } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -135,8 +135,10 @@ function RemediationItemRow({
 
 function ArtifactListItem({
   artifact,
+  onInspect,
 }: {
   artifact: TaskArtifact;
+  onInspect?: () => void;
 }) {
   const { t } = useModuleTranslation('playbook');
   const colors = PORT_COLORS[artifact.artifactKind];
@@ -187,17 +189,25 @@ function ArtifactListItem({
           </p>
         )}
       </div>
-      {hasDownload && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="shrink-0 h-7 px-2 text-xs"
-          onClick={handleDownload}
-        >
-          <Download className="mr-1 h-3 w-3" />
-          {t('artifacts.download' as any)}
-        </Button>
-      )}
+      <div className="flex shrink-0 items-center gap-1">
+        {onInspect && (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
+            <Eye className="mr-1 h-3 w-3" />
+            {t('artifacts.view' as any)}
+          </Button>
+        )}
+        {hasDownload && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={handleDownload}
+          >
+            <Download className="mr-1 h-3 w-3" />
+            {t('artifacts.download' as any)}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -420,6 +430,27 @@ function buildCurrentStepExecution(step: TaskResult) {
     artifacts: step.artifacts || [],
     hitlHistory: step.hitlHistory || [],
   };
+}
+
+function buildResultComponentsWithText(text: string, components: TaskResult['components'], taskId: string) {
+  const trimmedText = text.trim();
+  const remainingComponents = (components || []).filter((component) => {
+    if (component.type !== 'text') return true;
+    return String((component.data as { content?: string })?.content || '').trim() !== trimmedText;
+  });
+
+  return [
+    {
+      id: `playbook-final-text-${taskId}`,
+      type: 'text',
+      data: { content: text },
+    },
+    ...remainingComponents,
+  ];
+}
+
+function isHtmlResultText(text: string): boolean {
+  return /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(text);
 }
 
 function getHitlResponseText(entry: HitlHistoryEntry) {
@@ -1272,153 +1303,182 @@ export function ExecutionStepDetail({
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
-            {canDownload && (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
-                  <FileText className="mr-1 h-4 w-4" />
-                  {t('detail.actions.downloadHtml')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
-                  <Download className="mr-1 h-4 w-4" />
-                  {t('detail.actions.downloadPdf')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
-                  {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
-                  {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
-                </Button>
+            {selectedStepExecution?.status === 'running' ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-6 w-6 animate-spin mb-3" />
+                <span className="text-sm">{t('execution.running')}</span>
               </div>
-            )}
-
-            {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
-              <IteratorResultPanel step={step} />
             ) : (
               <>
-                {selectedHitlHistory.length > 0 && (
-                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                    <div className="mb-3 flex items-center gap-2 font-medium">
-                      <MessageSquare className="h-4 w-4 text-primary" />
-                      {t('detail.hitlFeedback.title')}
-                    </div>
-                    <div className="space-y-3">
-                      {selectedHitlHistory.map((entry) => {
-                        const responseText = getHitlResponseText(entry);
-                        return (
-                          <div key={entry.interruptId} className="space-y-2 rounded-md border bg-background/60 p-3">
-                            <div className="text-xs text-muted-foreground">
-                              {entry.respondedAt ? formatDateTimeCompact(entry.respondedAt) : formatDateTimeCompact(entry.createdAt)}
-                            </div>
-                            <div>
-                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.agent')}</div>
-                              <p className="mt-1 whitespace-pre-wrap">{entry.message}</p>
-                            </div>
-                            {responseText && (
-                              <div>
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.user')}</div>
-                                <p className="mt-1 whitespace-pre-wrap">{responseText}</p>
+                {canDownload && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
+                      <FileText className="mr-1 h-4 w-4" />
+                      {t('detail.actions.downloadHtml')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
+                      <Download className="mr-1 h-4 w-4" />
+                      {t('detail.actions.downloadPdf')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
+                      {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
+                      {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
+                    </Button>
+                  </div>
+                )}
+
+                {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
+                  <IteratorResultPanel step={step} />
+                ) : (
+                  <>
+                    {selectedHitlHistory.length > 0 && (
+                      <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                        <div className="mb-3 flex items-center gap-2 font-medium">
+                          <MessageSquare className="h-4 w-4 text-primary" />
+                          {t('detail.hitlFeedback.title')}
+                        </div>
+                        <div className="space-y-3">
+                          {selectedHitlHistory.map((entry) => {
+                            const responseText = getHitlResponseText(entry);
+                            return (
+                              <div key={entry.interruptId} className="space-y-2 rounded-md border bg-background/60 p-3">
+                                <div className="text-xs text-muted-foreground">
+                                  {entry.respondedAt ? formatDateTimeCompact(entry.respondedAt) : formatDateTimeCompact(entry.createdAt)}
+                                </div>
+                                <div>
+                                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.agent')}</div>
+                                  <p className="mt-1 whitespace-pre-wrap">{entry.message}</p>
+                                </div>
+                                {responseText && (
+                                  <div>
+                                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.user')}</div>
+                                    <p className="mt-1 whitespace-pre-wrap">{responseText}</p>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {selectedStepExecutionText && (() => {
+                      const isHtml = isHtmlResultText(selectedStepExecutionText);
+                      const parts = isHtml
+                        ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                        : mapComponentsToContentParts(buildResultComponentsWithText(
+                            selectedStepExecutionText,
+                            selectedStepExecution?.components,
+                            step.taskId,
+                          ) as never);
+                      return (
+                        <div
+                          data-testid="step-result-markdown"
+                          className={cn(
+                            'rounded-lg bg-muted/50 p-4',
+                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                          )}
+                        >
+                          <MessageProvider fileViewerDisplayMode="floating">
+                            <AIMessageContent parts={parts} />
+                          </MessageProvider>
+                        </div>
+                      );
+                    })()}
+                    {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
+                      && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                    <div className="font-medium">{t('detail.provenance.title')}</div>
+                    <div className="mt-2 space-y-1 text-muted-foreground">
+                      <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
+                      {replaySource && (
+                        <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
+                      )}
+                      {replayPlanning && (
+                        <div>
+                          {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
+                          {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
+                        </div>
+                      )}
+                      {baselineReplay?.preserveOutputFormat && (
+                        <div>{t('detail.provenance.outputFormat')}</div>
+                      )}
                     </div>
                   </div>
                 )}
-                {selectedStepExecutionText && (() => {
-                  const isHtml = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(selectedStepExecutionText);
-                  return (
-                    <div
-                      data-testid="step-result-markdown"
-                      className={cn(
-                        'rounded-lg bg-muted/50 p-4',
-                        isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                {replayPlanning && (
+                  <div className="space-y-3">
+                    {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+                        {t('replayPlanning.unresolvedRequiredWarning')}
+                      </div>
+                    )}
+                    <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
+                    <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
+                  </div>
+                )}
+                {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
+                  <Collapsible defaultOpen className="rounded-lg border">
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-4 border-t px-4 py-3">
+                      {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+                        <div className="space-y-2">
+                          {groupedArtifacts.map((group) => (
+                            <PortArtifactPane
+                              key={group.portId}
+                              portId={group.portId}
+                              portName={group.portName}
+                              portKind={group.portKind}
+                              artifacts={group.artifacts}
+                              onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
+                            />
+                          ))}
+                        </div>
                       )}
-                    >
-                      <MessageProvider fileViewerDisplayMode="floating">
-                        <AIMessageContent parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]} />
-                      </MessageProvider>
+
+                      {inputPortEntries.length > 0 && (
+                        <div className="space-y-2">
+                          {inputPortEntries.map((entry) => (
+                            <PortArtifactPane
+                              key={entry.portId}
+                              portId={entry.portId}
+                              portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
+                              portKind={entry.portKind}
+                              artifacts={entry.artifacts}
+                              defaultOpen={false}
+                              onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
+                {selectedStepExecution?.error && (
+                  <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+                    <div className="mb-2 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                      <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
                     </div>
-                  );
-                })()}
-                {!selectedStepExecutionText && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                    <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                      {selectedStepExecution.error}
+                    </pre>
                   </div>
                 )}
               </>
-            )}
-
-            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                <div className="font-medium">{t('detail.provenance.title')}</div>
-                <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
-                  {replaySource && (
-                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
-                  )}
-                  {replayPlanning && (
-                    <div>
-                      {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
-                      {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
-                    </div>
-                  )}
-                  {baselineReplay?.preserveOutputFormat && (
-                    <div>{t('detail.provenance.outputFormat')}</div>
-                  )}
-                </div>
-              </div>
-            )}
-            {replayPlanning && (
-              <div className="space-y-3">
-                {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
-                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
-                    {t('replayPlanning.unresolvedRequiredWarning')}
-                  </div>
-                )}
-                <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
-                <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
-              </div>
-            )}
-            {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
-              <Collapsible defaultOpen className="rounded-lg border">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 border-t px-4 py-3">
-                  {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
-                    <div className="space-y-2">
-                      {groupedArtifacts.map((group) => (
-                        <PortArtifactPane
-                          key={group.portId}
-                          portId={group.portId}
-                          portName={group.portName}
-                          portKind={group.portKind}
-                          artifacts={group.artifacts}
-                          onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {inputPortEntries.length > 0 && (
-                    <div className="space-y-2">
-                      {inputPortEntries.map((entry) => (
-                        <PortArtifactPane
-                          key={entry.portId}
-                          portId={entry.portId}
-                          portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
-                          portKind={entry.portKind}
-                          artifacts={entry.artifacts}
-                          defaultOpen={false}
-                          onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
             )}
 
             <PortContentViewer
@@ -1428,25 +1488,6 @@ export function ExecutionStepDetail({
               portKind={detailInspectPortKind}
               artifacts={detailInspectArtifacts}
             />
-
-            {selectedStepExecution?.status === 'running' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-                {t('execution.running')}
-              </div>
-            )}
-
-            {selectedStepExecution?.error && (
-              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
-                </div>
-                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
-                  {selectedStepExecution.error}
-                </pre>
-              </div>
-            )}
 
           </TabsContent>
 

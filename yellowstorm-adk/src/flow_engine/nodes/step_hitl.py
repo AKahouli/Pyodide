@@ -22,6 +22,8 @@ FEEDBACK_SCOPES = {
     "future_workflow_runs",
 }
 CURRENT_RUN_CONTEXT_SCOPES = {"downstream_run", "entire_run"}
+HITL_TRANSCRIPT_START = "<HITL_Transcript>"
+HITL_TRANSCRIPT_END = "</HITL_Transcript>"
 
 SKIP_STEP_REASON = "__skip_step__"
 IGNORE_CLARIFICATION_REPLIES = {
@@ -152,6 +154,41 @@ def extract_follow_up_question(text: Any) -> str:
     if match:
         return match.group(1).strip()
     return ""
+
+
+def build_hitl_transcript_block(transcript: list[dict[str, str]] | None) -> str:
+    lines: list[str] = [HITL_TRANSCRIPT_START]
+    counters = {"assistant": 0, "user": 0, "system": 0}
+    for turn in transcript or []:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or "user").strip().lower()
+        content = str(turn.get("content") or "").strip()
+        content = content.replace(HITL_TRANSCRIPT_START, "[HITL_Transcript]")
+        content = content.replace(HITL_TRANSCRIPT_END, "[/HITL_Transcript]")
+        if not content:
+            continue
+        normalized_role = role if role in counters else "system"
+        counters[normalized_role] += 1
+        label = {
+            "assistant": "Assistant question",
+            "user": "User answer",
+            "system": "System note",
+        }[normalized_role]
+        lines.append(f"{label} {counters[normalized_role]}: {content}")
+    if len(lines) == 1:
+        return ""
+    lines.append(HITL_TRANSCRIPT_END)
+    return "\n".join(lines)
+
+
+def append_hitl_transcript_block(base_text: str, transcript: list[dict[str, str]] | None) -> str:
+    block = build_hitl_transcript_block(transcript)
+    if not block:
+        return base_text
+    pattern = rf"\n*{re.escape(HITL_TRANSCRIPT_START)}.*?{re.escape(HITL_TRANSCRIPT_END)}"
+    cleaned = re.sub(pattern, "", base_text or "", flags=re.DOTALL).rstrip()
+    return f"{cleaned}\n\n{block}" if cleaned else block
 
 
 def build_clarification_pre_prompt(
