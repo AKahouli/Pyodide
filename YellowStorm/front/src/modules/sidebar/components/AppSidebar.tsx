@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback, memo } from 'react';
+import { useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { History, Sparkles } from 'lucide-react';
+import { Bot, History, Sparkles } from 'lucide-react';
 import { ChatBubbleIcon } from '@radix-ui/react-icons';
 import { toast } from 'sonner';
 
@@ -32,6 +32,10 @@ import {
   useToggleHistoryPanel,
   DEFAULT_CONVERSATIONS_LIMIT,
 } from '@/modules/conversation/store';
+import {
+  useConversationV2PointersStore,
+  useConversationV2Store,
+} from '@/modules/conversation-v2/store';
 import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
@@ -118,6 +122,13 @@ export const AppSidebar = memo(function AppSidebar() {
   const moveConversationToProject = useConversationStore((s) => s.moveConversationToProject);
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
 
+  // conversation-v2 sessions live in their own store; merge them into history.
+  const v2Pointers = useConversationV2PointersStore((s) => s.items);
+  const fetchV2Pointers = useConversationV2PointersStore((s) => s.fetch);
+  const renameV2 = useConversationV2PointersStore((s) => s.rename);
+  const removeV2 = useConversationV2PointersStore((s) => s.remove);
+  const currentV2SessionId = useConversationV2Store((s) => s.sessionId);
+
   const createProject = useProjectStore((s) => s.createProject);
 
   const [historySearch, setHistorySearch] = useState('');
@@ -126,6 +137,7 @@ export const AppSidebar = memo(function AppSidebar() {
 
   useEffect(() => {
     fetchConversations({ reset: true, limit: DEFAULT_CONVERSATIONS_LIMIT });
+    fetchV2Pointers({ reset: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -137,6 +149,7 @@ export const AppSidebar = memo(function AppSidebar() {
         limit: DEFAULT_CONVERSATIONS_LIMIT,
         search: trimmed || undefined,
       });
+      fetchV2Pointers({ reset: true, q: trimmed || undefined });
     }, 300);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,6 +217,38 @@ export const AppSidebar = memo(function AppSidebar() {
     [moveConversationToProject, t],
   );
 
+  const handleDeleteV2 = useCallback(
+    async (sessionId: string) => {
+      const wasCurrent = currentV2SessionId === sessionId;
+      await removeV2(sessionId);
+      if (wasCurrent) {
+        navigate('/conversation-v2');
+      }
+    },
+    [currentV2SessionId, removeV2, navigate],
+  );
+
+  // Merge v1 conversations and v2 sessions into a single, recency-sorted list.
+  type HistoryRow =
+    | { kind: 'v1'; id: string; sortTime: number; conv: (typeof historyConversations)[number] }
+    | { kind: 'v2'; id: string; sortTime: number; ptr: (typeof v2Pointers)[number] };
+
+  const mergedHistory = useMemo<HistoryRow[]>(() => {
+    const v1Rows: HistoryRow[] = historyConversations.map((conv) => ({
+      kind: 'v1',
+      id: conv.id,
+      sortTime: new Date(conv.updatedAt || conv.lastMessageAt).getTime(),
+      conv,
+    }));
+    const v2Rows: HistoryRow[] = v2Pointers.map((ptr) => ({
+      kind: 'v2',
+      id: ptr.sessionId,
+      sortTime: new Date(ptr.lastEventAt).getTime(),
+      ptr,
+    }));
+    return [...v1Rows, ...v2Rows].sort((a, b) => b.sortTime - a.sortTime);
+  }, [historyConversations, v2Pointers]);
+
   return (
     <Sidebar collapsible='icon' className='shrink-0 z-30'>
       <SidebarHeader className='pt-8 gap-0 duration-500 ease-linear '>
@@ -268,7 +313,7 @@ export const AppSidebar = memo(function AppSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
             <CollapsibleContent className='flex min-h-0 flex-1 flex-col'>
-              {(historyConversations.length > 0 || historySearch.trim().length > 0) && (
+              {(mergedHistory.length > 0 || historySearch.trim().length > 0) && (
                 <div className='px-2 pb-2'>
                   <Input
                     value={historySearch}
@@ -283,7 +328,24 @@ export const AppSidebar = memo(function AppSidebar() {
                 onDropConversation={handleHistoryDrop}
               >
                 <SidebarMenu>
-                  {historyConversations.map((conv) => {
+                  {mergedHistory.map((row) => {
+                    if (row.kind === 'v2') {
+                      return (
+                        <ConversationItem
+                          key={`v2-${row.ptr.sessionId}`}
+                          id={row.ptr.sessionId}
+                          title={row.ptr.title || t('history.untitled')}
+                          to={`/conversation-v2/${row.ptr.sessionId}`}
+                          icon={<Bot className='h-4 w-4' />}
+                          isActive={currentV2SessionId === row.ptr.sessionId}
+                          draggable={false}
+                          onRename={(newTitle) => renameV2(row.ptr.sessionId, newTitle)}
+                          onDelete={() => handleDeleteV2(row.ptr.sessionId)}
+                        />
+                      );
+                    }
+
+                    const conv = row.conv;
                     const mentionCount =
                       conv.groupMeta?.members?.find((m) => m.userId === user?.id)?.mentions?.filter((m) => !m.seenAt).length || 0;
 
@@ -310,7 +372,7 @@ export const AppSidebar = memo(function AppSidebar() {
                       <SidebarMenuSkeleton index={2} />
                     </>
                   )}
-                  {!conversationsLoading && historyConversations.length === 0 && (
+                  {!conversationsLoading && mergedHistory.length === 0 && (
                     <li className='px-2 py-1 text-xs text-muted-foreground'>{t('history.empty')}</li>
                   )}
                   {hasMore && !conversationsLoading && (
