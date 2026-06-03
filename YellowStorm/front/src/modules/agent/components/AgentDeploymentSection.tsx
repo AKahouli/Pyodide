@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, Code2, Copy, Info, Rocket, Sparkles } from "lucide-react";
+import { Check, Code2, Copy, Info, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import { createWidgetToken } from "@/modules/agent/api";
 
 interface AgentDeploymentSectionProps {
   agentId: string | null;
+  agentName?: string;
 }
 
 interface IntegrationSnippetPanelProps {
@@ -24,7 +25,7 @@ interface IntegrationSnippetPanelProps {
   isCopied: boolean;
 }
 
-export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps) {
+export function AgentDeploymentSection({ agentId, agentName = "" }: AgentDeploymentSectionProps) {
   const { t } = useModuleTranslation("agent");
   const [snippet, setSnippet] = useState("");
   const [isCopied, setIsCopied] = useState(false);
@@ -47,7 +48,7 @@ export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps)
       );
       const chatApiUrl = `${apiBase}/widget/chat`;
       const streamApiUrl = `${apiBase}/widget/stream`;
-      setSnippet(buildWidgetSnippet(agentId, result.token, chatApiUrl, streamApiUrl));
+      setSnippet(buildWidgetSnippet(agentId, agentName, result.token, chatApiUrl, streamApiUrl));
       setIsCopied(false);
       showSuccess(t("createEdit.fields.deploymentGenerated"));
     } catch {
@@ -70,17 +71,10 @@ export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps)
   };
 
   return (
-    <div className="min-w-0 max-w-full space-y-3 rounded-xl border bg-card/80 p-3 shadow-sm backdrop-blur-sm sm:p-4">
-      <div className="space-y-1.5">
-        <Label className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-            <Rocket className="h-3.5 w-3.5 text-primary" />
-          </span>
-          {t("createEdit.fields.deployment")}
-        </Label>
-        <p className="pl-9 text-xs leading-relaxed text-muted-foreground">
-          {t("createEdit.fields.deploymentDescription")}
-        </p>
+    <div className="grid min-w-0 max-w-full gap-4">
+      <div className="space-y-2">
+        <Label>{t("createEdit.fields.deployment")}</Label>
+        <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentDescription")}</p>
       </div>
 
       {!agentId ? (
@@ -88,7 +82,7 @@ export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps)
           {t("createEdit.fields.deploymentRequiresAgent")}
         </p>
       ) : (
-        <Button type="button" size="sm" className="shadow-sm" onClick={handleGenerate} disabled={isGenerating}>
+        <Button type="button" size="sm" onClick={handleGenerate} disabled={isGenerating}>
           <Sparkles className="mr-1.5 h-3.5 w-3.5" />
           {t("createEdit.actions.generateDeploymentSnippet")}
         </Button>

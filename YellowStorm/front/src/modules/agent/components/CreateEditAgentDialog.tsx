@@ -206,13 +206,14 @@ export function CreateEditAgentDialog({
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
-              <TabsList className="shrink-0 w-full">
+              <TabsList className="h-auto shrink-0 w-full flex flex-wrap justify-start gap-1">
                 <TabsTrigger value="identity">{t('createEdit.tabs.identity')}</TabsTrigger>
                 <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
                 <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
                 <TabsTrigger value="skills">{t('createEdit.tabs.skills')}</TabsTrigger>
                 <TabsTrigger value="connectors">{t('createEdit.tabs.connectors')}</TabsTrigger>
+                <TabsTrigger value="deployment">{t('createEdit.tabs.deployment')}</TabsTrigger>
                 <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
               </TabsList>
               <ScrollArea className="flex-1 min-h-0 mt-4">
@@ -498,9 +499,13 @@ export function CreateEditAgentDialog({
                     </div>
 
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
-                    <AgentDeploymentSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
+
+                <TabsContent value="deployment" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                </TabsContent>
+
                   {/* Evaluation Tab */}
                   <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <EvaluationTab agent={agent} />
