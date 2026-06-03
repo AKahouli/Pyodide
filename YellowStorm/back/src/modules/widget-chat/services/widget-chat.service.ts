@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
+import { Types } from 'mongoose';
 import * as grpc from '@grpc/grpc-js';
 import { Observable } from 'rxjs';
 import { StreamService } from '@modules/conversation/services/stream.service';
@@ -12,9 +13,10 @@ import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema
 import { WidgetSession, WidgetSessionDocument } from '../schemas/widget-session.schema';
 import { WidgetMessage, WidgetMessageDocument } from '../schemas/widget-message.schema';
 import { AgentService } from '@modules/agent/agent.service';
+import { ModelsService } from '@modules/models/models.service';
 import { IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
-import { getComponentType, extractComponentData } from '@modules/conversation/utils/component-mapper';
+import { extractComponentData, aggregateTextFromComponents } from '@modules/conversation/utils/component-mapper';
 
 @Injectable()
 export class WidgetChatService {
@@ -25,6 +27,7 @@ export class WidgetChatService {
     @InjectModel(WidgetSession.name) private readonly widgetSessionModel: Model<WidgetSessionDocument>,
     @InjectModel(WidgetMessage.name) private readonly widgetMessageModel: Model<WidgetMessageDocument>,
     private readonly agentService: AgentService,
+    private readonly modelsService: ModelsService,
     private readonly streamService: StreamService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -88,6 +91,29 @@ export class WidgetChatService {
     const sessionId = (session as any)._id.toString();
     this.logger.log('Widget session created', { sessionId, agentId, visitorId });
     return { id: sessionId };
+  }
+
+  /** Closes the active visitor session and starts a fresh one (clear chat). */
+  async resetVisitorSession(
+    tokenHash: string,
+    agentId: string,
+    visitorId: string,
+    metadata: Record<string, unknown>,
+  ): Promise<{ sessionId: string }> {
+    const active = await this.widgetSessionModel
+      .findOne({ tokenHash, visitorId, status: 'active' })
+      .lean()
+      .exec();
+
+    if (active) {
+      const previousSessionId = active._id.toString();
+      await this.widgetSessionModel.findByIdAndUpdate(previousSessionId, { status: 'closed' }).exec();
+      this.sseRegistry.cleanup(previousSessionId);
+      this.logger.log('Widget session closed for reset', { previousSessionId, agentId, visitorId });
+    }
+
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    return { sessionId: session.id };
   }
 
   // ─── Chat ──────────────────────────────────────────────────
@@ -179,15 +205,53 @@ export class WidgetChatService {
       return;
     }
 
+    this.sseRegistry.resetStreamBuffer(sessionId);
     this.sseRegistry.emit(sessionId, { type: 'stream_start', data: { sessionId } });
 
     try {
-      const agents = await this.agentService.buildAgentsForStream('widget', undefined, [agentId]);
-      const resolvedAgents = agents.length > 0 ? agents : await this.agentService.buildAgentsForStream('widget', undefined, undefined);
+      const ownerUserId = this.resolveAgentOwnerUserId(agentDoc);
+      if (!ownerUserId) {
+        this.logger.error('Widget executeStream aborted: agent missing createdBy', { sessionId, agentId });
+        this.sseRegistry.emit(sessionId, {
+          type: 'stream_error',
+          data: { message: 'Agent configuration is invalid for widget chat.' },
+        });
+        this.sseRegistry.cleanup(sessionId);
+        return;
+      }
+
+      const fallbackModelId = await this.resolveFallbackModelId();
+      const resolvedAgents = await this.resolveWidgetGrpcAgents(
+        ownerUserId,
+        agentId,
+        fallbackModelId,
+        sessionId,
+      );
+      if (!resolvedAgents) {
+        this.logger.warn('Widget executeStream aborted: missing manager for manual gRPC', {
+          sessionId,
+          agentId,
+          ownerUserId,
+        });
+        this.sseRegistry.emit(sessionId, {
+          type: 'stream_error',
+          data: {
+            message:
+              'Widget chat requires a Manager agent. Add an active Manager agent for this account (or a system default Manager).',
+          },
+        });
+        this.sseRegistry.cleanup(sessionId);
+        return;
+      }
+
       this.logger.debug('Widget gRPC agents resolved', {
         sessionId,
         requestedAgentId: agentId,
+        ownerUserId,
         resolvedCount: resolvedAgents.length,
+        agentNames: resolvedAgents.map((a) => ({ name: a.name, type: a.agent_type })),
+        fallbackModelId: fallbackModelId || '(none)',
+        agentModels: resolvedAgents.map((a) => a.chatbot?.model || '(empty)'),
       });
 
       const grpcRequest = {
@@ -202,6 +266,12 @@ export class WidgetChatService {
       };
 
       const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
+      const managerAgentIds = new Set(
+        resolvedAgents.filter((a) => a.agent_type === 'manager').map((a) => a.id),
+      );
+      const componentAgentIds = new Map<string, string>();
+      const managerComponentBuffer = new Map<string, MessageComponent>();
+      const fullComponentBuffer = new Map<string, MessageComponent>();
 
       await new Promise<void>((resolve, reject) => {
         const metadata = new grpc.Metadata();
@@ -228,24 +298,59 @@ export class WidgetChatService {
 
           const action = chunk.action;
           const comp = chunk.component;
+          const chunkAgentId = typeof chunk.metadata?.agent_id === 'string' ? chunk.metadata.agent_id : '';
+
+          if (comp?.id && chunkAgentId) {
+            componentAgentIds.set(comp.id, chunkAgentId);
+          }
 
           if (comp && comp.id && (action === 'add' || action === 'update' || action === 'delete')) {
+            const showInWidget = this.isManagerStreamOutput(
+              managerAgentIds,
+              componentAgentIds,
+              comp.id,
+              chunkAgentId,
+            );
+
             if (action === 'delete') {
+              managerComponentBuffer.delete(comp.id);
+              fullComponentBuffer.delete(comp.id);
               stream.buffer.delete(comp.id);
-              this.sseRegistry.emit(sessionId, { type: 'stream_chunk', data: { action, component: { id: comp.id } } });
+              componentAgentIds.delete(comp.id);
+              if (showInWidget) {
+                this.sseRegistry.emit(sessionId, {
+                  type: 'stream_chunk',
+                  data: { action, component: { id: comp.id } },
+                });
+              }
             } else {
               const { type, data } = this.extractComponent(comp);
-              if (action === 'add') {
-                stream.buffer.set(comp.id, { id: comp.id, type, data: { ...data } });
-              } else {
-                const existing = stream.buffer.get(comp.id);
-                if (existing) existing.data = this.mergeData(type, existing.data, data);
+              this.mergeComponentBuffer(fullComponentBuffer, comp.id, action, type, data);
+              if (showInWidget) {
+                this.mergeComponentBuffer(managerComponentBuffer, comp.id, action, type, data);
+                stream.buffer.set(comp.id, managerComponentBuffer.get(comp.id)!);
               }
-              this.sseRegistry.emit(sessionId, {
-                type: 'stream_chunk',
-                data: { action, component: { id: comp.id, type, data } },
-              });
+              if (showInWidget && this.isWidgetDisplayChunk(type, data)) {
+                const payload =
+                  type === 'error'
+                    ? {
+                        content: [data.title, data.content].filter(Boolean).join(': ') || 'Agent error',
+                      }
+                    : data;
+                this.sseRegistry.emit(sessionId, {
+                  type: 'stream_chunk',
+                  data: { action, component: { id: comp.id, type: type === 'error' ? 'text' : type, data: payload } },
+                });
+              }
             }
+          } else if (!chunk.usage) {
+            this.logger.warn('Widget gRPC chunk ignored', {
+              sessionId,
+              action,
+              hasComponent: Boolean(comp),
+              componentId: comp?.id,
+              chunkKeys: Object.keys(chunk || {}),
+            });
           }
 
           if (chunk.usage) {
@@ -260,18 +365,55 @@ export class WidgetChatService {
         call.on('end', async () => {
           if (timeoutHandle) clearTimeout(timeoutHandle);
           try {
-            const components = Array.from(stream.buffer.values());
-            let replyText = '';
-            for (const c of components) {
-              if (c.type === 'text' && typeof c.data.content === 'string') {
-                replyText += c.data.content;
-              }
+            const managerComponents = Array.from(managerComponentBuffer.values());
+            const workerComponents = this.filterWorkerComponents(
+              Array.from(fullComponentBuffer.values()),
+              agentId,
+              managerAgentIds,
+              componentAgentIds,
+            );
+            const managerReply = this.aggregateReplyText(managerComponents);
+            const workerReply = this.aggregateReplyText(workerComponents);
+            const allComponents = Array.from(fullComponentBuffer.values());
+            let displayReply =
+              managerReply.trim() || workerReply.trim() || this.extractErrorReply(allComponents);
+            const usedWorkerFallback = !managerReply.trim() && Boolean(workerReply.trim());
+
+            if (usedWorkerFallback) {
+              this.logger.log('Widget using worker agent reply (manager had no text)', {
+                sessionId,
+                widgetAgentId: agentId,
+                workerReplyLength: workerReply.length,
+              });
+              this.sseRegistry.emit(sessionId, {
+                type: 'stream_chunk',
+                data: {
+                  action: 'add',
+                  component: {
+                    id: `widget-worker-${sessionId}`,
+                    type: 'text',
+                    data: { content: workerReply },
+                  },
+                },
+              });
+            }
+
+            if (!displayReply.trim()) {
+              this.logger.warn('Widget gRPC stream ended with empty reply', {
+                sessionId,
+                chunkCount,
+                componentTypes: allComponents.map((c) => c.type),
+                inputTokens: totalInput,
+                outputTokens: totalOutput,
+              });
             }
 
             this.logger.log('Widget gRPC stream completed', {
               sessionId,
               chunkCount,
-              replyLength: replyText.length,
+              replyLength: displayReply.length,
+              usedWorkerFallback,
+              componentTypes: allComponents.map((c) => c.type),
               inputTokens: totalInput,
               outputTokens: totalOutput,
             });
@@ -281,8 +423,8 @@ export class WidgetChatService {
               tokenHash,
               agentId,
               role: 'assistant',
-              content: replyText || 'No response generated.',
-              components,
+              content: displayReply || 'No response generated.',
+              components: allComponents,
               inputTokens: totalInput,
               outputTokens: totalOutput,
             });
@@ -294,11 +436,20 @@ export class WidgetChatService {
             this.sseRegistry.emit(sessionId, {
               type: 'stream_complete',
               data: {
-                reply: replyText,
+                reply: displayReply,
                 usage: { inputTokens: totalInput, outputTokens: totalOutput },
               },
             });
-            this.sseRegistry.cleanup(sessionId);
+
+            if (!displayReply.trim()) {
+              this.sseRegistry.emit(sessionId, {
+                type: 'stream_error',
+                data: {
+                  message:
+                    'The agent returned no text. Check the agent model, ADK logs, and that CONVERSATION_GRPC_URL points to a running ADK server.',
+                },
+              });
+            }
             resolve();
           } catch (err) {
             this.logger.error('Failed to persist widget AI message', { sessionId, error: (err as Error).message });
@@ -323,8 +474,15 @@ export class WidgetChatService {
     }
   }
 
+  private resolveAgentOwnerUserId(agentDoc: { createdBy?: unknown }): string | null {
+    const raw = agentDoc?.createdBy;
+    if (!raw) return null;
+    const id = typeof raw === 'string' ? raw : (raw as { toString(): string }).toString();
+    return Types.ObjectId.isValid(id) ? id : null;
+  }
+
   private extractComponent(comp: any): { type: ComponentType; data: Record<string, unknown> } {
-    return { type: getComponentType(comp), data: extractComponentData(comp) };
+    return extractComponentData(comp);
   }
 
   private mergeData(type: ComponentType, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
@@ -332,5 +490,110 @@ export class WidgetChatService {
       return { ...existing, content: (existing.content as string) + (incoming.content as string) };
     }
     return { ...incoming };
+  }
+
+  private mergeComponentBuffer(
+    buffer: Map<string, MessageComponent>,
+    componentId: string,
+    action: string,
+    type: ComponentType,
+    data: Record<string, unknown>,
+  ): void {
+    const existing = buffer.get(componentId);
+    if (action === 'add' || !existing) {
+      buffer.set(componentId, { id: componentId, type, data: { ...data } });
+      return;
+    }
+    existing.data = this.mergeData(type, existing.data, data);
+  }
+
+  private filterWorkerComponents(
+    components: MessageComponent[],
+    widgetAgentId: string,
+    managerAgentIds: Set<string>,
+    componentAgentIds: Map<string, string>,
+  ): MessageComponent[] {
+    return components.filter((c) => {
+      const ownerId = componentAgentIds.get(c.id) || '';
+      return ownerId === widgetAgentId && !managerAgentIds.has(ownerId);
+    });
+  }
+
+  private isManagerStreamOutput(
+    managerAgentIds: Set<string>,
+    componentAgentIds: Map<string, string>,
+    componentId: string,
+    chunkAgentId: string,
+  ): boolean {
+    const agentId = chunkAgentId || componentAgentIds.get(componentId) || '';
+    return Boolean(agentId && managerAgentIds.has(agentId));
+  }
+
+  private isWidgetDisplayChunk(type: ComponentType, data: Record<string, unknown>): boolean {
+    if (type === 'error') {
+      return typeof data.content === 'string' || typeof data.title === 'string';
+    }
+    return type === 'text' && typeof data.content === 'string';
+  }
+
+  /**
+   * ADK manual mode requires a Manager agent plus the widget worker.
+   * Uses the same manager resolution as conversation streams.
+   */
+  private async resolveWidgetGrpcAgents(
+    ownerUserId: string,
+    widgetAgentId: string,
+    fallbackModelId: string | undefined,
+    sessionId: string,
+  ): Promise<IGrpcAgent[] | null> {
+    let agents = await this.agentService.buildAgentsForStream(
+      ownerUserId,
+      fallbackModelId,
+      [widgetAgentId],
+    );
+
+    if (!agents.some((a) => a.id === widgetAgentId)) {
+      const widgetOnly = await this.agentService.buildGrpcAgentsForPlaybook(
+        ownerUserId,
+        [widgetAgentId],
+        fallbackModelId,
+        sessionId,
+      );
+      if (widgetOnly.length === 0) {
+        return null;
+      }
+      const byId = new Map(agents.map((a) => [a.id, a]));
+      for (const agent of widgetOnly) {
+        byId.set(agent.id, agent);
+      }
+      agents = Array.from(byId.values());
+    }
+
+    if (!agents.some((a) => a.agent_type === 'manager')) {
+      return null;
+    }
+
+    return agents;
+  }
+
+  private async resolveFallbackModelId(): Promise<string | undefined> {
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const identifier = this.modelsService.getModelIdentifier(defaultModel);
+    return identifier || undefined;
+  }
+
+  private aggregateReplyText(components: MessageComponent[]): string {
+    return aggregateTextFromComponents(components.filter((c) => c.type === 'text'));
+  }
+
+  private extractErrorReply(components: MessageComponent[]): string {
+    for (const component of components) {
+      if (component.type !== 'error') continue;
+      const title = typeof component.data.title === 'string' ? component.data.title : '';
+      const content = typeof component.data.content === 'string' ? component.data.content : '';
+      const combined = [title, content].filter(Boolean).join(': ');
+      if (combined) return combined;
+    }
+    return '';
   }
 }

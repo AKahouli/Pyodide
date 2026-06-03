@@ -45,6 +45,26 @@ export class WidgetChatController {
     return { sessionId: session.id };
   }
 
+  @Post('session/reset')
+  @Public()
+  @SkipMaintenance()
+  @UseGuards(WidgetTokenGuard)
+  @RateLimit({ limit: 15, windowMs: 60000, keyPrefix: 'widget-session-reset' })
+  async resetSession(@Body() dto: WidgetCreateSessionDto, @Req() req: WidgetRequest) {
+    const result = await this.widgetChatService.resetVisitorSession(
+      req.widgetTokenHash!,
+      req.widgetAgentId!,
+      dto.visitorId,
+      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin },
+    );
+    this.logger.log('Widget POST /session/reset', {
+      sessionId: result.sessionId,
+      agentId: req.widgetAgentId,
+      visitorId: dto.visitorId,
+    });
+    return result;
+  }
+
   @Post('chat')
   @Public()
   @SkipMaintenance()

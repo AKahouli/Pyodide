@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 import { AgentModule } from '@modules/agent/agent.module';
+import { ModelsModule } from '@modules/models/models.module';
 import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 import { LoggerModule } from '@modules/logger';
 import { WidgetChatController } from './controllers/widget-chat.controller';
@@ -21,6 +22,7 @@ import { WidgetTokenGuard } from './guards/widget-token.guard';
       { name: Agent.name, schema: AgentSchema },
     ]),
     AgentModule,
+    ModelsModule,
     ConversationModule,
     LoggerModule,
   ],
