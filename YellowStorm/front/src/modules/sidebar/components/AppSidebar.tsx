@@ -270,13 +270,6 @@ export const AppSidebar = memo(function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
 
-            <SidebarMenuItem>
-              <SidebarMenuButton tooltip='Manus Agent (v2)' onClick={() => navigate('/conversation-v2')}>
-                <Sparkles />
-                <span>Manus (v2)</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
             <WorkspaceButton />
 
             <AgentButton />

@@ -103,7 +103,7 @@ export const ConversationItem = memo(function ConversationItem({
       >
         <SidebarMenuButton asChild tooltip={displayTitle} isActive={resolvedActive}>
           <NavLink to={resolvedTo} draggable={false}>
-            {icon}
+
             {isGroup && (
               <div className='relative'>
                 <Users className='h-4 w-4' />
@@ -115,6 +115,7 @@ export const ConversationItem = memo(function ConversationItem({
               </div>
             )}
             <span className='truncate'>{displayTitle}</span>
+            {icon}
           </NavLink>
         </SidebarMenuButton>
         <DropdownMenu>
