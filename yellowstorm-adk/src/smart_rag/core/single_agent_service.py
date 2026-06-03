@@ -301,10 +301,11 @@ class SingleAgentService:
                 # Create search toolkit
                 toolkit = SearchToolkit(
                     task_order=None,
-                    brain_id=agent_config.brain_ids,
+                    workspace_name=agent_config.brain_ids,
                     top_k=top_k,
                     vectorstore=agent_config.vectorstore_name or "default",
-                    search_web=search_web
+                    search_web=search_web,
+                    user_id=request.user_id,
                 )
 
                 # Create standard search tool schema
@@ -357,6 +358,15 @@ class SingleAgentService:
                 )
 
             logger.info(f"Created agent {agent_config.name} with {len(tools)} tools: {[t.schema.get('name') if hasattr(t, 'schema') else str(t) for t in tools]}")
+
+            agent._mcp_search_state = {
+                "_mcp_search_user_id": request.user_id,
+            }
+            if agent_config.brain_ids:
+                agent._mcp_search_state["_mcp_search_workspace_name"] = (
+                    agent_config.brain_ids[0] if len(agent_config.brain_ids) == 1 else agent_config.brain_ids
+                )
+
             return agent
 
         except Exception as e:

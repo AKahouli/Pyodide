@@ -201,7 +201,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       if (citation?.text_source) {
         sourceData.sourceType = 'text';
         sourceData.source = citation.text_source.source || '';
-        sourceData.externalId = citation.text_source.external_id || '';
+        sourceData.fileName = citation.text_source.file_name || '';
         sourceData.page = citation.text_source.page || '';
         sourceData.pageContent = citation.text_source.page_content || '';
         sourceData.workspaceId = citation.text_source.workspace_id || '';
@@ -211,7 +211,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         sourceData.path = citation.image_source.path || '';
         sourceData.page = citation.image_source.page || '';
         sourceData.fileName = citation.image_source.file_name || '';
-        sourceData.externalId = citation.image_source.external_id || '';
+        sourceData.workspaceName = citation.image_source.workspace_name || '';
         sourceData.workspaceId = citation.image_source.workspace_id || '';
         sourceData.height = citation.image_source.height || '';
         sourceData.width = citation.image_source.width || '';

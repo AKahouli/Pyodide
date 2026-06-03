@@ -46,6 +46,7 @@ export interface IAgentForStream {
 
 export interface IGrpcWorkspaceContext {
   workspace_id: string;
+  workspace_name?: string;
   chunks?: number;
   hybrid_search?: boolean;
   instruction?: string;
@@ -58,6 +59,8 @@ export interface IGrpcWorkspaceContext {
     language: string;
     indexing_token: number;
     workspace_id: string;
+    workspace_name?: string;
+    file_name?: string;
     createdAt: string;
   }>;
 }

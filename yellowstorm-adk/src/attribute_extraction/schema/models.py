@@ -15,7 +15,7 @@ class AttributeDefinition(BaseModel):
 
 class AttributeExtractionRequest(BaseModel):
     """Request model for attribute-based extraction endpoint"""
-    brain_ids: List[str] = Field(..., description="List of brain IDs to search")
+    workspace_names: List[str] = Field(..., description="List of workspace names to search")
     attributes: Dict[str, AttributeDefinition] = Field(
         ...,
         description="Dictionary mapping attribute names to their definitions"
@@ -26,9 +26,9 @@ class AttributeExtractionRequest(BaseModel):
         description="Vectorstore name"
     )
     top_k: int = Field(default=3, description="Number of search results to return")
-    external_ids: Optional[List[str]] = Field(
+    file_names: Optional[List[str]] = Field(
         None,
-        description="Optional list of external document IDs to filter search"
+        description="Optional list of file names to filter search"
     )
     sheet_name: Optional[str] = Field(
         None,

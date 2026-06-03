@@ -103,16 +103,18 @@ def _normalize_search_result_blocks(
         content = str(block.get("content") or "").strip()
         if not content:
             continue
-        external_id = str(
-            block.get("external_id")
+        file_name = str(
+            block.get("file_name")
+            or block.get("external_id")
             or block.get("doc_id")
             or block.get("block_id")
             or block.get("id")
             or ""
         ).strip()
         page_number = block.get("page_number")
-        page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
-        workspace_id = str(block.get("brain_id") or block.get("workspace_id") or "").strip()
+        page = str(page_number + 1) if isinstance(page_number, int) else str(page_number or "").strip()
+        workspace_id = str(block.get("workspace_id") or block.get("brain_id") or "").strip()
+        workspace_name = str(block.get("workspace_name") or workspace_id).strip()
         source = str(
             _display_source_name(
                 block.get("source")
@@ -122,7 +124,7 @@ def _normalize_search_result_blocks(
                 or source_label
             )
         ).strip()
-        signature = (source, external_id, page, content)
+        signature = (source, file_name, page, content)
         if signature in seen:
             continue
         seen.add(signature)
@@ -130,10 +132,11 @@ def _normalize_search_result_blocks(
             {
                 "type": "text",
                 "source": source,
-                "external_id": external_id,
+                "file_name": file_name,
                 "page": page,
                 "page_content": content,
                 "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
                 "reference": "",
             }
         )
@@ -144,7 +147,7 @@ def _normalize_search_result_blocks(
 def _normalize_blocks_list(
     blocks: Any,
     source_label: str,
-    external_id: str = "",
+    file_name: str = "",
     workspace_id: str = "",
 ) -> List[Dict[str, str]]:
     """Convert a blocks array from MCP into text citation source entries."""
@@ -163,11 +166,12 @@ def _normalize_blocks_list(
             continue
         page_number = block.get("page_number")
         page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
-        block_external_id = str(block.get("external_id") or external_id).strip()
-        block_workspace_id = str(block.get("brain_id") or block.get("workspace_id") or workspace_id).strip()
+        block_file_name = str(block.get("file_name") or block.get("external_id") or file_name).strip()
+        block_workspace_id = str(block.get("workspace_id") or block.get("brain_id") or workspace_id).strip()
+        block_workspace_name = str(block.get("workspace_name") or block_workspace_id).strip()
         source = str(_display_source_name(block.get("source") or source_label)).strip()
 
-        signature = (source, block_external_id, page, content)
+        signature = (source, block_file_name, page, content)
         if signature in seen:
             continue
         seen.add(signature)
@@ -175,10 +179,11 @@ def _normalize_blocks_list(
             {
                 "type": "text",
                 "source": source,
-                "external_id": block_external_id,
+                "file_name": block_file_name,
                 "page": page,
                 "page_content": content,
                 "workspace_id": block_workspace_id,
+                "workspace_name": block_workspace_name,
                 "reference": "",
             }
         )
@@ -189,7 +194,7 @@ def _normalize_blocks_list(
 def _normalize_image_list(
     images: Any,
     source_label: str,
-    external_id: str = "",
+    file_name: str = "",
     workspace_id: str = "",
 ) -> List[Dict[str, str]]:
     """Convert an images array from MCP into image citation source entries."""
@@ -206,11 +211,12 @@ def _normalize_image_list(
             continue
         page_number = img.get("page_number") or img.get("page")
         page = str(page_number) if isinstance(page_number, int) else str(page_number or "").strip()
-        file_name = str(img.get("file_name") or img.get("filename") or source_label).strip()
-        img_external_id = str(img.get("external_id") or external_id).strip()
-        img_workspace_id = str(img.get("brain_id") or img.get("workspace_id") or workspace_id).strip()
+        source_file_name = str(img.get("file_name") or img.get("filename") or source_label).strip()
+        img_file_name = str(img.get("file_name") or img.get("external_id") or file_name).strip()
+        img_workspace_id = str(img.get("workspace_id") or img.get("brain_id") or workspace_id).strip()
+        img_workspace_name = str(img.get("workspace_name") or img_file_name).strip()
 
-        signature = (path, img_external_id, page)
+        signature = (path, img_file_name, page)
         if signature in seen:
             continue
         seen.add(signature)
@@ -219,8 +225,8 @@ def _normalize_image_list(
                 "type": "image",
                 "path": path,
                 "page": page,
-                "file_name": file_name,
-                "external_id": img_external_id,
+                "file_name": source_file_name,
+                "workspace_name": img_workspace_name,
                 "workspace_id": img_workspace_id,
                 "height": str(img.get("height") or "").strip(),
                 "width": str(img.get("width") or "").strip(),
@@ -283,6 +289,13 @@ def _normalize_mcp_response(
         content_mode = str(response.get("contentMode") or "").strip().lower()
         inline_text = response.get("text")
         if content_mode == "inline_text" and isinstance(inline_text, str) and inline_text.strip():
+            item_workspace_id = str(
+                item.get("workspace_id")
+                or item.get("brain_id")
+                or response.get("workspace_id")
+                or response.get("brain_id")
+                or ""
+            ).strip()
             response["citation_sources"] = [
                 {
                     "type": "text",
@@ -292,10 +305,15 @@ def _normalize_mcp_response(
                         or item.get("displayName")
                         or "Connector Document"
                     ),
-                    "external_id": str(item.get("itemId") or item.get("id") or ""),
+                    "file_name": str(item.get("itemId") or item.get("id") or ""),
                     "page": "",
                     "page_content": inline_text,
-                    "workspace_id": "",
+                    "workspace_id": item_workspace_id,
+                    "workspace_name": str(
+                        item.get("workspace_name")
+                        or response.get("workspace_name")
+                        or item_workspace_id
+                    ).strip(),
                     "reference": "",
                 }
             ]
@@ -312,8 +330,8 @@ def _normalize_mcp_response(
         blocks_citation_sources = _normalize_blocks_list(
             response.get("blocks"),
             source_label=str(response.get("source") or action_key or ""),
-            external_id=str(response.get("external_id") or ""),
-            workspace_id=str(response.get("brain_id") or ""),
+            file_name=str(response.get("file_name") or response.get("external_id") or ""),
+            workspace_id=str(response.get("workspace_id") or response.get("brain_id") or ""),
         )
         if blocks_citation_sources:
             response["citation_sources"] = blocks_citation_sources
@@ -322,8 +340,8 @@ def _normalize_mcp_response(
         image_citation_sources = _normalize_image_list(
             response.get("images"),
             source_label=str(response.get("source") or action_key or ""),
-            external_id=str(response.get("external_id") or ""),
-            workspace_id=str(response.get("brain_id") or ""),
+            file_name=str(response.get("file_name") or response.get("external_id") or ""),
+            workspace_id=str(response.get("workspace_id") or response.get("brain_id") or ""),
         )
         if image_citation_sources:
             existing = response.get("citation_sources")
@@ -379,10 +397,10 @@ async def call_mcp_tool(
     merged_env = _build_env(server_config, auth_env)
 
     logger.info(
-        "mcp_call_tool action=%s transport=%s headers=%s request_payload=%s",
+        "mcp_call_tool action=%s transport=%s header_names=%s request_payload=%s",
         action_key,
         transport_type,
-        merged_headers,
+        sorted((merged_headers or {}).keys()),
         _log_payload(params),
     )
 
@@ -423,19 +441,21 @@ async def call_mcp_tool(
             from mcp.client.streamable_http import streamable_http_client
             import httpx
 
-            if merged_headers:
-                http_client = httpx.AsyncClient(headers=merged_headers)
+            client_headers = merged_headers or {}
+            async def _inject_mcp_headers(request: httpx.Request) -> None:
+                for key, value in client_headers.items():
+                    request.headers[key] = value
+
+            async with httpx.AsyncClient(
+                headers=client_headers,
+                event_hooks={"request": [_inject_mcp_headers]},
+                follow_redirects=True,
+                # read=None: no timeout on SSE stream reads (tool calls can take >5s)
+                timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
+            ) as http_client:
                 async with streamable_http_client(
                     url=server_url, http_client=http_client
                 ) as streams:
-                    read_stream, write_stream, _ = streams
-                    from mcp import ClientSession
-
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        result = await session.call_tool(action_key, arguments=params)
-            else:
-                async with streamable_http_client(url=server_url) as streams:
                     read_stream, write_stream, _ = streams
                     from mcp import ClientSession
 
@@ -510,13 +530,21 @@ async def call_mcp_tool(
             )
         return normalized_response
     except Exception as e:
-        logger.error("MCP tool call failed: action=%s error=%s", action_key, str(e))
+        logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, str(e))
         # Unwrap ExceptionGroup / TaskGroup sub-exceptions for visibility
-        if isinstance(e, BaseExceptionGroup):
-            for sub in e.exceptions:
+        # BaseExceptionGroup is only a builtin on Python 3.11+; use backport on 3.10
+        try:
+            _BEG = BaseExceptionGroup  # type: ignore[name-defined]
+        except NameError:
+            try:
+                from exceptiongroup import BaseExceptionGroup as _BEG  # type: ignore[no-redef]
+            except ImportError:
+                _BEG = None  # type: ignore[assignment]
+        if _BEG is not None and isinstance(e, _BEG):
+            for sub in e.exceptions:  # type: ignore[attr-defined]
                 logger.error("MCP sub-exception: action=%s type=%s error=%s", action_key, type(sub).__name__, str(sub))
-                if isinstance(sub, BaseExceptionGroup):
-                    for nested in sub.exceptions:
+                if isinstance(sub, _BEG):
+                    for nested in sub.exceptions:  # type: ignore[attr-defined]
                         logger.error("MCP nested-exception: action=%s type=%s error=%s", action_key, type(nested).__name__, str(nested))
         return f"Connector action '{action_key}' failed: {str(e)}"
 

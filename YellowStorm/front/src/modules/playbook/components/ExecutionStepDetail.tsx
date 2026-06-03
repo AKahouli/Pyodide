@@ -21,6 +21,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
 import type {
@@ -1380,7 +1381,14 @@ export function ExecutionStepDetail({
                   </div>
                 )}
                 {selectedStepExecutionText && (() => {
-                  const isHtml = /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(selectedStepExecutionText);
+                  const isHtml = isHtmlResultText(selectedStepExecutionText);
+                  const parts = isHtml
+                    ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                    : mapComponentsToContentParts(buildResultComponentsWithText(
+                        selectedStepExecutionText,
+                        selectedStepExecution?.components,
+                        step.taskId,
+                      ) as never);
                   return (
                     <div
                       data-testid="step-result-markdown"
@@ -1390,14 +1398,13 @@ export function ExecutionStepDetail({
                       )}
                     >
                       <MessageProvider fileViewerDisplayMode="floating">
-                        <AIMessageContent
-                          parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]}
-                        />
+                        <AIMessageContent parts={parts} />
                       </MessageProvider>
                     </div>
                   );
                 })()}
-                {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
+                  && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
                   <div className="prose prose-sm max-w-none dark:prose-invert">
                     <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
                   </div>

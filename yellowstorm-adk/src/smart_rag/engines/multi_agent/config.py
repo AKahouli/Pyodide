@@ -11,6 +11,7 @@ from typing import Optional, List, Dict
 from src.config.settings import get_settings
 # Langfuse initialization (Lazy-loaded to avoid hangs if host is unreachable)
 _langfuse_instance = None
+app_settings = get_settings()
 
 def get_langfuse_client():
     global _langfuse_instance
@@ -114,7 +115,8 @@ class AgentTeamConfig:
         chatbot_name (dict): Configuration dictionary specifying the chatbot/LLM provider
         doc_tree (Optional[List]): Hierarchical structure of available documents, defaults to None
         brain_tree (Optional[List]): Tree structure representing knowledge relationships, defaults to None
-        brain_ids (Optional[List[str]]): List of brain/knowledge base identifiers, defaults to None
+        brain_ids (Optional[List[str]]): Compatibility alias for workspace_names
+        workspace_names (Optional[List[str]]): Workspace names to search, defaults to None
         top_k (int): Number of top results to retrieve from searches, defaults to 10
         vectorstore_name (str): Name of the vector database to use, defaults to "default"
         attached_files (Optional[List[dict]]): Documents attached in this turn (being indexed)
@@ -127,9 +129,16 @@ class AgentTeamConfig:
     doc_tree: Optional[List] = None
     brain_tree: Optional[List] = None
     brain_ids: Optional[List[str]] = None
+    workspace_names: Optional[List[str]] = None
     vectorstore_name: str = "default"
     attached_files: Optional[List[dict]] = None
     attached_images: Optional[List[dict]] = None
     previous_attached_files: Optional[List[dict]] = None
     connector_repo: Optional[Dict[str, str]] = None
+
+    def __post_init__(self) -> None:
+        if self.brain_ids is None and self.workspace_names is not None:
+            self.brain_ids = self.workspace_names
+        if self.workspace_names is None and self.brain_ids is not None:
+            self.workspace_names = self.brain_ids
 

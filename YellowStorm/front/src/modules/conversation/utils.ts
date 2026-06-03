@@ -95,19 +95,46 @@ function buildCitationData(data: Record<string, unknown>): {
   height?: string;
   width?: string;
 } {
+  const textSource = data.text_source as Record<string, unknown> | undefined;
+  const imageSource = data.image_source as Record<string, unknown> | undefined;
+  const sourceData = textSource || imageSource || data;
+  const sourceType = imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
+
   return {
-    parentId: (data.parentId as string) || '',
-    sourceType: (data.sourceType as 'text' | 'image') || 'text',
-    source: (data.source as string) || (data.fileName as string) || '',
-    externalId: (data.externalId as string) || '',
-    page: (data.page as string) || '',
-    pageContent: (data.pageContent as string) || '',
-    workspaceId: (data.workspaceId as string) || '',
-    reference: (data.reference as string) || undefined,
-    path: (data.path as string) || '',
-    height: (data.height as string) || '',
-    width: (data.width as string) || '',
+    parentId: (data.parentId as string) || (data.parent_id as string) || '',
+    sourceType,
+    source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
+    externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
+    page: (sourceData.page as string) || '',
+    pageContent: (sourceData.pageContent as string) || (sourceData.page_content as string) || (sourceData.content as string) || '',
+    workspaceId: (sourceData.workspaceId as string) || (sourceData.workspace_id as string) || (sourceData.workspace_name as string) || '',
+    reference: (sourceData.reference as string) || undefined,
+    path: (sourceData.path as string) || '',
+    height: (sourceData.height as string) || '',
+    width: (sourceData.width as string) || '',
   };
+}
+
+function findTextPartByReference(parts: MessageContentPart[], reference?: string): number | undefined {
+  const ref = reference?.trim().replace(/^\[|\]$/g, '').trim();
+  if (!ref) {
+    return undefined;
+  }
+
+  const index = parts.findIndex((part) => part.type === 'text' && part.content.includes(`[${ref}]`));
+  return index >= 0 ? index : undefined;
+}
+
+function attachCitation(parts: MessageContentPart[], index: number, citation: ReturnType<typeof buildCitationData>): boolean {
+  const part = parts[index];
+  if (part?.type !== 'text') {
+    return false;
+  }
+  if (!part.citations) {
+    part.citations = [];
+  }
+  part.citations.push(citation);
+  return true;
 }
 
 /**
@@ -240,13 +267,13 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     const citation = buildCitationData(data);
 
     if (parentId && idToIndex.has(parentId)) {
-      const parentIdx = idToIndex.get(parentId)!;
-      const parentPart = parts[parentIdx];
-      if (parentPart.type === 'text') {
-        if (!parentPart.citations) parentPart.citations = [];
-        parentPart.citations.push(citation);
+      if (attachCitation(parts, idToIndex.get(parentId)!, citation)) {
         continue;
       }
+    }
+    const referenceMatchIndex = findTextPartByReference(parts, citation.reference);
+    if (referenceMatchIndex !== undefined && attachCitation(parts, referenceMatchIndex, citation)) {
+      continue;
     }
     // Fallback: standalone citation part
     parts.push({ type: 'citation', ...citation });

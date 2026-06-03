@@ -58,7 +58,8 @@ def vector_search_with_score(
 
     # 👉 Automatically add keywords for hybrid search
     hybrid_filter = filter.copy() if filter else {}
-    #hybrid_filter["brain_id"] = hybrid_filter["brain_id"][0]
+    if user_id and user_id != "unknown":
+        hybrid_filter["user_id"] = user_id
     # If the caller did NOT explicitly pass keywords,
     # derive them from the query (simple + effective)
     if "keywords" not in hybrid_filter:

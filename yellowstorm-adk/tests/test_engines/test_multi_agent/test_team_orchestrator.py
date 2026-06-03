@@ -115,7 +115,7 @@ class TestAutoAgentGenerationTeam:
         """Test creating an agent team."""
         mock_config = MagicMock()
         mock_config.vectorstore_name = "test_vectorstore"
-        mock_config.brain_ids = ["brain1"]
+        mock_config.workspace_names = ["brain1"]
 
         mock_prompt_processor = MagicMock()
         mock_llm_factory = MagicMock()
@@ -143,7 +143,7 @@ class TestAutoAgentGenerationTeam:
         search_agent_config.brain_relations = {}
         search_agent_config.tools = [{"name": "search", "top_k": 5}]
         search_agent_config.vectorstore_name = "test_vectorstore"
-        search_agent_config.brain_ids = ["brain1"]
+        search_agent_config.workspace_names = ["brain1"]
         search_agent_config.chatbot_name = {"name": "test_bot"}
 
         report_agent_config = MagicMock()

@@ -79,6 +79,113 @@ def _replace_citation_marker(text: str, original_ref: str, ui_reference: str) ->
     return text.replace(f"[{normalized_original}]", f"[{ui_reference}]")
 
 
+def _extract_page_from_text(full_text: str, citation_ref: str) -> Optional[str]:
+    """Extract a page number mentioned near a citation reference in the LLM's text.
+
+    Looks for patterns like 'page 6', 'p. 6', 'page: 6' within a window around
+    the citation marker. Returns the nearest page number as a string, or None.
+    """
+    if not full_text or not citation_ref:
+        return None
+    positions = [m.start() for m in re.finditer(re.escape(citation_ref), full_text)]
+    if not positions:
+        norm = re.sub(r"\D", "", citation_ref)
+        if norm:
+            positions = [
+                m.start()
+                for m in re.finditer(r"\[" + re.escape(norm) + r"\]", full_text)
+            ]
+    if not positions:
+        return None
+    for pos in positions:
+        window = full_text[max(0, pos - 500): pos + 200]
+        matches = re.findall(r"(?i)(?:page|p\.)\s*[:\s]?\s*(\d+)", window)
+        if matches:
+            return matches[-1]
+    return None
+
+
+def _find_best_page_by_content(answer_text: str, pages_cache: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Find the page whose content has the highest word-overlap with the LLM answer.
+
+    Used as fallback when no explicit page mention is found in the text.
+    Only considers words of 4+ characters to avoid noise.
+    Requires at least 10 % of answer words to match (precision threshold).
+    """
+    if not answer_text or not pages_cache:
+        return None
+    answer_words = set(re.findall(r"\b\w{4,}\b", answer_text.lower()))
+    if not answer_words:
+        return None
+    best_score = 0.0
+    best_entry: Optional[Dict[str, Any]] = None
+    for entry in pages_cache:
+        if not isinstance(entry, dict):
+            continue
+        page_text = str(entry.get("content") or entry.get("page_content") or "")
+        if not page_text:
+            continue
+        page_words = set(re.findall(r"\b\w{4,}\b", page_text.lower()))
+        if not page_words:
+            continue
+        overlap = len(answer_words & page_words) / len(answer_words)
+        if overlap > best_score:
+            best_score = overlap
+            best_entry = entry
+    return best_entry if best_score >= 0.10 else None
+
+
+def _apply_read_content_page(
+    source_info: Dict[str, Any],
+    text_context: str,
+    citation_ref: str,
+) -> Dict[str, Any]:
+    """Override page / page_content for a read_content doc-level citation.
+
+    Strategy:
+      1. Regex: find 'page N' near the citation marker in the LLM text.
+      2. Content matching: compare LLM answer words against each cached page
+         and pick the page with the highest overlap (≥10 %).
+    Falls back to the original (full page range) if neither strategy succeeds.
+    """
+    if not source_info:
+        return source_info
+    content = source_info.get("source_object", {}).get("content", {})
+    if not content.get("_read_content_doc"):
+        return source_info
+    pages_cache: List[Dict[str, Any]] = content.get("_pages_cache") or []
+    if not pages_cache:
+        return source_info
+
+    import copy
+
+    def _build_updated(page_entry: Dict[str, Any]) -> Dict[str, Any]:
+        page_num = str(page_entry.get("page") or "")
+        page_text = str(
+            page_entry.get("content") or page_entry.get("page_content") or ""
+        ).strip()
+        updated = copy.deepcopy(source_info)
+        if page_num:
+            updated["source_object"]["content"]["page"] = page_num
+        if page_text:
+            updated["source_object"]["content"]["page_content"] = page_text
+        return updated
+
+    # Strategy 1 — explicit page mention in text
+    extracted = _extract_page_from_text(text_context, citation_ref)
+    if extracted:
+        for entry in pages_cache:
+            if str(entry.get("page") or "") == extracted:
+                return _build_updated(entry)
+
+    # Strategy 2 — content overlap matching
+    best = _find_best_page_by_content(text_context, pages_cache)
+    if best:
+        return _build_updated(best)
+
+    return source_info
+
+
 class AgentRunner:
     """Handles running agents and processing their outputs.
 
@@ -143,6 +250,9 @@ class AgentRunner:
             initial_state = {}
             if hasattr(agent, "_code_interpreter_state"):
                 initial_state.update(agent._code_interpreter_state)
+
+            if hasattr(agent, "_mcp_search_state"):
+                initial_state.update(agent._mcp_search_state)
 
             # Create a simple session to examine its properties
             session_id = f"session-{uuid.uuid4()}"
@@ -352,6 +462,11 @@ class AgentRunner:
                                     citation_ref,
                                     toolkit,
                                     getattr(session, "state", {}),
+                                )
+                                source_info = _apply_read_content_page(
+                                    source_info,
+                                    accumulated_text + text_to_send + citation_buffer,
+                                    citation_ref,
                                 )
                                 if source_info and q:
                                     logger.debug(
@@ -650,6 +765,11 @@ class AgentRunner:
                                 citation_ref,
                                 toolkit,
                                 getattr(session, "state", {}),
+                            )
+                            source_info = _apply_read_content_page(
+                                source_info,
+                                accumulated_text + final_text_for_citations,
+                                citation_ref,
                             )
                             if source_info and q:
                                 logger.debug(
@@ -1434,10 +1554,10 @@ class AgentRunner:
             if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
                 logger.info(
-                    "[CITATION LOOKUP] found_in_toolkit_text reference=%s source=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_toolkit_text reference=%s source=%s file_name=%s",
                     citation_ref,
                     source_obj.get("content", {}).get("source", ""),
-                    source_obj.get("content", {}).get("external_id", ""),
+                    source_obj.get("content", {}).get("file_name", ""),
                 )
 
                 return {"source_object": source_obj, "type": "text"}
@@ -1449,10 +1569,10 @@ class AgentRunner:
             if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
                 logger.info(
-                    "[CITATION LOOKUP] found_in_toolkit_image reference=%s path=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_toolkit_image reference=%s path=%s workspace_name=%s",
                     citation_ref,
                     source_obj.get("content", {}).get("path", ""),
-                    source_obj.get("content", {}).get("external_id", ""),
+                    source_obj.get("content", {}).get("workspace_name", ""),
                 )
 
                 return {"source_object": source_obj, "type": "image"}
@@ -1460,12 +1580,12 @@ class AgentRunner:
         for source in (session_state or {}).get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, []):
             if _matches_reference(source):
                 logger.info(
-                    "[CITATION LOOKUP] found_in_connector_text reference=%s stored_reference=%s aliases=%s source=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_connector_text reference=%s stored_reference=%s aliases=%s source=%s file_name=%s",
                     citation_ref,
                     source.get("reference", ""),
                     source.get("reference_aliases", []),
                     source.get("object", {}).get("content", {}).get("source", ""),
-                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                    source.get("object", {}).get("content", {}).get("file_name", ""),
                 )
                 return {"source_object": source.get("object", {}), "type": "text"}
 
@@ -1474,12 +1594,12 @@ class AgentRunner:
         ):
             if _matches_reference(source):
                 logger.info(
-                    "[CITATION LOOKUP] found_in_connector_image reference=%s stored_reference=%s aliases=%s path=%s external_id=%s",
+                    "[CITATION LOOKUP] found_in_connector_image reference=%s stored_reference=%s aliases=%s path=%s workspace_name=%s",
                     citation_ref,
                     source.get("reference", ""),
                     source.get("reference_aliases", []),
                     source.get("object", {}).get("content", {}).get("path", ""),
-                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                    source.get("object", {}).get("content", {}).get("workspace_name", ""),
                 )
                 return {"source_object": source.get("object", {}), "type": "image"}
 
@@ -1492,14 +1612,14 @@ class AgentRunner:
             parts = [
                 source_type,
                 str(source.get("path") or ""),
-                str(source.get("external_id") or ""),
+                str(source.get("workspace_name") or ""),
                 str(source.get("page") or ""),
             ]
         else:
             parts = [
                 source_type,
                 str(source.get("source") or ""),
-                str(source.get("external_id") or ""),
+                str(source.get("file_name") or ""),
                 str(source.get("page") or ""),
                 str(source.get("page_content") or ""),
             ]
@@ -1563,8 +1683,8 @@ class AgentRunner:
                                     "file_name": str(
                                         normalized_source.get("file_name") or ""
                                     ),
-                                    "external_id": str(
-                                        normalized_source.get("external_id") or ""
+                                    "workspace_name": str(
+                                        normalized_source.get("workspace_name") or ""
                                     ),
                                     "brain_id": str(
                                         normalized_source.get("workspace_id") or ""
@@ -1585,13 +1705,17 @@ class AgentRunner:
                             "object": {
                                 "content": {
                                     "source": str(normalized_source.get("source") or ""),
-                                    "external_id": str(
-                                        normalized_source.get("external_id") or ""
+                                    "file_name": str(
+                                        normalized_source.get("file_name") or ""
                                     ),
                                     "page": str(normalized_source.get("page") or ""),
                                     "page_content": str(
                                         normalized_source.get("page_content") or ""
                                     ),
+                                    "_read_content_doc": bool(
+                                        normalized_source.get("_read_content_doc")
+                                    ),
+                                    "_pages_cache": normalized_source.get("_pages_cache") or [],
                                     "brain_id": str(
                                         normalized_source.get("workspace_id") or ""
                                     ),
@@ -1599,23 +1723,25 @@ class AgentRunner:
                             },
                         }
                     )
+                source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s external_id=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s id_value=%s",
                     tool_name,
                     reference,
                     normalized_source.get("reference_aliases") or [],
                     normalized_source.get("type", "text"),
                     normalized_source.get("source") or normalized_source.get("path") or "",
-                    normalized_source.get("external_id") or "",
+                    source_id_field,
                 )
             else:
+                source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s reused_fallback_connector_citation reference=%s aliases=%s source=%s external_id=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s reused_fallback_connector_citation reference=%s aliases=%s source=%s id_value=%s",
                     tool_name,
                     reference,
                     normalized_source.get("reference_aliases") or [],
                     normalized_source.get("source") or normalized_source.get("path") or "",
-                    normalized_source.get("external_id") or "",
+                    source_id_field,
                 )
 
         logger.info(
@@ -1647,6 +1773,110 @@ class AgentRunner:
                 return []
 
         if not isinstance(result_payload, list):
+            # Fallback: handle MCP responses wrapped by ADK as {'content': '<json>', 'isError': False}
+            # The rich MCP payload (with 'blocks', 'file_name', etc.) is JSON-encoded in 'content'
+            raw_content = response_data.get("content")
+            mcp_payload: Dict[str, Any] = {}
+            # Resolve MCP list format: [{"type": "text", "text": "..."}]
+            content_str: Optional[str] = None
+            if isinstance(raw_content, list):
+                for item in raw_content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        content_str = item.get("text") or ""
+                        break
+                if content_str is None and raw_content:
+                    first = raw_content[0]
+                    if isinstance(first, dict):
+                        for key in ("text", "value", "content", "data"):
+                            val = first.get(key)
+                            if isinstance(val, str) and val.strip():
+                                content_str = val
+                                break
+            elif isinstance(raw_content, str):
+                content_str = raw_content
+            if content_str and content_str.strip():
+                try:
+                    parsed = json.loads(content_str)
+                    if isinstance(parsed, dict):
+                        mcp_payload = parsed
+                except json.JSONDecodeError:
+                    pass
+            elif isinstance(raw_content, dict):
+                mcp_payload = raw_content
+
+            if mcp_payload:
+                # Case 1: read_content response — register ONE document-level citation.
+                # Per-page registration causes [1] to always resolve to page 1 even when
+                # the answer is on a different page (e.g. page 6). A single document citation
+                # ensures [1] always points to the correct source file.
+                raw_citations = mcp_payload.get("citation_sources")
+                if isinstance(raw_citations, list) and raw_citations:
+                    file_name = str(mcp_payload.get("file_name") or "")
+                    raw_src = str(mcp_payload.get("source") or file_name or "")
+                    # Derive display name from the first citation entry if top-level is missing
+                    if not raw_src and isinstance(raw_citations[0], dict):
+                        raw_src = str(
+                            raw_citations[0].get("source") or raw_citations[0].get("file_name") or ""
+                        )
+                    if not file_name and isinstance(raw_citations[0], dict):
+                        file_name = str(raw_citations[0].get("file_name") or "")
+                    display_src = _display_source_name(raw_src) or file_name or tool_name
+                    total_pages = str(mcp_payload.get("total_pages") or len(raw_citations) or "")
+                    page_range = f"1-{total_pages}" if total_pages else ""
+                    workspace = str(
+                        mcp_payload.get("workspace_name") or mcp_payload.get("workspace_id") or ""
+                    )
+                    logger.info(
+                        "[STRUCTURED TOOL RESPONSE] tool=%s mcp_read_content_doc_citation source=%s file=%s pages=%s",
+                        tool_name, display_src, file_name, page_range,
+                    )
+                    return [
+                        {
+                            "type": "text",
+                            "source": display_src,
+                            "file_name": file_name,
+                            "page": page_range,
+                            "page_content": "",
+                            "workspace_id": workspace,
+                            "reference": "",
+                            "reference_aliases": [],
+                            "_read_content_doc": True,
+                            "_pages_cache": raw_citations,
+                        }
+                    ]
+
+                # Case 2: read_section response — blocks array + top-level content
+                if "blocks" in mcp_payload:
+                    section_content = str(mcp_payload.get("content") or "").strip()
+                    if section_content:
+                        file_name = str(mcp_payload.get("file_name") or "")
+                        page = str(mcp_payload.get("page_range") or "")
+                        workspace = str(
+                            mcp_payload.get("workspace_name")
+                            or mcp_payload.get("workspace_id")
+                            or ""
+                        )
+                        raw_source = str(mcp_payload.get("source") or file_name or "")
+                        display_source = _display_source_name(raw_source) or file_name or tool_name
+                        logger.info(
+                            "[STRUCTURED TOOL RESPONSE] tool=%s mcp_blocks_section_citation source=%s file=%s page=%s",
+                            tool_name,
+                            display_source,
+                            file_name,
+                            page,
+                        )
+                        return [
+                            {
+                                "type": "text",
+                                "source": display_source,
+                                "file_name": file_name,
+                                "page": page,
+                                "page_content": section_content,
+                                "workspace_id": workspace,
+                                "reference": "",
+                                "reference_aliases": [],
+                            }
+                        ]
             return []
 
         citation_sources: List[Dict[str, Any]] = []
@@ -1659,7 +1889,7 @@ class AgentRunner:
             if not content:
                 continue
 
-            external_id = str(
+            file_name = str(
                 block.get("external_id")
                 or block.get("doc_id")
                 or block.get("block_id")
@@ -1690,7 +1920,7 @@ class AgentRunner:
                 if document_id_value:
                     reference_aliases.append(document_id_value)
 
-            signature = (source, external_id, page, content)
+            signature = (source, file_name, page, content)
             if signature in seen:
                 continue
             seen.add(signature)
@@ -1699,7 +1929,7 @@ class AgentRunner:
                 {
                     "type": "text",
                     "source": source,
-                    "external_id": external_id,
+                    "file_name": file_name,
                     "page": page,
                     "page_content": content,
                     "workspace_id": workspace_id,
@@ -1730,7 +1960,7 @@ class AgentRunner:
             return ""
 
         # Try to match "page 5" or "Page 5"
-        match = re.search(r"page\s+(\d+)", page_info, re.IGNORECASE)
+        match = re.search(r"(?i)page\s+(\d+)", page_info)
         if match:
             return match.group(1)
 
@@ -1770,23 +2000,21 @@ class AgentRunner:
 
         # Build component data based on type
         if source_type == "text":
-            # Build TextSourceData
             component_data = {
                 "parent_id": parent_text_component_id,
                 "text_source": {
                     "type": "text",
                     "source": content.get("source", ""),
-                    "external_id": content.get("external_id", ""),
+                    "file_name": content.get("file_name", ""),
                     "page": content.get("page", ""),
                     "page_content": content.get("page_content", ""),
                     "workspace_id": content.get(
                         "brain_id", ""
-                    ),  # Map brain_id to workspace_id
+                    ),
                     "reference": citation_ref,
                 },
             }
         else:
-            # Build ImageSourceData
             component_data = {
                 "parent_id": parent_text_component_id,
                 "image_source": {
@@ -1794,10 +2022,10 @@ class AgentRunner:
                     "path": content.get("path", ""),
                     "page": content.get("page", ""),
                     "file_name": content.get("file_name", ""),
-                    "external_id": content.get("external_id", ""),
+                    "workspace_name": content.get("workspace_name", ""),
                     "workspace_id": content.get(
                         "brain_id", ""
-                    ),  # Map brain_id to workspace_id
+                    ),
                     "height": str(content.get("height", "")),
                     "width": str(content.get("width", "")),
                     "reference": citation_ref,

@@ -77,7 +77,7 @@ class TestAgentSuggestionGenerator:
         available_agents = []
         config = MagicMock()
         config.user_id = "user123"
-        config.brain_id = ["brain1"]
+        config.workspace_name = ["brain1"]
 
         result = await generator.generate_suggestions(
             "test-session-id", suggestions_prompt, user_prompt, available_agents, config
@@ -100,7 +100,7 @@ class TestAgentSuggestionGenerator:
 
         config = MagicMock()
         config.user_id = "user123"
-        config.brain_id = ["brain1"]
+        config.workspace_name = ["brain1"]
 
         result = await generator.generate_suggestions("test-session-id", "prompt", "user prompt", [], config)
         assert result == []

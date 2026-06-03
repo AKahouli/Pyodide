@@ -499,13 +499,14 @@ async def _execute_step(
     tools, collector = create_langchain_tools(
         agent_config=agent_config,
         workspace_context=tool_scope.workspace_context,
-        input_files=tool_scope.input_files,
+        input_files=tool_scope.file_names,
         documents_by_port=tool_scope.documents_by_port,
         code_interpreter_files=tool_scope.code_interpreter_files,
         output_ports=(output_contract or {}).get("ports") if isinstance(output_contract, dict) else None,
         step_connector_bindings=connector_bindings,
         output_workspace_id=output_workspace_id,
         workspace_context_mode=tool_scope.workspace_context_mode,
+        user_id=str(state.get("evaluation_user_id") or ""),
     )
     components: list[dict[str, Any]] = []
     should_stream_tokens = (

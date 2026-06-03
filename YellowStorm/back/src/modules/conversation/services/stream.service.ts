@@ -28,6 +28,7 @@ import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UsageService } from '../../usage';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { WorkspaceService } from '../../workspace/workspace.service';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
@@ -75,6 +76,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly usageService: UsageService,
     @Inject(forwardRef(() => WorkspaceDocumentService))
     private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly workspaceService: WorkspaceService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
   ) {
@@ -197,6 +199,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   ): Promise<
     Array<{
       workspace_id: string;
+      workspace_name: string;
       workspace_documents: Array<{
         _id: string;
         filename: string;
@@ -205,6 +208,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         language: string;
         indexing_token: number;
         workspace_id: string;
+        workspace_name: string;
+        file_name: string;
         createdAt: string;
       }>;
     }>
@@ -220,6 +225,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       const contexts: Array<{
         workspace_id: string;
+        workspace_name: string;
         workspace_documents: Array<{
           _id: string;
           filename: string;
@@ -228,11 +234,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           language: string;
           indexing_token: number;
           workspace_id: string;
+          workspace_name: string;
+          file_name: string;
           createdAt: string;
         }>;
       }> = [];
 
       for (const workspaceId of workspaceIds) {
+        const workspaceName = await this.resolveWorkspaceName(workspaceId);
         const result = await this.workspaceDocumentService.findAllByWorkspace(workspaceId, {
           limit: 1000,
           status: DocumentStatus.COMPLETED,
@@ -240,6 +249,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
         contexts.push({
           workspace_id: workspaceId,
+          workspace_name: workspaceName,
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.filename || '',
@@ -248,6 +258,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
             workspace_id: workspaceId,
+            workspace_name: workspaceName,
+            file_name: doc.filename || '',
             createdAt: doc.createdAt,
           })),
         });
@@ -284,8 +296,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           limit: 1000,
           status: DocumentStatus.COMPLETED,
         });
+        const workspaceName = await this.resolveWorkspaceName(wsId);
         contextMap.set(wsId, {
           workspace_id: wsId,
+          workspace_name: workspaceName,
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.filename || '',
@@ -294,6 +308,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
             workspace_id: wsId,
+            workspace_name: workspaceName,
+            file_name: doc.filename || '',
             createdAt: doc.createdAt,
           })),
         });
@@ -329,7 +345,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       document?: {
         filepath: string;
         filename: string;
-        external_id: string;
+        workspace_name: string;
         workspace_id: string;
         source: string;
         createdAt: string;
@@ -373,7 +389,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           document: {
             filepath: doc.path || '',
             filename: doc.filename || '',
-            external_id: doc.id,
+            workspace_name: this.workspaceNameFromPath(doc.path, doc.workspaceId),
             workspace_id: doc.workspaceId,
             source: doc.path || '',
             brain_type: 'doc',
@@ -412,9 +428,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       in_memory: boolean;
       language: string;
       indexing_token: number;
-      workspace_id: string;
-      createdAt: string;
-    }>
+        workspace_id: string;
+        workspace_name: string;
+        file_name: string;
+        createdAt: string;
+      }>
   > {
     if (!systemWorkspaceId) return [];
 
@@ -442,6 +460,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         language: doc.detected_language || 'fr',
         indexing_token: doc.chunk_size || 1200,
         workspace_id: systemWorkspaceId,
+        workspace_name: this.workspaceNameFromPath(doc.path, systemWorkspaceId),
+        file_name: doc.filename || '',
         createdAt: doc.createdAt,
       }));
     } catch (error) {
@@ -604,7 +624,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       agents,
       workspace_context: workspaceContexts?.length
         ? workspaceContexts
-        : [{ workspace_id: conversationId, workspace_documents: [] }],
+        : [{ workspace_id: conversationId, workspace_name: conversationId, workspace_documents: [] }],
       agent_mode: 'manual',
       attached_files: attachedFiles,
       previous_attached_files: previousAttachedFiles,
@@ -1524,5 +1544,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
       return [];
     }
+  }
+
+  private async resolveWorkspaceName(workspaceId: string): Promise<string> {
+    try {
+      const context = await this.workspaceService.getStorageContext(workspaceId);
+      return context.storagePrefix || workspaceId;
+    } catch (error) {
+      this.logger.warn('Failed to resolve workspace name for search metadata', {
+        workspaceId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return workspaceId;
+    }
+  }
+
+  private workspaceNameFromPath(filePath: string | undefined, fallback: string): string {
+    const parts = String(filePath || '').split('/').filter(Boolean);
+    return parts.length >= 2 ? parts[1] : fallback;
   }
 }

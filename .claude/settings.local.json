@@ -53,7 +53,13 @@
       "Bash(echo \"---EXIT: $?---\")",
       "Bash(echo \"---BACK TSC EXIT: $?---\")",
       "Bash(echo \"---FRONT TSC EXIT: $?---\")",
-      "Bash(grep -n \"List workspaces for a user with pagination\\\\|isPersonal,\\\\s*$\\\\|allocatedStorage,\\\\s*$\\\\s*isSystem: true,\" /Users/syrinejoulak/Documents/YellowStorm-poc/YellowStorm/back/src/modules/workspace/workspace.service.ts)"
+      "Bash(grep -n \"List workspaces for a user with pagination\\\\|isPersonal,\\\\s*$\\\\|allocatedStorage,\\\\s*$\\\\s*isSystem: true,\" /Users/syrinejoulak/Documents/YellowStorm-poc/YellowStorm/back/src/modules/workspace/workspace.service.ts)",
+      "Bash(sed -n '/export interface ISkillResponse/,/^}/p' src/modules/skill/interfaces/*.ts)",
+      "Bash(sed -n '/SkillCategoryResponse/,/^}/p' src/modules/skill/interfaces/*.ts)",
+      "Bash(sed -n '/async findAllActive/,/^  }/p' src/modules/skill/skill.service.ts)",
+      "Bash(sed -n '/toResponse/,/^  }/p' src/modules/skill/skill.service.ts)",
+      "Bash(sed -n '1,20p' src/modules/skill/skill.service.ts)",
+      "Bash(sed -n '/isActive: \\(doc.isActive/,/^  }/p' src/modules/skill/skill.service.ts)"
     ]
   },
   "disabledMcpjsonServers": [

@@ -66,13 +66,13 @@ def query_qdrant_search_index(
         >>> # Filter only search
         >>> results = query_qdrant_search_index(
         ...     "my_collection",
-        ...     filter={"brain_id": "brain123"}
+        ...     filter={"workspace_id": "workspace123"}
         ... )
 
         >>> # Similarity search with filters
         >>> results = query_qdrant_search_index(
         ...     "my_collection",
-        ...     filter={"language": "en"},
+        ...     filter={"file_name": "report.pdf"},
         ...     query_text="search query",
         ...     limit=5
         ... )

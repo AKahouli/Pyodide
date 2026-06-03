@@ -24,10 +24,10 @@ class AttributeExtractionService:
         api_key: str,
         base_url: str,
         model: str,
-        brain_ids: List[str],
+        workspace_names: List[str],
         vectorstore: str,
         top_k: int,
-        external_ids: Optional[List[str]] = None,
+        file_names: Optional[List[str]] = None,
         sheet_name: Optional[str] = None,
         timeout: float = 120.0
     ):
@@ -38,10 +38,10 @@ class AttributeExtractionService:
             api_key: LiteLLM API key
             base_url: LiteLLM base URL
             model: Model name to use
-            brain_ids: List of brain IDs to search
+            workspace_names: List of workspace names to search
             vectorstore: Vectorstore name
             top_k: Number of search results to return
-            external_ids: Optional list of external document IDs to filter search
+            file_names: Optional list of file names to filter search
             sheet_name: Optional sheet name to filter Excel document search
             timeout: Request timeout in seconds
         """
@@ -63,16 +63,16 @@ class AttributeExtractionService:
             max_retries=2
         )
         self.model = model
-        self.external_ids = external_ids
+        self.file_names = file_names
         self.sheet_name = sheet_name
 
-        # Build attribute mapping from external_ids
-        attribute_mapping = self._build_attribute_mapping(external_ids) if external_ids else {}
+        # Build attribute mapping from file_names
+        attribute_mapping = self._build_attribute_mapping(file_names) if file_names else {}
 
         # Initialize search toolkit
         self.search_toolkit = SearchToolkit(
             task_order=1,
-            brain_id=brain_ids,
+            workspace_name=workspace_names,
             top_k=top_k,
             vectorstore=vectorstore,
             attribute_mapping=attribute_mapping,
@@ -97,12 +97,10 @@ class AttributeExtractionService:
             self.search_toolkit.ids.clear()
             logger.info(f"[Async Search] Cleared toolkit IDs before search")
 
-            # Use filtered search if external_ids or sheet_name are provided
-            if self.external_ids or self.sheet_name:
-                # Create filter dictionary
+            if self.file_names or self.sheet_name:
                 filters = {}
-                if self.external_ids:
-                    filters["id"] = self.external_ids
+                if self.file_names:
+                    filters["id"] = self.file_names
                 if self.sheet_name:
                     filters["sheet_name"] = self.sheet_name
 
@@ -152,8 +150,8 @@ class AttributeExtractionService:
 
             # Create filter dictionary for SearchToolkit
             filters = {}
-            if self.external_ids:
-                filters["id"] = self.external_ids  # Use 'id' key to match what filter_ids expects
+            if self.file_names:
+                filters["id"] = self.file_names  # Use 'id' key to match what filter_ids expects
             if self.sheet_name:
                 filters["sheet_name"] = self.sheet_name
 
@@ -177,7 +175,7 @@ class AttributeExtractionService:
                     formatted_chunks.append(f"Chunk {idx} from {filename}:\n{content}")
 
             result = "\n\n".join(formatted_chunks) if formatted_chunks else "No chunks found"
-            logger.info(f"[get_document_chunks] Retrieved {len(formatted_chunks)} chunks for external_ids {self.external_ids}")
+            logger.info(f"[get_document_chunks] Retrieved {len(formatted_chunks)} chunks for file_names {self.file_names}")
             return result
 
         except Exception as e:
@@ -592,19 +590,17 @@ class AttributeExtractionService:
             Formatted search results as string
         """
         try:
-            logger.info(f"[Search] Query: '{query}', external_ids: {self.external_ids}, sheet_name: {self.sheet_name}")
+            logger.info(f"[Search] Query: '{query}', file_names: {self.file_names}, sheet_name: {self.sheet_name}")
             logger.info(f"[Search] Toolkit state before search - sources_text: {len(self.search_toolkit.sources_text)}, ids: {len(self.search_toolkit.ids)}")
 
             # Clear self.ids to prevent cross-contamination between searches
             self.search_toolkit.ids.clear()
             logger.info(f"[Search] Cleared toolkit IDs - now have {len(self.search_toolkit.ids)} IDs")
 
-            # Use filtered search if external_ids or sheet_name are provided
-            if self.external_ids or self.sheet_name:
-                # Create filter dictionary
+            if self.file_names or self.sheet_name:
                 filters = {}
-                if self.external_ids:
-                    filters["id"] = self.external_ids
+                if self.file_names:
+                    filters["id"] = self.file_names
                 if self.sheet_name:
                     filters["sheet_name"] = self.sheet_name
                 logger.info(f"[Search] Using filtered search with filters: {filters}")
@@ -683,8 +679,8 @@ class AttributeExtractionService:
 
             # Create filter dictionary for SearchToolkit
             filters = {}
-            if self.external_ids:
-                filters["id"] = self.external_ids  # Use 'id' key to match what filter_ids expects
+            if self.file_names:
+                filters["id"] = self.file_names  # Use 'id' key to match what filter_ids expects
             if self.sheet_name:
                 filters["sheet_name"] = self.sheet_name
 
@@ -715,7 +711,7 @@ class AttributeExtractionService:
                     formatted_chunks.append(f"Chunk {idx} from {filename}:\n{content}")
 
             result = "\n\n".join(formatted_chunks) if formatted_chunks else "No chunks found"
-            logger.info(f"[sync_get_document_chunks] Retrieved {len(formatted_chunks)} chunks for external_ids {self.external_ids}")
+            logger.info(f"[sync_get_document_chunks] Retrieved {len(formatted_chunks)} chunks for file_names {self.file_names}")
             return result
 
         except Exception as e:
@@ -745,25 +741,24 @@ class AttributeExtractionService:
             logger.error(f"Calculator error: {e}")
             return f"Calculation error: {str(e)}"
 
-    def _build_attribute_mapping(self, external_ids: List[str]) -> Dict[str, Any]:
+    def _build_attribute_mapping(self, file_names: List[str]) -> Dict[str, Any]:
         """
-        Build attribute mapping from external IDs for document filtering.
+        Build attribute mapping from file names for document filtering.
 
         Args:
-            external_ids: List of external document IDs
+            file_names: List of file names
 
         Returns:
-            Attribute mapping dictionary with external ID to internal UUID mapping
+            Attribute mapping dictionary with file name to internal UUID mapping
         """
-        # Simple 1:1 mapping as external IDs are the same as internal UUIDs
+
         attribute_mapping = {
             "id": {}
         }
 
-        for ext_id in external_ids:
-            # Map external ID to itself (assuming external ID = internal UUID)
-            attribute_mapping["id"][ext_id] = [ext_id]
-            logger.info(f"[Attribute Mapping] Mapped external_id '{ext_id}' to internal UUID '{ext_id}'")
+        for file_name in file_names:
+            attribute_mapping["id"][file_name] = [file_name]
+            logger.info(f"[Attribute Mapping] Mapped file_name '{file_name}' to internal UUID '{file_name}'")
 
-        logger.info(f"[Attribute Mapping] Built mapping for {len(external_ids)} documents")
+        logger.info(f"[Attribute Mapping] Built mapping for {len(file_names)} documents")
         return attribute_mapping

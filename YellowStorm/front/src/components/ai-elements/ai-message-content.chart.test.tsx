@@ -9,6 +9,30 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('AIMessageContent charts', () => {
+  it('renders inline citation markers without bracket text', () => {
+    const parts: MessageContentPart[] = [
+      {
+        type: 'text',
+        content: 'Priorite haute [2].',
+        citations: [{
+          parentId: '',
+          sourceType: 'text',
+          source: 'user-1/codeinterpreter/contract.docx',
+          externalId: '',
+          page: '2',
+          pageContent: 'Clause',
+          workspaceId: 'codeinterpreter',
+          reference: '[2]',
+        }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.queryByText('[2]')).not.toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+  });
+
   it('renders a line chart between text parts', () => {
     const parts: MessageContentPart[] = [
       { type: 'text', content: 'Before chart' },

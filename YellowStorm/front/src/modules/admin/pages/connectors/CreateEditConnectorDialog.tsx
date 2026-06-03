@@ -175,11 +175,21 @@ function truncateValue(value: string, maxLength: number) {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
+function normalizeMcpActionDescription(description: string) {
+  return description
+    .replaceAll('workspace names', 'workspace IDs')
+    .replaceAll('Workspace name', 'Workspace ID')
+    .replaceAll('workspace name', 'workspace ID');
+}
+
 function mapInspectToolsToActions(tools: McpToolDefinition[]): ConnectorActionResponse[] {
   return tools.map((tool) => ({
     key: truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH),
     label: truncateValue(humanizeToolName(tool.name), CONNECTOR_ACTION_LABEL_MAX_LENGTH),
-    description: truncateValue(tool.description ?? '', CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
+    description: truncateValue(
+      normalizeMcpActionDescription(tool.description ?? ''),
+      CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH,
+    ),
     parameterSchema: tool.inputSchema ?? {},
     outputSchema: {},
     safety: 'read',

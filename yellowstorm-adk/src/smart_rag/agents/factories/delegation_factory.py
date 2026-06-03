@@ -13,7 +13,7 @@ import json
 from typing import Any, Optional, List
 from src.logger.logging import get_logger
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names, normalize_tools
-from src.smart_rag.agents.factories.delegation_factory_helper import create_agent_for_delegation, _extract_original_expected_output
+from src.smart_rag.agents.factories.delegation_factory_helper import create_agent_for_delegation, _extract_original_expected_output, _build_mcp_context_note
 from src.smart_rag.agents.factories.utils import update_span_with_execution_result, process_execution_summary, \
     create_enhanced_prompt
 from src.smart_rag.agents.core.helpers import AgentHelper
@@ -235,6 +235,10 @@ class AgentDelegationFactory:
                     "- Use the image contents when relevant to the task.\n"
                     "</attached_images>"
                 )
+
+            mcp_note = _build_mcp_context_note(self.config, agent_config)
+            if mcp_note:
+                base_enhanced_prompt = f"{base_enhanced_prompt}\n\n{mcp_note}"
 
             agent, toolkit = create_agent_for_delegation(self._helper,self._tool_provider,self.agent_factory,self.config,
                 agent_config, tool_names, base_enhanced_prompt, expected_output, normalized_agent_name,self.chatbot_name, search_web,

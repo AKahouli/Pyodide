@@ -39,7 +39,7 @@ class ToolFactory:
             # Create toolkit and in-memory tool if schema exists
             if inmemory_attribute_mapping and inmemory_schema:
                 toolkit = SearchToolkit(
-                    task_order=task_order, brain_id=brain_ids, top_k=top_k,
+                    task_order=task_order, workspace_name=brain_ids, top_k=top_k,
                     vectorstore=vectorstore_name, search_web="off",
                 )
                 toolkit.set_in_memory_documents(original_doc_tree)
@@ -61,7 +61,8 @@ class ToolFactory:
     def create_search_tools(self, doc_tree: Optional[List], brain_tree: Optional[List],
                             brain_ids: List[str], top_k: int, vectorstore_name: str,
                             task_order: Optional[str] = None, search_web: str = "off",
-                            citation_manager=None) -> Tuple[
+                            citation_manager=None,
+                            user_id: Optional[str] = None) -> Tuple[
         List, Optional[SearchToolkit]]:
         """Create search tools based on document and brain configurations."""
         tools = []
@@ -83,10 +84,10 @@ class ToolFactory:
 
         if attribute_mapping and brain_attribute_mapping:
             toolkit = SearchToolkit(
-                task_order=task_order, brain_id=brain_ids, top_k=top_k,
+                task_order=task_order, workspace_name=brain_ids, top_k=top_k,
                 vectorstore=vectorstore_name, attribute_mapping=attribute_mapping,
                 brain_attribute_mapping=brain_attribute_mapping, search_web=search_web,
-                citation_manager=citation_manager
+                citation_manager=citation_manager, user_id=user_id
             )
 
             search_wrapper, tool_schema = toolkit.generate_function(schema, toolkit.perform_document_search)
@@ -99,9 +100,9 @@ class ToolFactory:
 
         elif attribute_mapping:
             toolkit = SearchToolkit(
-                task_order=task_order, brain_id=brain_ids, top_k=top_k,
+                task_order=task_order, workspace_name=brain_ids, top_k=top_k,
                 vectorstore=vectorstore_name, attribute_mapping=attribute_mapping, search_web=search_web,
-                citation_manager=citation_manager
+                citation_manager=citation_manager, user_id=user_id
             )
             search_wrapper, tool_schema = toolkit.generate_function(schema, toolkit.perform_document_search)
             search_tool = SearchToolADK(func=search_wrapper, schema=tool_schema)
@@ -109,9 +110,9 @@ class ToolFactory:
 
         elif brain_attribute_mapping:
             toolkit = SearchToolkit(
-                task_order=task_order, brain_id=brain_ids, top_k=top_k,
+                task_order=task_order, workspace_name=brain_ids, top_k=top_k,
                 vectorstore=vectorstore_name, brain_attribute_mapping=brain_attribute_mapping, search_web=search_web,
-                citation_manager=citation_manager
+                citation_manager=citation_manager, user_id=user_id
             )
             brain_search_wrapper, brain_tool_schema = toolkit.generate_function(brain_schema,
                                                                                 toolkit.preform_all_brain_search)
@@ -121,9 +122,9 @@ class ToolFactory:
         # Fallback case: when no documents or brain data, but web search is enabled
         elif search_web != "off":
             toolkit = SearchToolkit(
-                task_order=task_order, brain_id=brain_ids, top_k=top_k,
+                task_order=task_order, workspace_name=brain_ids, top_k=top_k,
                 vectorstore=vectorstore_name, search_web=search_web,
-                citation_manager=citation_manager
+                citation_manager=citation_manager, user_id=user_id
             )
             tools = [toolkit.perform_web_search]
 
@@ -162,7 +163,7 @@ class ToolFactory:
         # Add standalone web search tool if requested (without document search)
         elif search_web_tool and not search_tool:
             toolkit = SearchToolkit(
-                task_order=task_order, brain_id=brain_ids or [], top_k=top_k,
+                task_order=task_order, workspace_name=brain_ids or [], top_k=top_k,
                 vectorstore=vectorstore_name, search_web=search_web
             )
             tools.append(toolkit.perform_web_search)

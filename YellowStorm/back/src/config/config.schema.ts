@@ -53,12 +53,18 @@ export const configValidationSchema = Joi.object({
 
   // Ceph S3 Storage
   CEPH_S3_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
+  CEPH_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
   CEPH_S3_REGION: Joi.string().default('us-east-1'),
+  CEPH_REGION: Joi.string().optional(),
   CEPH_S3_BUCKET: Joi.string().default('documents'),
+  CEPH_BUCKET_NAME: Joi.string().optional(),
   CEPH_S3_ACCESS_KEY_ID: Joi.string().optional(),
+  CEPH_ACCESS_KEY_ID: Joi.string().optional(),
   CEPH_S3_SECRET_ACCESS_KEY: Joi.string().optional(),
+  CEPH_SECRET_ACCESS_KEY: Joi.string().optional(),
   CEPH_S3_FORCE_PATH_STYLE: Joi.boolean().default(true),
   CEPH_S3_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).optional(),
+  CEPH_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).optional(),
   STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
   STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),

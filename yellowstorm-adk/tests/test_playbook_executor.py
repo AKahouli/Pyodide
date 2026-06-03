@@ -20,7 +20,7 @@ def mock_agent_suggestion():
         prompt="You are a helpful agent",
         tools=[{"name": "search"}, {"name": "calculator"}],
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=["brain-1"],
+        workspace_names=["brain-1"],
         save_memory=False,
         agent_params={"temperature": 0.7}
     )
@@ -35,7 +35,7 @@ def mock_manager_suggestion():
         description="A manager agent",
         prompt="You are a manager",
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=[],
+        workspace_names=[],
         agent_type="manager"
     )
 
@@ -141,7 +141,7 @@ class TestCreateConfigObject:
         assert config.session_id == session_id
         assert config.user_id == mock_playbook_request.userId
         assert config.chatbot_name == "gpt-4"
-        assert config.brain_ids == mock_playbook_request.agent.brain_ids
+        assert config.workspace_names == mock_playbook_request.agent.workspace_names
         assert config.vectorstore_name == mock_playbook_request.vectorstore_name
 
     def test_create_config_object_chatbot_name_dict(self, executor, mock_playbook_request):
@@ -172,7 +172,7 @@ class TestConvertRequestToAgentConfig:
         assert config["name"] == mock_playbook_request.agent.name
         assert config["description"] == mock_playbook_request.agent.description
         assert config["prompt"] == mock_playbook_request.agent.prompt
-        assert config["brain_ids"] == mock_playbook_request.agent.brain_ids
+        assert config["workspace_names"] == mock_playbook_request.agent.workspace_names
         # chatbot_name is now returned as a dict (not a string)
         assert config["chatbot_name"] == {"provider": "gpt-4"}
         assert config["vectorstore_name"] == mock_playbook_request.vectorstore_name

@@ -3,13 +3,13 @@ import { DEFAULT_ALLOWED_MIME_TYPES } from '../modules/document/constants/mime-t
 
 export default registerAs('storage', () => ({
   s3: {
-    endpoint: process.env.CEPH_S3_ENDPOINT || '',
-    region: process.env.CEPH_S3_REGION || 'us-east-1',
-    bucket: process.env.CEPH_S3_BUCKET || 'documents',
-    accessKeyId: process.env.CEPH_S3_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.CEPH_S3_SECRET_ACCESS_KEY || '',
+    endpoint: process.env.CEPH_S3_ENDPOINT || process.env.CEPH_ENDPOINT || '',
+    region: process.env.CEPH_S3_REGION || process.env.CEPH_REGION || 'us-east-1',
+    bucket: process.env.CEPH_S3_BUCKET || process.env.CEPH_BUCKET_NAME || 'documents',
+    accessKeyId: process.env.CEPH_S3_ACCESS_KEY_ID || process.env.CEPH_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.CEPH_S3_SECRET_ACCESS_KEY || process.env.CEPH_SECRET_ACCESS_KEY || '',
     forcePathStyle: process.env.CEPH_S3_FORCE_PATH_STYLE !== 'false',
-    publicUrl: process.env.CEPH_S3_PUBLIC_URL || '',
+    publicUrl: process.env.CEPH_S3_PUBLIC_URL || process.env.CEPH_PUBLIC_URL || '',
   },
 
   maxFileSizeMb: parseInt(process.env.STORAGE_MAX_FILE_SIZE_MB || '50', 10),

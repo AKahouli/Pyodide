@@ -42,10 +42,10 @@ def process_single_attribute_extraction(self, job_id: str, user_request_data: di
             api_key=settings.LITELLM_API_SECRET_KEY,
             base_url=settings.LITELLM_API_BASE_URL,
             model=settings.ATTRIBUT_EXTRACT_MODEL,
-            brain_ids=user_request.brain_ids,
+            workspace_names=user_request.workspace_names,
             vectorstore=user_request.vectorstore,
             top_k=user_request.top_k,
-            external_ids=user_request.external_ids,
+            file_names=user_request.file_names,
             sheet_name=user_request.sheet_name
         )
 
@@ -73,8 +73,8 @@ def process_single_attribute_extraction(self, job_id: str, user_request_data: di
             "event_type": "task_enrichissement",
             "status": "completed",
             "data": result_dict,
-            "brain_ids": user_request.brain_ids,
-            "external_id": user_request.external_ids[0] if user_request.external_ids else None,
+            "workspace_names": user_request.workspace_names,
+            "file_name": user_request.file_names[0] if user_request.file_names else None,
             "sheet_name": user_request.sheet_name
         }
         logger.info(f"webhook payload: {webhook_payload}")
@@ -106,7 +106,7 @@ def process_single_attribute_extraction(self, job_id: str, user_request_data: di
                 job_id,
                 user_request_data['webhook_url'],
                 f"Celery task failed: {str(exc)}",
-                user_request_data.get('external_ids', [None])[0] if user_request_data.get('external_ids') else None,
+                user_request_data.get('file_names', [None])[0] if user_request_data.get('file_names') else None,
                 user_request_data.get('sheet_name')
             )
         except Exception as webhook_exc:

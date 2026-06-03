@@ -649,10 +649,10 @@ class TestAgentRunner:
                 {
                     "type": "text",
                     "source": "SLA_Indicateurs_Performance.docx",
-                    "external_id": "doc-123",
+                    "file_name": "doc-123",
                     "page": "",
                     "page_content": "1. Objectifs de Niveau de Service (SLA)",
-                    "workspace_id": "",
+                    "workspace_name": "",
                 }
             ],
         }
@@ -695,8 +695,8 @@ class TestAgentRunner:
             [
               {
                 "document_id": 68,
-                "brain_id": "69e643ae25a48c9410bff159",
-                "external_id": "69e643d725a48c9410bff182",
+                "workspace_name": "69e643ae25a48c9410bff159",
+                "file_name": "69e643d725a48c9410bff182",
                 "source": "https://yssametachatbotdev001.blob.core.windows.net/metachatbot/6992fc709968567dc766a12d/69e643ae25a48c9410bff159/69e643d725a48c9410bff182/SLA_Indicateurs_Performance.docx",
                 "block_id": "p0_b0",
                 "block_type": "text",
@@ -705,7 +705,7 @@ class TestAgentRunner:
               },
               {
                 "document_id": 68,
-                "brain_id": "69e643ae25a48c9410bff159",
+                "workspace_name": "69e643ae25a48c9410bff159",
                 "block_id": "p0_b6",
                 "block_type": "paragraph_title",
                 "content": "1. Objectifs de Niveau de Service (SLA)",
@@ -732,7 +732,7 @@ class TestAgentRunner:
             == "SLA_Indicateurs_Performance.docx"
         )
         assert (
-            session_state["_connector_text_sources"][0]["object"]["content"]["external_id"]
+            session_state["_connector_text_sources"][0]["object"]["content"]["file_name"]
             == "69e643d725a48c9410bff182"
         )
         assert (
@@ -763,12 +763,27 @@ class TestAgentRunner:
                 {
                     "reference": "1",
                     "object": {
-                        "content": {
-                            "source": "Q1-report.txt",
-                            "external_id": "item-123",
-                            "page": "",
-                            "page_content": "Quarterly revenue increased by 18%.",
-                            "brain_id": "",
+                    "content": {
+                        "source": "Q1-report.txt",
+                        "file_name": "item-123",
+                        "page": "",
+                        "page_content": "Quarterly revenue increased by 18%.",
+                        "workspace_name": "",
+                    }
+                },
+            }
+        ]
+
+        source = runner._find_source_by_reference("1", toolkit, session_state)
+
+        assert source == {
+            "source_object": {
+                "content": {
+                    "source": "Q1-report.txt",
+                    "file_name": "item-123",
+                    "page": "",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "workspace_name": "",
                         }
                     },
                 }
@@ -781,10 +796,10 @@ class TestAgentRunner:
             "source_object": {
                 "content": {
                     "source": "Q1-report.txt",
-                    "external_id": "item-123",
+                    "file_name": "item-123",
                     "page": "",
                     "page_content": "Quarterly revenue increased by 18%.",
-                    "brain_id": "",
+                    "workspace_name": "",
                 }
             },
             "type": "text",
@@ -814,10 +829,10 @@ class TestAgentRunner:
                     "object": {
                         "content": {
                             "source": "SLA_Indicateurs_Performance.docx",
-                            "external_id": "p0_b0",
+                            "file_name": "p0_b0",
                             "page": "1",
                             "page_content": "Les indicateurs de performance sont utilises...",
-                            "brain_id": "69e643ae25a48c9410bff159",
+                            "workspace_name": "69e643ae25a48c9410bff159",
                         }
                     },
                 }
@@ -830,10 +845,10 @@ class TestAgentRunner:
             "source_object": {
                 "content": {
                     "source": "SLA_Indicateurs_Performance.docx",
-                    "external_id": "p0_b0",
+                    "file_name": "p0_b0",
                     "page": "1",
                     "page_content": "Les indicateurs de performance sont utilises...",
-                    "brain_id": "69e643ae25a48c9410bff159",
+                    "workspace_name": "69e643ae25a48c9410bff159",
                 }
             },
             "type": "text",

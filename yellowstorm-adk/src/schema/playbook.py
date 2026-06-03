@@ -99,7 +99,7 @@ class RunPlaybookStepRequest(BaseModel):
     )
     search_documents: Optional[List[str]] = Field(
         default_factory=list,
-        description="List of document external_ids to restrict search to. When provided, only filtered search will be available.",
+        description="List of file names to restrict search to. When provided, only filtered search will be available.",
     )
 
     @field_validator("messageId")

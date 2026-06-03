@@ -5,11 +5,18 @@ executable LangChain StructuredTool instances, reusing the same search
 infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
+import contextvars
 import copy
 import json
 import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
+# Carries the actual MCP args (after Python overrides) from _execute_mcp to step_tools
+_last_mcp_actual_args: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "_last_mcp_actual_args", default={}
+)
+
+import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
@@ -29,6 +36,85 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Workspace name resolver (brain_id ObjectId → actual workspace name)
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_NAME_CACHE: Dict[str, str] = {}
+_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{24}$", re.IGNORECASE)
+
+
+def _looks_like_object_id(value: str) -> bool:
+    return bool(_OBJECT_ID_RE.match(value or ""))
+
+
+async def _resolve_workspace_names(ids: List[str]) -> Dict[str, str]:
+    """Resolve MongoDB ObjectIds to workspace names via the internal backend endpoint.
+
+    Results are cached in-process for the lifetime of the worker.
+    Unknown or failed IDs fall back to the original ID string.
+    """
+    settings = get_settings()
+    raw_api_url = (getattr(settings, "API_URL", "") or "").rstrip("/")
+    token = getattr(settings, "INTERNAL_SERVICE_SECRET", "") or ""
+
+    if not raw_api_url or not token:
+        return {}
+
+    # Ensure the base URL includes the /api prefix used by NestJS
+    if raw_api_url.endswith("/api") or raw_api_url.endswith("/api/v1"):
+        api_base = raw_api_url.rsplit("/v1", 1)[0] if raw_api_url.endswith("/api/v1") else raw_api_url
+    else:
+        api_base = f"{raw_api_url}/api"
+
+    unresolved = [i for i in ids if i not in _WORKSPACE_NAME_CACHE and _looks_like_object_id(i)]
+    if unresolved:
+        resolve_url = f"{api_base}/workspaces/internal/resolve-names"
+        logger.info(
+            "workspace_name_resolve_calling url=%s ids=%s",
+            resolve_url,
+            unresolved,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    resolve_url,
+                    json={"ids": unresolved},
+                    headers={"X-Internal-Token": token, "Content-Type": "application/json"},
+                )
+                logger.info(
+                    "workspace_name_resolve_response status=%s url=%s",
+                    resp.status_code,
+                    resolve_url,
+                )
+                if resp.status_code == 200:
+                    body = resp.json()
+                    # Unwrap NestJS standard envelope {"success": true, "data": {...}, "meta": {...}}
+                    if isinstance(body, dict) and "data" in body and isinstance(body["data"], dict):
+                        data = body["data"]
+                    elif isinstance(body, dict):
+                        data = body
+                    else:
+                        data = {}
+                    if data:
+                        _WORKSPACE_NAME_CACHE.update({k: v for k, v in data.items() if v})
+                        logger.info(
+                            "workspace_names_resolved count=%s mapping=%s",
+                            len(data),
+                            data,
+                        )
+                else:
+                    logger.warning(
+                        "workspace_name_resolve_failed status=%s url=%s body=%s",
+                        resp.status_code,
+                        resolve_url,
+                        resp.text[:200],
+                    )
+        except Exception as exc:
+            logger.warning("workspace_name_resolve_error error=%s", str(exc))
+
+    return {i: _WORKSPACE_NAME_CACHE.get(i, i) for i in ids}
 
 
 def _log_payload(value: Any) -> str:
@@ -89,7 +175,7 @@ class ToolResultCollector:
             source = _component_to_connector_citation_source(component)
             if not source:
                 continue
-            reference = str(source.get("reference") or "").strip()
+            reference = _format_reference_marker(source.get("reference", ""))
             if not reference:
                 continue
 
@@ -111,6 +197,18 @@ def _parse_reference_number(reference: str) -> Optional[int]:
     return int(match.group(0))
 
 
+def _normalize_reference_token(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _format_reference_marker(value: Any) -> str:
+    reference = _normalize_reference_token(value)
+    return f"[{reference}]" if reference else ""
+
+
 def _component_to_connector_citation_source(
     component: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
@@ -120,10 +218,15 @@ def _component_to_connector_citation_source(
         return {
             "type": "text",
             "source": str(text_source.get("source") or ""),
-            "external_id": str(text_source.get("external_id") or ""),
+            "file_name": str(text_source.get("file_name") or ""),
             "page": str(text_source.get("page") or ""),
             "page_content": str(text_source.get("page_content") or ""),
             "workspace_id": str(text_source.get("workspace_id") or ""),
+            "workspace_name": str(
+                text_source.get("workspace_name")
+                or text_source.get("workspace_id")
+                or ""
+            ),
             "reference": str(text_source.get("reference") or ""),
         }
 
@@ -132,7 +235,7 @@ def _component_to_connector_citation_source(
         return {
             "type": "image",
             "path": str(image_source.get("path") or ""),
-            "external_id": str(image_source.get("external_id") or ""),
+            "workspace_name": str(image_source.get("workspace_name") or ""),
             "page": str(image_source.get("page") or ""),
             "file_name": str(image_source.get("file_name") or ""),
             "workspace_id": str(image_source.get("workspace_id") or ""),
@@ -148,7 +251,7 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
     if not text or not references:
         return text
 
-    refs = ", ".join(f"[{ref}]" for ref in references)
+    refs = ", ".join(_format_reference_marker(ref) for ref in references)
     return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
 
 
@@ -158,14 +261,14 @@ def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
         parts = [
             source_type,
             str(source.get("path") or ""),
-            str(source.get("external_id") or ""),
+            str(source.get("workspace_name") or ""),
             str(source.get("page") or ""),
         ]
     else:
         parts = [
             source_type,
             str(source.get("source") or ""),
-            str(source.get("external_id") or ""),
+            str(source.get("file_name") or ""),
             str(source.get("page") or ""),
             str(source.get("page_content") or ""),
         ]
@@ -232,28 +335,36 @@ def _collect_connector_response_components(
             continue
 
         source = dict(raw_source)
+        source_type = str(source.get("type") or "text")
+        if source_type != "image":
+            workspace_id = str(source.get("workspace_id") or "").strip()
+            source["workspace_name"] = str(
+                source.get("workspace_name") or workspace_id
+            ).strip()
         signature = _build_connector_citation_signature(source)
         reference = collector._connector_source_signatures.get(signature)
         is_new_source = reference is None
         if reference is None:
-            reference = collector.next_connector_reference()
+            reference = _format_reference_marker(collector.next_connector_reference())
             collector._connector_source_signatures[signature] = reference
+            ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
             logger.warning(
-                "PLAYBOOK_MCP_CITATION_REGISTERED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                "PLAYBOOK_MCP_CITATION_REGISTERED reference=%s source_type=%s source=%s ref_val=%s page=%s raw_source=%s",
                 reference,
                 source.get("type", "text"),
                 source.get("source") or source.get("path") or "",
-                source.get("external_id") or "",
+                ref_val,
                 source.get("page") or "",
                 _log_payload(source),
             )
         else:
+            ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
             logger.warning(
-                "PLAYBOOK_MCP_CITATION_REUSED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                "PLAYBOOK_MCP_CITATION_REUSED reference=%s source_type=%s source=%s ref_val=%s page=%s raw_source=%s",
                 reference,
                 source.get("type", "text"),
                 source.get("source") or source.get("path") or "",
-                source.get("external_id") or "",
+                ref_val,
                 source.get("page") or "",
                 _log_payload(source),
             )
@@ -264,7 +375,6 @@ def _collect_connector_response_components(
         if not is_new_source:
             continue
 
-        source_type = str(source.get("type") or "text")
         if source_type == "image":
             component_payload = {
                 "parent_id": "",
@@ -273,7 +383,7 @@ def _collect_connector_response_components(
                     "path": str(source.get("path") or ""),
                     "page": str(source.get("page") or ""),
                     "file_name": str(source.get("file_name") or ""),
-                    "external_id": str(source.get("external_id") or ""),
+                    "workspace_name": str(source.get("workspace_name") or ""),
                     "workspace_id": str(source.get("workspace_id") or ""),
                     "height": str(source.get("height") or ""),
                     "width": str(source.get("width") or ""),
@@ -290,10 +400,15 @@ def _collect_connector_response_components(
                 "text_source": {
                     "type": "text",
                     "source": str(source.get("source") or ""),
-                    "external_id": str(source.get("external_id") or ""),
+                    "file_name": str(source.get("file_name") or ""),
                     "page": str(source.get("page") or ""),
                     "page_content": str(source.get("page_content") or ""),
                     "workspace_id": str(source.get("workspace_id") or ""),
+                    "workspace_name": str(
+                        source.get("workspace_name")
+                        or source.get("workspace_id")
+                        or ""
+                    ),
                     "reference": reference,
                 },
             }
@@ -411,6 +526,7 @@ class ConnectorImportInput(BaseModel):
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
+    file_names: Optional[List[str]] = None,
     input_files: Optional[List[str]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
@@ -419,14 +535,15 @@ def create_langchain_tools(
     workspace_context_mode: str = "resolved_inputs_only",
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
     initial_components: Optional[List[dict]] = None,
+    user_id: Optional[str] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
     Args:
         agent_config: Agent dict with keys like tools, brain_ids, brain_documents.
         workspace_context: Optional workspace context list (from gRPC request).
-        input_files: Optional list of document external_ids to restrict search to.
-        documents_by_port: Optional mapping of input port id to document external_ids.
+        file_names: Optional list of file names to restrict search to.
+        documents_by_port: Optional mapping of input port id to file names.
         code_interpreter_files: Optional list of resolved files to mount in the sandbox.
         output_workspace_id: Workspace used for generated file uploads.
         workspace_context_mode: Indicates whether the current task relies on fallback workspace context.
@@ -438,17 +555,30 @@ def create_langchain_tools(
         Tuple of (list of StructuredTools, ToolResultCollector).
     """
     collector = ToolResultCollector(initial_components=initial_components)
+    effective_file_names = file_names if file_names is not None else input_files
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        agent_brain_ids = agent_config.get("brain_ids") or []
+        # Use raw workspace IDs directly (brain_ids), with fallback to output_workspace_id
+        raw_ids = agent_config.get("brain_ids") or []
+        connector_workspace_ids = (
+            raw_ids
+            or [
+                wc.get("workspace_id")
+                for wc in (workspace_context or [])
+                if isinstance(wc, dict) and wc.get("workspace_id")
+            ]
+        )
+        if not connector_workspace_ids and output_workspace_id:
+            connector_workspace_ids = [output_workspace_id]
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
-            brain_ids=agent_brain_ids,
-            external_ids=input_files,
+            workspace_ids=connector_workspace_ids,
+            file_names=effective_file_names,
+            user_id=user_id,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -482,7 +612,7 @@ def create_langchain_tools(
     tools: List[StructuredTool] = list(mcp_tools)
 
     # Merge workspace context into agent brain data
-    brain_ids, brain_documents = _merge_brain_data(agent_config, workspace_context)
+    workspace_names, brain_documents = _merge_brain_data(agent_config, workspace_context)
 
     # Determine top_k from tool configs
     top_k = _get_top_k(tool_configs)
@@ -500,24 +630,25 @@ def create_langchain_tools(
         )
 
     # --- Search tools ---
-    # Search tools can be created with doc_tree if available, or with input_files for filtered search
-    if "search" in tool_names and (doc_tree or input_files):
+    # Search tools can be created with doc_tree if available, or with file_names for filtered search
+    if "search" in tool_names and (doc_tree or effective_file_names):
         search_tools = _create_search_tools(
             tool_configs,
             doc_tree,
             brain_tree,
-            brain_ids,
+            workspace_names,
             top_k,
             collector,
-            input_files=input_files,
+            file_names=effective_file_names,
             documents_by_port=documents_by_port,
+            user_id=user_id,
         )
         tools.extend(search_tools)
 
     # --- In-memory tool ---
     if "in_memory" in tool_names and doc_tree:
         in_memory_tools = _create_in_memory_tools(
-            tool_configs, doc_tree, brain_ids, top_k
+            tool_configs, doc_tree, workspace_names, top_k
         )
         tools.extend(in_memory_tools)
 
@@ -527,7 +658,7 @@ def create_langchain_tools(
 
     # --- Web search ---
     if "search_web" in tool_names:
-        web_tool = _create_web_search_tool(brain_ids, collector)
+        web_tool = _create_web_search_tool(workspace_names, collector)
         if web_tool:
             tools.append(web_tool)
 
@@ -537,7 +668,7 @@ def create_langchain_tools(
             raise ValueError("Code interpreter requires a default playbook workspace")
         code_tool = _create_code_interpreter_tool(
             agent_config,
-            brain_ids,
+            workspace_names,
             code_interpreter_files or brain_documents,
             collector,
             output_ports=output_ports,
@@ -636,26 +767,29 @@ def _build_args_schema_for_connector_tool(
 
 
 def _merge_brain_data(agent_config: dict, workspace_context: Optional[list]) -> tuple:
-    """Merge agent brain_ids/brain_documents with workspace_context."""
-    brain_ids = list(agent_config.get("brain_ids") or [])
+    """Merge agent workspace_names/brain_documents with workspace_context."""
+    workspace_names = list(agent_config.get("brain_ids") or [])
     brain_documents = list(agent_config.get("brain_documents") or [])
 
     if workspace_context:
         for wc in workspace_context:
             wid = wc.get("workspace_id")
-            if wid and wid not in brain_ids:
-                brain_ids.append(wid)
+            workspace_name = wc.get("workspace_name") or wid
+            if workspace_name and workspace_name not in workspace_names:
+                workspace_names.append(workspace_name)
             for doc in wc.get("documents", []):
                 brain_documents.append(
                     {
                         "_id": doc.get("id", doc.get("_id", "")),
                         "filename": doc.get("filename", ""),
+                        "file_name": doc.get("file_name") or doc.get("filename", ""),
                         "filepath": doc.get("filepath", ""),
                         "workspace_id": doc.get("workspace_id", wid or ""),
+                        "workspace_name": doc.get("workspace_name") or workspace_name or "",
                     }
                 )
 
-    return brain_ids, brain_documents
+    return workspace_names, brain_documents
 
 
 def _get_top_k(tool_configs: list) -> int:
@@ -843,9 +977,9 @@ def _format_documents_by_port(
         return ""
 
     entries = []
-    for port_id, document_ids in list(documents_by_port.items())[:max_ports]:
-        if document_ids:
-            entries.append(f"{port_id}: {len(document_ids)} doc(s)")
+    for port_id, file_names in list(documents_by_port.items())[:max_ports]:
+        if file_names:
+            entries.append(f"{port_id}: {len(file_names)} doc(s)")
 
     if not entries:
         return ""
@@ -860,16 +994,17 @@ def _create_search_tools(
     tool_configs: list,
     doc_tree: list,
     brain_tree: list,
-    brain_ids: list,
+    workspace_names: list,
     top_k: int,
     collector: ToolResultCollector,
-    input_files: Optional[List[str]] = None,
+    file_names: Optional[List[str]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
+    user_id: Optional[str] = None,
 ) -> List[StructuredTool]:
     """Create document-search and brain-search LangChain tools.
 
-    When input_files is provided (non-empty list), only the filtered search tool
-    will be created, which restricts search to the specified document external_ids.
+    When file_names is provided (non-empty list), only the filtered search tool
+    will be created, which restricts search to the specified file names.
     """
     from src.smart_rag.tools import (
         construct_json,
@@ -881,16 +1016,16 @@ def _create_search_tools(
     settings = get_settings()
     tools: List[StructuredTool] = []
 
-    # When input_files is provided without doc_tree, skip schema construction
-    # Filtered search works with just external_ids
+    # When file_names is provided without doc_tree, skip schema construction
+    # Filtered search works with just file names
     if doc_tree:
         doc_tree_copy = copy.deepcopy(doc_tree)
         schema, attribute_mapping, _ = construct_json(doc_tree_copy)
-    elif input_files:
+    elif file_names:
         # Filtered search mode - no schema needed
         schema, attribute_mapping = None, {}
     else:
-        # No doc_tree and no input_files - can't create search tools
+        # No doc_tree and no file_names - can't create search tools
         return tools
 
     brain_schema, brain_attribute_mapping = None, None
@@ -902,16 +1037,17 @@ def _create_search_tools(
     # Build toolkit
     toolkit = SearchToolkit(
         task_order=None,
-        brain_id=brain_ids,
+        workspace_name=workspace_names,
         top_k=top_k,
         vectorstore=getattr(settings, "QDRANT_COLLECTION_NAME", "vectorstoredev2"),
         attribute_mapping=attribute_mapping or {},
         brain_attribute_mapping=brain_attribute_mapping or {},
         search_web="off",
+        user_id=user_id,
     )
 
     # Track how many sources we've already collected so we only emit new ones
-    # Must be defined before the input_files check so both paths can use it
+    # Must be defined before the file_names check so both paths can use it
     prev_text_count = 0
     prev_image_count = 0
 
@@ -928,6 +1064,7 @@ def _create_search_tools(
         for src in new_text:
             obj = src.get("object", {})
             content = obj.get("content", {})
+            reference = _format_reference_marker(src.get("reference", ""))
             collector.add_component(
                 "citation",
                 {
@@ -935,11 +1072,11 @@ def _create_search_tools(
                     "text_source": {
                         "type": "text",
                         "source": content.get("source", ""),
-                        "external_id": content.get("external_id", ""),
+                        "file_name": content.get("file_name", ""),
                         "page": str(content.get("page", "")),
                         "page_content": content.get("page_content", ""),
-                        "workspace_id": content.get("brain_id", ""),
-                        "reference": src.get("reference", ""),
+                        "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
+                        "reference": reference,
                     },
                 },
             )
@@ -947,6 +1084,7 @@ def _create_search_tools(
         for src in new_image:
             obj = src.get("object", {})
             content = obj.get("content", {})
+            reference = _format_reference_marker(src.get("reference", ""))
             collector.add_component(
                 "citation",
                 {
@@ -956,24 +1094,24 @@ def _create_search_tools(
                         "path": content.get("path", ""),
                         "page": str(content.get("page", "")),
                         "file_name": content.get("file_name", ""),
-                        "external_id": content.get("external_id", ""),
-                        "workspace_id": content.get("brain_id", ""),
+                        "workspace_name": content.get("workspace_name", ""),
+                        "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
                         "height": str(content.get("height", "")),
                         "width": str(content.get("width", "")),
-                        "reference": src.get("reference", ""),
+                        "reference": reference,
                     },
                 },
             )
 
-    # When input_files is provided, only create filtered search tool
-    if input_files:
+    # When file_names is provided, only create filtered search tool
+    if file_names:
         logger.info(
             "CREATING_FILTERED_SEARCH_TOOL",
-            input_files_count=len(input_files),
+            file_names_count=len(file_names),
         )
 
         async def _filtered_search(query: str) -> str:
-            result = await toolkit.perform_filtered_search(query, input_files)
+            result = await toolkit.perform_filtered_search(query, file_names)
             _collect_new_citations()
             return _format_search_result(result)
 
@@ -982,7 +1120,7 @@ def _create_search_tools(
                 name="perform_filtered_search",
                 description=(
                     f"Search within specific documents from the knowledge base. "
-                    f"Restricted to {len(input_files)} document(s). "
+                    f"Restricted to {len(file_names)} document(s). "
                     f"Use this to find information in the specified documents only."
                     + (
                         f" Port groups: {_format_documents_by_port(documents_by_port)}."
@@ -1043,7 +1181,7 @@ def _create_search_tools(
             )
         )
 
-    # Standard search fallback (when no specific schema but we have brain_ids)
+    # Standard search fallback (when no specific schema but we have workspace_names)
     if not attribute_mapping and not brain_attribute_mapping:
 
         async def _standard_search(query: str) -> str:
@@ -1067,7 +1205,7 @@ def _create_search_tools(
 def _create_in_memory_tools(
     tool_configs: list,
     doc_tree: list,
-    brain_ids: list,
+    workspace_names: list,
     top_k: int,
 ) -> List[StructuredTool]:
     """Create in-memory extraction LangChain tool."""
@@ -1091,7 +1229,7 @@ def _create_in_memory_tools(
 
     toolkit = SearchToolkit(
         task_order=None,
-        brain_id=brain_ids,
+        workspace_name=workspace_names,
         top_k=top_k,
         vectorstore=getattr(settings, "QDRANT_COLLECTION_NAME", "vectorstoredev2"),
         search_web="off",
@@ -1129,14 +1267,14 @@ def _create_calculator_tool() -> StructuredTool:
 
 
 def _create_web_search_tool(
-    brain_ids: list, collector: ToolResultCollector
+    workspace_names: list, collector: ToolResultCollector
 ) -> Optional[StructuredTool]:
     """Create a web search LangChain tool."""
     from src.smart_rag.tools import SearchToolkit
 
     toolkit = SearchToolkit(
         task_order=None,
-        brain_id=brain_ids or [],
+        workspace_name=workspace_names or [],
         top_k=4,
         search_web="standard",
     )
@@ -1172,7 +1310,7 @@ def _create_web_search_tool(
 
 def _create_code_interpreter_tool(
     agent_config: dict,
-    brain_ids: list,
+    workspace_names: list,
     code_interpreter_files: list,
     collector: ToolResultCollector,
     output_ports: Optional[List[Dict[str, Any]]] = None,
@@ -1433,9 +1571,18 @@ def _format_search_result(result: Dict[str, Any]) -> str:
     if sources_text:
         for i, source in enumerate(sources_text, 1):
             if isinstance(source, dict):
-                text = source.get("text", source.get("content", str(source)))
+                text = source.get(
+                    "text",
+                    source.get("content", source.get("page_content", str(source))),
+                )
                 filename = source.get("filename", source.get("source", ""))
-                header = f"[Source {i}: {filename}]" if filename else f"[Source {i}]"
+                reference = str(source.get("source_reference") or "").strip()
+                citation = f" | Citation: {reference}" if reference else ""
+                header = (
+                    f"[Source {i}: {filename}{citation}]"
+                    if filename
+                    else f"[Source {i}{citation}]"
+                )
                 parts.append(f"{header}\n{text}")
             else:
                 parts.append(f"[Source {i}]\n{source}")
@@ -1455,8 +1602,9 @@ def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
     output_workspace_id: str = "",
-    brain_ids: Optional[List[str]] = None,
-    external_ids: Optional[List[str]] = None,
+    workspace_ids: Optional[List[str]] = None,
+    file_names: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1556,6 +1704,9 @@ def _create_connector_mcp_tools(
                 tn: str = tool_name,
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
+                _uid: Optional[str] = user_id,
+                _wi: Optional[List[str]] = workspace_ids,
+                _fn: Optional[List[str]] = file_names,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1578,6 +1729,31 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
+                        merged_params.pop("user_id", None)
+
+                        # Build context headers for streamable_http transport
+                        effective_auth_headers = dict(ah)
+                        if tt == "streamable_http":
+                            # Always override workspace_name / file_name with known-good
+                            # values so LLM-guessed or fixed_params values can't reach the backend.
+                            if _fn:
+                                effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
+                                merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
+                            else:
+                                # No explicit file binding — strip any LLM-guessed file_name (e.g. "*")
+                                merged_params.pop("file_name", None)
+                                effective_auth_headers.pop("file_name", None)
+                            if _wi:
+                                effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                merged_params.pop("workspace_name", None)
+                                effective_auth_headers.pop("workspace_name", None)
+                            logger.info(
+                                "playbook_connector_mcp_context_headers file_name=%s workspace_id=%s",
+                                effective_auth_headers.get("file_name"),
+                                effective_auth_headers.get("workspace_id"),
+                            )
+
                         logger.info(
                             "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
                             cid,
@@ -1585,13 +1761,14 @@ def _create_connector_mcp_tools(
                             tn,
                             _log_payload(merged_params),
                         )
+                        _last_mcp_actual_args.set(dict(merged_params))
                         response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
                             ak,
                             merged_params,
-                            auth_headers=ah,
+                            auth_headers=effective_auth_headers,
                             auth_env=ae,
                         )
                         logger.info(
@@ -1647,8 +1824,8 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
-            brain_ids=brain_ids,
-            external_ids=external_ids,
+            workspace_ids=workspace_ids,
+            file_names=file_names,
         )
 
     return tools

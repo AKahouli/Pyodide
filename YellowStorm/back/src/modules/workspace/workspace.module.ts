@@ -25,6 +25,7 @@ import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
 import { WorkspaceIngestController } from './workspace-ingest.controller';
+import { WorkspaceInternalController } from './workspace-internal.controller';
 import { WorkspaceShareController } from './workspace-share.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
@@ -36,6 +37,7 @@ import {
   WorkspaceAccessGuard,
   WritePermissionGuard,
 } from './guards';
+import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { AuthModule } from '../auth/auth.module';
 import { LoggerModule } from '../logger';
 import { DocumentModule } from '../document/document.module';
@@ -71,6 +73,7 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceSettingController,
     WorkspaceDocumentController,
     WorkspaceIngestController,
+    WorkspaceInternalController,
     WorkspaceShareController,
   ],
   providers: [
@@ -82,6 +85,7 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceOwnerGuard,
     WorkspaceAccessGuard,
     WritePermissionGuard,
+    InternalServiceGuard,
   ],
   exports: [
     WorkspaceService,
