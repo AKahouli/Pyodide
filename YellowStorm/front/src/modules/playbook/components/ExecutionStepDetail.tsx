@@ -21,6 +21,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
 import type {
@@ -1333,14 +1334,12 @@ export function ExecutionStepDetail({
                       )}
                     >
                       <MessageProvider fileViewerDisplayMode="floating">
-                        <AIMessageContent
-                          parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]}
-                        />
+                        <AIMessageContent parts={[{ type: isHtml ? 'webPreview' : 'text', content: selectedStepExecutionText }]} />
                       </MessageProvider>
                     </div>
                   );
                 })()}
-                {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                {!selectedStepExecutionText && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
                   <div className="prose prose-sm max-w-none dark:prose-invert">
                     <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
                   </div>

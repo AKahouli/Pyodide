@@ -273,6 +273,10 @@ class PlaybookStepExecutor:
             logger.info(f"[PLAYBOOK EXECUTOR] Converted agent config with {len(tools)} tools for agent '{agent_config.name}'")
 
             # Build agent_config matching delegation_factory structure
+            # Pass full agent_params to preserve connector_bindings_json, max_tokens, etc.
+            full_agent_params = dict(agent_config.agent_params) if agent_config.agent_params else {}
+            full_agent_params.setdefault('temperature', temperature)
+
             return {
                 'id': agent_config.id,
                 'name': agent_config.name,
@@ -285,9 +289,10 @@ class PlaybookStepExecutor:
                 'brain_documents': brain_documents,
                 'brain_relations': brain_relations,
                 'chatbot_name': chatbot_name,
-                'agent_params': {'temperature': temperature} if agent_config.agent_params else {},
+                'agent_params': full_agent_params,
                 'agent_type': agent_config.agent_type if hasattr(agent_config, 'agent_type') and agent_config.agent_type else 'normal',
                 'save_memory': agent_config.save_memory,
+                'mcp': agent_config.mcp if hasattr(agent_config, 'mcp') else None,
                 # Store originals for reference (used by delegation_factory)
                 '_original_brain_documents': brain_documents,
                 '_original_brain_relations': brain_relations,

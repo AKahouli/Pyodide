@@ -104,22 +104,22 @@ async def _generate_token() -> str:
     return _cached_token
 
 
-def get_action_document_ids(
+def get_action_file_names(
     task: Dict[str, Any],
     resolved_inputs: Dict[str, Any],
 ) -> List[str]:
-    """Collect document IDs from document-type input ports."""
+    """Collect file names from document-type input ports."""
     tool_scope = build_tool_scope(resolved_inputs)
     input_ports = task.get("input_ports") or []
-    doc_ids: List[str] = []
+    file_names: List[str] = []
 
     for port in input_ports:
         if str(port.get("artifact_kind") or "") != "document":
             continue
         port_id = _normalize_task_port_id(port.get("id"))
-        doc_ids.extend(tool_scope["documents_by_port"].get(port_id, []))
+        file_names.extend(tool_scope["documents_by_port"].get(port_id, []))
 
-    return _unique_strings(doc_ids)
+    return _unique_strings(file_names)
 
 
 def get_action_document_metadata(
@@ -363,7 +363,7 @@ async def _action_index_trigger(
             payload = {
                 "filepath": filepath,
                 "brain_id": workspace_id,
-                "external_id": doc_id,
+                "file_name": doc_id,
                 "source": filepath,
                 "brain_type": "doc",
                 "lang_code": "auto",
@@ -486,18 +486,18 @@ async def execute_action_task(
         },
     )
 
-    document_ids = get_action_document_ids(task, resolved_inputs)
+    file_names = get_action_file_names(task, resolved_inputs)
     documents = get_action_document_metadata(task, resolved_inputs)
-    if not document_ids:
+    if not file_names:
         documents = _collect_direct_input_documents(task, node_inputs_by_port)
-        document_ids = [item["document_id"] for item in documents]
+        file_names = [item["document_id"] for item in documents]
     workspace_id = get_action_workspace_id(resolved_inputs)
     workspace_settings = get_workspace_indexing_settings(
         resolved_inputs, workspace_id
     )
     vectorstores_url = _get_vectorstores_url()
 
-    if not document_ids:
+    if not file_names:
         error_msg = "No documents found on document-type input ports"
         logger.warning(f"[{task_id}] {error_msg}")
         return {
@@ -598,7 +598,7 @@ async def execute_action_task(
         elif action == "delete":
             output = (
                 f"Delete action not yet implemented. "
-                f"Documents: {', '.join(document_ids[:5])}"
+                f"Documents: {', '.join(file_names[:5])}"
             )
             result = _build_step_result(
                 task_id, "failed", output, start_time, started_at
@@ -607,7 +607,7 @@ async def execute_action_task(
         elif action == "read":
             output = (
                 f"Read action not yet implemented. "
-                f"Documents: {', '.join(document_ids[:5])}"
+                f"Documents: {', '.join(file_names[:5])}"
             )
             result = _build_step_result(
                 task_id, "failed", output, start_time, started_at

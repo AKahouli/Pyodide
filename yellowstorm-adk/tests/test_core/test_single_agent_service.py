@@ -19,7 +19,7 @@ def mock_single_agent_request():
         tools=[{"name": "search_documents", "description": "Search tool"}],
         chatbot_name={"name": "gpt-4.1", "provider": "azure/gpt-4.1"},
         vectorstore_name="vectorstorerec",
-        brain_ids=["brain_123"],
+        workspace_names=["brain_123"],
         brain_documents=[
             {
                 "_id": "doc_123",

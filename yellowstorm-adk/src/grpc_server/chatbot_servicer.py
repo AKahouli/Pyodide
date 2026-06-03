@@ -542,7 +542,7 @@ class ChatbotServicer(
         - Renamed AgentSuggestion → Agent
         - Removed html field
         - Removed vectorstore_name field
-        - brain_context is now repeated WorkspaceContext (extract all brain_ids and documents)
+        - brain_context is now repeated WorkspaceContext (extract all workspace_names and documents)
         - Removed brain_relations field
         - chatbot_name renamed to chatbot (with single model field containing full identifier)
 
@@ -552,18 +552,33 @@ class ChatbotServicer(
         Returns:
             AgentSuggestion: Internal V1 Pydantic model (for backward compatibility)
         """
-        # Extract brain_ids and brain_documents from repeated WorkspaceContext
-        brain_ids = []
+        # Extract workspace_names and brain_documents from repeated WorkspaceContext
+        workspace_names = []
+        workspace_ids = []
         brain_documents = []
         if pb_agent.brain_context:
             for workspace in pb_agent.brain_context:
-                if workspace.workspace_id:
-                    brain_ids.append(workspace.workspace_id)
+                workspace_id = getattr(workspace, "workspace_id", "") or ""
+                if workspace_id:
+                    workspace_ids.append(workspace_id)
+                workspace_name = (
+                    getattr(workspace, "workspace_name", "") or workspace_id
+                )
+                if workspace_name:
+                    workspace_names.append(workspace_name)
                 for doc in workspace.workspace_documents:
+                    doc_file_name = getattr(doc, "file_name", "") or doc.filename or ""
+                    doc_workspace_name = (
+                        getattr(doc, "workspace_name", "")
+                        or workspace_name
+                        or doc.workspace_id
+                        or ""
+                    )
                     brain_documents.append(
                         {
                             "_id": doc._id,
                             "filename": doc.filename if doc.filename else "",
+                            "file_name": doc_file_name,
                             "filepath": doc.filepath if doc.filepath else "",
                             "in_memory": doc.in_memory if doc.in_memory else False,
                             "language": doc.language if doc.language else "",
@@ -573,9 +588,13 @@ class ChatbotServicer(
                             "workspace_id": doc.workspace_id
                             if doc.workspace_id
                             else "",
+                            "workspace_name": doc_workspace_name,
                         }
                     )
 
+        raw_agent_params = (
+            dict(pb_agent.agent_params.params) if pb_agent.HasField("agent_params") else {}
+        )
         return AgentSuggestion(
             id=pb_agent.id if pb_agent.id else "no_id",
             name=pb_agent.name,
@@ -620,24 +639,21 @@ class ChatbotServicer(
             ]
             if pb_agent.skills
             else None,
-            html=False,  # V2 removed this, default to False
-            vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,  # Use environment variable
-            brain_ids=brain_ids,
+            html=False,
+            vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,
+            workspace_names=workspace_names,
+            brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
-            brain_relations={
-                "nodes": [],
-                "relationships": [],
-            },  # V2 removed this, use empty
+            brain_relations={"nodes": [], "relationships": []},
             chatbot_name={
-                "provider": pb_agent.chatbot.model  # Full model identifier
+                "provider": pb_agent.chatbot.model
             }
             if pb_agent.HasField("chatbot")
             else None,
-            agent_params=dict(pb_agent.agent_params.params)
-            if pb_agent.HasField("agent_params")
-            else None,
+            agent_params=raw_agent_params if raw_agent_params else None,
             agent_type=pb_agent.agent_type if pb_agent.agent_type else None,
             save_memory=pb_agent.save_memory,
+            mcp=None,
         )
 
     async def _convert_agent_team_request_v2(
@@ -662,31 +678,47 @@ class ChatbotServicer(
         Returns:
             RunAgentTeamRequest: Internal V1 Pydantic model
         """
-        # Extract workspace IDs and documents from multiple workspace contexts
-        brain_ids = []
+        # Extract workspace names and documents from multiple workspace contexts
+        workspace_names = []
+        workspace_ids = []
         brain_documents = []
 
         # Iterate through all workspace contexts (now a repeated field)
         for workspace_ctx in pb_request.workspace_context:
-            # Collect workspace IDs
-            if workspace_ctx.workspace_id:
-                brain_ids.append(workspace_ctx.workspace_id)
+            workspace_id = getattr(workspace_ctx, "workspace_id", "") or ""
+            if workspace_id:
+                workspace_ids.append(workspace_id)
+            workspace_name = (
+                getattr(workspace_ctx, "workspace_name", "")
+                or workspace_id
+            )
+            if workspace_name:
+                workspace_names.append(workspace_name)
 
             # Convert V2 Document objects to V1 brain_documents format
             for doc in workspace_ctx.workspace_documents:
+                doc_file_name = getattr(doc, "file_name", "") or doc.filename or ""
+                doc_workspace_name = (
+                    getattr(doc, "workspace_name", "")
+                    or workspace_name
+                    or doc.workspace_id
+                    or ""
+                )
                 brain_doc = {
                     "_id": doc._id,
                     "filename": doc.filename if doc.filename else "",
+                    "file_name": doc_file_name,
                     "filepath": doc.filepath if doc.filepath else "",
                     "in_memory": doc.in_memory if doc.in_memory else False,
                     "language": doc.language if doc.language else "",
                     "indexing_token": doc.indexing_token if doc.indexing_token else 0,
                     "workspace_id": doc.workspace_id if doc.workspace_id else "",
+                    "workspace_name": doc_workspace_name,
                 }
                 brain_documents.append(brain_doc)
 
         # Convert to None if empty (to match expected schema)
-        brain_ids = brain_ids if brain_ids else None
+        workspace_names = workspace_names if workspace_names else None
         brain_documents = brain_documents if brain_documents else None
         ################
         # ── Process attached_files: separate images from documents ──
@@ -706,7 +738,7 @@ class ChatbotServicer(
                     {
                         "filepath": doc.filepath,
                         "filename": doc.filename,
-                        "external_id": doc.external_id,
+                        "workspace_name": doc.workspace_name,
                         "workspace_id": doc.workspace_id,
                         "source": doc.source or doc.filepath,
                         "createdAt": getattr(doc, "createdAt", None) or None,
@@ -744,14 +776,22 @@ class ChatbotServicer(
         # ── Process previous_attached_files (repeated Document) ──
         previous_attached = []
         for prev_doc in pb_request.previous_attached_files:
+            prev_file_name = (
+                getattr(prev_doc, "file_name", "") or prev_doc.filename or ""
+            )
+            prev_workspace_name = (
+                getattr(prev_doc, "workspace_name", "") or prev_doc.workspace_id
+            )
             previous_attached.append(
                 {
                     "_id": prev_doc._id,
                     "filename": prev_doc.filename,
+                    "file_name": prev_file_name,
                     "filepath": prev_doc.filepath,
                     "in_memory": prev_doc.in_memory,
                     "language": prev_doc.language if prev_doc.language else None,
                     "workspace_id": prev_doc.workspace_id,
+                    "workspace_name": prev_workspace_name,
                     "createdAt": getattr(prev_doc, "createdAt", None) or None,
                 }
             )
@@ -767,19 +807,21 @@ class ChatbotServicer(
         existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
 
         for doc in attached_documents:
-            doc_id = doc.get("external_id")
-            if doc_id and doc_id not in existing_ids:
+            doc_name = doc.get("workspace_name")
+            if doc_name and doc_name not in existing_ids:
                 brain_documents.append(
                     {
-                        "_id": doc_id,
+                        "_id": doc_name,
                         "filename": doc.get("filename", ""),
+                        "file_name": doc.get("filename", ""),
                         "filepath": doc.get("filepath", ""),
                         "in_memory": doc.get("in_memory", False),
                         "language": doc.get("lang_code", ""),
                         "workspace_id": doc.get("workspace_id", ""),
+                        "workspace_name": doc.get("workspace_name", ""),
                     }
                 )
-                existing_ids.add(doc_id)
+                existing_ids.add(doc_name)
 
         for doc in previous_attached:
             doc_id = doc.get("_id")
@@ -789,23 +831,23 @@ class ChatbotServicer(
 
         brain_documents = brain_documents if brain_documents else None
 
-        # ── Ensure attached files' workspace_ids are in brain_ids for search filtering ──
-        # Documents are indexed with brain_id = workspace_id, so the search filter
-        # must include these IDs or Qdrant won't find them.
-        if brain_ids is None:
-            brain_ids = []
+        # Documents are indexed with workspace_name, so the search filter must
+        # include these names or Qdrant won't find them.
+        if workspace_names is None:
+            workspace_names = []
 
         for doc in attached_documents:
-            ws_id = doc.get("workspace_id")
-            if ws_id and ws_id not in brain_ids:
-                brain_ids.append(ws_id)
+            workspace_name = doc.get("workspace_name")
+            if workspace_name and workspace_name not in workspace_names:
+                workspace_names.append(workspace_name)
 
         for doc in previous_attached:
-            ws_id = doc.get("workspace_id")
-            if ws_id and ws_id not in brain_ids:
-                brain_ids.append(ws_id)
+            workspace_name = doc.get("workspace_name") or doc.get("workspace_id")
+            if workspace_name and workspace_name not in workspace_names:
+                workspace_names.append(workspace_name)
 
-        brain_ids = brain_ids if brain_ids else None
+        workspace_names = workspace_names if workspace_names else None
+        workspace_ids = workspace_ids if workspace_ids else workspace_names
         ################
         # Extract chatbot_name from manager agent (agent_type="manager")
         # Manager agent is required - client must always provide one
@@ -865,7 +907,8 @@ class ChatbotServicer(
             available_agents=[],  # V2 removed this field
             available_tools=[],  # V2 removed this field
             vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,  # Use environment variable
-            brain_ids=brain_ids,  # V2: workspace_context.workspace_id (singular) → V1: brain_ids (plural)
+            workspace_names=workspace_names,  # V2: workspace_context.workspace_id (singular) → V1: workspace_names (plural)
+            brain_ids=workspace_ids,
             brain_documents=brain_documents,
             brain_relations=None,  # V2 removed this field
             search_web=False,  # V2 removed this field, default to False
@@ -1023,7 +1066,7 @@ class ChatbotServicer(
             payload = {
                 "filepath": doc["filepath"],
                 "brain_id": doc["workspace_id"],
-                "external_id": doc.get("external_id") or doc["filepath"],
+                "external_id": doc.get("workspace_name") or doc["filepath"],
                 "source": doc.get("source") or doc["filepath"],
                 "brain_type": doc.get("brain_type", "doc"),
                 "lang_code": doc.get("lang_code", "auto"),
@@ -1333,7 +1376,10 @@ class ChatbotServicer(
                     text_source=chatbot_pb2.TextSourceData(
                         type=str(text_source_data.get("type", "text")),
                         source=str(text_source_data.get("source", "")),
-                        external_id=str(text_source_data.get("external_id", "")),
+                        file_name=str(
+                            text_source_data.get("external_id")
+                            or text_source_data.get("file_name", "")
+                        ),
                         page=str(text_source_data.get("page", "")),
                         page_content=str(text_source_data.get("page_content", "")),
                         workspace_id=str(text_source_data.get("workspace_id", "")),
@@ -1353,7 +1399,11 @@ class ChatbotServicer(
                         path=str(image_source_data.get("path", "")),
                         page=str(image_source_data.get("page", "")),
                         file_name=str(image_source_data.get("file_name", "")),
-                        external_id=str(image_source_data.get("external_id", "")),
+                        workspace_name=str(
+                            image_source_data.get("external_id")
+                            or image_source_data.get("workspace_name")
+                            or image_source_data.get("file_name", "")
+                        ),
                         workspace_id=str(image_source_data.get("workspace_id", "")),
                         height=str(image_source_data.get("height", "")),
                         width=str(image_source_data.get("width", "")),
@@ -2459,11 +2509,11 @@ def _proto_task_to_dict(proto_task) -> dict:
         "max_clarifications": proto_task.max_clarifications or 3,
         "input_keys": list(proto_task.input_keys) if proto_task.input_keys else None,
         "output_key": proto_task.output_key or None,
-        "input_files": list(proto_task.input_files) if proto_task.input_files else None,
+        "file_names": list(proto_task.file_names) if proto_task.file_names else None,
         "input_files_by_port": [
             {
                 "port_id": b.port_id,
-                "document_ids": list(b.document_ids) if b.document_ids else [],
+                "file_names": list(b.file_names) if b.file_names else [],
             }
             for b in proto_task.input_files_by_port
         ]
@@ -2576,20 +2626,32 @@ def _proto_agent_to_dict(proto_agent) -> dict:
         else []
     )
 
-    # Extract brain_context (brain_ids + brain_documents)
-    brain_ids = []
+    # Extract brain_context (workspace_names + brain_documents)
+    workspace_names = []
     brain_documents = []
     if proto_agent.brain_context:
         for workspace in proto_agent.brain_context:
-            if workspace.workspace_id:
-                brain_ids.append(workspace.workspace_id)
+            workspace_name = (
+                getattr(workspace, "workspace_name", "") or workspace.workspace_id
+            )
+            if workspace_name:
+                workspace_names.append(workspace_name)
             for doc in workspace.workspace_documents:
+                doc_file_name = getattr(doc, "file_name", "") or doc.filename or ""
+                doc_workspace_name = (
+                    getattr(doc, "workspace_name", "")
+                    or workspace_name
+                    or doc.workspace_id
+                    or ""
+                )
                 brain_documents.append(
                     {
                         "_id": doc._id,
                         "filename": doc.filename or "",
+                        "file_name": doc_file_name,
                         "filepath": doc.filepath or "",
                         "workspace_id": doc.workspace_id or "",
+                        "workspace_name": doc_workspace_name,
                     }
                 )
 
@@ -2634,7 +2696,7 @@ def _proto_agent_to_dict(proto_agent) -> dict:
         if proto_agent.skills
         else [],
         "model": proto_agent.chatbot.model if proto_agent.HasField("chatbot") else None,
-        "brain_ids": brain_ids or None,
+        "workspace_names": workspace_names or None,
         "brain_documents": brain_documents or None,
         "agent_params": agent_params,
         "agent_type": proto_agent.agent_type or None,
@@ -3019,7 +3081,7 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
             citation_kwargs["text_source"] = chatbot_pb2.TextSourceData(
                 type=str(ts.get("type", "text")),
                 source=str(ts.get("source", "")),
-                external_id=str(ts.get("external_id", "")),
+                file_name=str(ts.get("external_id") or ts.get("file_name", "")),
                 page=str(ts.get("page", "")),
                 page_content=str(ts.get("page_content", "")),
                 workspace_id=str(ts.get("workspace_id", "")),
@@ -3032,7 +3094,11 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
                 path=str(img.get("path", "")),
                 page=str(img.get("page", "")),
                 file_name=str(img.get("file_name", "")),
-                external_id=str(img.get("external_id", "")),
+                workspace_name=str(
+                    img.get("external_id")
+                    or img.get("workspace_name")
+                    or img.get("file_name", "")
+                ),
                 workspace_id=str(img.get("workspace_id", "")),
                 height=str(img.get("height", "")),
                 width=str(img.get("width", "")),

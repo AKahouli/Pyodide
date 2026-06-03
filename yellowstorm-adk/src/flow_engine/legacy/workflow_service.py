@@ -160,7 +160,7 @@ def _citation_signature(component: Dict[str, Any]) -> str:
             [
                 "text",
                 str(text_source.get("source") or ""),
-                str(text_source.get("external_id") or ""),
+                str(text_source.get("file_name") or ""),
                 str(text_source.get("page") or ""),
                 str(text_source.get("page_content") or ""),
             ]
@@ -172,7 +172,7 @@ def _citation_signature(component: Dict[str, Any]) -> str:
             [
                 "image",
                 str(image_source.get("path") or ""),
-                str(image_source.get("external_id") or ""),
+                str(image_source.get("workspace_name") or ""),
                 str(image_source.get("page") or ""),
             ]
         )

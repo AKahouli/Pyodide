@@ -204,6 +204,7 @@ class AgentFactory:
                 task_order,
                 search_web,
                 citation_manager=self.citation_manager,
+                user_id=user_id,
             )
             tools.extend(search_tools)
 
@@ -218,7 +219,7 @@ class AgentFactory:
         if search_web_tool and not (search_tool and doc_tree and brain_ids):
             toolkit = SearchToolkit(
                 task_order=task_order,
-                brain_id=brain_ids or [],
+                workspace_name=brain_ids or [],
                 top_k=top_k,
                 vectorstore=vectorstore_name,
                 search_web=search_web,
@@ -535,6 +536,7 @@ class AgentFactory:
         max_tokens=20000,
         top_k: int = 1,
         citation_manager=None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
         tools, toolkit = self.tool_factory.create_search_tools(
@@ -546,6 +548,7 @@ class AgentFactory:
             task_order,
             search_web,
             citation_manager=citation_manager,
+            user_id=user_id,
         )
 
         tree_info = ""

@@ -77,30 +77,33 @@ async def similarity_search_with_score_task_async(
     from src.modules.document_status_redis import DocumentStatusRedis
     from src.modules.redis_bm25_search import search_bm25
 
-    # Extract brain_ids and external_ids from filter
-    brain_ids = []
-    external_ids = None
+    # Extract Qdrant metadata filters from the request scope.
+    workspace_ids = []
+    file_names = None
 
     # DEBUG: Log the filter to see what we're getting
     logger.info(f"[DEBUG] Filter value: {filter}")
 
     if filter:
-        brain_id_list = filter.get("brain_id")
-        # Support multiple brain_ids
-        if brain_id_list and isinstance(brain_id_list, list) and len(brain_id_list) > 0:
-            brain_ids = brain_id_list
-            logger.info(f"[DEBUG] Extracted brain_ids: {brain_ids}")
+        workspace_id_list = filter.get("workspace_id")
+        if (
+            workspace_id_list
+            and isinstance(workspace_id_list, list)
+            and len(workspace_id_list) > 0
+        ):
+            workspace_ids = workspace_id_list
+            logger.info(f"[DEBUG] Extracted workspace_ids: {workspace_ids}")
 
-        external_id_list = filter.get("external_id")
-        if external_id_list:
-            external_ids = external_id_list if isinstance(external_id_list, list) else [external_id_list]
-            logger.info(f"[DEBUG] Extracted external_ids: {external_ids}")
+        file_name_list = filter.get("file_name")
+        if file_name_list:
+            file_names = file_name_list if isinstance(file_name_list, list) else [file_name_list]
+            logger.info(f"[DEBUG] Extracted file_names: {file_names}")
     else:
-        logger.warning("[DEBUG] Filter is None or empty - no brain_id found")
+        logger.warning("[DEBUG] Filter is None or empty - no workspace_id found")
 
-    # If no brain_ids, use standard Qdrant search (non-brain collection)
-    if not brain_ids:
-        logger.info(f"Standard Qdrant search (no brain_id in filter)")
+    # If no workspace_ids, use standard Qdrant search.
+    if not workspace_ids:
+        logger.info("Standard Qdrant search (no workspace_id in filter)")
         result = await to_thread(vector_search_with_score, collection_name, query, top_k, filter, user_id)
         # Add source metadata
         for doc, score in result:
@@ -108,9 +111,9 @@ async def similarity_search_with_score_task_async(
             doc.metadata["_source"] = "qdrant_vector"
             doc.metadata["_search_method"] = "vector_similarity_search"
         logger.info(
-            "STANDARD QDRANT SEARCH | collection=%s | brain_ids=%s | query='%s' | total=%d",
+            "STANDARD QDRANT SEARCH | collection=%s | workspace_ids=%s | query='%s' | total=%d",
             collection_name,
-            brain_ids,
+            workspace_ids,
             query[:50] + "..." if len(query) > 50 else query,
             len(result),
         )
@@ -122,10 +125,10 @@ async def similarity_search_with_score_task_async(
         r = await get_redis_connection()
         status_client = DocumentStatusRedis(r)
 
-        # Scan for document statuses across all brain_ids
+        # Scan for document statuses across all workspace ids
         has_statuses = False
-        for brain_id in brain_ids:
-            pattern = f"doc_status/{brain_id}/*"
+        for workspace_id in workspace_ids:
+            pattern = f"doc_status/{workspace_id}/*"
             async for _ in r.scan_iter(match=pattern, count=1):# need to find only 1 status
                 has_statuses = True
                 break
@@ -134,16 +137,16 @@ async def similarity_search_with_score_task_async(
 
         # edge case no document statuses found: standard search
         if not has_statuses:
-            logger.info(f"Standard Qdrant search (no document statuses found for brain_ids '{brain_ids}')")
+            logger.info(f"Standard Qdrant search (no document statuses found for workspace_ids '{workspace_ids}')")
             result = await to_thread(vector_search_with_score, collection_name, query, top_k, filter, user_id)
             # Add source metadata
             for doc, score in result:
                 doc.metadata["_source"] = "qdrant_vector"
                 doc.metadata["_search_method"] = "vector_similarity_search"
             logger.info(
-                "STANDARD QDRANT SEARCH | collection=%s | brain_ids=%s | query='%s' | total=%d",
+                "STANDARD QDRANT SEARCH | collection=%s | workspace_ids=%s | query='%s' | total=%d",
                 collection_name,
-                brain_ids,
+                workspace_ids,
                 query[:50] + "..." if len(query) > 50 else query,
                 len(result),
             )
@@ -151,7 +154,7 @@ async def similarity_search_with_score_task_async(
     except Exception as e:
         # Redis connection/operation failure: Fallback Qdrant
         logger.warning(
-            f"Redis operation failed for brain_ids '{brain_ids}': {e}. Falling back to Qdrant search only."
+            f"Redis operation failed for workspace_ids '{workspace_ids}': {e}. Falling back to Qdrant search only."
         )
         result = await to_thread(vector_search_with_score, collection_name, query, top_k, filter, user_id)
         # Add source metadata
@@ -159,9 +162,9 @@ async def similarity_search_with_score_task_async(
             doc.metadata["_source"] = "qdrant_vector"
             doc.metadata["_search_method"] = "vector_similarity_search"
         logger.info(
-            "FALLBACK QDRANT SEARCH (Redis failed) | collection=%s | brain_ids=%s | query='%s' | total=%d",
+            "FALLBACK QDRANT SEARCH (Redis failed) | collection=%s | workspace_ids=%s | query='%s' | total=%d",
             collection_name,
-            brain_ids,
+            workspace_ids,
             query[:50] + "..." if len(query) > 50 else query,
             len(result),
         )
@@ -169,46 +172,48 @@ async def similarity_search_with_score_task_async(
 
     # Status-aware search: get document statuses from all brains and route accordingly
     #async cuz we dont want to block entire event loop (no wait for redis)
-    # Aggregate statuses across all brain_ids
+    # Aggregate statuses across all workspace ids
     all_status_groups = {"PENDING": [], "COMPLETED": [], "FAILED": [], "IMPORTED": []}
-    for brain_id in brain_ids:
-        status_groups = await status_client.get_all_statuses_for_brain_async(brain_id)
+    for workspace_id in workspace_ids:
+        status_groups = await status_client.get_all_statuses_for_brain_async(workspace_id)
         for status_type in all_status_groups:
             all_status_groups[status_type].extend(status_groups[status_type])
 
     logger.info(
-        "STATUS-AWARE SEARCH | brain_ids=%s | query='%s' | filter_ids=%s | "
+        "STATUS-AWARE SEARCH | workspace_ids=%s | query='%s' | file_names=%s | "
         "status(pending=%d, completed=%d, failed=%d, imported=%d)",
-        brain_ids,
+        workspace_ids,
         query[:50] + "..." if len(query) > 50 else query,
-        external_ids if external_ids else "all",
+        file_names if file_names else "all",
         len(all_status_groups["PENDING"]),
         len(all_status_groups["COMPLETED"]),
         len(all_status_groups["FAILED"]),
         len(all_status_groups["IMPORTED"]),
     )
 
-    # Get external_ids for Redis BM25 search (PENDING + FAILED)
+    # Get file names for Redis BM25 search (PENDING + FAILED)
     redis_search_ids = all_status_groups["PENDING"] + all_status_groups["FAILED"]
-    if external_ids:
-        redis_search_ids = [eid for eid in redis_search_ids if eid in external_ids]
+    if file_names:
+        redis_search_ids = [file_name for file_name in redis_search_ids if file_name in file_names]
 
-    # Get external_ids for Qdrant search (COMPLETED)
-    completed_ids = all_status_groups["COMPLETED"]
-    if external_ids:
-        completed_ids = [eid for eid in completed_ids if eid in external_ids]
+    # Get file names for Qdrant search (COMPLETED)
+    completed_file_names = all_status_groups["COMPLETED"]
+    if file_names:
+        completed_file_names = [
+            file_name for file_name in completed_file_names if file_name in file_names
+        ]
 
     results = []
 
     # Qdrant vector search for COMPLETED documents
     qdrant_results = []
-    if completed_ids:
+    if completed_file_names:
         try:
             qdrant_filter = filter.copy() if filter else {}
-            qdrant_filter["external_id"] = completed_ids
+            qdrant_filter["file_name"] = completed_file_names
 
             logger.info(
-                f"Qdrant search for {len(completed_ids)} COMPLETED documents"
+                f"Qdrant search for {len(completed_file_names)} COMPLETED documents"
             )
 
             qdrant_results = await to_thread(
@@ -225,25 +230,22 @@ async def similarity_search_with_score_task_async(
         except Exception as e:
             logger.error(f"Qdrant search failed: {e}")
 
-    # Redis BM25 search for PENDING/FAILED documents (across all brain_ids)
+    # Redis BM25 search for PENDING/FAILED documents.
     redis_results = []
     if redis_search_ids:
         try:
             logger.info(
-                f"Redis BM25 search for {len(redis_search_ids)} PENDING/FAILED documents across {len(brain_ids)} brain(s)"
+                f"Redis BM25 search for {len(redis_search_ids)} PENDING/FAILED documents across {len(workspace_ids)} workspace(s)"
             )
 
-            # Search across all brain_ids and aggregate results
-            for brain_id in brain_ids:
-                brain_specific_ids = [eid for eid in redis_search_ids]
-                # If external_ids filter is provided, we already filtered above
-                # But we need to make sure we're searching for documents in this specific brain
+            for workspace_id in workspace_ids:
+                workspace_file_names = [file_name for file_name in redis_search_ids]
 
                 bm25_results = await search_bm25(
                     r=r,
                     query=query,
-                    brain_id=brain_id,
-                    external_ids=brain_specific_ids,
+                    brain_id=workspace_id,
+                    external_ids=workspace_file_names,
                     k=top_k,
                 )
 
@@ -273,9 +275,9 @@ async def similarity_search_with_score_task_async(
 
     # Comprehensive summary logging
     logger.info(
-        "STATUS-AWARE SUMMARY | brain_ids=%s | query='%s' | "
+        "STATUS-AWARE SUMMARY | workspace_ids=%s | query='%s' | "
         "results(redis_bm25=%d, qdrant_vector=%d, total=%d)",
-        brain_ids,
+        workspace_ids,
         query[:50] + "..." if len(query) > 50 else query,
         len(redis_results),
         len(qdrant_results),

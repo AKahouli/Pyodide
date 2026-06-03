@@ -14,6 +14,7 @@ import {
   ConnectorDynamicHeader,
   DynamicHeaderSource,
 } from './schemas/connector.schema';
+import { ConnectorCategory } from './schemas/connector-category.schema';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
@@ -26,6 +27,8 @@ export class ConnectorService {
   constructor(
     @InjectModel(Connector.name)
     private readonly connectorModel: Model<ConnectorDocument>,
+    @InjectModel(ConnectorCategory.name)
+    private readonly connectorCategoryModel: Model<ConnectorCategory>,
     private readonly logger: LoggerService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
   ) {
@@ -133,7 +136,40 @@ export class ConnectorService {
       .lean()
       .exec();
 
-    return connectors.map((c) => this.toResponse(c));
+    const categoryNameById = await this.buildCategoryNameMap(connectors);
+
+    return connectors.map((c) =>
+      this.toResponse({
+        ...c,
+        categoryName: c.categoryId
+          ? (categoryNameById.get(c.categoryId.toString()) ?? null)
+          : null,
+      }),
+    );
+  }
+
+  /** Resolve category id -> name for the given connectors in a single query. */
+  private async buildCategoryNameMap(
+    connectors: Array<{ categoryId?: Types.ObjectId | null }>,
+  ): Promise<Map<string, string>> {
+    const categoryIds = Array.from(
+      new Set(
+        connectors
+          .map((c) => c.categoryId?.toString())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    if (!categoryIds.length) return new Map();
+
+    const categories = await this.connectorCategoryModel
+      .find({ _id: { $in: categoryIds.map((id) => new Types.ObjectId(id)) } })
+      .select('_id name')
+      .lean()
+      .exec();
+
+    return new Map(
+      categories.map((cat: any) => [cat._id.toString(), cat.name as string]),
+    );
   }
 
   async update(id: string, dto: UpdateConnectorDto): Promise<IConnectorResponse> {
@@ -534,6 +570,7 @@ export class ConnectorService {
       color: doc.color,
       iconColor: doc.iconColor ?? 'light',
       categoryId: doc.categoryId ? doc.categoryId.toString() : null,
+      categoryName: doc.categoryName ?? null,
       authType: doc.authType,
       authConfigSchema: doc.authConfigSchema ?? {},
       authSourceType: doc.authSourceType ?? 'credential',

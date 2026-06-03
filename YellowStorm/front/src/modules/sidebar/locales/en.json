@@ -8,6 +8,7 @@
   "history.showMore": "Show more",
   "history.searchPlaceholder": "Search history",
   "history.empty": "No conversations",
+  "history.untitled": "New conversation",
   "conversations.rename": "Rename",
   "conversations.share": "Share",
   "conversations.delete": "Delete",

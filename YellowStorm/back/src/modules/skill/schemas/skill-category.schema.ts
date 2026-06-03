@@ -14,6 +14,10 @@ export class SkillCategory extends Document {
   @Prop({ default: '', maxlength: 1024 })
   description!: string;
 
+  /** Reserved built-in category that cannot be edited or deleted. Skills in it are hidden from users. */
+  @Prop({ default: false })
+  isSystem!: boolean;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

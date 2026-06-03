@@ -1,9 +1,14 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from src.grpc_server.chatbot_servicer import _put_progress_event, ChatbotServicer
+from src.grpc_server.chatbot_servicer import (
+    _dict_to_proto_component,
+    _put_progress_event,
+    ChatbotServicer,
+)
 
 
 def test_dict_to_stream_chunk_artifact_uses_object_key_fallback() -> None:
@@ -25,6 +30,30 @@ def test_dict_to_stream_chunk_artifact_uses_object_key_fallback() -> None:
     )
 
     assert chunk.component.artifact.file_path == "user/session/report.xlsx"
+
+
+def test_dict_to_proto_component_maps_legacy_external_id_to_text_file_name() -> None:
+    component = _dict_to_proto_component(
+        {
+            "id": "citation-1",
+            "type": "citation",
+            "data": {
+                "parent_id": "text-1",
+                "text_source": {
+                    "type": "text",
+                    "source": "recettes.pdf",
+                    "external_id": "document-1",
+                    "page": "7",
+                    "page_content": "couscous",
+                    "workspace_id": "workspace-1",
+                    "reference": "[1]",
+                },
+            },
+        }
+    )
+
+    assert component.citation.text_source.file_name == "document-1"
+    assert component.citation.text_source.workspace_id == "workspace-1"
 
 
 @pytest.mark.asyncio
@@ -173,3 +202,79 @@ async def test_convert_agent_team_request_v2_preserves_connector_repo() -> None:
         "repo_name": "org-name/repo-name",
         "repo_url": "https://github.com/org-name/repo-name",
     }
+
+
+@pytest.mark.asyncio
+async def test_convert_agent_does_not_attach_raw_connector_mcp_toolset() -> None:
+    servicer = ChatbotServicer(agent_team_service=None)
+    binding = {
+        "connector_id": "connector-1",
+        "mcp_transport_type": "streamable_http",
+        "mcp_server_url": "http://localhost:8045/http",
+        "auth_headers": {"X-User-Id": "user-1"},
+    }
+    pb_agent = SimpleNamespace(
+        agent_type="agent",
+        id="agent-1",
+        name="Agent",
+        description="Agent",
+        prompt="Prompt",
+        tools=[],
+        brain_context=[],
+        agent_params=SimpleNamespace(
+            params={"connector_bindings_json": json.dumps([binding])}
+        ),
+        save_memory=False,
+        skills=[],
+        chatbot=SimpleNamespace(model="anthropic/claude-sonnet-4-5"),
+        HasField=lambda field: field in {"chatbot", "agent_params"},
+    )
+
+    converted = servicer._convert_agent(pb_agent)
+
+    assert converted.mcp is None
+    assert converted.agent_params["connector_bindings_json"] == json.dumps([binding])
+
+
+@pytest.mark.asyncio
+async def test_convert_agent_team_request_v2_uses_workspace_ids_for_brain_ids() -> None:
+    servicer = ChatbotServicer(agent_team_service=None)
+    manager_agent = SimpleNamespace(
+        agent_type="manager",
+        id="agent-1",
+        name="Manager",
+        description="Manager agent",
+        prompt="Manager prompt",
+        tools=[],
+        brain_context=[],
+        agent_params=SimpleNamespace(params={}),
+        save_memory=False,
+        skills=[],
+        chatbot=SimpleNamespace(model="anthropic/claude-sonnet-4-5"),
+        HasField=lambda field: field in {"chatbot", "agent_params"},
+    )
+    workspace = SimpleNamespace(
+        workspace_id="workspace-actual-id",
+        workspace_name="default",
+        workspace_documents=[],
+        chunks=0,
+        hybrid_search=False,
+        instruction="",
+        tag="",
+    )
+    pb_request = SimpleNamespace(
+        workspace_context=[workspace],
+        attached_files=[],
+        previous_attached_files=[],
+        agents=[manager_agent],
+        user_context=SimpleNamespace(user_id="user-1"),
+        conversation_id="conv-1",
+        query="search",
+        agent_mode="manual",
+        connector_repo=SimpleNamespace(repo_name=""),
+    )
+
+    converted = await servicer._convert_agent_team_request_v2(pb_request)
+
+    assert converted.workspace_names == ["default"]
+    assert converted.brain_ids == ["workspace-actual-id"]

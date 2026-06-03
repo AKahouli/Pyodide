@@ -249,6 +249,7 @@ Do not render charts for single values or non-numeric content.
                     "vectorstore_name": agent.vectorstore_name,
                     "agent_params": agent.agent_params if hasattr(agent, 'agent_params') else {},
                     "save_memory": agent.save_memory,
+                    "mcp": agent.mcp if hasattr(agent, 'mcp') else None,
                 }
 
                 # Handle workspace merging for available agents with search tools

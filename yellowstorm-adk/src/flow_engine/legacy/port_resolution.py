@@ -99,36 +99,52 @@ def _build_port_retrieval_scope(
 ) -> Dict[str, List[str]]:
     resolved_documents = list(port_state.get("resolved_documents") or [])
     staged_files = list(port_state.get("staged_files") or [])
+    resolved_document_ids = {
+        str(doc.get("document_id") or "").strip()
+        for doc in resolved_documents
+        if isinstance(doc, dict)
+    }
+    resolved_document_ids.discard("")
 
     return {
-        "brain_ids": _unique_strings(
+        "workspace_names": _unique_strings(
             [
                 default_workspace_id,
                 *[
-                    doc.get("workspace_id")
+                    doc.get("workspace_name") or doc.get("workspace_id")
                     for doc in resolved_documents
                     if isinstance(doc, dict)
                 ],
                 *[
-                    file_ref.get("workspace_id")
+                    file_ref.get("workspace_name") or file_ref.get("workspace_id")
                     for file_ref in staged_files
                     if isinstance(file_ref, dict)
                 ],
             ]
         ),
-        "external_ids": _unique_strings(
+        "file_names": _unique_strings(
             [
                 *(
-                    (port_state.get("document_bindings") or {}).get("document_ids")
+                    (port_state.get("document_bindings") or {}).get("file_names")
                     or []
                 ),
+                *(
+                    doc_id
+                    for doc_id in (
+                        (port_state.get("document_bindings") or {}).get("document_ids")
+                        or []
+                    )
+                    if str(doc_id or "").strip() not in resolved_document_ids
+                ),
                 *[
-                    doc.get("document_id")
+                    doc.get("file_name") or doc.get("filename") or doc.get("document_id")
                     for doc in resolved_documents
                     if isinstance(doc, dict)
                 ],
                 *[
-                    file_ref.get("document_id")
+                    file_ref.get("file_name")
+                    or file_ref.get("filename")
+                    or file_ref.get("document_id")
                     for file_ref in staged_files
                     if isinstance(file_ref, dict)
                 ],
@@ -143,18 +159,29 @@ def _resolve_document_metadata(
     workspace_context: List[Dict[str, Any]],
     brain_documents: List[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    def _document_identifier(document: Dict[str, Any]) -> str:
-        return str(
-            document.get("document_id")
-            or document.get("external_id")
-            or document.get("externalId")
-            or document.get("id")
-            or document.get("_id")
-            or ""
-        ).strip()
+    def _document_matches(document: Dict[str, Any], identifier: str) -> bool:
+        identifiers = {
+            str(value or "").strip()
+            for value in (
+                document.get("document_id"),
+                document.get("id"),
+                document.get("_id"),
+                document.get("file_name"),
+                document.get("filename"),
+                document.get("workspace_name"),
+                document.get("externalId"),
+            )
+        }
+        identifiers.discard("")
+        return str(identifier or "").strip() in identifiers
 
     def _document_filename(document: Dict[str, Any]) -> str:
-        return str(document.get("filename") or document.get("name") or "").strip()
+        return str(
+            document.get("file_name")
+            or document.get("filename")
+            or document.get("name")
+            or ""
+        ).strip()
 
     def _document_filepath(document: Dict[str, Any]) -> str:
         return str(document.get("filepath") or document.get("file_path") or "").strip()
@@ -170,23 +197,39 @@ def _resolve_document_metadata(
             or ""
         ).strip()
 
+    def _document_workspace_name(
+        document: Dict[str, Any], workspace: Optional[Dict[str, Any]] = None
+    ) -> str:
+        return str(
+            document.get("workspace_name")
+            or document.get("workspaceName")
+            or (workspace or {}).get("workspace_name")
+            or (workspace or {}).get("workspaceName")
+            or _document_workspace_id(document, workspace)
+            or ""
+        ).strip()
+
     for workspace in workspace_context:
         for doc in workspace.get("documents", []):
-            if _document_identifier(doc) == document_id:
+            if _document_matches(doc, document_id):
                 return {
                     "document_id": document_id,
                     "filename": _document_filename(doc),
+                    "file_name": _document_filename(doc),
                     "filepath": _document_filepath(doc),
                     "workspace_id": _document_workspace_id(doc, workspace),
+                    "workspace_name": _document_workspace_name(doc, workspace),
                 }
 
     for doc in brain_documents:
-        if _document_identifier(doc) == document_id:
+        if _document_matches(doc, document_id):
             return {
                 "document_id": document_id,
                 "filename": _document_filename(doc),
+                "file_name": _document_filename(doc),
                 "filepath": _document_filepath(doc),
                 "workspace_id": _document_workspace_id(doc),
+                "workspace_name": _document_workspace_name(doc),
             }
 
     return None
@@ -216,8 +259,15 @@ def _coalesce_port_documents(
     for document in port_state.get("resolved_documents") or []:
         add_document(document)
 
-    if len(documents) >= len(
-        _unique_strings((port_state.get("document_bindings") or {}).get("document_ids") or [])
+    bound_identifiers = _unique_strings(
+        [
+            *((port_state.get("document_bindings") or {}).get("file_names") or []),
+            *((port_state.get("document_bindings") or {}).get("document_ids") or []),
+        ]
+    )
+
+    if not bound_identifiers or all(
+        document_id in seen_document_ids for document_id in bound_identifiers
     ):
         return documents
 
@@ -225,9 +275,7 @@ def _coalesce_port_documents(
         *list(playbook_workspace_context or []),
         *list(fallback_workspace_context or []),
     ]
-    for document_id in _unique_strings(
-        (port_state.get("document_bindings") or {}).get("document_ids") or []
-    ):
+    for document_id in bound_identifiers:
         if document_id in seen_document_ids:
             continue
         metadata = _resolve_document_metadata(
@@ -250,8 +298,8 @@ def _coalesce_port_documents(
             "Port document metadata missing; using placeholder",
             document_id=document_id,
             default_workspace_id=str(default_workspace_id or "").strip(),
-            bound_document_ids=_unique_strings(
-                (port_state.get("document_bindings") or {}).get("document_ids") or []
+            bound_file_names=_unique_strings(
+                bound_identifiers
             ),
             workspace_context_document_count=sum(
                 len(workspace.get("documents") or [])
@@ -268,7 +316,8 @@ def _coalesce_port_documents(
                         {
                             "id": str(
                                 doc.get("document_id")
-                                or doc.get("external_id")
+                                or doc.get("file_name")
+                                or doc.get("filename")
                                 or doc.get("externalId")
                                 or doc.get("id")
                                 or doc.get("_id")
@@ -285,7 +334,8 @@ def _coalesce_port_documents(
                         if isinstance(doc, dict)
                         and str(
                             doc.get("document_id")
-                            or doc.get("external_id")
+                            or doc.get("file_name")
+                            or doc.get("filename")
                             or doc.get("externalId")
                             or doc.get("id")
                             or doc.get("_id")
@@ -301,7 +351,8 @@ def _coalesce_port_documents(
                 {
                     "id": str(
                         doc.get("document_id")
-                        or doc.get("external_id")
+                        or doc.get("file_name")
+                        or doc.get("filename")
                         or doc.get("externalId")
                         or doc.get("id")
                         or doc.get("_id")
@@ -319,7 +370,8 @@ def _coalesce_port_documents(
                 if isinstance(doc, dict)
                 and str(
                     doc.get("document_id")
-                    or doc.get("external_id")
+                    or doc.get("file_name")
+                    or doc.get("filename")
                     or doc.get("externalId")
                     or doc.get("id")
                     or doc.get("_id")
@@ -332,8 +384,10 @@ def _coalesce_port_documents(
             {
                 "document_id": document_id,
                 "filename": "",
+                "file_name": document_id,
                 "filepath": "",
                 "workspace_id": str(default_workspace_id or "").strip(),
+                "workspace_name": str(default_workspace_id or "").strip(),
             }
         )
 
@@ -908,7 +962,9 @@ def resolve_task_inputs(
 
         upstream_binding = upstream_bindings[0] if upstream_bindings else None
 
-        document_bindings = []
+        document_binding_ids = []
+        document_binding_file_names = []
+        explicit_bound_file_names = []
         for port_binding in task_config.get("input_files_by_port") or []:
             if not isinstance(port_binding, dict):
                 continue
@@ -917,11 +973,14 @@ def resolve_task_inputs(
             )
             if binding_port_id != port_id:
                 continue
-            document_ids = _unique_strings(port_binding.get("document_ids") or [])
-            if document_ids:
+            bound_file_names = _unique_strings(port_binding.get("file_names") or [])
+            bound_document_ids = _unique_strings(port_binding.get("document_ids") or [])
+            bound_identifiers = _unique_strings([*bound_file_names, *bound_document_ids])
+            if bound_identifiers:
                 has_port_sources = True
-            document_bindings.extend(document_ids)
-            for document_id in document_ids:
+            explicit_bound_file_names.extend(bound_file_names)
+            document_binding_ids.extend(bound_document_ids)
+            for document_id in bound_identifiers:
                 metadata = _resolve_document_metadata(
                     document_id,
                     workspace_context=workspace_context,
@@ -934,14 +993,21 @@ def resolve_task_inputs(
                         f"Task '{task_id}' input port '{port_id}' references document '{document_id}' without resolvable filename/filepath"
                     )
                 resolved_documents.append(metadata)
+                document_binding_file_names.append(
+                    metadata.get("file_name") or metadata.get("filename") or document_id
+                )
 
-        document_bindings = _unique_strings(document_bindings)
+        document_binding_ids = _unique_strings(document_binding_ids)
+        document_binding_file_names = _unique_strings(
+            [*explicit_bound_file_names, *document_binding_file_names]
+        )
         resolved_ports[port_id] = {
             "input_port": input_port,
             "upstream_binding": upstream_binding,
             "upstream_bindings": upstream_bindings,
             "document_bindings": {
-                "document_ids": document_bindings,
+                "document_ids": document_binding_ids,
+                "file_names": document_binding_file_names,
             },
             "resolved_documents": resolved_documents,
             "staged_files": staged_files,
@@ -986,16 +1052,33 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
                 *[
                     doc.get("document_id")
                     for doc in resolved_documents
-                    if isinstance(doc, dict) and doc.get("document_id")
+                    if isinstance(doc, dict)
                 ],
                 *[
                     file_ref.get("document_id")
                     for file_ref in staged_files
-                    if isinstance(file_ref, dict) and file_ref.get("document_id")
+                    if isinstance(file_ref, dict)
                 ],
             ]
         )
-        documents_by_port[port_id] = document_ids
+        file_names = _unique_strings(
+            [
+                *((port_state.get("document_bindings") or {}).get("file_names") or []),
+                *[
+                    doc.get("file_name") or doc.get("filename") or doc.get("document_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                *[
+                    file_ref.get("file_name")
+                    or file_ref.get("filename")
+                    or file_ref.get("document_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+            ]
+        )
+        documents_by_port[port_id] = file_names
         files_by_port[port_id] = [*resolved_documents, *staged_files]
         all_document_ids.extend(document_ids)
         all_files.extend(resolved_documents)
@@ -1011,9 +1094,13 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
                 {
                     "document_id": str(doc.get("id") or doc.get("_id") or "").strip(),
                     "filename": filename,
+                    "file_name": str(doc.get("file_name") or filename).strip(),
                     "filepath": filepath,
                     "workspace_id": str(
                         doc.get("workspace_id") or workspace.get("workspace_id") or ""
+                    ).strip(),
+                    "workspace_name": str(
+                        doc.get("workspace_name") or workspace.get("workspace_name") or ""
                     ).strip(),
                 }
             )
@@ -1152,8 +1239,14 @@ def build_task_prompt_context(
                     {
                         "document_id": str(doc.get("document_id") or ""),
                         "filename": str(doc.get("filename") or ""),
+                        "file_name": str(
+                            doc.get("file_name") or doc.get("filename") or ""
+                        ),
                         "filepath": str(doc.get("filepath") or ""),
                         "workspace_id": str(doc.get("workspace_id") or ""),
+                        "workspace_name": str(
+                            doc.get("workspace_name") or doc.get("workspace_id") or ""
+                        ),
                     }
                     for doc in resolved_documents
                     if isinstance(doc, dict)
@@ -1162,8 +1255,18 @@ def build_task_prompt_context(
                     {
                         "document_id": str(file_ref.get("document_id") or ""),
                         "filename": str(file_ref.get("filename") or ""),
+                        "file_name": str(
+                            file_ref.get("file_name")
+                            or file_ref.get("filename")
+                            or ""
+                        ),
                         "filepath": str(file_ref.get("filepath") or ""),
                         "workspace_id": str(file_ref.get("workspace_id") or ""),
+                        "workspace_name": str(
+                            file_ref.get("workspace_name")
+                            or file_ref.get("workspace_id")
+                            or ""
+                        ),
                     }
                     for file_ref in staged_files
                     if isinstance(file_ref, dict)
@@ -1173,32 +1276,32 @@ def build_task_prompt_context(
                     for artifact in workspace_artifacts
                     if isinstance(artifact, dict)
                 ],
-                "bound_document_ids": _unique_strings(
-                    (port_state.get("document_bindings") or {}).get("document_ids")
+                "bound_file_names": _unique_strings(
+                    (port_state.get("document_bindings") or {}).get("file_names")
                     or []
                 ),
             }
         )
 
     retrieval_scope = {
-        "brain_ids": _unique_strings(
+        "workspace_names": _unique_strings(
             [
                 str(default_workspace_id or ""),
                 *[
-                    brain_id
+                    ws_name
                     for item in prompt_inputs
-                    for brain_id in (
-                        (item.get("retrieval_scope") or {}).get("brain_ids") or []
+                    for ws_name in (
+                        (item.get("retrieval_scope") or {}).get("workspace_names") or []
                     )
                 ],
             ]
         ),
-        "external_ids": _unique_strings(
+        "file_names": _unique_strings(
             [
-                external_id
+                file_name
                 for item in prompt_inputs
-                for external_id in (
-                    (item.get("retrieval_scope") or {}).get("external_ids") or []
+                for file_name in (
+                    (item.get("retrieval_scope") or {}).get("file_names") or []
                 )
             ]
         ),
@@ -1299,18 +1402,18 @@ def build_task_prompt(
     retrieval_scope = (
         (prompt_context.get("metadata") or {}).get("retrieval_scope") or {}
     )
-    if retrieval_scope.get("brain_ids") or retrieval_scope.get("external_ids"):
+    if retrieval_scope.get("workspace_names") or retrieval_scope.get("file_names"):
         lines.append(
             "Retrieval scope for MCP document tools JSON:\n"
             + json.dumps(retrieval_scope, ensure_ascii=True, indent=2)
             + "\n\n"
             + "MCP retrieval rules:\n"
-            + "- Use `brain_ids` exactly from `retrieval_scope.brain_ids` when calling global retrieval tools.\n"
-            + "- Use `external_ids` exactly from `retrieval_scope.external_ids` when restricting retrieval to known documents.\n"
-            + "- Always pass `brain_ids` and `external_ids` as arrays when provided.\n"
-            + "- `workspace_id` values map to MCP `brain_ids`.\n"
-            + "- `document_id` values map to MCP `external_ids`.\n"
-            + "- `list_documents` supports `brain_ids` only and must not receive `external_ids`.\n"
+            + "- Use `workspace_names` exactly from `retrieval_scope.workspace_names` when calling global retrieval tools.\n"
+            + "- Use `file_names` exactly from `retrieval_scope.file_names` when restricting retrieval to known documents.\n"
+            + "- Always pass `workspace_names` and `file_names` as arrays when provided.\n"
+            + "- `workspace_name` values map to MCP `workspace_names`.\n"
+            + "- `file_name` values map to MCP `file_names`.\n"
+            + "- `list_documents` supports `workspace_names` only and must not receive `file_names`.\n"
             + "- Do not invent IDs or derive them from filenames."
         )
 

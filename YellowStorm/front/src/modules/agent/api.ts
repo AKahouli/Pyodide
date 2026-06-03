@@ -76,6 +76,16 @@ export interface ConnectorOption {
   name: string;
   description: string;
   connectedAppKey: string;
+  /** Presentation + auth metadata returned by GET /connectors (optional for backward compat). */
+  slug?: string;
+  icon?: string;
+  color?: string;
+  iconColor?: 'light' | 'dark';
+  authType?: string;
+  authSourceType?: string;
+  categoryId?: string | null;
+  /** Resolved category name; used to exclude "System" connectors. */
+  categoryName?: string | null;
 }
 
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {

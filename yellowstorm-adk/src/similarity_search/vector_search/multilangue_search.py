@@ -16,8 +16,6 @@ from qdrant_client.models import (
     Distance,
     VectorParams,
     Filter,
-    FieldCondition,
-    MatchValue,
 )
 
 from src.similarity_search.embeddings import get_embeddings
@@ -62,19 +60,9 @@ class CustomQdrant:
 
     def _build_filter(self, filters: Optional[dict]) -> Optional[Filter]:
         """Convert dict filter into Qdrant Filter."""
-        if not filters:
-            return None
+        from src.similarity_search.qdrant_search.filter import dict_to_qdrant_filter
 
-        conditions = []
-        for key, value in filters.items():
-            conditions.append(
-                FieldCondition(
-                    key=key,
-                    match=MatchValue(value=value),
-                )
-            )
-
-        return Filter(must=conditions)
+        return dict_to_qdrant_filter(filters)
 
     def _vector_search_with_score(
         self,
@@ -198,12 +186,16 @@ def vector_search_with_score_multilangue(
     # Use vector_search_top_k if provided, otherwise use top_k
     k = vector_search_top_k or top_k
 
+    qdrant_filter = filter.copy() if filter else {}
+    if user_id and user_id != "unknown":
+        qdrant_filter["user_id"] = user_id
+
     qdrant_instance = CustomQdrant(collection_name, user_id=user_id)
 
     results = qdrant_instance._vector_search_with_score(
         query=query,
         k=k,
-        filters=filter,
+        filters=qdrant_filter,
     )
 
     logger.info(f"Received {len(results)} results")
@@ -234,12 +226,16 @@ def hybrid_search_with_score_multilangue(
     )
     logger.debug(f"RRF k={rrf_k}, vector_weight={vector_search_weight}, text_weight={full_text_search_weight}")
 
+    qdrant_filter = filter.copy() if filter else {}
+    if user_id and user_id != "unknown":
+        qdrant_filter["user_id"] = user_id
+
     qdrant_instance = CustomQdrant(collection_name, user_id=user_id)
 
     results = qdrant_instance._hybrid_search_with_score(
         query=query,
         k=top_k,
-        filters=filter,
+        filters=qdrant_filter,
     )
 
     logger.info(f"Received {len(results)} results")

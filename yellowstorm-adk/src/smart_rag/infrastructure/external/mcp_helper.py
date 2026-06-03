@@ -131,6 +131,34 @@ class MCPHelper:
             raise
 
     @staticmethod
+    def create_mcp_context_headers(
+        user_id: str,
+        file_names: Optional[List[str]] = None,
+        workspace_names: Optional[List[str]] = None,
+        workspace_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict]:
+        """Create MCP context headers (user_id, file_name, workspace_id)."""
+        try:
+            headers: Dict[str, str] = {"user_id": user_id}
+            effective_workspace_ids = workspace_ids or workspace_names
+
+            if file_names:
+                headers["file_name"] = json.dumps(file_names) if len(file_names) > 1 else file_names[0]
+
+            if effective_workspace_ids:
+                headers["workspace_id"] = (
+                    json.dumps(effective_workspace_ids)
+                    if len(effective_workspace_ids) > 1
+                    else effective_workspace_ids[0]
+                )
+
+            logger.debug(f"MCP context headers: {headers}")
+            return headers
+        except Exception as e:
+            logger.error(f"Error creating MCP context headers for user {user_id}: {str(e)}")
+            return None
+
+    @staticmethod
     def create_mcp_config(mcp_type: str, **kwargs):
         """Create MCP configuration for different MCP types.
 
@@ -141,7 +169,26 @@ class MCPHelper:
             Connection parameters for the specified MCP type
         """
         try:
-            if mcp_type == 'excel':
+            transport_type = kwargs.get('transport_type')
+
+            # streamable_http: always inject user context headers
+            if transport_type == 'streamable_http' and mcp_type not in ['microsandbox']:
+                url = kwargs.get('url')
+                if not url:
+                    raise ValueError(f"'url' is required for transport_type=streamable_http (mcp_type={mcp_type})")
+                user_id = kwargs.get('user_id')
+                headers = {}
+                if user_id:
+                    headers = MCPHelper.create_mcp_context_headers(
+                        user_id=user_id,
+                        file_names=kwargs.get('file_names'),
+                        workspace_ids=kwargs.get('workspace_ids'),
+                        workspace_names=kwargs.get('workspace_names'),
+                    ) or {}
+                headers.update(kwargs.get('auth_headers') or {})
+                return StreamableHTTPConnectionParams(url=url, headers=headers)
+
+            elif mcp_type == 'excel':
                 headers = kwargs.get('headers', {})
                 return SseServerParams(
                     url=app_settings.EXCEL_MCP_URL,
@@ -152,26 +199,19 @@ class MCPHelper:
                 url = kwargs.get('url', app_settings.MICROSANDBOX_MCP_URL)
                 if not url:
                     raise ValueError("MICROSANDBOX_MCP_URL is not configured")
-                connection_params = StreamableHTTPConnectionParams(url=url)
-                return connection_params
+                return StreamableHTTPConnectionParams(url=url)
 
             elif mcp_type == 'snowflake':
                 url = kwargs.get('url', app_settings.SNOWFLAKE_MCP_URL)
                 if not url:
                     raise ValueError("SNOWFLAKE_MCP_URL is not configured")
-                return SseServerParams(
-                    url=url,
-                    timeout=180.0
-                )
+                return SseServerParams(url=url, timeout=180.0)
 
             elif mcp_type == 'dataviz':
                 url = kwargs.get('url', app_settings.DATAVIZ_MCP_URL)
                 if not url:
                     raise ValueError("DATAVIZ_MCP_URL is not configured")
-                return SseServerParams(
-                    url=url,
-                    timeout=180.0
-                )
+                return SseServerParams(url=url, timeout=180.0)
 
             elif mcp_type == 'github':
                 url = kwargs.get('url')

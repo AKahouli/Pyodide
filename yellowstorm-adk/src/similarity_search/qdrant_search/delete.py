@@ -55,7 +55,7 @@ def delete_qdrant_documents_by_filter(
     collection_name : str
         Name of the collection to delete from
     field_name : str
-        Name of the field to filter on (e.g., 'external_id', 'brain_id')
+        Name of the Qdrant payload field to filter on.
     field_values : List[str]
         List of values to match for deletion
 
@@ -92,45 +92,49 @@ def delete_qdrant_documents_by_filter(
         raise
 
 
-def delete_qdrant_documents_by_external_id(
+def delete_qdrant_documents_by_file_name(
     collection_name: str,
-    external_id: str,
+    file_name: str,
 ) -> None:
-    """Delete all documents with a specific external_id.
+    """Delete all documents with a specific file_name.
 
     Parameters
     ----------
     collection_name : str
         Name of the collection to delete from
-    external_id : str
-        External ID to match for deletion
+    file_name : str
+        File name to match for deletion
 
     Raises
     ------
     Exception
         If the deletion operation fails
     """
-    logger.info(f"Deleting documents from {collection_name} with external_id={external_id}")
-    delete_qdrant_documents_by_filter(collection_name, "external_id", [external_id])
+    logger.info(f"Deleting documents from {collection_name} with file_name={file_name}")
+    delete_qdrant_documents_by_filter(collection_name, "metadata.file_name", [file_name])
 
 
-def delete_qdrant_documents_by_brain_id(
+def delete_qdrant_documents_by_workspace_id(
     collection_name: str,
-    brain_id: str,
+    workspace_id: str,
 ) -> None:
-    """Delete all documents with a specific brain_id.
+    """Delete all documents with a specific workspace_id.
 
     Parameters
     ----------
     collection_name : str
         Name of the collection to delete from
-    brain_id : str
-        Brain ID to match for deletion
+    workspace_id : str
+        Workspace ID to match for deletion
 
     Raises
     ------
     Exception
         If the deletion operation fails
     """
-    logger.info(f"Deleting documents from {collection_name} with brain_id={brain_id}")
-    delete_qdrant_documents_by_filter(collection_name, "metadata.brain_id", [brain_id])
+    logger.info(f"Deleting documents from {collection_name} with workspace_id={workspace_id}")
+    delete_qdrant_documents_by_filter(
+        collection_name,
+        "metadata.workspace_id",
+        [workspace_id],
+    )

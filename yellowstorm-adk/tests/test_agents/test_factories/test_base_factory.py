@@ -91,7 +91,7 @@ class TestAgentFactory:
                 chatbot_name="test-chatbot",
                 search_tool=True,
                 doc_tree=["doc1", "doc2"],
-                brain_ids=["brain1", "brain2"]
+                workspace_names=["brain1", "brain2"]
             )
 
         # Assert
@@ -132,7 +132,7 @@ class TestAgentFactory:
                 prompt="Test prompt",
                 chatbot_name="test-chatbot",
                 search_tool=True
-                # Missing doc_tree and brain_ids
+                # Missing doc_tree and workspace_names
             )
             # If no error is raised, that's fine - the test should reflect the actual behavior
             assert isinstance(agent, Agent)
@@ -215,7 +215,7 @@ class TestAgentFactory:
                 prompt="Operator prompt",
                 chatbot_name="operator-chatbot",
                 user_id="test_user",
-                brain_ids=["brain1"],
+                workspace_names=["brain1"],
                 session_id="test_session",
                 brain_documents=[{"id": "doc1"}]
             )
@@ -272,7 +272,7 @@ class TestAgentFactory:
                         agent, toolkit, instruction = agent_factory.create_search_agent(
                             doc_tree=["doc1"],
                             brain_tree=["brain1"],
-                            brain_ids=["id1"],
+                            workspace_names=["id1"],
                             vectorstore_name="test_store",
                             prompt="Search prompt",
                             chatbot_name="search-chatbot"
@@ -320,7 +320,7 @@ class TestAgentFactory:
             result = agent_factory.create_tools_for_agent(
                 doc_tree=["doc1"],
                 brain_tree=["brain1"],
-                brain_ids=["id1"],
+                workspace_names=["id1"],
                 top_k=5,
                 vectorstore_name="test_store",
                 calculator_tool=True,

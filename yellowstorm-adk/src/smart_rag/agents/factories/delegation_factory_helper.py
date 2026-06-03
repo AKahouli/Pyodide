@@ -236,7 +236,7 @@ def prepare_agent_data(
         base_enhanced_prompt (str): Base enhanced prompt to potentially modify.
 
     Returns:
-        tuple: (doc_tree, brain_tree, enhanced_prompt, final_brain_ids,
+        tuple: (doc_tree, brain_tree, enhanced_prompt, final_workspace_names,
                vectorstore_name, chatbot_name) for agent creation.
     """
     try:
@@ -264,7 +264,7 @@ def prepare_agent_data(
     if tool_prompts:
         enhanced_prompt = enhanced_prompt + "\n\n" + "\n\n".join(tool_prompts)
 
-    final_brain_ids = agent_config.get("brain_ids") or config.brain_ids
+    final_workspace_names = agent_config.get("brain_ids") or config.brain_ids
     vectorstore_name = agent_config.get("vectorstore_name", config.vectorstore_name)
     chatbot_name = agent_config.get("chatbot_name", chatbot_name)
     if isinstance(chatbot_name, dict):
@@ -274,7 +274,7 @@ def prepare_agent_data(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     )
@@ -288,6 +288,34 @@ def get_enhanced_prompt(
     if "search" in tools and doc_tree:
         enhanced_prompt += helper.get_document_tree_info(doc_tree, brain_tree)
     return enhanced_prompt
+
+
+def _build_mcp_context_note(config, agent_config: Dict[str, Any]) -> str:
+    """Build a prompt note with MCP context values for streamable_http transport."""
+    mcp = agent_config.get("mcp")
+    if not mcp or mcp.get("transport_type") != "streamable_http":
+        return ""
+
+    user_id = getattr(config, "user_id", None) or ""
+    # Use only explicitly bound file_names (from input port bindings), not all brain_documents
+    explicit_file_names = agent_config.get("file_names") or []
+    # Use workspace IDs directly (brain_ids from config)
+    workspace_ids = list(getattr(config, "brain_ids", None) or [])
+
+    if not user_id and not explicit_file_names and not workspace_ids:
+        return ""
+
+    lines = ["<mcp_tool_context>"]
+    if user_id:
+        lines.append(f'- user_id: "{user_id}"')
+    if explicit_file_names:
+        val = json.dumps(explicit_file_names) if len(explicit_file_names) > 1 else f'"{explicit_file_names[0]}"'
+        lines.append(f"- file_name: {val}")
+    if workspace_ids:
+        val = json.dumps(workspace_ids) if len(workspace_ids) > 1 else f'"{workspace_ids[0]}"'
+        lines.append(f"- workspace_id: {val}")
+    lines.append("</mcp_tool_context>")
+    return "\n".join(lines)
 
 
 def create_search_agent_with_tools(
@@ -308,7 +336,7 @@ def create_search_agent_with_tools(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     ) = prepare_agent_data(
@@ -339,9 +367,8 @@ def create_search_agent_with_tools(
     top_k = 1
     tools_config = agent_config.get("tools", [])
     connector_bindings = []
-    raw_connector_bindings = agent_config.get("agent_params", {}).get(
-        "connector_bindings_json"
-    )
+    _agent_params_search = agent_config.get("agent_params") or {}
+    raw_connector_bindings = _agent_params_search.get("connector_bindings_json")
     if raw_connector_bindings:
         try:
             connector_bindings = json.loads(raw_connector_bindings)
@@ -355,7 +382,7 @@ def create_search_agent_with_tools(
     agent, toolkit, _ = agent_factory.create_search_agent(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
-        brain_ids=final_brain_ids,
+        brain_ids=final_workspace_names,
         vectorstore_name=vectorstore_name,
         search_web="standard" if search_web else "off",
         snowflake_tool=True if "snowflake connector" in tools else False,
@@ -369,6 +396,7 @@ def create_search_agent_with_tools(
         max_tokens=max_tokens,
         top_k=top_k,
         citation_manager=citation_manager,
+        user_id=config.user_id,
     )
 
     # Store toolkit for source handling
@@ -388,7 +416,7 @@ def create_search_agent_with_tools(
                 create_connector_tools(
                     connector_bindings,
                     workspace_id=connector_workspace_id,
-                    brain_ids=final_brain_ids,
+                    brain_ids=final_workspace_names,
                 )
             )
         except Exception as e:
@@ -433,6 +461,9 @@ def create_search_agent_with_tools(
 
         except Exception as e:
             logger.exception("Error adding python_interpreter to search agent: %s", e)
+
+    _attach_mcp_search_state(agent, config, agent_config)
+    _attach_mcp_toolset(agent, config, agent_config)
 
     return agent, toolkit
 
@@ -506,7 +537,7 @@ def create_standard_agent_with_tools(
         doc_tree,
         brain_tree,
         enhanced_prompt,
-        final_brain_ids,
+        final_workspace_names,
         vectorstore_name,
         chatbot_name,
     ) = prepare_agent_data(
@@ -518,9 +549,8 @@ def create_standard_agent_with_tools(
     )
 
     connector_bindings = []
-    raw_connector_bindings = agent_config.get("agent_params", {}).get(
-        "connector_bindings_json"
-    )
+    _agent_params_std = agent_config.get("agent_params") or {}
+    raw_connector_bindings = _agent_params_std.get("connector_bindings_json")
     if raw_connector_bindings:
         try:
             connector_bindings = json.loads(raw_connector_bindings)
@@ -545,7 +575,7 @@ def create_standard_agent_with_tools(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
         top_k=top_k,
-        brain_ids=final_brain_ids,
+        brain_ids=final_workspace_names,
         vectorstore_name=vectorstore_name,
         task_order=expected_output,
         temperature=temp,
@@ -568,7 +598,58 @@ def create_standard_agent_with_tools(
         except Exception as e:
             logger.exception("Error adding platform tools to standard agent: %s", e)
 
+    _attach_mcp_search_state(agent, config, agent_config)
+    _attach_mcp_toolset(agent, config, agent_config)
+
     return agent, None
+
+
+def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
+    """Create and attach an MCPToolset if the agent config has an mcp field."""
+    mcp = agent_config.get("mcp")
+    if not mcp:
+        return
+
+    transport_type = mcp.get("transport_type")
+    server_url = mcp.get("server_url")
+
+    if transport_type != "streamable_http" or not server_url:
+        return
+
+    # Use only explicitly bound file_names (from input port bindings), not all brain_documents
+    explicit_file_names = agent_config.get("file_names") or None
+    # Use workspace IDs directly (brain_ids from config)
+    workspace_ids = list(getattr(config, "brain_ids", None) or []) or None
+
+    try:
+        toolsets = MCPHelper.create_toolsets([{
+            "type": "mcp",
+            "transport_type": "streamable_http",
+            "url": server_url,
+            "user_id": config.user_id,
+            "file_names": explicit_file_names,
+            "workspace_ids": workspace_ids,
+            "auth_headers": mcp.get("auth_headers") or {},
+        }])
+        if toolsets:
+            if not hasattr(agent, "tools") or agent.tools is None:
+                agent.tools = []
+            agent.tools.extend(toolsets)
+            logger.info(
+                f"Attached MCPToolset ({server_url}) to agent {agent.name} "
+                f"for user {config.user_id}"
+            )
+    except Exception as e:
+        logger.exception(f"Error creating MCPToolset for agent {agent.name}: {e}")
+
+
+def _attach_mcp_search_state(agent, config, agent_config: Dict[str, Any]) -> None:
+    state = {"_mcp_search_user_id": config.user_id}
+    if config.brain_ids:
+        state["_mcp_search_workspace_id"] = (
+            config.brain_ids[0] if len(config.brain_ids) == 1 else config.brain_ids
+        )
+    agent._mcp_search_state = state
 
 
 def _extract_original_expected_output(task_description: str) -> tuple:

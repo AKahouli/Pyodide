@@ -98,6 +98,34 @@ describe('PlaybookFlowObservabilityService', () => {
     }]);
   });
 
+  it('maps playbook citation sources to conversation citation components', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'Risque financier majeur [2].',
+      citation_sources: [{
+        type: 'text',
+        page: '2',
+        content: 'Clause de penalites',
+        source: 's3://vectorstore/user-1/codeinterpreter/contract.docx',
+        file_name: 'contract.docx',
+        workspace_name: 'codeinterpreter',
+        reference: '[2]',
+      }],
+    }, { executionId: 'exec-1', taskId: 'task-1' });
+
+    expect(payload.components).toEqual([{
+      type: 'citation',
+      data: expect.objectContaining({
+        sourceType: 'text',
+        source: 'user-1/codeinterpreter/contract.docx',
+        fileName: 'contract.docx',
+        page: '2',
+        pageContent: 'Clause de penalites',
+        workspaceId: 'codeinterpreter',
+        reference: '[2]',
+      }),
+    }]);
+  });
+
   it('falls back to raw_llm_output parsing when reasoning_trace is absent', () => {
     const payload = service.extractCompletedResultPayload({
       output: 'Summary text',

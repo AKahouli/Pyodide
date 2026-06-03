@@ -62,6 +62,6 @@ export interface IndexStatus {
 
 export interface IndexingClient {
   indexDocument(document: IndexDocumentRequest): Promise<IndexDocumentResponse>;
-  getIndexStatus(externalId: string): Promise<IndexStatus>;
+  getIndexStatus(documentId: string): Promise<IndexStatus>;
   deleteIndex(request: DeleteIndexRequest): Promise<DeleteIndexResponse>;
 }

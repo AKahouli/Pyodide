@@ -184,6 +184,7 @@ class PlaybookFlowRuntimeServicer:
                 "errors": [],
                 "pending_approval": None,
                 "cancelled": False,
+                "evaluation_user_id": str(getattr(request, "owner_id", "") or ""),
                 "hitl_policy": _snapshot_hitl_policy(snapshot),
                 "hitl_blockers": _snapshot_hitl_blockers(snapshot),
                 "hitl_memory": hitl_memory,

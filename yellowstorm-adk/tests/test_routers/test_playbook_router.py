@@ -30,7 +30,7 @@ def mock_agent_suggestion():
         prompt="You are a helpful test agent",
         tools=[{"name": "search", "top_k": 3}],
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=["brain-1"],
+        workspace_names=["brain-1"],
         save_memory=False
     )
 
@@ -44,7 +44,7 @@ def mock_manager_suggestion():
         description="A manager agent for coordination",
         prompt="You are a manager that coordinates agents",
         chatbot_name={"provider": "gpt-4"},
-        brain_ids=[],
+        workspace_names=[],
         agent_type="manager"
     )
 
