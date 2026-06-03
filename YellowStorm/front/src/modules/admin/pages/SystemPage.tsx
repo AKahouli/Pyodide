@@ -48,6 +48,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getMaintenanceStatus, setMaintenanceMode, getRegistrationStatus, setRegistrationStatus } from '../api';
 import type { MaintenanceStatus, RegistrationStatus } from '../types';
+import { CorsSettingsCard } from '../components/CorsSettingsCard';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -606,6 +607,8 @@ export function SystemPage() {
           )}
         </CardContent>
       </Card>
+
+      <CorsSettingsCard />
 
       {/* Maintenance Confirmation Dialog */}
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>

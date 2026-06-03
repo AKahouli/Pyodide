@@ -27,6 +27,8 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  CorsSettings,
+  SetCorsSettingsRequest,
   AppearanceSettings,
   PlanResponse,
   CreatePlanRequest,
@@ -178,6 +180,19 @@ export async function setRegistrationStatus(
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
     data
+  );
+  return response.data.data;
+}
+
+export async function getCorsSettings(): Promise<CorsSettings> {
+  const response = await apiClient.get<ApiResponse<CorsSettings>>(API_ENDPOINTS.system.cors);
+  return response.data.data;
+}
+
+export async function setCorsSettings(data: SetCorsSettingsRequest): Promise<CorsSettings> {
+  const response = await apiClient.post<ApiResponse<CorsSettings>>(
+    API_ENDPOINTS.system.cors,
+    data,
   );
   return response.data.data;
 }

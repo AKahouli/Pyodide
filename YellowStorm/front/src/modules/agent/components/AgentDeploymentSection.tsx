@@ -101,7 +101,7 @@ function IntegrationSnippetPanel({
   lines,
   onCopy,
   isCopied,
-}: IntegrationSnippetPanelProps) {
+}: Readonly<IntegrationSnippetPanelProps>) {
   return (
     <div
       className={cn(
@@ -165,7 +165,7 @@ function IntegrationSnippetPanel({
   );
 }
 
-function SnippetCodeLine({ line }: { line: string }) {
+function SnippetCodeLine({ line }: Readonly<{ line: string }>) {
   if (line.length === 0) {
     return <div>{"\u00a0"}</div>;
   }

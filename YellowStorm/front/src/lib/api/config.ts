@@ -46,6 +46,7 @@ export const API_ENDPOINTS = {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
+    cors: '/experimental/system/cors',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
