@@ -49,6 +49,7 @@
   "createEdit.tabs.tools": "Tools",
   "createEdit.tabs.skills": "Skills",
   "createEdit.tabs.connectors": "Connectors",
+  "createEdit.tabs.deployment": "Deployment",
   "createEdit.fields.name": "Name",
   "createEdit.fields.namePlaceholder": "Agent name (alphanumeric)",
   "createEdit.fields.slug": "Slug",
