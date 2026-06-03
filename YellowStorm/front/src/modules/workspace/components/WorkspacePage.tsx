@@ -78,6 +78,7 @@ export function WorkspacePage() {
   const deletePageFolder = useWorkspaceStore((s) => s.deletePageFolder);
   const movePageFolder = useWorkspaceStore((s) => s.movePageFolder);
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
+  const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== selectedWorkspaceId) {
@@ -86,6 +87,34 @@ export function WorkspacePage() {
       void selectPageWorkspace(null);
     }
   }, [routeWorkspaceId, selectedWorkspaceId, selectPageWorkspace]);
+
+  // TEMP diagnostic: log the indexing statuses the workspace page receives.
+  useEffect(() => {
+    if (!files.length) return;
+    const counts = files.reduce<Record<string, number>>((acc, f) => {
+      const s = f.indexingStatus ?? 'undefined';
+      acc[s] = (acc[s] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log('[indexing-status] received files', {
+      total: files.length,
+      counts,
+      sample: files.slice(0, 5).map((f) => ({ name: f.name, indexingStatus: f.indexingStatus })),
+    });
+  }, [files]);
+
+  // While any file is still indexing, poll so its status dot updates to
+  // green/red on its own without a manual refresh. Stops once all settle.
+  const hasIndexingInFlight = files.some(
+    (f) => f.indexingStatus === 'pending' || f.indexingStatus === 'processing',
+  );
+  useEffect(() => {
+    if (!hasIndexingInFlight) return;
+    const interval = setInterval(() => {
+      void refreshPageData();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasIndexingInFlight, refreshPageData]);
 
   const activeWorkspaceId = routeWorkspaceId ?? null;
 
@@ -685,6 +714,27 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
   );
 }
 
+/** Small colored dot reflecting a file's vectorstore indexing status. */
+function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexingStatus']; error?: string }) {
+  const config: Record<NonNullable<WorkspaceFile['indexingStatus']>, { color: string; pulse?: boolean; label: string }> = {
+    ready: { color: 'bg-green-500', label: 'Indexé' },
+    failed: { color: 'bg-red-500', label: "Échec de l'indexation" },
+    pending: { color: 'bg-orange-500', pulse: true, label: 'Indexation en attente' },
+    processing: { color: 'bg-orange-500', pulse: true, label: 'Indexation en cours' },
+    none: { color: 'bg-muted-foreground/40', label: 'Non indexé' },
+  };
+  const cfg = config[status ?? 'none'] ?? config.none;
+  const title = status === 'failed' && error ? `${cfg.label} : ${error}` : cfg.label;
+  return (
+    <span
+      className={cn('inline-block h-2 w-2 shrink-0 rounded-full', cfg.color, cfg.pulse && 'animate-pulse')}
+      title={title}
+      aria-label={title}
+      role='img'
+    />
+  );
+}
+
 function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
   const Icon = getFileIcon(file.mimeType);
   const [isDragging, setIsDragging] = useState(false);
@@ -730,12 +780,14 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
     try {
       await reindexDocument(file.workspaceId, file.id);
       toast.success(`${file.name} envoyé à l'indexation`);
+      // Refresh so the status dot reflects the new "pending/processing" state.
+      await refreshPageData();
     } catch {
       // toast handled by the store
     } finally {
       setIsReindexing(false);
     }
-  }, [file.id, file.name, file.workspaceId, reindexDocument]);
+  }, [file.id, file.name, file.workspaceId, reindexDocument, refreshPageData]);
 
   const handleDelete = useCallback(async () => {
     setIsDeleting(true);
@@ -757,6 +809,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
         <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
 
         <div className='min-w-0 flex-1 flex items-center gap-2'>
+          <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
           <span className='truncate text-sm'>{file.name}</span>
         </div>
 

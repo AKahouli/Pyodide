@@ -886,6 +886,36 @@ class ChatbotServicer(
                     "repo_url": str(getattr(pb_request.connector_repo, "repo_url", "") or "").strip(),
                 }
 
+        # Conversation-level skills selected by the user in the composer.
+        skills = (
+            [
+                {
+                    "id": skill.id,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "instructions": skill.instructions,
+                    "license": skill.license,
+                    "compatibility": skill.compatibility,
+                    "metadata": dict(skill.metadata) if skill.metadata else {},
+                    "allowed_tools": list(skill.allowed_tools) if skill.allowed_tools else [],
+                    "files": [
+                        {
+                            "path": file.path,
+                            "kind": file.kind,
+                            "mime_type": file.mime_type,
+                            "content": file.content,
+                        }
+                        for file in skill.files
+                    ]
+                    if skill.files
+                    else [],
+                }
+                for skill in pb_request.skills
+            ]
+            if getattr(pb_request, "skills", None)
+            else None
+        )
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
@@ -914,6 +944,7 @@ class ChatbotServicer(
             search_web=False,  # V2 removed this field, default to False
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
+            skills=skills,
         )
 
     def _get_vectorstores_token(self) -> str:

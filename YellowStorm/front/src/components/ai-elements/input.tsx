@@ -14,7 +14,7 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSetSelectedConnectorRepo, useSelectedConnectorRepo } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
 import { fetchTaggedAgents } from '@/modules/conversation/api';
@@ -137,6 +137,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
   const { addRecent: addRecentSkill } = useRecentSkills();
+  const selectedSkillIds = useSelectedSkillIds();
+  const toggleSelectedSkill = useToggleSelectedSkill();
 
   // Fetch connectors
   useEffect(() => {
@@ -419,10 +421,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     setConnectorDialogOpen(true);
   }, [addRecent]);
 
-  // Skill selection is scaffolding for now — record it as recent; not yet applied to the conversation.
+  // Toggle a skill for the whole conversation and record it as recent. Selected
+  // skills are sent with every message (see ConversationInput / store.selectedSkillIds).
   const handleSelectSkill = useCallback((skill: SkillOption) => {
     addRecentSkill(skill.id);
-  }, [addRecentSkill]);
+    toggleSelectedSkill(skill.id);
+  }, [addRecentSkill, toggleSelectedSkill]);
 
   const derivedStatus = externalStatus ?? status;
 
@@ -537,6 +541,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   <RecentSkillsMenu
                     skills={skills}
                     loading={skillsLoading}
+                    selectedIds={selectedSkillIds}
                     onSelectSkill={handleSelectSkill}
                     onOpenManage={() => setManageSkillsOpen(true)}
                   />
@@ -630,6 +635,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         onOpenChange={setManageSkillsOpen}
         skills={skills}
         loading={skillsLoading}
+        selectedIds={selectedSkillIds}
+        onToggleSkill={handleSelectSkill}
       />
     </div>
   );

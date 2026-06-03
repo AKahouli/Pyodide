@@ -53,4 +53,10 @@ export class UpdateConversationDto {
   @ValidateIf((_o, v) => v !== null)
   @IsMongoId()
   projectId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Skill IDs selected for this conversation', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  skillIds?: string[];
 }

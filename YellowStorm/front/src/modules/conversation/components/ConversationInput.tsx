@@ -106,6 +106,9 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         memberIds: memberIds?.length ? memberIds : undefined,
         parentMessageId: replyingToMessage?.id,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
+        skillIds: useConversationStore.getState().selectedSkillIds.length
+          ? useConversationStore.getState().selectedSkillIds
+          : undefined,
       });
 
       clearAll();

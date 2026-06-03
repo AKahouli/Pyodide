@@ -229,6 +229,10 @@ export class ConversationService {
       conversation.workspaces = data.workspaces.map((id) => new Types.ObjectId(id));
     }
 
+    if (data.skillIds !== undefined) {
+      conversation.selectedSkills = data.skillIds.map((id) => new Types.ObjectId(id));
+    }
+
     if (data.projectId !== undefined) {
       conversation.projectId = data.projectId ? new Types.ObjectId(data.projectId) : null;
     }
@@ -902,6 +906,7 @@ export class ConversationService {
       createdBy: toStr(conversation.createdBy?._id || conversation.createdBy),
       ownerName,
       workspaces: conversation.workspaces?.map((w: any) => toStr(w)) || [],
+      selectedSkills: conversation.selectedSkills?.map((s: any) => toStr(s)) || [],
       systemWorkspaceId: toStr(conversation.systemWorkspaceId),
       lastMessageAt: toISO(conversation.lastMessageAt),
       messageCount: conversation.messageCount,

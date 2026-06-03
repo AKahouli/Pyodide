@@ -122,6 +122,7 @@ class AgentTeamConfig:
         attached_files (Optional[List[dict]]): Documents attached in this turn (being indexed)
         previous_attached_files (Optional[List[dict]]): Already-indexed files from previous turns
         connector_repo (Optional[Dict[str, str]]): Conversation-level repo binding from connector picker
+        skills (Optional[List[dict]]): Conversation-level skills selected by the user (applied to every agent)
     """
     session_id: str
     user_id: str
@@ -135,6 +136,7 @@ class AgentTeamConfig:
     attached_images: Optional[List[dict]] = None
     previous_attached_files: Optional[List[dict]] = None
     connector_repo: Optional[Dict[str, str]] = None
+    skills: Optional[List[dict]] = None
 
     def __post_init__(self) -> None:
         if self.brain_ids is None and self.workspace_names is not None:
