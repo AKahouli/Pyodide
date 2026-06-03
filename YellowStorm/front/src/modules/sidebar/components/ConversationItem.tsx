@@ -23,6 +23,14 @@ import { CONVERSATION_DRAG_MIME, encodeConversationDrag } from './drag-types';
 export interface ConversationItemProps {
   id: string;
   title: string;
+  /** Link target. Defaults to the v1 conversation route. v2 items pass their own. */
+  to?: string;
+  /** Optional leading icon (e.g. a bot icon to mark conversation-v2 items). */
+  icon?: React.ReactNode;
+  /** Active-state override. When omitted, falls back to the v1 current conversation. */
+  isActive?: boolean;
+  /** Whether the item can be dragged into projects. v2 items are not draggable. */
+  draggable?: boolean;
   projectId?: string | null;
   isGroup?: boolean;
   mentionCount?: number;
@@ -36,6 +44,10 @@ export interface ConversationItemProps {
 export const ConversationItem = memo(function ConversationItem({
   id,
   title,
+  to,
+  icon,
+  isActive,
+  draggable = true,
   projectId,
   isGroup,
   mentionCount,
@@ -60,6 +72,9 @@ export const ConversationItem = memo(function ConversationItem({
   const displayTitle = isTypewriting && typewriterText ? typewriterText : title;
   const { t } = useModuleTranslation('sidebar');
 
+  const resolvedTo = to ?? `/conversation/${id}`;
+  const resolvedActive = isActive ?? currentConversationId === id;
+
   const handleRenameClick = useCallback(() => setRenameOpen(true), []);
   const handleDeleteClick = useCallback(() => setDeleteOpen(true), []);
   const handleShareClick = useCallback(() => onShare?.(), [onShare]);
@@ -83,11 +98,12 @@ export const ConversationItem = memo(function ConversationItem({
         data-slot='sidebar-menu-item'
         data-sidebar='menu-item'
         className='group/menu-item relative'
-        draggable
-        onDragStart={handleDragStart}
+        draggable={draggable}
+        onDragStart={draggable ? handleDragStart : undefined}
       >
-        <SidebarMenuButton asChild tooltip={displayTitle} isActive={currentConversationId === id}>
-          <NavLink to={`/conversation/${id}`} draggable={false}>
+        <SidebarMenuButton asChild tooltip={displayTitle} isActive={resolvedActive}>
+          <NavLink to={resolvedTo} draggable={false}>
+
             {isGroup && (
               <div className='relative'>
                 <Users className='h-4 w-4' />
@@ -99,6 +115,7 @@ export const ConversationItem = memo(function ConversationItem({
               </div>
             )}
             <span className='truncate'>{displayTitle}</span>
+            {icon}
           </NavLink>
         </SidebarMenuButton>
         <DropdownMenu>
@@ -117,10 +134,12 @@ export const ConversationItem = memo(function ConversationItem({
               <Pencil className='mr-2 h-4 w-4' />
               {t('conversations.rename')}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleShareClick} className='cursor-pointer'>
-              <Share className='mr-2 h-4 w-4' />
-              {t('conversations.share')}
-            </DropdownMenuItem>
+            {onShare && (
+              <DropdownMenuItem onClick={handleShareClick} className='cursor-pointer'>
+                <Share className='mr-2 h-4 w-4' />
+                {t('conversations.share')}
+              </DropdownMenuItem>
+            )}
             {onMove && (
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className='cursor-pointer'>
