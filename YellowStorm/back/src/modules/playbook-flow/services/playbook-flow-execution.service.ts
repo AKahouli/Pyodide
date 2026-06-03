@@ -49,6 +49,7 @@ import { PlaybookFlowOutputContractService } from './playbook-flow-output-contra
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
 import { SystemService } from '@modules/system/system.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
@@ -209,6 +210,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly eventHandlerService?: PlaybookExecutionEventHandlerService,
     @Optional() private readonly replayRuntimeService?: PlaybookExecutionReplayRuntimeService,
     @Optional() private readonly executionStreamFinalizerService?: PlaybookExecutionStreamFinalizerService,
+    @Optional() private readonly workspaceService?: WorkspaceService,
     @Optional()
     @InjectModel(FlowHitlMemory.name)
     private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
@@ -819,6 +821,83 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
   }
 
+  /**
+   * Collect every workspaceId referenced by a constant-value file binding.
+   * Constant values are file references (`{ workspaceId, name, path, ... }`) or
+   * arrays of them, so we scan both shapes. Used to resolve their storage paths
+   * in a single query before serializing the bindings for the runtime.
+   */
+  private collectBindingWorkspaceIds(dataBindings: any[]): string[] {
+    const ids = new Set<string>();
+    const scan = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        value.forEach(scan);
+        return;
+      }
+      const workspaceId = (value as Record<string, unknown>).workspaceId;
+      if (typeof workspaceId === 'string' && workspaceId) ids.add(workspaceId);
+    };
+    for (const binding of dataBindings) scan(binding?.constantValue);
+    return [...ids];
+  }
+
+  /**
+   * Add the `{ownerUserId}/{storagePrefix}` workspacePath next to the workspaceId
+   * carried by a constant-value file binding, so the runtime gets the storage
+   * path alongside the existing workspaceId / file name / file path. Handles both
+   * a single file reference and an array of them; references without a resolvable
+   * workspaceId are returned unchanged.
+   */
+  private enrichConstantValueWithWorkspacePath(
+    constantValue: unknown,
+    workspacePathsById: Record<string, string>,
+  ): unknown {
+    const enrichOne = (value: unknown): unknown => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+      const record = value as Record<string, unknown>;
+      const workspaceId = typeof record.workspaceId === 'string' ? record.workspaceId : '';
+      const workspacePath = workspaceId ? workspacePathsById[workspaceId] : undefined;
+      return workspacePath ? { ...record, workspacePath } : value;
+    };
+    if (Array.isArray(constantValue)) return constantValue.map(enrichOne);
+    return enrichOne(constantValue);
+  }
+
+  /**
+   * Serialize a snapshot's data bindings to the proto shape, enriching each
+   * constant-value file reference with its workspacePath. `knownWorkspacePaths`
+   * holds paths already resolved for the run's selected workspaces; any extra
+   * workspaceIds referenced only by bindings are resolved here in one query.
+   */
+  private async buildDataBindingsProto(
+    dataBindings: any[],
+    knownWorkspacePaths: Record<string, string> = {},
+  ): Promise<any[]> {
+    const referenced = this.collectBindingWorkspaceIds(dataBindings);
+    const missing = referenced.filter((id) => !(id in knownWorkspacePaths));
+    const resolvedMissing = missing.length > 0 && this.workspaceService
+      ? await this.workspaceService.getStoragePathMapByIds(missing)
+      : {};
+    const workspacePathsById = { ...knownWorkspacePaths, ...resolvedMissing };
+
+    return dataBindings.map((b) => ({
+      id: b.id,
+      target_node: b.targetNode,
+      target_port: b.targetPort,
+      source_kind: b.sourceKind,
+      source_node: b.sourceNode || '',
+      source_port: b.sourcePort || '',
+      iteration: b.iteration || '',
+      trigger_path: b.triggerPath || '',
+      state_path: b.statePath || '',
+      constant_value: toGrpcValue(
+        this.enrichConstantValueWithWorkspacePath(b.constantValue, workspacePathsById),
+      ),
+      expression: b.expression || '',
+    }));
+  }
+
   private assertSingleStepControlDependenciesSupported(
     nodes: FlowNode[],
     controlEdges: ControlEdge[],
@@ -1086,10 +1165,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         : new Map<string, { formatGuide?: string | null }>();
       const activeHitlMemories = await this.loadActiveHitlMemories(flowId, taskNodeIds);
       const replayInputContext = inputContext || {};
+      const workspaceIds: string[] = ((snapshotOverride || snapshot) as any).workspaces || [];
+      const defaultWorkspaceId = workspaceIds[0] || '';
+      // Resolve each workspaceId to its `{ownerUserId}/{storagePrefix}` storage
+      // path so the runtime can scan documents without a second lookup. Keyed by
+      // workspaceId (lossless); unresolved ids are simply absent from the map.
+      const workspacePathsById = this.workspaceService
+        ? await this.workspaceService.getStoragePathMapByIds(workspaceIds)
+        : {};
       const runtimeInputContext = this.buildRuntimeInputContext({
         ...replayInputContext,
-        __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
-        __playbook_default_workspace_id: (((snapshotOverride || snapshot) as any).workspaces || [])[0] || '',
+        __playbook_workspace_ids: workspaceIds,
+        __playbook_default_workspace_id: defaultWorkspaceId,
+        __playbook_workspace_paths: workspacePathsById,
+        __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
       }, activeHitlMemories);
       const replayFingerprintNodesById = new Map(
         replayFingerprintNodes.map((entry) => [String((entry as any).id || ''), entry]),
@@ -1236,6 +1325,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         ? ((executionRecord as Record<string, unknown>).seededTaskOutputs as Array<SeededTaskOutput>)
         : [];
 
+      const dataBindingsProto = await this.buildDataBindingsProto(
+        snapshot.dataBindings as any[],
+        workspacePathsById,
+      );
+
       const request = {
         execution_id: executionId,
         flow_id: flowId,
@@ -1301,19 +1395,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           source_output_port_id: e.sourceOutputPortId || '',
           target_input_port_id: e.targetInputPortId || '',
         })),
-        data_bindings: (snapshot.dataBindings as any[]).map((b) => ({
-          id: b.id,
-          target_node: b.targetNode,
-          target_port: b.targetPort,
-          source_kind: b.sourceKind,
-          source_node: b.sourceNode || '',
-          source_port: b.sourcePort || '',
-          iteration: b.iteration || '',
-          trigger_path: b.triggerPath || '',
-          state_path: b.statePath || '',
-          constant_value: toGrpcValue(b.constantValue),
-          expression: b.expression || '',
-        })),
+        data_bindings: dataBindingsProto,
         settings: {
           recursion_limit: recursionLimit,
           max_parallelism: maxParallelism,
@@ -2365,6 +2447,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       };
     });
 
+    const dataBindingsProto = await this.buildDataBindingsProto(snapshot.dataBindings as any[]);
+
     const snapshotProto = {
       nodes: enrichedNodes.map((n) => ({
         id: n.id,
@@ -2407,12 +2491,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         router_label: e.routerLabel || '', priority: e.priority || 0,
         source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
       })),
-      data_bindings: (snapshot.dataBindings as any[]).map((b) => ({
-        id: b.id, target_node: b.targetNode, target_port: b.targetPort,
-        source_kind: b.sourceKind, source_node: b.sourceNode || '', source_port: b.sourcePort || '',
-        iteration: b.iteration || '', trigger_path: b.triggerPath || '', state_path: b.statePath || '',
-        constant_value: toGrpcValue(b.constantValue), expression: b.expression || '',
-      })),
+      data_bindings: dataBindingsProto,
       settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
     };
 

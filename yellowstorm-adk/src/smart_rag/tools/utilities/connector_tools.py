@@ -594,7 +594,6 @@ def _relax_fixed_param_requirements(
     return relaxed_schema
 
 
-
 def _with_default_workspace_params(
     params: Dict[str, Any],
     parameter_schema: Dict[str, Any],

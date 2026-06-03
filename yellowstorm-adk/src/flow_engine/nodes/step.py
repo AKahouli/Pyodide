@@ -89,6 +89,43 @@ def _resolve_output_workspace_id(
     return ""
 
 
+def _collect_workspace_ceph_paths(
+    input_context: dict[str, Any],
+    state: ExecutionState,
+    document_paths: list[str],
+) -> list[str]:
+    """Merge Ceph workspace paths from wired documents and playbook-level context.
+
+    Returns a deduplicated list of "user_id/workspace_name" paths to mount into the
+    sandbox VM (sent to MCP connectors via the x-workspace-paths header).
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: Any) -> None:
+        path = str(raw or "").strip().strip("/")
+        if "/" not in path or path in seen:
+            return
+        seen.add(path)
+        paths.append(path)
+
+    # Document-derived paths first (most specific to this node's inputs).
+    for path in document_paths or []:
+        _add(path)
+
+    # Playbook-level workspace paths: dict {workspace_id: "user_id/workspace_name"}.
+    state_inputs = state.get("inputs", {})
+    for source in (input_context, state_inputs):
+        if not isinstance(source, dict):
+            continue
+        playbook_paths = source.get("__playbook_workspace_paths")
+        if isinstance(playbook_paths, dict):
+            for value in playbook_paths.values():
+                _add(value)
+
+    return paths
+
+
 def _build_prompt(
     label: str,
     node_id: str,
@@ -455,6 +492,11 @@ async def _execute_step(
         input_context if isinstance(input_context, dict) else {},
         metadata,
     )
+    workspace_ceph_paths = _collect_workspace_ceph_paths(
+        input_context if isinstance(input_context, dict) else {},
+        state,
+        tool_scope.workspace_ceph_paths,
+    )
     tool_names = {
         str(tool.get("name") or "")
         for tool in agent_config.get("tools", [])
@@ -507,6 +549,7 @@ async def _execute_step(
         output_workspace_id=output_workspace_id,
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
+        workspace_ceph_paths=workspace_ceph_paths,
     )
     components: list[dict[str, Any]] = []
     should_stream_tokens = (
