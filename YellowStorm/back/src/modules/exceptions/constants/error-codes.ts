@@ -262,6 +262,17 @@ export enum ErrorCode {
   TELEGRAM_USER_INACTIVE = 'ERR_3207',
   TELEGRAM_DUPLICATE_UPDATE = 'ERR_3208',
 
+  // Widget Chat errors (3300-3399)
+  WIDGET_TOKEN_INVALID = 'ERR_3300',
+  WIDGET_TOKEN_EXPIRED = 'ERR_3301',
+  WIDGET_TOKEN_INACTIVE = 'ERR_3302',
+  WIDGET_ORIGIN_NOT_ALLOWED = 'ERR_3303',
+  WIDGET_AGENT_NOT_FOUND = 'ERR_3304',
+  WIDGET_SESSION_NOT_FOUND = 'ERR_3305',
+  WIDGET_AI_UNAVAILABLE = 'ERR_3306',
+  WIDGET_MESSAGE_LIMIT = 'ERR_3307',
+  WIDGET_TOKEN_NOT_FOUND = 'ERR_3308',
+
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
   CONNECTED_APP_ALREADY_EXISTS = 'ERR_3001',
@@ -486,6 +497,16 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_COMPLETION_FAILED]: 'Chat completion request failed.',
   [ErrorCode.CHAT_COMPLETION_MODEL_NOT_FOUND]: 'The configured chat completion model was not found.',
   [ErrorCode.CHAT_COMPLETION_LITELLM_UNAVAILABLE]: 'LiteLLM service is unavailable for chat completion.',
+
+  [ErrorCode.WIDGET_TOKEN_INVALID]: 'Invalid or expired widget token.',
+  [ErrorCode.WIDGET_TOKEN_EXPIRED]: 'Widget token has expired.',
+  [ErrorCode.WIDGET_TOKEN_INACTIVE]: 'This widget token has been deactivated.',
+  [ErrorCode.WIDGET_ORIGIN_NOT_ALLOWED]: 'This widget is not allowed on the current domain.',
+  [ErrorCode.WIDGET_AGENT_NOT_FOUND]: 'The agent associated with this widget token was not found or is inactive.',
+  [ErrorCode.WIDGET_SESSION_NOT_FOUND]: 'Widget session not found.',
+  [ErrorCode.WIDGET_AI_UNAVAILABLE]: 'AI service is currently unavailable for the widget.',
+  [ErrorCode.WIDGET_MESSAGE_LIMIT]: 'Widget message limit reached for this session.',
+  [ErrorCode.WIDGET_TOKEN_NOT_FOUND]: 'Widget token not found.',
 
   [ErrorCode.CONNECTED_APP_NOT_FOUND]: 'Connected app not found.',
   [ErrorCode.CONNECTED_APP_ALREADY_EXISTS]: 'A connected app with this key already exists.',

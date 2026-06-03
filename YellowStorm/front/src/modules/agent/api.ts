@@ -109,6 +109,19 @@ export async function deleteAgentTelegramIntegration(agentId: string): Promise<v
   await apiClient.delete(API_ENDPOINTS.agents.telegramIntegration(agentId));
 }
 
+export interface WidgetTokenResponse {
+  id: string;
+  token: string;
+  agentId: string;
+}
+
+export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.widgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
+
 
 // Re-export evaluation API functions
 export * from './evaluation-api';

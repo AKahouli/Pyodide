@@ -54,6 +54,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
 import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
+import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
 
 @Module({
   imports: [
@@ -108,6 +109,7 @@ import { TelegramModule } from './modules/telegram';
     ClassifierModule,
     HealthModule,
     EvaluationModule,
+    WidgetChatModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

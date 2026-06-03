@@ -1,4 +1,3 @@
-const WIDGET_CHAT_API_URL = '__YELLOWSTORM_CHAT_API_URL__';
 const WIDGET_TITLE = 'YellowStorm AI Support';
 
 const WIDGET_STYLES = [
@@ -93,6 +92,9 @@ const WIDGET_HTML = [
   '</div>',
 ].join('\n');
 
+const GENERATE_UUID_FN =
+  'function generateUUID(){return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(c){var r=Math.random()*16|0;var v=c==="x"?r:(r&0x3|0x8);return v.toString(16);});}';
+
 const WIDGET_SCRIPT = [
   'var root=document.createElement("div");root.id="ys-widget-root";',
   'root.innerHTML=[\'<style>\',' + JSON.stringify(WIDGET_STYLES) + ',\'</style>\',' + JSON.stringify(WIDGET_HTML) + '].join("\\n");',
@@ -106,7 +108,10 @@ const WIDGET_SCRIPT = [
   'var input=document.getElementById("ys-widget-input");',
   'var sendBtn=document.getElementById("ys-widget-send");',
   'var badge=document.getElementById("ys-widget-badge");',
-  'var isOpen=false;var requestInFlight=false;var unreadCount=0;',
+  GENERATE_UUID_FN,
+  'var isOpen=false;var requestInFlight=false;var unreadCount=0;var visitorId=generateUUID();',
+  'try{var stored=localStorage.getItem("ys_visitor_id");if(stored)visitorId=stored;}catch(e){}',
+  'try{localStorage.setItem("ys_visitor_id",visitorId);}catch(e){}',
   '',
   'function formatTime(){var d=new Date();var h=d.getHours();var m=d.getMinutes();return(h<10?"0":"")+h+":"+(m<10?"0":"")+m;}',
   '',
@@ -116,9 +121,14 @@ const WIDGET_SCRIPT = [
   '',
   'function addMessage(role,text,isError){var wrap=document.createElement("div");wrap.className="ys-msg-wrap "+(role==="user"?"ys-right":"ys-left");if(isError){var err=document.createElement("div");err.className="ys-msg-error";err.textContent=text;messagesEl.appendChild(err);}else{var msg=document.createElement("div");msg.className="ys-msg "+(role==="user"?"ys-msg-user":"ys-msg-assistant");msg.textContent=text;var time=document.createElement("span");time.className="ys-msg-time";time.textContent=formatTime();wrap.appendChild(msg);wrap.appendChild(time);messagesEl.appendChild(wrap);}scrollToBottom();if(!isOpen&&role==="assistant"&&!isError){unreadCount++;badge.textContent=unreadCount>9?"9+":String(unreadCount);badge.classList.add("ys-visible");}}',
   '',
+  'var currentAssistantEl=null;',
+  'function appendToAssistant(text){if(!currentAssistantEl){addMessage("assistant","");currentAssistantEl=messagesEl.lastElementChild;if(!currentAssistantEl)return;var msgContainer=currentAssistantEl.querySelector(".ys-msg");if(msgContainer)msgContainer.textContent="";}var msgContainer=currentAssistantEl.querySelector(".ys-msg");if(msgContainer)msgContainer.textContent+=text;scrollToBottom();}',
+  '',
   'function showTyping(show){requestInFlight=show;sendBtn.disabled=show;var existing=messagesEl.querySelector(".ys-typing");if(show&&!existing){var typing=document.createElement("div");typing.className="ys-typing";typing.setAttribute("aria-label","AI is typing");typing.innerHTML=\'<span class="ys-typing-dot"></span><span class="ys-typing-dot"></span><span class="ys-typing-dot"></span>\';messagesEl.appendChild(typing);scrollToBottom();}if(!show&&existing){existing.remove();}}',
   '',
-  'async function sendMessage(text){addMessage("user",text);showTyping(true);try{var response=await fetch(CHAT_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId:AGENT_ID,message:text})});if(!response.ok)throw new Error("HTTP "+response.status);var data=await response.json();var reply=data&&data.data&&typeof data.data.reply==="string"?data.data.reply:data&&typeof data.reply==="string"?data.reply:"I received your message.";addMessage("assistant",reply);}catch(err){addMessage("assistant","Sorry, something went wrong. Please try again.",true);}finally{showTyping(false);}}',
+  'async function connectStream(){try{if(window._ysEvt){window._ysEvt.close();window._ysEvt=null;}if(!SESSION_ID)return;var url=STREAM_URL+"?token="+encodeURIComponent(WIDGET_TOKEN)+"&sessionId="+encodeURIComponent(SESSION_ID);var evt=new EventSource(url);evt.addEventListener("stream_start",function(){showTyping(true);currentAssistantEl=null;});evt.addEventListener("stream_chunk",function(e){var d=JSON.parse(e.data);if(d.component&&d.component.type==="text"&&typeof d.component.data.content==="string"){appendToAssistant(d.component.data.content);}});evt.addEventListener("stream_complete",function(){showTyping(false);currentAssistantEl=null;});evt.addEventListener("stream_error",function(e){showTyping(false);currentAssistantEl=null;var d=JSON.parse(e.data);addMessage("assistant",d.message||"An error occurred. Please try again.",true);});evt.onerror=function(){};window._ysEvt=evt;}catch(e){}}',
+  '',
+  'async function sendMessage(text){addMessage("user",text);showTyping(true);try{var resp=await fetch(CHAT_API_URL,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+WIDGET_TOKEN},body:JSON.stringify({message:text,visitorId:visitorId})});if(!resp.ok)throw new Error("HTTP "+resp.status);var data=await resp.json();var payload=data.data||data;if(payload&&payload.sessionId){SESSION_ID=String(payload.sessionId);connectStream();}}catch(err){showTyping(false);addMessage("assistant","Sorry, something went wrong. Please try again.",true);}}',
   '',
   'addMessage("assistant","Hello! How can I help you today?");',
   '',
@@ -128,8 +138,8 @@ const WIDGET_SCRIPT = [
   'form.addEventListener("submit",function(e){e.preventDefault();if(requestInFlight)return;var value=input.value.trim();if(!value)return;input.value="";sendMessage(value);});',
 ].join('\n');
 
-export function buildWidgetSnippet(agentId: string): string {
-  const config = `var AGENT_ID="${agentId}";var CHAT_API_URL="${WIDGET_CHAT_API_URL}";var TITLE="${WIDGET_TITLE}";`;
+export function buildWidgetSnippet(agentId: string, token: string, chatApiUrl: string, streamApiUrl: string): string {
+  const config = 'var AGENT_ID="' + agentId + '";var WIDGET_TOKEN="' + token + '";var CHAT_API_URL="' + chatApiUrl + '";var STREAM_URL="' + streamApiUrl + '";var SESSION_ID="";';
   return [
     '<script>',
     '(function(){',

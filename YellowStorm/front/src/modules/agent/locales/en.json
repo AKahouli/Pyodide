@@ -121,6 +121,7 @@
   "createEdit.actions.deploymentSnippetCopiedShort": "Copied",
   "createEdit.fields.deploymentSnippetCopied": "Snippet copied.",
   "createEdit.fields.deploymentCopyFailed": "Failed to copy snippet",
+  "createEdit.fields.deploymentGenerateFailed": "Failed to generate deployment snippet",
   "createEdit.actions.generateDeploymentSnippet": "Generate",
   "createEdit.actions.copyDeploymentSnippet": "Copy snippet",
   "createEdit.fields.additionalSkills": "Additional skills",

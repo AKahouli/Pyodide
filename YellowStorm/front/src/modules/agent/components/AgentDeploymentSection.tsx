@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { showSuccess, showWarning } from "@/lib/notifications";
 import { useModuleTranslation } from "@/modules/localization";
 import { buildWidgetSnippet } from "../constants/widget-template";
+import { createWidgetToken } from "@/modules/agent/api";
 
 interface AgentDeploymentSectionProps {
   agentId: string | null;
@@ -27,18 +28,33 @@ export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps)
   const { t } = useModuleTranslation("agent");
   const [snippet, setSnippet] = useState("");
   const [isCopied, setIsCopied] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const hasSnippet = useMemo(() => snippet.trim().length > 0, [snippet]);
   const codeLines = useMemo(() => (hasSnippet ? snippet.split("\n") : []), [snippet, hasSnippet]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!agentId) {
       showWarning(t("createEdit.fields.deploymentRequiresAgent"));
       return;
     }
-    setSnippet(buildWidgetSnippet(agentId));
-    setIsCopied(false);
-    showSuccess(t("createEdit.fields.deploymentGenerated"));
+    setIsGenerating(true);
+    try {
+      const result = await createWidgetToken(agentId);
+      const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:3000/api/v1").replace(
+        /\/$/,
+        "",
+      );
+      const chatApiUrl = `${apiBase}/widget/chat`;
+      const streamApiUrl = `${apiBase}/widget/stream`;
+      setSnippet(buildWidgetSnippet(agentId, result.token, chatApiUrl, streamApiUrl));
+      setIsCopied(false);
+      showSuccess(t("createEdit.fields.deploymentGenerated"));
+    } catch {
+      showWarning(t("createEdit.fields.deploymentGenerateFailed"));
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleCopySnippet = async () => {
@@ -72,7 +88,7 @@ export function AgentDeploymentSection({ agentId }: AgentDeploymentSectionProps)
           {t("createEdit.fields.deploymentRequiresAgent")}
         </p>
       ) : (
-        <Button type="button" size="sm" className="shadow-sm" onClick={handleGenerate}>
+        <Button type="button" size="sm" className="shadow-sm" onClick={handleGenerate} disabled={isGenerating}>
           <Sparkles className="mr-1.5 h-3.5 w-3.5" />
           {t("createEdit.actions.generateDeploymentSnippet")}
         </Button>

@@ -121,6 +121,7 @@
   "createEdit.actions.deploymentSnippetCopiedShort": "Copié",
   "createEdit.fields.deploymentSnippetCopied": "Script copié.",
   "createEdit.fields.deploymentCopyFailed": "Échec de la copie du script",
+  "createEdit.fields.deploymentGenerateFailed": "Échec de la génération du script de déploiement",
   "createEdit.actions.generateDeploymentSnippet": "Generate",
   "createEdit.actions.copyDeploymentSnippet": "Copier le script",
   "createEdit.fields.additionalSkills": "Compétences supplémentaires",
