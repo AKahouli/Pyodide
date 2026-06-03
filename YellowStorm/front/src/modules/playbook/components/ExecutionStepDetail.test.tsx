@@ -667,7 +667,15 @@ describe('ExecutionStepDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
 
     expect(onApplyAdvisorIntent).toHaveBeenCalledWith({
-      intent: expect.stringContaining('Optimize only the step "Analyze Data" based on these advisor findings.'),
+      mode: 'optimize-step',
+      executionId: 'exec-1',
+      items: [
+        {
+          id: 'rem-1',
+          category: 'prompt',
+          description: 'Clarify the task prompt to request a concise summary.',
+        },
+      ],
       selectedTaskId: 't1',
     });
 

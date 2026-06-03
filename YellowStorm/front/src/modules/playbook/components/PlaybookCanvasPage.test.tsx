@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations, resolveCanvasNodeSelection } from './PlaybookCanvasPage';
+import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
+import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
 
 describe('buildCanvasJudgeStateMap', () => {

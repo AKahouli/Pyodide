@@ -96,9 +96,10 @@ def build_step_prompt(
         lines.extend([
             "",
             "Response Format:",
-            "Return JSON only using the exact shape below.",
+            "Return JSON only using the **EXACT** shape below.",
             json.dumps(response_schema, indent=2, default=str),
-            "`display_text` is the final human-readable answer.",
+            "All string values must always use \" for any double quote inside the value.",
+            "`display_text` is the final human-readable answer and must always be plain markdown. Never embed a JSON object inside it.",  
             "Each item in `outputs` must target one declared output port.",
             "Do not put reasoning steps inside `outputs`; reasoning steps belong only in top-level `reasoning_trace`.",
             "For document outputs, use `filename` and `filepath` (not `content`).",

@@ -1335,7 +1335,8 @@ def build_task_prompt(
                     "  ]\n"
                     "}\n\n"
                     "Rules:\n"
-                    "- `display_text` is the final user-visible answer.\n"
+                    "All string values must always use \" for any double quote inside the value.",
+                    "`display_text` is the final human-readable answer and must always be plain markdown. Never embed a JSON object inside it.",  
                     "- Use only declared `output_port_id` values.\n"
                     "- Every output object must include `artifact_kind`; it must match the declared port kind.\n"
                     "- Every output object must use `content` for its payload.\n"
