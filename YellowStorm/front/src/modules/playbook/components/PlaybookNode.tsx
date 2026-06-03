@@ -359,6 +359,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [agentDialogSaving, setAgentDialogSaving] = useState(false);
   const updateAgent = useAgentStore((s) => s.updateAgent);
+  const createAgent = useAgentStore((s) => s.createAgent);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
@@ -501,8 +502,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     if (!agent) return;
     setAgentDialogSaving(true);
     try {
-      await updateAgent(agent.id, {
+      const payload = {
         name: data.name,
+        slug: data.slug,
         agentType: data.agentType,
         role: data.role,
         description: data.description,
@@ -517,14 +519,21 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         connectors: data.connectors,
         isActive: data.isActive,
         isDefaultForType: data.isDefaultForType,
-      });
+      };
+
+      if (agent.isDefault) {
+        const cloned = await createAgent(payload);
+        nodeDataActions?.updateNodeData(id, { assignedAgentId: cloned.id });
+      } else {
+        await updateAgent(agent.id, payload);
+      }
       setAgentDialogOpen(false);
     } catch {
       // handled by store toast
     } finally {
       setAgentDialogSaving(false);
     }
-  }, [agent, updateAgent]);
+  }, [agent, id, createAgent, updateAgent, nodeDataActions]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();

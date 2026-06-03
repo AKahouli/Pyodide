@@ -12,8 +12,8 @@ import { playbookFeatures } from '../features';
 import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
 const IDLE_DEBOUNCE_MS = 600;
-const ACTIVE_EDIT_DEBOUNCE_MS = 3000;
-const MAX_DEBOUNCE_MS = 5000;
+const ACTIVE_EDIT_DEBOUNCE_MS = 1500;
+const MAX_DEBOUNCE_MS = 2500;
 
 function getAdaptiveDebounceMs(params: {
   lastAutosaveDurationMs: number | null;
