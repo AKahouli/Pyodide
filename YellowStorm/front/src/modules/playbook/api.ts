@@ -33,6 +33,8 @@ import type {
   UpdateOutputFormatTemplateData,
   OutputFormatTemplate,
   AdvisorRemediationItem,
+  AdvisorRemediationPreviewRequest,
+  AdvisorRemediationPreviewResponse,
   PlaybookEvaluationBaseline,
   PlaybookEvaluationExecution,
   PlaybookRepeatabilitySummary,
@@ -1146,6 +1148,18 @@ export async function fetchAdvisorRemediations(
   const response = await apiClient.get<ApiResponse<AdvisorRemediationItem[]>>(
     `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations`,
     { params },
+  );
+  return response.data.data;
+}
+
+export async function previewAdvisorRemediation(
+  playbookId: string,
+  data: AdvisorRemediationPreviewRequest,
+): Promise<AdvisorRemediationPreviewResponse> {
+  const response = await apiClient.post<ApiResponse<AdvisorRemediationPreviewResponse>>(
+    API_ENDPOINTS.playbooks.advisorRemediationPreview(playbookId),
+    data,
+    { timeout: 180000 },
   );
   return response.data.data;
 }

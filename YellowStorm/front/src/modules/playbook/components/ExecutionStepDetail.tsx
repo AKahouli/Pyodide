@@ -39,8 +39,6 @@ import type {
 } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
-const MAX_ADVISOR_INTENT_LENGTH = 4000;
-
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   structure: 'bg-purple-100 text-purple-700 border-purple-200',
   prompt: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -849,69 +847,17 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, executePlaybook, t]);
 
-  const buildAdvisorIntent = useCallback((
+  const buildSelectedRemediationItems = useCallback((
     selectedIds: string[],
     editedItems: Map<string, string>,
-    mode: AdvisorRemediationMode,
-  ): string => {
+  ): Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>> => {
     const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
-    const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
-    for (const item of selectedItems) {
-      const existing = groupedByCategory.get(item.category) || [];
-      existing.push(item);
-      groupedByCategory.set(item.category, existing);
-    }
-    const categoryOrder: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'];
-    const findings = categoryOrder
-      .filter((cat) => groupedByCategory.has(cat))
-      .map((cat) => {
-        const items = groupedByCategory.get(cat)!;
-        const lines = items.map((item) => {
-          const desc = editedItems.get(item.id) || item.description;
-          return `- [${cat}] ${desc}`;
-        });
-        return lines.join('\n');
-      })
-      .join('\n');
-
-    if (mode === 'optimize-step') {
-      const taskTitle = step?.taskId
-        ? currentPlaybook?.tasks.find((t) => t.id === step.taskId)?.title || step.taskId
-        : 'this step';
-      return [
-        `Optimize only the step "${taskTitle}" based on these advisor findings.`,
-        'Preserve the rest of the playbook unless a connection or port must change to keep the workflow valid.',
-        '',
-        'Advisor findings:',
-        findings,
-        '',
-        'Apply the changes directly to the current playbook.',
-      ].join('\n');
-    }
-
-    if (mode === 'generate-new') {
-      return [
-        'Plan a broader optimization of the current playbook based on these advisor findings.',
-        'Restructure the current workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
-        'Preserve the user\'s original intent.',
-        '',
-        'Advisor findings:',
-        findings,
-        '',
-        'Apply the changes directly to the current playbook.',
-      ].join('\n');
-    }
-
-    return [
-      'Optimize the current playbook based on these advisor findings.',
-      'Preserve the user\'s original intent, keep valid DAG structure, and only change steps, edges, ports, or agent assignments that are necessary to address the findings.',
-      '',
-      'Advisor findings:',
-      findings,
-      '',
-      'Apply the changes directly to the current playbook.',
-    ].join('\n');
-  }, [remediationItems, step?.taskId, currentPlaybook?.tasks]);
+    return selectedItems.map((item) => ({
+      id: item.id,
+      category: item.category,
+      description: editedItems.get(item.id) || item.description,
+    }));
+  }, [remediationItems]);
 
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
@@ -922,18 +868,15 @@ export function ExecutionStepDetail({
       throw new Error(message);
     }
 
-    const intent = buildAdvisorIntent(selectedIds, editedItems, remediationDialogMode);
-    if (intent.length > MAX_ADVISOR_INTENT_LENGTH) {
-      const message = t('detail.remediation.intentTooLong', { max: MAX_ADVISOR_INTENT_LENGTH });
-      showError(message);
-      throw new Error(message);
-    }
+    const items = buildSelectedRemediationItems(selectedIds, editedItems);
 
     return onApplyAdvisorIntent({
-      intent,
+      mode: remediationDialogMode,
+      executionId: execution.id,
+      items,
       selectedTaskId: remediationDialogMode === 'optimize-step' ? step?.taskId : undefined,
     });
-  }, [buildAdvisorIntent, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
+  }, [buildSelectedRemediationItems, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
 
   const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
     if (!currentPlaybook || !execution || !step) return;

@@ -11,7 +11,7 @@ import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/req
 import { playbookFeatures } from '../features';
 import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
-const IDLE_DEBOUNCE_MS = 1200;
+const IDLE_DEBOUNCE_MS = 600;
 const ACTIVE_EDIT_DEBOUNCE_MS = 3000;
 const MAX_DEBOUNCE_MS = 5000;
 

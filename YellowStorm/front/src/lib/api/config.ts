@@ -288,6 +288,7 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    advisorRemediationPreview: (id: string) => `/playbooks/${id}/advisor-remediations/preview`,
     nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,

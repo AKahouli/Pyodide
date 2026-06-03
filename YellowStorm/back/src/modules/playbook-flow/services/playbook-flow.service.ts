@@ -30,18 +30,38 @@ import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
 
-  private stableStringify(value: unknown): string {
-    if (value === null || value === undefined) {
-      return JSON.stringify(value);
+  private stableStringify(value: unknown, seen = new WeakSet<object>()): string {
+    if (value === undefined) {
+      return 'undefined';
+    }
+
+    if (value === null) {
+      return 'null';
     }
     if (typeof value !== 'object') {
       return JSON.stringify(value);
     }
-    if (Array.isArray(value)) {
-      return `[${value.map((item) => this.stableStringify(item)).join(',')}]`;
+
+    const objectValue = value as Record<string, unknown>;
+
+    if (seen.has(objectValue)) {
+      return JSON.stringify('[Circular]');
     }
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${this.stableStringify(record[key])}`).join(',')}}`;
+
+    if (Array.isArray(value)) {
+      seen.add(objectValue);
+      const serialized = `[${value.map((item) => this.stableStringify(item, seen)).join(',')}]`;
+      seen.delete(objectValue);
+      return serialized;
+    }
+
+    seen.add(objectValue);
+    const serialized = `{${Object.keys(objectValue)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${this.stableStringify(objectValue[key], seen)}`)
+      .join(',')}}`;
+    seen.delete(objectValue);
+    return serialized;
   }
 
   private buildEditorStateHash(flow: FlowDocument | Record<string, unknown>): string {
