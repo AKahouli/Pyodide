@@ -131,6 +131,12 @@ For delete_data_binding include:
 - Impact counts must match the actual changes.
 - Confidence must reflect uncertainty honestly.
 
+# Advisor Remediation Instructions
+- If the intent asks to optimize only a selected step, return exactly one single_change suggestion with operationType="update_node" and targetTaskId equal to that selected task. Do not create, delete, reorder, reconnect, or modify unrelated nodes.
+- If the intent asks to optimize the current playbook, prefer a minimal valid workflow_plan that preserves business intent, graph validity, port compatibility, data bindings, and existing agents/templates.
+- Improve task contracts, expected results, output format, tool guidance, handoff readiness, and HITL/clarification rules instead of only rewording text.
+- Never invent agents or template types.
+
 # Short Examples
 
 Sequential creation:
@@ -283,6 +289,20 @@ Scoring fields (each 0-100 integer):
 - "overallScore": weighted average of the above, rounded to nearest integer
 - "confidence": your confidence in this evaluation (0-100)
 - "toolUsageScore": quality of tool selection, sequencing, and output utilization (0-100)
+- "relevanceScore": whether output stayed focused on task intent
+- "specificityScore": whether output is concrete enough for downstream use
+- "formatComplianceScore": whether output respects expected format, ports, schema, or guide
+- "evidenceGroundingScore": whether claims are backed by upstream context or tool outputs
+- "handoffReadinessScore": whether downstream nodes can consume the output reliably
+- "hitlAppropriatenessScore": whether the step should have paused for clarification, approval, or review
+- "determinismScore": whether the task instruction is precise enough for stable future outputs
+- "stepOptimizationPriority": expected value of optimizing the selected step
+- "playbookOptimizationPriority": expected value of broader workflow optimization
+
+Priority fields:
+- "riskSeverity": "low" | "medium" | "high" | "critical"
+- "blockingIssueCount": count of severe issues that can break execution
+- "downstreamImpactLevel": "none" | "low" | "medium" | "high"
 
 Expected result matching:
 - "expectedResultSource": "node_field" | "golden_baseline" | "none"
@@ -307,10 +327,13 @@ Tool usage analysis:
 - "toolUsageRecommendation": one-sentence summary recommendation for tool usage
 
 Actionable outcome:
+- Do not decide whether optimization is allowed. Optimization actions are user-driven. Your role is to evaluate quality, identify risks, and recommend the most useful next action.
 - "safeAutoFixType": "optimize_step" if a safe automatic rewrite would improve this step, otherwise "none"
 - "recommendation": "update_current_playbook" | "generate_new_optimized_playbook" | "none"
+- "recommendedAction": "optimize_step" | "optimize_playbook" | "review_only" | "add_hitl_guard" | "improve_tooling" | "improve_output_contract"
+- "availableActions": { "optimizeStep": true, "optimizePlaybook": true }
 - "reason": concise justification for the overallScore and recommendation`,
-    enabled: true, isBuiltIn: true, version: 3,
+    enabled: true, isBuiltIn: true, version: 4,
   },
   {
     key: 'judge.execution_summary', title: 'Playbook Advisor execution summary', category: 'judge',

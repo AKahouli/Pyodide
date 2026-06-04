@@ -18,8 +18,10 @@ from .execution_advisor_models import (
 )
 from .score_aggregator import (
     score_expected_match,
+    score_determinism,
     score_output_quality,
     score_overall,
+    score_specificity,
     score_tool_usage,
 )
 
@@ -80,13 +82,50 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
         "tool_sequencing_issues",
     ))
     tool_usage = score_tool_usage(len(request.tool_trace), tool_issue_count)
-    overall = score_overall([output_quality, expected_match, tool_usage])
+    format_compliance = 65 if unsupported_claims else 90 if request.output_format_guide.strip() else 75
+    evidence_grounding = 65 if tool_findings["tool_output_use_issues"] else 85 if request.tool_trace else 60
+    handoff_readiness = 60 if output_quality < 60 else 82
+    specificity = score_specificity(request.task_output)
+    determinism = score_determinism(request.task_description, request.expected_result, request.output_format_guide)
+    relevance = 80 if request.task_output.strip() else 10
+    hitl_appropriateness = 70 if request.task_error.strip() else 85
+    caps: list[int] = []
+    if not request.task_output.strip():
+        caps.append(20)
+    if request.task_error.strip():
+        caps.append(25)
+    if expected_source != "none" and not expected_matched:
+        caps.append(60)
+    if unsupported_claims:
+        caps.append(65)
+    if handoff_readiness < 65:
+        caps.append(60)
+    metrics = {
+        "accuracy_score": output_quality,
+        "completeness_score": max(0, min(100, expected_match)),
+        "result_matching_score": expected_match,
+        "relevance_score": relevance,
+        "format_compliance_score": format_compliance,
+        "evidence_grounding_score": evidence_grounding,
+        "handoff_readiness_score": handoff_readiness,
+    }
+    overall = score_overall(metrics, caps)
+    blocking_issue_count = sum(1 for score in (output_quality, format_compliance, evidence_grounding, handoff_readiness) if score < 60)
+    downstream_impact_level = "high" if handoff_readiness < 60 else "medium" if handoff_readiness < 75 else "low"
+    risk_severity = "critical" if blocking_issue_count >= 3 else "high" if blocking_issue_count >= 1 else "medium" if overall < 75 else "low"
+    step_priority = max(0, min(100, 100 - min(determinism, specificity, format_compliance)))
+    playbook_priority = max(0, min(100, 100 - min(handoff_readiness, evidence_grounding)))
 
     recommendation = "none"
     if overall < 50:
         recommendation = "generate_new_optimized_playbook"
     elif overall < 75:
         recommendation = "update_current_playbook"
+    recommended_action = "optimize_playbook" if playbook_priority > step_priority else "optimize_step"
+    if unsupported_claims:
+        recommended_action = "improve_output_contract"
+    elif tool_issue_count > 0 and tool_usage < min(step_priority, playbook_priority):
+        recommended_action = "improve_tooling"
 
     result = ExecutionAdvisorResult(
         accuracy_score=output_quality,
@@ -95,6 +134,20 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
         overall_score=overall,
         confidence=0.82 if request.expected_result or request.baseline_output else 0.6,
         tool_usage_score=tool_usage,
+        relevance_score=relevance,
+        specificity_score=specificity,
+        format_compliance_score=format_compliance,
+        evidence_grounding_score=evidence_grounding,
+        handoff_readiness_score=handoff_readiness,
+        hitl_appropriateness_score=hitl_appropriateness,
+        determinism_score=determinism,
+        step_optimization_priority=step_priority,
+        playbook_optimization_priority=playbook_priority,
+        risk_severity=risk_severity,
+        blocking_issue_count=blocking_issue_count,
+        downstream_impact_level=downstream_impact_level,
+        recommended_action=recommended_action,
+        available_actions={"optimize_step": True, "optimize_playbook": True},
         expected_result_source=expected_source,
         expected_result_type=expected_type,
         expected_result_matched=expected_matched,

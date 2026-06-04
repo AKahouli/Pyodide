@@ -32,7 +32,14 @@ export interface AdvisorRemediationPreviewResponse {
   suggestions: PlaybookFlowIntentResponse['suggestions'];
   expectedDefinitionRevision: number;
   intent: string;
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  };
 }
+
+const FALLBACK_STEP_FINDING = 'No specific advisor findings were selected. Improve this selected task so future executions are more deterministic, robust, and aligned with the expected output.';
 
 @Injectable()
 export class PlaybookFlowExecutionAdvisorService {
@@ -73,21 +80,21 @@ export class PlaybookFlowExecutionAdvisorService {
       const scope = taskId ? 'task' as const : 'playbook' as const;
       const targetTaskId = taskId ?? null;
 
-      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean }> = [
-        { key: 'missingFacts', category: 'structure', defaultSelected: true },
-        { key: 'incoherences', category: 'prompt', defaultSelected: true },
-        { key: 'unsupportedClaims', category: 'contract', defaultSelected: true },
-        { key: 'handoffRisks', category: 'handoff', defaultSelected: true },
-        { key: 'toolSelectionIssues', category: 'tooling', defaultSelected: true },
-        { key: 'missingToolCalls', category: 'tooling', defaultSelected: true },
-        { key: 'redundantToolCalls', category: 'tooling', defaultSelected: false },
-        { key: 'toolOutputUseIssues', category: 'tooling', defaultSelected: true },
-        { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true },
-        { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false },
-        { key: 'rewriteHints', category: 'prompt', defaultSelected: true },
+      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean; blocking: boolean }> = [
+        { key: 'missingFacts', category: 'structure', defaultSelected: true, blocking: false },
+        { key: 'incoherences', category: 'prompt', defaultSelected: true, blocking: false },
+        { key: 'unsupportedClaims', category: 'evidence', defaultSelected: true, blocking: true },
+        { key: 'handoffRisks', category: 'handoff', defaultSelected: true, blocking: true },
+        { key: 'toolSelectionIssues', category: 'tooling', defaultSelected: true, blocking: false },
+        { key: 'missingToolCalls', category: 'tooling', defaultSelected: true, blocking: true },
+        { key: 'redundantToolCalls', category: 'tooling', defaultSelected: false, blocking: false },
+        { key: 'toolOutputUseIssues', category: 'evidence', defaultSelected: true, blocking: true },
+        { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true, blocking: false },
+        { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false, blocking: false },
+        { key: 'rewriteHints', category: 'determinism', defaultSelected: true, blocking: false },
       ];
 
-      for (const { key, category, defaultSelected } of fieldMappings) {
+      for (const { key, category, defaultSelected, blocking } of fieldMappings) {
         const entries = judgeResult[key];
         if (!Array.isArray(entries)) continue;
         entries.forEach((description: string, index: number) => {
@@ -99,9 +106,13 @@ export class PlaybookFlowExecutionAdvisorService {
             title: description.length > 80 ? description.slice(0, 80) + '...' : description,
             description,
             rationale: undefined,
+            severity: blocking ? 'high' : defaultSelected ? 'medium' : 'low',
+            confidence: 0.8,
+            suggestedAction: category === 'tooling' ? 'improve_tooling' : category === 'handoff' ? 'optimize_playbook' : 'optimize_step',
+            blocking,
             editable: true,
             defaultSelected,
-            source: { kind: 'judge_result', field: category, index },
+            source: { kind: 'judge_result', field: String(key), index },
           });
         });
       }
@@ -134,17 +145,18 @@ export class PlaybookFlowExecutionAdvisorService {
       intent,
       selectedTaskId: dto.targetTaskId,
     });
-    const suggestion = this.selectAdvisorSuggestion(analysis.suggestions, dto);
+    const selection = this.selectAdvisorSuggestion(analysis.suggestions, dto);
 
-    if (!suggestion) {
+    if (!selection.suggestion) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Advisor remediation did not produce an applicable suggestion.');
     }
 
     return {
-      suggestion,
+      suggestion: selection.suggestion,
       suggestions: analysis.suggestions,
       expectedDefinitionRevision: flow.definitionRevision ?? 0,
       intent,
+      validation: selection.validation,
     };
   }
 
@@ -293,7 +305,10 @@ export class PlaybookFlowExecutionAdvisorService {
   }
 
   private buildRemediationIntent(dto: PreviewAdvisorRemediationDto, targetNode: any | null): string {
-    const findings = dto.items
+    const selectedFindings = dto.items.length > 0
+      ? dto.items
+      : [{ category: 'determinism', description: FALLBACK_STEP_FINDING }];
+    const findings = selectedFindings
       .map((item) => `- [${item.category}] ${item.description.trim()}`)
       .join('\n');
 
@@ -303,6 +318,7 @@ export class PlaybookFlowExecutionAdvisorService {
         'Return exactly one single_change suggestion with operationType "update_node" and targetTaskId equal to the selected task id.',
         'Do not create, delete, reorder, or reconnect nodes. Do not modify unrelated steps, edges, ports, or data bindings unless strictly required to keep this selected step valid.',
         'Prefer updating the selected task description. Preserve the existing title unless the findings explicitly require a title change.',
+        'Improve task purpose, required inputs, success criteria, expected result, output contract, evidence grounding, tool-use guidance, handoff readiness, and HITL/clarification rules where relevant.',
         '',
         'Current selected step:',
         JSON.stringify({
@@ -321,6 +337,7 @@ export class PlaybookFlowExecutionAdvisorService {
         ? 'Plan a broader optimization of the current playbook based on these structured advisor findings.'
         : 'Optimize the current playbook based on these structured advisor findings.',
       'Return a valid PlaybookIntentSuggestion. Preserve the user\'s original intent and keep the workflow valid.',
+      'Prefer minimal valid changes that improve graph structure, handoffs, output contracts, validation/evaluation steps, HITL checkpoints, tool placement, and data binding compatibility.',
       '',
       'Advisor findings:',
       findings,
@@ -330,17 +347,40 @@ export class PlaybookFlowExecutionAdvisorService {
   private selectAdvisorSuggestion(
     suggestions: PlaybookFlowIntentResponse['suggestions'],
     dto: PreviewAdvisorRemediationDto,
-  ): PlaybookFlowIntentResponse['suggestions'][number] | null {
+  ): { suggestion: PlaybookFlowIntentResponse['suggestions'][number] | null; validation: AdvisorRemediationPreviewResponse['validation'] } {
     const ranked = suggestions
       .filter((suggestion) => !suggestion.isDirectIntentFallback)
       .sort((left, right) => right.confidence - left.confidence);
     if (dto.mode !== 'optimize-step') {
-      return ranked[0] || null;
+      const suggestion = ranked.find((candidate) => candidate.kind === 'workflow_plan') || ranked[0] || null;
+      return { suggestion, validation: { valid: Boolean(suggestion), errors: suggestion ? [] : ['No valid playbook-level suggestion was produced.'], warnings: [] } };
     }
 
-    return ranked.find((suggestion) => suggestion.kind === 'single_change'
-      && suggestion.operationType === 'update_node'
-      && suggestion.targetTaskId === dto.targetTaskId) || null;
+    const rejected: string[] = [];
+    const suggestion = ranked.find((candidate) => {
+      if (candidate.kind !== 'single_change') {
+        rejected.push(`${candidate.id}: expected single_change suggestion.`);
+        return false;
+      }
+      if (candidate.operationType !== 'update_node') {
+        rejected.push(`${candidate.id}: expected update_node operation.`);
+        return false;
+      }
+      if (candidate.targetTaskId !== dto.targetTaskId) {
+        rejected.push(`${candidate.id}: targeted ${candidate.targetTaskId || 'no task'} instead of ${dto.targetTaskId}.`);
+        return false;
+      }
+      return true;
+    }) || null;
+
+    return {
+      suggestion,
+      validation: {
+        valid: Boolean(suggestion),
+        errors: suggestion ? [] : rejected,
+        warnings: [],
+      },
+    };
   }
 
   private async loadOutputFormatGuide(flowId: string, taskId: string): Promise<string | null> {

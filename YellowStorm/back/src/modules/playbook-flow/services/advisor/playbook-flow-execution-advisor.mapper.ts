@@ -66,6 +66,20 @@ export class PlaybookFlowExecutionAdvisorMapper {
       overallScore: numberValue('overall_score'),
       confidence: numberValue('confidence'),
       toolUsageScore: numberValue('tool_usage_score'),
+      relevanceScore: numberValue('relevance_score'),
+      specificityScore: numberValue('specificity_score'),
+      formatComplianceScore: numberValue('format_compliance_score'),
+      evidenceGroundingScore: numberValue('evidence_grounding_score'),
+      handoffReadinessScore: numberValue('handoff_readiness_score'),
+      hitlAppropriatenessScore: numberValue('hitl_appropriateness_score'),
+      determinismScore: numberValue('determinism_score'),
+      stepOptimizationPriority: numberValue('step_optimization_priority'),
+      playbookOptimizationPriority: numberValue('playbook_optimization_priority'),
+      riskSeverity: this.mapRiskSeverity(raw.risk_severity),
+      blockingIssueCount: numberValue('blocking_issue_count'),
+      downstreamImpactLevel: this.mapDownstreamImpactLevel(raw.downstream_impact_level),
+      recommendedAction: this.mapRecommendedAction(raw.recommended_action),
+      availableActions: { optimizeStep: true, optimizePlaybook: true },
       expectedResultSource: this.mapExpectedResultSource(raw.expected_result_source),
       expectedResultType: this.mapExpectedResultType(raw.expected_result_type),
       expectedResultMatched: Boolean(raw.expected_result_matched),
@@ -107,6 +121,22 @@ export class PlaybookFlowExecutionAdvisorMapper {
       overallScore: score('overallScore'),
       confidence: score('confidence'),
       toolUsageScore: score('toolUsageScore'),
+      relevanceScore: score('relevanceScore'),
+      specificityScore: score('specificityScore'),
+      formatComplianceScore: score('formatComplianceScore'),
+      evidenceGroundingScore: score('evidenceGroundingScore'),
+      handoffReadinessScore: score('handoffReadinessScore'),
+      hitlAppropriatenessScore: score('hitlAppropriatenessScore'),
+      determinismScore: score('determinismScore'),
+      stepOptimizationPriority: score('stepOptimizationPriority'),
+      playbookOptimizationPriority: score('playbookOptimizationPriority'),
+      riskSeverity: this.mapRiskSeverity(parsed.riskSeverity),
+      blockingIssueCount: typeof parsed.blockingIssueCount === 'number' && Number.isFinite(parsed.blockingIssueCount)
+        ? Math.max(0, Math.round(parsed.blockingIssueCount))
+        : 0,
+      downstreamImpactLevel: this.mapDownstreamImpactLevel(parsed.downstreamImpactLevel),
+      recommendedAction: this.mapRecommendedAction(parsed.recommendedAction),
+      availableActions: { optimizeStep: true, optimizePlaybook: true },
       expectedResultSource: this.mapExpectedResultSource(parsed.expectedResultSource),
       expectedResultType: this.mapExpectedResultType(parsed.expectedResultType),
       expectedResultMatched: Boolean(parsed.expectedResultMatched),
@@ -194,6 +224,29 @@ export class PlaybookFlowExecutionAdvisorMapper {
     return value === 'update_current_playbook' || value === 'generate_new_optimized_playbook' || value === 'none'
       ? value
       : 'none';
+  }
+
+  private mapRiskSeverity(value: unknown): FlowExecutionJudgeResult['riskSeverity'] {
+    return value === 'low' || value === 'medium' || value === 'high' || value === 'critical'
+      ? value
+      : 'low';
+  }
+
+  private mapDownstreamImpactLevel(value: unknown): FlowExecutionJudgeResult['downstreamImpactLevel'] {
+    return value === 'none' || value === 'low' || value === 'medium' || value === 'high'
+      ? value
+      : 'none';
+  }
+
+  private mapRecommendedAction(value: unknown): FlowExecutionJudgeResult['recommendedAction'] {
+    return value === 'optimize_step'
+      || value === 'optimize_playbook'
+      || value === 'review_only'
+      || value === 'add_hitl_guard'
+      || value === 'improve_tooling'
+      || value === 'improve_output_contract'
+      ? value
+      : 'review_only';
   }
 
   private clampScore(value: unknown): number {

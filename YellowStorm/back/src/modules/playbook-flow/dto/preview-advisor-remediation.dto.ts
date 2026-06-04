@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
-const REMEDIATION_CATEGORIES = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'] as const;
+const REMEDIATION_CATEGORIES = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat', 'format', 'hitl', 'determinism', 'expected_result'] as const;
 const REMEDIATION_MODES = ['optimize-step', 'update-current', 'generate-new'] as const;
 
 export class PreviewAdvisorRemediationItemDto {
@@ -36,7 +36,6 @@ export class PreviewAdvisorRemediationDto {
 
   @ApiProperty({ type: [PreviewAdvisorRemediationItemDto] })
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => PreviewAdvisorRemediationItemDto)
   items!: PreviewAdvisorRemediationItemDto[];

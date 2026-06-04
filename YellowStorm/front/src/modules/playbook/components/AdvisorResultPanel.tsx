@@ -84,6 +84,28 @@ function IssueSection({
   );
 }
 
+function MetricGroup({
+  title,
+  metrics,
+}: Readonly<{
+  title: string;
+  metrics: Array<{ label: string; value: number | null | undefined }>;
+}>) {
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {metrics.map((metric) => (
+          <div key={metric.label} className={cn('rounded border px-2 py-1.5', getScoreTone(metric.value))}>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{metric.label}</div>
+            <div className="mt-1 text-sm font-semibold">{formatPercent(metric.value)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function AdvisorResultPanel({
   judgeResult,
   className,
@@ -111,9 +133,9 @@ export function AdvisorResultPanel({
       items: judgeResult.incoherences || [],
     },
     {
-      title: t('detail.judge.contractIssues'),
-      badge: t('detail.remediation.category.contract'),
-      badgeClassName: 'bg-amber-100 text-amber-700 border-amber-200',
+      title: t('detail.judge.evidenceIssues'),
+      badge: t('detail.remediation.category.evidence'),
+      badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
       items: judgeResult.unsupportedClaims || [],
     },
     {
@@ -142,8 +164,8 @@ export function AdvisorResultPanel({
     },
     {
       title: t('detail.judge.toolOutputUseIssues'),
-      badge: t('detail.remediation.category.tooling'),
-      badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      badge: t('detail.remediation.category.evidence'),
+      badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
       items: judgeResult.toolOutputUseIssues || [],
     },
     {
@@ -189,6 +211,41 @@ export function AdvisorResultPanel({
         <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
           <p className="mt-2 whitespace-pre-wrap text-sm">{judgeResult.reason || t('detail.judge.noReason')}</p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{t(`detail.judge.recommendedAction.${judgeResult.recommendedAction || 'review_only'}` as any)}</Badge>
+            <Badge variant="outline">{t(`detail.judge.riskSeverity.${judgeResult.riskSeverity || 'low'}` as any)}</Badge>
+            <Badge variant="outline">{t(`detail.judge.downstreamImpact.${judgeResult.downstreamImpactLevel || 'none'}` as any)}</Badge>
+            <Badge variant="outline">{t('detail.judge.blockingIssueCount', { count: judgeResult.blockingIssueCount ?? 0 })}</Badge>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          <MetricGroup
+            title={t('detail.judge.qualityMetrics')}
+            metrics={[
+              { label: t('detail.judge.accuracyScore'), value: judgeResult.accuracyScore },
+              { label: t('detail.judge.completenessScore'), value: judgeResult.completenessScore },
+              { label: t('detail.judge.relevanceScore'), value: judgeResult.relevanceScore },
+              { label: t('detail.judge.specificityScore'), value: judgeResult.specificityScore },
+            ]}
+          />
+          <MetricGroup
+            title={t('detail.judge.robustnessMetrics')}
+            metrics={[
+              { label: t('detail.judge.formatComplianceScore'), value: judgeResult.formatComplianceScore },
+              { label: t('detail.judge.evidenceGroundingScore'), value: judgeResult.evidenceGroundingScore },
+              { label: t('detail.judge.handoffReadinessScore'), value: judgeResult.handoffReadinessScore },
+              { label: t('detail.judge.hitlAppropriatenessScore'), value: judgeResult.hitlAppropriatenessScore },
+              { label: t('detail.judge.determinismScore'), value: judgeResult.determinismScore },
+            ]}
+          />
+          <MetricGroup
+            title={t('detail.judge.priorityMetrics')}
+            metrics={[
+              { label: t('detail.judge.stepOptimizationPriority'), value: judgeResult.stepOptimizationPriority },
+              { label: t('detail.judge.playbookOptimizationPriority'), value: judgeResult.playbookOptimizationPriority },
+            ]}
+          />
         </div>
 
         <div className="mt-4 rounded-md border bg-muted/20 px-3 py-3 text-sm">

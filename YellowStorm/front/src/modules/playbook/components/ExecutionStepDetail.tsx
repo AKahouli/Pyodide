@@ -47,6 +47,10 @@ const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   tooling: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   evidence: 'bg-sky-100 text-sky-700 border-sky-200',
   outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
+  format: 'bg-orange-100 text-orange-700 border-orange-200',
+  hitl: 'bg-red-100 text-red-700 border-red-200',
+  determinism: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  expected_result: 'bg-amber-100 text-amber-700 border-amber-200',
 };
 
 type JudgeResultLike = {
@@ -72,20 +76,20 @@ function buildLocalRemediationItems(
   const items: AdvisorRemediationItem[] = [];
   const scope = mode === 'optimize-step' ? 'task' as const : 'playbook' as const;
   const targetTaskId = mode === 'optimize-step' ? (taskId ?? null) : null;
-  const mappings: Array<{ entries: string[]; category: RemediationCategory; defaultSelected: boolean }> = [
-    { entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true },
-    { entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true },
-    { entries: judgeResult.unsupportedClaims || [], category: 'contract', defaultSelected: true },
-    { entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true },
-    { entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false },
-    { entries: judgeResult.toolOutputUseIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false },
-    { entries: judgeResult.rewriteHints || [], category: 'prompt', defaultSelected: true },
+  const mappings: Array<{ key: keyof JudgeResultLike; entries: string[]; category: RemediationCategory; defaultSelected: boolean; blocking: boolean }> = [
+    { key: 'missingFacts', entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true, blocking: false },
+    { key: 'incoherences', entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true, blocking: false },
+    { key: 'unsupportedClaims', entries: judgeResult.unsupportedClaims || [], category: 'evidence', defaultSelected: true, blocking: true },
+    { key: 'handoffRisks', entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true, blocking: true },
+    { key: 'toolSelectionIssues', entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true, blocking: false },
+    { key: 'missingToolCalls', entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true, blocking: true },
+    { key: 'redundantToolCalls', entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false, blocking: false },
+    { key: 'toolOutputUseIssues', entries: judgeResult.toolOutputUseIssues || [], category: 'evidence', defaultSelected: true, blocking: true },
+    { key: 'toolSequencingIssues', entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true, blocking: false },
+    { key: 'toolUsageStrengths', entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false, blocking: false },
+    { key: 'rewriteHints', entries: judgeResult.rewriteHints || [], category: 'determinism', defaultSelected: true, blocking: false },
   ];
-  for (const { entries, category, defaultSelected } of mappings) {
+  for (const { key, entries, category, defaultSelected, blocking } of mappings) {
     entries.forEach((description, index) => {
       items.push({
         id: `local-${category}-${index}`,
@@ -94,9 +98,13 @@ function buildLocalRemediationItems(
         targetTaskId,
         title: description.length > 80 ? description.slice(0, 80) + '...' : description,
         description,
+        severity: blocking ? 'high' : defaultSelected ? 'medium' : 'low',
+        confidence: 0.8,
+        suggestedAction: category === 'tooling' ? 'improve_tooling' : category === 'handoff' ? 'optimize_playbook' : 'optimize_step',
+        blocking,
         editable: true,
         defaultSelected,
-        source: { kind: 'judge_result', field: category, index },
+        source: { kind: 'judge_result', field: key, index },
       });
     });
   }
@@ -580,9 +588,9 @@ export function ExecutionStepDetail({
         items: stepJudgeResult.incoherences || [],
       },
       {
-        title: t('detail.judge.contractIssues'),
-        badge: t('detail.remediation.category.contract'),
-        badgeClassName: 'bg-amber-100 text-amber-700 border-amber-200',
+        title: t('detail.judge.evidenceIssues'),
+        badge: t('detail.remediation.category.evidence'),
+        badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
         items: stepJudgeResult.unsupportedClaims || [],
       },
       {
@@ -2131,10 +2139,24 @@ export function ExecutionStepDetail({
                 </pre>
               </div>
             ) : (
-              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-                {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
-                  ? t('detail.judge.evaluating')
-                  : t('detail.judge.empty')}
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                <div>
+                  {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
+                    ? t('detail.judge.evaluating')
+                    : t('detail.judge.empty')}
+                </div>
+                {canApplyAdvisorChanges && execution && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.previewChanges')}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.applyToCurrentPlaybook')}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 

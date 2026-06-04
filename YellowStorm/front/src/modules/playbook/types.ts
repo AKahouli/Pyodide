@@ -1082,6 +1082,20 @@ export interface TaskResult {
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    relevanceScore?: number;
+    specificityScore?: number;
+    formatComplianceScore?: number;
+    evidenceGroundingScore?: number;
+    handoffReadinessScore?: number;
+    hitlAppropriatenessScore?: number;
+    determinismScore?: number;
+    stepOptimizationPriority?: number;
+    playbookOptimizationPriority?: number;
+    riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
+    blockingIssueCount?: number;
+    downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
+    recommendedAction?: 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
+    availableActions?: { optimizeStep: true; optimizePlaybook: true };
     expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
     expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
     expectedResultMatched: boolean;
@@ -1123,6 +1137,20 @@ export interface TaskResult {
       overallScore: number;
       confidence: number;
       toolUsageScore: number;
+      relevanceScore?: number;
+      specificityScore?: number;
+      formatComplianceScore?: number;
+      evidenceGroundingScore?: number;
+      handoffReadinessScore?: number;
+      hitlAppropriatenessScore?: number;
+      determinismScore?: number;
+      stepOptimizationPriority?: number;
+      playbookOptimizationPriority?: number;
+      riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
+      blockingIssueCount?: number;
+      downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
+      recommendedAction?: 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
+      availableActions?: { optimizeStep: true; optimizePlaybook: true };
       expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
       expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
       expectedResultMatched: boolean;
@@ -2004,7 +2032,8 @@ export interface ResumeFromStepData {
   payload?: Record<string, unknown>;
 }
 
-export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat';
+export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat' | 'format' | 'hitl' | 'determinism' | 'expected_result';
+export type AdvisorRemediationSuggestedAction = 'optimize_step' | 'optimize_playbook' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
 
 export interface AdvisorRemediationItem {
   id: string;
@@ -2014,6 +2043,10 @@ export interface AdvisorRemediationItem {
   title: string;
   description: string;
   rationale?: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  confidence: number;
+  suggestedAction: AdvisorRemediationSuggestedAction;
+  blocking: boolean;
   editable: boolean;
   defaultSelected: boolean;
   source: {
@@ -2044,6 +2077,11 @@ export interface AdvisorRemediationPreviewResponse {
   suggestions: PlaybookIntentSuggestion[];
   expectedDefinitionRevision: number;
   intent: string;
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  };
 }
 
 // ===== Store =====

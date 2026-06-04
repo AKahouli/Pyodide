@@ -41,6 +41,20 @@ class ExecutionAdvisorResult:
     overall_score: int
     confidence: float
     tool_usage_score: int
+    relevance_score: int
+    specificity_score: int
+    format_compliance_score: int
+    evidence_grounding_score: int
+    handoff_readiness_score: int
+    hitl_appropriateness_score: int
+    determinism_score: int
+    step_optimization_priority: int
+    playbook_optimization_priority: int
+    risk_severity: str
+    blocking_issue_count: int
+    downstream_impact_level: str
+    recommended_action: str
+    available_actions: dict[str, bool]
     expected_result_source: str
     expected_result_type: str
     expected_result_matched: bool

@@ -723,6 +723,109 @@ describe('ExecutionStepDetail', () => {
     storeState.currentPlaybook = null;
   });
 
+  it('keeps optimize actions available despite high score, no recommendation, and empty rewrite hints', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.fetchAdvisorRemediations.mockClear();
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', title: 'Analyze Data' }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          judgeResult: {
+            overallScore: 98,
+            recommendation: 'none',
+            safeAutoFixType: 'none',
+            rewriteHints: [],
+            reason: 'Looks good.',
+          } as any,
+          judgeStatus: 'evaluated',
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [{ ...baseStep, judgeResult: { overallScore: 98 } as any, judgeStatus: 'evaluated' }],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'detail.judge.previewChanges' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'detail.judge.applyToCurrentPlaybook' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' })).toBeEnabled();
+
+    storeState.currentPlaybook = null;
+  });
+
+  it('allows optimize-step apply with no selected remediation items', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.fetchAdvisorRemediations.mockResolvedValueOnce([]);
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', title: 'Analyze Data' }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{ ...baseStep, judgeResult: { overallScore: 98, rewriteHints: [] } as any, judgeStatus: 'evaluated' }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [{ ...baseStep, judgeResult: { overallScore: 98, rewriteHints: [] } as any, judgeStatus: 'evaluated' }],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.previewChanges' }));
+    await screen.findByText('detail.remediation.optimizeStepTitle');
+    await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
+
+    expect(onApplyAdvisorIntent).toHaveBeenCalledWith({
+      mode: 'optimize-step',
+      executionId: 'exec-1',
+      items: [],
+      selectedTaskId: 't1',
+    });
+
+    storeState.currentPlaybook = null;
+  });
+
   it('disables remediation apply actions when the canvas handler is unavailable', () => {
     storeState.currentPlaybook = {
       id: 'p1',
