@@ -28,10 +28,12 @@ from src.flow_engine.legacy.port_resolution import (
 )
 from src.flow_engine.runtime.artifact_routing import normalize_port_id as _normalize_port_id
 from src.skills.runtime import inject_skill_catalog
+from src.config.settings import get_settings
 
 logger = get_logger(__name__)
+settings = get_settings()
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = settings.PLAYBOOK_MAX_TOOL_ITERATIONS
 SKIP_STEP_REASON = "__SKIP_STEP__"
 StepProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
