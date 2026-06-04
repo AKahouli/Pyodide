@@ -136,11 +136,26 @@ export const conversationV2Api = {
   /**
    * Exchange a message-attachment Ceph object key for a short-lived presigned
    * read URL. Backend access-checks the path's owning workspace before signing.
+   *
+   * Some artifacts (e.g. ones whose content is a URL) carry no Ceph object key,
+   * or already carry a directly-openable URL instead of a key. We must never
+   * POST those to the signing endpoint: an empty/undefined path serializes to an
+   * empty body, and the DTO's `@MaxLength(4096)` then rejects the non-string
+   * value with a misleading "path must be shorter than 4096" 400 (class-validator
+   * returns false for any non-string). An already-absolute URL needs no signing.
    */
   async getFileSignedUrl(path: string): Promise<{ url: string }> {
+    const trimmed = path?.trim();
+    if (!trimmed) {
+      throw new Error('This artifact has no file path to open.');
+    }
+    // http(s)/blob/data URLs are already resolvable — return them as-is.
+    if (/^(https?:|blob:|data:)/i.test(trimmed)) {
+      return { url: trimmed };
+    }
     const res = await apiClient.post<ApiResponse<{ url: string }>>(
       '/conversation-v2/files/signed-url',
-      { path },
+      { path: trimmed },
     );
     return res.data.data;
   },
