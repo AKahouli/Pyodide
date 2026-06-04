@@ -1532,6 +1532,13 @@ async def _execute_with_tools(
                         len(citation_components),
                         citation_components,
                     )
+                    logger.warning(
+                        "[%s] RETURNED_NEW_CITATION tool=%s citation_count=%s citations=%s",
+                        task_id or "unknown_task",
+                        tool_call["name"],
+                        len(citation_components),
+                        citation_components,
+                    )
 
             if on_progress is not None:
                 await on_progress(

@@ -225,6 +225,11 @@ def _find_text_parent_id(components: List[Dict[str, Any]], output: str) -> str:
     return ""
 
 
+def _is_located_answer_citation(component: Dict[str, Any]) -> bool:
+    data = component.get("data") or {}
+    return str(data.get("citation_origin") or "") == "locate_answer_citations"
+
+
 def _normalize_task_result_citations(
     task_results: List[Dict[str, Any]],
     tasks: List[TaskConfig],
@@ -265,6 +270,19 @@ def _normalize_task_result_citations(
         task_citation_components = [
             component for component in components if component.get("type") == "citation"
         ]
+        if any(
+            _is_located_answer_citation(component)
+            for component in task_citation_components
+        ):
+            task_citation_components = [
+                component
+                for component in task_citation_components
+                if _is_located_answer_citation(component)
+            ]
+            reference_by_signature = {}
+            citation_by_signature = {}
+            cumulative_signatures = []
+            next_reference = 1
         for component in task_citation_components:
             signature = _citation_signature(component)
             if signature not in reference_by_signature:

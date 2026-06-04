@@ -6,6 +6,7 @@ import pytest
 from src.flow_engine.legacy.workflow_service import (
     _build_resume_state_update,
     _build_task_results,
+    _normalize_task_result_citations,
     resume_playbook,
     resume_single_step,
     run_single_step_graph,
@@ -33,6 +34,69 @@ def test_build_resume_state_update_skips_clarification_replay() -> None:
 
 def test_build_resume_state_update_ignores_non_clarification_interrupts() -> None:
     assert _build_resume_state_update({"type": "approval_request", "task_id": "step_1"}) is None
+
+
+def test_normalize_task_result_citations_keeps_only_located_answer_citations() -> None:
+    search_citation = {
+        "type": "citation",
+        "data": {
+            "parent_id": "",
+            "text_source": {
+                "source": "contract.pdf",
+                "page": "1",
+                "page_content": "Retrieved chunk",
+                "reference": "[9]",
+            },
+        },
+    }
+    located_citations = [
+        {
+            "type": "citation",
+            "data": {
+                "parent_id": "",
+                "citation_origin": "locate_answer_citations",
+                "text_source": {
+                    "source": "contract.pdf",
+                    "page": str(index),
+                    "page_content": f"Exact quote {index}",
+                    "reference": f"[{index}]",
+                },
+            },
+        }
+        for index in range(1, 5)
+    ]
+    task_results = [
+        {
+            "task_id": "step-1",
+            "status": "completed",
+            "output": "Answer [1] [2] [3] [4]",
+            "components": [
+                {"id": "text-1", "type": "text", "data": {"content": "Answer [1] [2] [3] [4]"}},
+                search_citation,
+                *located_citations,
+            ],
+        }
+    ]
+
+    _normalize_task_result_citations(
+        task_results,
+        [{"id": "step-1", "execution_order": 1}],
+    )
+
+    citations = [
+        component
+        for component in task_results[0]["components"]
+        if component.get("type") == "citation"
+    ]
+    assert len(citations) == 4
+    assert all(
+        citation["data"]["citation_origin"] == "locate_answer_citations"
+        for citation in citations
+    )
+    assert [
+        citation["data"]["text_source"]["page_content"]
+        for citation in citations
+    ] == [f"Exact quote {index}" for index in range(1, 5)]
 
 
 @pytest.mark.asyncio

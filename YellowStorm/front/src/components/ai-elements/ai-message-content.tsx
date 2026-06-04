@@ -34,6 +34,8 @@ import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 // Message Content Part Types
 // ============================================================================
 
+export type CitationBBox = [number, number, number, number];
+
 export interface CitationData {
   parentId: string;
   sourceType: 'text' | 'image';
@@ -46,6 +48,9 @@ export interface CitationData {
   path?: string;
   height?: string;
   width?: string;
+  highlightText?: string;
+  highlightBBox?: CitationBBox;
+  blockBBox?: CitationBBox;
 }
 
 export interface TextPart {
@@ -160,6 +165,9 @@ export interface CitationPart {
   path?: string;
   height?: string;
   width?: string;
+  highlightText?: string;
+  highlightBBox?: CitationBBox;
+  blockBBox?: CitationBBox;
 }
 
 export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart;
@@ -388,7 +396,8 @@ async function openCitationSource(
   openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
     displayMode,
     page,
-    highlightText: c.pageContent || undefined,
+    highlightText: c.highlightText || c.pageContent || undefined,
+    highlightBBox: c.highlightBBox || c.blockBBox,
   });
 }
 
@@ -481,6 +490,9 @@ const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
         path: citation.path,
         height: citation.height,
         width: citation.width,
+        highlightText: citation.highlightText,
+        highlightBBox: citation.highlightBBox,
+        blockBBox: citation.blockBBox,
       },
     ]}
   />

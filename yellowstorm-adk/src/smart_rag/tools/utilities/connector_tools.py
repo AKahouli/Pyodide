@@ -30,6 +30,24 @@ def _log_payload(value: Any) -> str:
         return str(value)
 
 
+def _is_locate_answer_citations_action(action_key: str) -> bool:
+    return "locate_answer_citations" in str(action_key or "")
+
+
+def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
+    stripped = dict(response)
+    stripped.pop("citation_sources", None)
+    stripped.pop("citations", None)
+    stripped.pop("sources", None)
+    return stripped
+
+
+def _loggable_payload(action_key: str, payload: Any) -> Any:
+    if _is_locate_answer_citations_action(action_key):
+        return payload
+    return "[non-locator MCP payload omitted]"
+
+
 def _normalize_connector_action_description(description: str) -> str:
     return (
         description.replace("workspace names", "workspace IDs")
@@ -148,9 +166,12 @@ def _register_connector_text_source(
 def _register_connector_response_sources(
     response: Any,
     tool_context: Optional[ToolContext],
+    action_key: str = "",
 ) -> Any:
     if not tool_context or not isinstance(response, dict):
         return response
+    if not _is_locate_answer_citations_action(action_key):
+        return _strip_legacy_citation_fields(response)
 
     citation_sources = response.get("citation_sources")
     logger.info(
@@ -887,18 +908,25 @@ def create_connector_tools(
                     auth_headers=_auth_headers,
                     auth_env=_auth_env,
                 )
+                logged_response = _loggable_payload(_action_key, response)
                 logger.info(
                     "connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
                     _connector_id,
                     _action_key,
                     _tool_name,
                     type(response).__name__,
-                    _log_payload(response),
+                    _log_payload(logged_response),
                 )
                 registered_response = _register_connector_response_sources(
-                    response, tool_context
+                    response,
+                    tool_context,
+                    action_key=_action_key,
                 )
                 if isinstance(registered_response, dict):
+                    logged_registered_response = _loggable_payload(
+                        _action_key,
+                        registered_response,
+                    )
                     logger.info(
                         "connector_tool_registered_response connector_id=%s action_key=%s tool_name=%s source_count=%s citation_source_count=%s registered_response=%s",
                         _connector_id,
@@ -912,7 +940,7 @@ def create_connector_tools(
                             registered_response.get("citation_sources"), list
                         )
                         else 0,
-                        _log_payload(registered_response),
+                        _log_payload(logged_registered_response),
                     )
                 return registered_response
 

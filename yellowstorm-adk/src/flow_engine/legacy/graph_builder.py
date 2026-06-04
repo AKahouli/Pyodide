@@ -414,6 +414,11 @@ def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
     return updated
 
 
+def _is_located_answer_citation(component: Dict[str, Any]) -> bool:
+    data = component.get("data") or {}
+    return str(data.get("citation_origin") or "") == "locate_answer_citations"
+
+
 def _collect_prior_source_components(
     state: ExecutionState,
     current_task_id: str,
@@ -1893,11 +1898,30 @@ class DynamicGraphBuilder:
                                 and component.get("type") == "citation"
                             )
                         ]
-                        current_citations = _merge_unique_components(
-                            [],
-                            components,
-                            component_type="citation",
-                        )
+                        raw_current_citations = [
+                            component
+                            for component in components
+                            if (
+                                isinstance(component, dict)
+                                and component.get("type") == "citation"
+                            )
+                        ]
+                        if any(
+                            _is_located_answer_citation(component)
+                            for component in raw_current_citations
+                        ):
+                            current_citations = [
+                                component
+                                for component in raw_current_citations
+                                if _is_located_answer_citation(component)
+                            ]
+                            prior_citations = []
+                        else:
+                            current_citations = _merge_unique_components(
+                                [],
+                                raw_current_citations,
+                                component_type="citation",
+                            )
                         components = current_non_citations + _merge_unique_components(
                             prior_citations,
                             current_citations,
@@ -1922,6 +1946,21 @@ class DynamicGraphBuilder:
                         components,
                         output_mode,
                     )
+                    returned_citations = [
+                        component
+                        for component in components
+                        if (
+                            isinstance(component, dict)
+                            and component.get("type") == "citation"
+                        )
+                    ]
+                    if returned_citations:
+                        logger.warning(
+                            "[%s] RETURNED_NEW_CITATION citation_count=%s citations=%s",
+                            task_id or "unknown_task",
+                            len(returned_citations),
+                            returned_citations,
+                        )
                     if output_mode == "structured_final_response":
                         await _on_execution_progress(
                             {"output": response, "components": list(components)}
