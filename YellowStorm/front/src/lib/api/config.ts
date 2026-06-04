@@ -248,10 +248,10 @@ export const API_ENDPOINTS = {
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
   },
   widgetTokens: {
-    create: (agentId: string) => `/admin/agents/${agentId}/widget-tokens`,
-    list: (agentId: string) => `/admin/agents/${agentId}/widget-tokens`,
-    update: (agentId: string, tokenId: string) => `/admin/agents/${agentId}/widget-tokens/${tokenId}`,
-    revoke: (agentId: string, tokenId: string) => `/admin/agents/${agentId}/widget-tokens/${tokenId}`,
+    create: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    list: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+    revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
   },
   tools: {
     active: '/tools/active',

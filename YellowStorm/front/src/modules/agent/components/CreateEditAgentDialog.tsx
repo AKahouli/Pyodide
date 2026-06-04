@@ -27,6 +27,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -59,6 +60,17 @@ function slugifyAgentName(value: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 }
+
+const AGENT_FORM_TABS = [
+  { value: 'identity', labelKey: 'createEdit.tabs.identity', tipKey: 'createEdit.tabs.identityTip' },
+  { value: 'behaviour', labelKey: 'createEdit.tabs.behaviour', tipKey: 'createEdit.tabs.behaviourTip' },
+  { value: 'knowledge', labelKey: 'createEdit.tabs.knowledge', tipKey: 'createEdit.tabs.knowledgeTip' },
+  { value: 'tools', labelKey: 'createEdit.tabs.tools', tipKey: 'createEdit.tabs.toolsTip' },
+  { value: 'skills', labelKey: 'createEdit.tabs.skills', tipKey: 'createEdit.tabs.skillsTip' },
+  { value: 'connectors', labelKey: 'createEdit.tabs.connectors', tipKey: 'createEdit.tabs.connectorsTip' },
+  { value: 'deployment', labelKey: 'createEdit.tabs.deployment', tipKey: 'createEdit.tabs.deploymentTip' },
+  { value: 'evaluation', labelKey: 'createEdit.tabs.evaluation', tipKey: 'createEdit.tabs.evaluationTip' },
+] as const;
 
 interface CreateEditAgentDialogProps {
   open: boolean;
@@ -206,16 +218,27 @@ export function CreateEditAgentDialog({
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
-              <TabsList className="h-auto shrink-0 w-full flex flex-wrap justify-start gap-1">
-                <TabsTrigger value="identity">{t('createEdit.tabs.identity')}</TabsTrigger>
-                <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
-                <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
-                <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
-                <TabsTrigger value="skills">{t('createEdit.tabs.skills')}</TabsTrigger>
-                <TabsTrigger value="connectors">{t('createEdit.tabs.connectors')}</TabsTrigger>
-                <TabsTrigger value="deployment">{t('createEdit.tabs.deployment')}</TabsTrigger>
-                <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
-              </TabsList>
+              <TooltipProvider delayDuration={300}>
+                <div className="w-full shrink-0 overflow-x-auto">
+                  <TabsList className="inline-flex h-auto w-max max-w-none flex-nowrap justify-start gap-0.5">
+                    {AGENT_FORM_TABS.map((tab) => (
+                      <Tooltip key={tab.value}>
+                        <TooltipTrigger asChild>
+                          <TabsTrigger
+                            value={tab.value}
+                            className="shrink-0 flex-none px-2.5 sm:px-3"
+                          >
+                            {t(tab.labelKey)}
+                          </TabsTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs text-center">
+                          {t(tab.tipKey)}
+                        </TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </TabsList>
+                </div>
+              </TooltipProvider>
               <ScrollArea className="flex-1 min-h-0 mt-4">
                 <div className="pr-4">
                   {/* Identity Tab */}
