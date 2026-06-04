@@ -64,6 +64,13 @@ export function NewConversationPage() {
   const { status: usageStatus } = useUsage();
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
+  // Starting a brand-new conversation: no conversation is active yet, so clear
+  // any skill selection (and stale conversation id) carried over from the
+  // previously open conversation. Direct setState avoids PATCHing the old one.
+  useEffect(() => {
+    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [] });
+  }, []);
+
   const limitPlaceholder = useMemo(() => {
     if (!isLimitExceeded) return undefined;
     if (!usageStatus?.resetsAt) return t('input.limitReached');
@@ -209,6 +216,9 @@ export function NewConversationPage() {
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
+        skillIds: useConversationStore.getState().selectedSkillIds.length
+          ? useConversationStore.getState().selectedSkillIds
+          : undefined,
       });
 
       clearAll();

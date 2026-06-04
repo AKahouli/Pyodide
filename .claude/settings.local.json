@@ -59,10 +59,39 @@
       "Bash(sed -n '/async findAllActive/,/^  }/p' src/modules/skill/skill.service.ts)",
       "Bash(sed -n '/toResponse/,/^  }/p' src/modules/skill/skill.service.ts)",
       "Bash(sed -n '1,20p' src/modules/skill/skill.service.ts)",
-      "Bash(sed -n '/isActive: \\(doc.isActive/,/^  }/p' src/modules/skill/skill.service.ts)"
+      "Bash(sed -n '/isActive: \\(doc.isActive/,/^  }/p' src/modules/skill/skill.service.ts)",
+      "Bash(awk '/message RunAgentTeamRequest/,/^}/' grpc/proto/chatbot.proto)",
+      "Bash(grep -n \"import { AgentService }\\\\|from '../../agent\\\\|ModelsService\\\\|from '../../models\" src/modules/conversation/services/stream.service.ts)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m py_compile src/schema/chatbot_schema.py src/grpc_server/chatbot_servicer.py src/smart_rag/engines/multi_agent/config.py src/smart_rag/engines/multi_agent/agentic_workflows/team_configuration.py src/smart_rag/agents/factories/delegation_factory_helper.py src/smart_rag/agents/factories/manager_factory.py src/skills/runtime.py)",
+      "Bash(sed -n '12,20p' src/grpc_generated/chatbot_pb2.py)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(nslookup s3.yellowsys.org)",
+      "Bash(host s3.yellowsys.org)",
+      "Bash(curl -sS -m 10 -o /dev/null -w \"HTTP %{http_code} | time %{time_total}s | ip %{remote_ip}\\\\n\" https://s3.yellowsys.org)",
+      "Bash(curl -sS -m 10 -o /dev/null -w \"bucket HTTP %{http_code}\\\\n\" https://s3.yellowsys.org/yellowstorm)",
+      "Bash(nslookup ceph-rgw.local)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"litellm 3014 -> HTTP %{http_code} | ip %{remote_ip} | t %{time_total}s\\\\n\" http://173.208.208.93:3014/health)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"litellm 3014 root -> HTTP %{http_code}\\\\n\" http://173.208.208.93:3014/)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"litellm /v1/models -> HTTP %{http_code}\\\\n\" http://173.208.208.93:3014/v1/models)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"vectorstores 3413 -> HTTP %{http_code} | t %{time_total}s\\\\n\" http://173.208.208.93:3413/)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"vectorstores /health -> HTTP %{http_code}\\\\n\" http://173.208.208.93:3413/health)",
+      "Bash(curl -sS -m 8 -o /dev/null -w \"qdrant 6333 -> HTTP %{http_code}\\\\n\" http://173.208.208.93:6333/)",
+      "Bash(sed -n '1,80p' src/modules/conversation/interfaces/conversation.interface.ts)",
+      "Bash(sed -n '844,910p' src/modules/conversation/services/conversation.service.ts)",
+      "Bash(tee /tmp/fronttc.txt)",
+      "Bash(tee /tmp/f.txt)",
+      "Bash(grep -nB1 -A6 \"status!:\" src/modules/workspace/schemas/workspace-document.schema.ts)",
+      "Bash(grep -rnA14 \"interface SharedWorkspaceResponse|type SharedWorkspaceResponse\" src/modules/workspace/types.ts)",
+      "Bash(grep -rnA12 \"export interface Workspace \" src/modules/workspace/types.ts)",
+      "Bash(grep -rnA16 \"SharedWorkspaceResponse =\" src/modules/workspace/)",
+      "Bash(grep -rnA16 \"interface SharedWorkspaceResponse\" src/modules/workspace/)",
+      "Bash(grep -nA6 'select' src/modules/workspace/locales/fr.json)",
+      "Bash(grep -nA6 'select' src/modules/workspace/locales/en.json)"
     ]
   },
   "disabledMcpjsonServers": [
-    "code-review-graph"
+    "code-review-graph",
+    "obsidian-semantic-mcp"
   ]
 }

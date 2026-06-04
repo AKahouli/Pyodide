@@ -134,6 +134,10 @@ export interface WorkspaceFile {
   assignmentSource: AssignmentSource;
   /** Ceph object key — populated by backend listings post-Ceph migration. */
   path?: string;
+  /** Vectorstore indexing status, surfaced for the per-file status indicator. */
+  indexingStatus?: IndexingStatus;
+  indexingError?: string;
+  lastIndexedAt?: string;
 }
 
 export type ClassifierRuleScope = 'global' | 'local';

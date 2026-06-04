@@ -157,6 +157,7 @@ message RunAgentTeamRequest {
     repeated AttachedFile attached_files = 10;                   // Files attached in this turn (images + documents)
     repeated Document previous_attached_files = 11;  // Already-indexed files from previous turns
     ConnectorRepo connector_repo = 12;
+    repeated Skill skills = 13;                      // Conversation-level skills selected by the user
 }
 
 message GenerateConversationNameRequest {

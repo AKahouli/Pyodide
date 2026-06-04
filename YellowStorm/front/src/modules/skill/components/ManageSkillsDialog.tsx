@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Loader2, Search } from 'lucide-react';
+import { Check, Loader2, Search } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -17,6 +18,10 @@ interface ManageSkillsDialogProps {
   onOpenChange: (open: boolean) => void;
   skills: SkillOption[];
   loading?: boolean;
+  /** IDs of skills currently selected for the conversation. */
+  selectedIds: string[];
+  /** Toggles a skill for the conversation. */
+  onToggleSkill: (skill: SkillOption) => void;
 }
 
 interface SkillGroup {
@@ -27,9 +32,10 @@ interface SkillGroup {
 
 /**
  * Full skill catalog modal: skills grouped by category, 2 per row, System excluded.
- * Display-only for now — skills are not yet applied to the conversation.
+ * Clicking a skill toggles it for the whole conversation; selected skills are sent
+ * with every message.
  */
-export function ManageSkillsDialog({ open, onOpenChange, skills, loading }: ManageSkillsDialogProps) {
+export function ManageSkillsDialog({ open, onOpenChange, skills, loading, selectedIds, onToggleSkill }: ManageSkillsDialogProps) {
   const { t } = useModuleTranslation('common');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORIES);
@@ -143,17 +149,29 @@ export function ManageSkillsDialog({ open, onOpenChange, skills, loading }: Mana
                       <span className='text-xs text-muted-foreground'>{group.items.length}</span>
                     </div>
                     <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
-                      {group.items.map((skill) => (
-                        <div key={skill.id} className='flex items-center gap-3 rounded-lg border p-3'>
-                          <SkillLogo skill={skill} size={40} />
-                          <div className='min-w-0 flex-1'>
-                            <span className='block truncate text-sm font-medium'>{skill.name}</span>
-                            {skill.description && (
-                              <p className='truncate text-xs text-muted-foreground'>{skill.description}</p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                      {group.items.map((skill) => {
+                        const isSelected = selectedIds.includes(skill.id);
+                        return (
+                          <button
+                            key={skill.id}
+                            type='button'
+                            onClick={() => onToggleSkill(skill)}
+                            aria-pressed={isSelected}
+                            className={cn(
+                              'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent',
+                              isSelected && 'border-primary bg-primary/5',
+                            )}>
+                            <SkillLogo skill={skill} size={40} />
+                            <div className='min-w-0 flex-1'>
+                              <span className='block truncate text-sm font-medium'>{skill.name}</span>
+                              {skill.description && (
+                                <p className='truncate text-xs text-muted-foreground'>{skill.description}</p>
+                              )}
+                            </div>
+                            {isSelected && <Check className='size-4 shrink-0 text-primary' />}
+                          </button>
+                        );
+                      })}
                     </div>
                   </section>
                 ))}

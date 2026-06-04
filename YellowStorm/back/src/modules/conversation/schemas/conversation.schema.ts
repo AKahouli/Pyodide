@@ -20,6 +20,10 @@ export class Conversation extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Workspace' }], default: [] })
   workspaces!: Types.ObjectId[];
 
+  // Skills selected by the user for this conversation (applied to every message)
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Skill' }], default: [] })
+  selectedSkills!: Types.ObjectId[];
+
   @Prop({ type: Types.ObjectId, ref: 'Workspace' })
   systemWorkspaceId?: Types.ObjectId;
 

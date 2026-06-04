@@ -22,6 +22,10 @@ export interface IClassifierFileResponse {
   assignmentSource: 'manual' | 'playbook' | null;
   /** Ceph object key — surfaced so the file viewer can sign it directly. */
   path?: string;
+  /** Vectorstore indexing status, surfaced for the per-file status indicator. */
+  indexingStatus: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
+  indexingError?: string;
+  lastIndexedAt?: string;
 }
 
 export type ClassificationRunStatusValue =
