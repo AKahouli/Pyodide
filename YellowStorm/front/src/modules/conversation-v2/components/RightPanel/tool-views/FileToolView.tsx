@@ -16,18 +16,30 @@ import type { ToolContent } from '../../../types';
 
 type File = Extract<ToolContent, { kind: 'file' }>;
 
+const URL_RE = /^(https?:|blob:|data:)/i;
+
 export function FileToolView({ content }: { content: File }) {
   const language = (content.language || 'plaintext') as BundledLanguage;
-  const filename = content.path.split(/[\\/]/).pop() || content.path;
+  // Prefer the path's basename; URL artifacts have no path, so fall back to the
+  // URL's last segment (sans query string) for a sensible viewer title.
+  const nameSource = content.path || content.content?.trim().split(/[?#]/)[0] || '';
+  const filename = nameSource.split(/[\\/]/).pop() || nameSource;
   const displayMode = useFileViewerDisplayMode();
   const closeRightPanel = useConversationV2Store((s) => s.closeRightPanel);
   const [opening, setOpening] = useState(false);
 
+  // Openable when there's a signable Ceph path, or when the artifact's content
+  // is itself a URL (URL artifacts carry no path — opening one must use the
+  // content, not POST an empty path to the signing endpoint).
+  const contentIsUrl = URL_RE.test(content.content?.trim() ?? '');
+  const canOpen = Boolean(content.path) || contentIsUrl;
+
   const handleOpenInViewer = async () => {
-    if (opening || !content.path) return;
+    if (opening || !canOpen) return;
     setOpening(true);
     try {
-      const { url } = await conversationV2Api.getFileSignedUrl(content.path);
+      const source = content.path || content.content.trim();
+      const { url } = await conversationV2Api.getFileSignedUrl(source);
       const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
       // Mutually exclusive with the tool-detail right panel — both occupy the
       // right side and collide otherwise.
@@ -56,7 +68,7 @@ export function FileToolView({ content }: { content: File }) {
             size='sm'
             variant='outline'
             onClick={handleOpenInViewer}
-            disabled={opening || !content.path}
+            disabled={opening || !canOpen}
             className='h-7 gap-1 px-2 text-xs'
           >
             {opening ? <Loader2 className='size-3 animate-spin' /> : <ExternalLinkIcon className='size-3' />}
