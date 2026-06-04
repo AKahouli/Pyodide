@@ -27,6 +27,12 @@ export function RootGuard() {
   // Keep SSE connection alive at app level so streaming persists across navigation
   useConversationStream();
 
+  // TEMP deploy marker — open the browser console on the homepage to confirm the
+  // latest front build is live. Remove after verifying.
+  React.useEffect(() => {
+    console.log('🚀 DEPLOY-CHECK indexation-status front build is live');
+  }, []);
+
   // Initialize models when authenticated
   React.useEffect(() => {
     if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion) {
