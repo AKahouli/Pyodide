@@ -177,6 +177,110 @@ export class WidgetChatService {
     this.sseRegistry.cleanup(sessionId);
   }
 
+  /**
+   * Synchronous REST integration: one request returns the full agent reply as JSON.
+   * Uses the same gRPC pipeline as the widget but not the /widget/* routes.
+   */
+  async sendIntegrationMessage(params: {
+    tokenHash: string;
+    agentId: string;
+    message: string;
+    visitorId: string;
+    agent: any;
+    metadata: Record<string, unknown>;
+  }): Promise<{
+    sessionId: string;
+    messageId: string;
+    reply: string;
+    usage: { inputTokens: number; outputTokens: number; model?: string };
+  }> {
+    const { tokenHash, agentId, message, visitorId, agent, metadata } = params;
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    const sessionId = session.id;
+
+    const userMsg = await this.widgetMessageModel.create({
+      sessionId,
+      tokenHash,
+      agentId,
+      role: 'user',
+      content: message,
+    });
+
+    await this.widgetSessionModel.findByIdAndUpdate(sessionId, { $inc: { messageCount: 1 } }).exec();
+    await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
+
+    const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
+    this.sseRegistry.ensureSession(sessionId);
+
+    const streamResult = await new Promise<{
+      reply: string;
+      usage: { inputTokens: number; outputTokens: number; model?: string };
+    }>((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        subscription.unsubscribe();
+        fn();
+      };
+
+      const timer = setTimeout(() => {
+        finish(() => reject(new Error('Integration reply timeout')));
+      }, timeoutMs);
+
+      const subscription = this.sseRegistry.observe(sessionId, timeoutMs).subscribe({
+        next: (event) => {
+          if (event.type === 'stream_complete') {
+            const data = event.data as {
+              reply?: string;
+              usage?: { inputTokens?: number; outputTokens?: number; model?: string };
+            };
+            finish(() =>
+              resolve({
+                reply: String(data.reply ?? '').trim(),
+                usage: {
+                  inputTokens: data.usage?.inputTokens ?? 0,
+                  outputTokens: data.usage?.outputTokens ?? 0,
+                  model: data.usage?.model,
+                },
+              }),
+            );
+          } else if (event.type === 'stream_error') {
+            const msg = String((event.data as { message?: string }).message ?? 'AI stream error');
+            finish(() => reject(new Error(msg)));
+          }
+        },
+        error: (err) => finish(() => reject(err)),
+      });
+
+      this.executeStream(sessionId, agentId, tokenHash, message, agent).catch((err) =>
+        finish(() => reject(err)),
+      );
+    });
+
+    this.sseRegistry.cleanup(sessionId);
+
+    const replyText = streamResult.reply || 'No response generated.';
+    await this.widgetMessageModel.create({
+      sessionId,
+      tokenHash,
+      agentId,
+      role: 'assistant',
+      content: replyText,
+      inputTokens: streamResult.usage.inputTokens,
+      outputTokens: streamResult.usage.outputTokens,
+    });
+    await this.widgetSessionModel.findByIdAndUpdate(sessionId, { $inc: { messageCount: 1 } }).exec();
+
+    return {
+      sessionId,
+      messageId: userMsg.id,
+      reply: replyText,
+      usage: streamResult.usage,
+    };
+  }
+
   private async executeStream(sessionId: string, agentId: string, tokenHash: string, query: string, agentDoc: any): Promise<void> {
     const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
     const grpcReady = await this.streamService.waitForGrpcReady(5000);
