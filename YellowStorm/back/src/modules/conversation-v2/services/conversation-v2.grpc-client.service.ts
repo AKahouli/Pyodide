@@ -35,7 +35,9 @@ interface RawProtoEvent {
   message?: {
     role: 'user' | 'assistant';
     content: string;
-    attachments?: Array<{ id: string; name: string; content_type: string; path: string }>;
+    // proto `FileInfo` carries the Ceph object key in field `url` (field 4);
+    // `path` is accepted too for forward-compat if the proto is ever renamed.
+    attachments?: Array<{ id: string; name: string; content_type: string; url?: string; path?: string }>;
   };
   tool?: {
     tool_call_id: string;
@@ -351,7 +353,17 @@ export class ConversationV2GrpcClientService
             ...base,
             role: raw.message!.role,
             content: raw.message!.content,
-            attachments: raw.message!.attachments ?? [],
+            // The AI service emits the Ceph object key in `FileInfo.url` (proto
+            // field 4). The frontend contract calls this `path` (the value the
+            // signed-url endpoint expects), so normalise the field name here.
+            // Reading `.path` directly downstream yields undefined → an empty
+            // signing request → a misleading 400 "path must be shorter than 4096".
+            attachments: (raw.message!.attachments ?? []).map((a) => ({
+              id: a.id,
+              name: a.name,
+              content_type: a.content_type,
+              path: a.path ?? a.url ?? '',
+            })),
           },
         };
       case 'tool': {
