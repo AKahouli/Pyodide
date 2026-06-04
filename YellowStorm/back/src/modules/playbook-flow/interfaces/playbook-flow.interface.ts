@@ -27,6 +27,7 @@ export interface IFlowResponse {
   dataBindings: DataBinding[];
   workspaces: string[];
   reflectionEnabled?: boolean;
+  deepSearch?: boolean;
   advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;

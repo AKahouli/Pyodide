@@ -379,6 +379,8 @@ def create_search_agent_with_tools(
         if tool.get("name") == "search":
             top_k = tool.get("top_k")
             break
+    logical_search_only = "logical_search" in tools and "search" not in tools
+    deep_search = "deep_search" in tools
     agent, toolkit, _ = agent_factory.create_search_agent(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
@@ -397,6 +399,9 @@ def create_search_agent_with_tools(
         top_k=top_k,
         citation_manager=citation_manager,
         user_id=config.user_id,
+        vectorstore_mcp_tool=True if "logical_search" in tools or "deep_search" in tools else False,
+        logical_search_only=logical_search_only,
+        deep_search=deep_search,
     )
 
     # Store toolkit for source handling

@@ -66,11 +66,13 @@ interface InputProps {
   showWorkspaceSelect?: boolean;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
   belowTextarea?: ReactNode;
+  /** Rendered inside PromptInputTools, after built-in tools. */
+  extraTools?: ReactNode;
   /** Fires on each textarea input event with the current value. */
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, belowTextarea, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -543,6 +545,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} />}
+              {extraTools}
               {/* <PromptInputSpeechButton textareaRef={textareaRef} /> */}
               {/* <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                 <ModelSelectorTrigger asChild>

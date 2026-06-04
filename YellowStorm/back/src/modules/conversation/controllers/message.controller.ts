@@ -66,6 +66,7 @@ export class MessageController {
       hasFiles: !!dto.attachedFileIds?.length,
       fileCount: dto.attachedFileIds?.length || 0,
       webSearchEnabled: dto.webSearchEnabled,
+      deepSearchEnabled: dto.deepSearchEnabled,
       modelId: dto.modelId,
       agentIds: dto.agentIds,
     });
@@ -175,16 +176,17 @@ export class MessageController {
       });
 
       // Start streaming (non-blocking)
-       this.streamService
-         .startStream(user._id.toString(), conversationId, aiMessage.id, {
-           content: dto.content,
-           attachedFileIds: dto.attachedFileIds,
-           webSearchEnabled: dto.webSearchEnabled,
-           modelId: dto.modelId,
-           agentIds: dto.agentIds,
-           connectorRepo: dto.connectorRepo,
-         }, requestId, undefined, user.email)
-         .catch((err) => {
+      this.streamService
+        .startStream(user._id.toString(), conversationId, aiMessage.id, {
+          content: dto.content,
+          attachedFileIds: dto.attachedFileIds,
+          webSearchEnabled: dto.webSearchEnabled,
+          deepSearchEnabled: dto.deepSearchEnabled,
+          modelId: dto.modelId,
+          agentIds: dto.agentIds,
+          connectorRepo: dto.connectorRepo,
+        }, requestId, undefined, user.email)
+        .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,
             aiMessageId: aiMessage.id,
@@ -312,6 +314,7 @@ export class MessageController {
         content: userMessage.content || '',
         attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()),
         webSearchEnabled: userMessage.webSearchEnabled,
+        deepSearchEnabled: (userMessage as any).deepSearchEnabled,
         agentIds: userMessage.agentIds?.map((id) => id.toString()),
       }, requestId, undefined, user.email)
       .catch((err) => {

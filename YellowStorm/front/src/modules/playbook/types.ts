@@ -856,6 +856,7 @@ export interface Playbook {
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
+  deepSearch: boolean;
   executionSchedule: ExecutionScheduleData | null;
   triggers: PlaybookTrigger[];
   automatedTriggerType: 'schedule' | 'mail' | null;
@@ -1242,6 +1243,7 @@ export interface PlaybookExecution {
   recursionBudgetUsed?: number | null;
   recursionBudgetMax?: number | null;
   routerDecisions?: RouterDecision[];
+  deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1823,6 +1825,7 @@ export interface CreatePlaybookData {
   name: string;
   description?: string;
   workspaces?: string[];
+  deepSearch?: boolean;
 }
 
 export interface GeneratePlaybookData {

@@ -39,6 +39,7 @@ interface StreamRequest {
   content: string;
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
+  deepSearchEnabled?: boolean;
   modelId?: string;
   agentIds?: string[];
   connectorRepo?: {
@@ -639,6 +640,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             },
           }
         : {}),
+      deep_search_enabled: request.deepSearchEnabled || false,
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);

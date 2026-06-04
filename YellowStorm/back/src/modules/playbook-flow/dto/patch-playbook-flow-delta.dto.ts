@@ -38,6 +38,11 @@ class PatchPlaybookFlowDeltaFieldsDto {
   @IsBoolean()
   reflectionEnabled?: boolean;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
+
   @ApiPropertyOptional({ enum: ['llm', 'heuristic'] })
   @IsOptional()
   @IsString()

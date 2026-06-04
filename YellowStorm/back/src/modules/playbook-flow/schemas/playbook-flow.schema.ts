@@ -229,6 +229,9 @@ export class Flow {
   @Prop({ required: false, type: Boolean, default: false })
   reflectionEnabled?: boolean;
 
+  @Prop({ required: false, type: Boolean, default: false })
+  deepSearch?: boolean;
+
   @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: 'llm' })
   advisorScoringMode?: AdvisorScoringMode;
 

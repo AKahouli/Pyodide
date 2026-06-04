@@ -3051,6 +3051,14 @@ function PlaybookCanvasInner() {
     [advisorAutopilotEnabled, id, playbook, updatePlaybook],
   );
 
+  const handleToggleDeepSearch = useCallback(async () => {
+    if (!id || !playbook) return;
+    try {
+      await updatePlaybook(id, { deepSearch: !playbook.deepSearch });
+    } catch {
+    }
+  }, [id, playbook, updatePlaybook]);
+
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
     captureSnapshot();
@@ -3431,6 +3439,10 @@ function PlaybookCanvasInner() {
             onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
             advisorScoringMode={advisorScoringMode}
             onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
+            onDownloadAllResults={handleDownloadAllResults}
+            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
+            deepSearch={playbook.deepSearch ?? false}
+            onToggleDeepSearch={handleToggleDeepSearch}
             onTriggers={() => setTriggersSheetOpen(true)}
             triggersOpen={triggersSheetOpen}
             designSettings={playbook.designSettings}

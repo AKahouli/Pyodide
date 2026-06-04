@@ -151,6 +151,7 @@ export interface SendMessagePayload {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   webSearchEnabled?: boolean;
+  deepSearchEnabled?: boolean;
   modelId?: string;
   agentIds?: string[];
   memberIds?: string[];

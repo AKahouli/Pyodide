@@ -914,6 +914,7 @@ class ChatbotServicer(
             search_web=False,  # V2 removed this field, default to False
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
+            deep_search_enabled=getattr(pb_request, 'deep_search_enabled', False),
         )
 
     def _get_vectorstores_token(self) -> str:
@@ -1823,6 +1824,7 @@ class ChatbotServicer(
                     prompt_overrides=dict(request.prompt_overrides)
                     if getattr(request, "prompt_overrides", None)
                     else {},
+                    deep_search=getattr(request, "deep_search", False),
                 )
             )
             register_task(thread_id, bg_task)

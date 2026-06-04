@@ -1334,6 +1334,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         execution_id: executionId,
         flow_id: flowId,
         owner_id: normalizedOwnerId,
+        deep_search: snapshot?.deepSearch || (flow as any)?.deepSearch || false,
       snapshot: {
         nodes: (enrichedNodes as any[]).map((n) => ({
           id: n.id,

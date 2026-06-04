@@ -537,6 +537,7 @@ def create_langchain_tools(
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
     workspace_ceph_paths: Optional[List[str]] = None,
+    deep_search: bool = False,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -551,6 +552,7 @@ def create_langchain_tools(
         step_connector_bindings: Optional list of connector bindings attached to this step.
         initial_components: Prior playbook source/citation components used to continue
             citation numbering and avoid duplicate source emission.
+        deep_search: When True, attach a search_relevant_documents tool via the MCP indexation server.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
@@ -704,6 +706,11 @@ def create_langchain_tools(
         )
         if activate_skill_tool:
             tools.append(activate_skill_tool)
+
+    if deep_search:
+        deep_search_tool = _create_deep_search_tool()
+        if deep_search_tool:
+            tools.append(deep_search_tool)
 
     logger.info(
         "Created LangChain tools for playbook agent",
@@ -1627,6 +1634,52 @@ def _create_plan_tool() -> StructuredTool:
         func=None,
         coroutine=_plan,
         args_schema=PlanGeneratorInput,
+    )
+
+
+class DeepSearchInput(BaseModel):
+    query: str = Field(description="The search query string.")
+    workspace_name: str = Field(description="The workspace to search in.")
+    top_k: int = Field(default=5, description="Maximum number of results to return.")
+
+
+def _create_deep_search_tool() -> Optional[StructuredTool]:
+    """Create a deep search tool that calls the MCP indexation server."""
+    from src.config.settings import settings as app_settings
+
+    mcp_url = getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None) or getattr(app_settings, "VECTORSTORE_MCP_URL", None)
+    if not mcp_url:
+        logger.warning("VECTORSTORE_MCP_URL not configured, skipping deep search tool")
+        return None
+
+    async def _deep_search(query: str, workspace_name: str, top_k: int = 5) -> str:
+        from src.flow_engine.mcp import call_mcp_tool
+
+        try:
+            result = await call_mcp_tool(
+                "streamable_http",
+                mcp_url,
+                {},
+                "search_relevant_documents",
+                {"query": query, "workspace_name": workspace_name, "top_k": top_k},
+            )
+            if isinstance(result, dict):
+                return json.dumps(result, ensure_ascii=False)
+            return str(result)
+        except Exception as e:
+            logger.error("deep_search_tool_failed", error=str(e))
+            return f"Deep search failed: {str(e)}"
+
+    return StructuredTool(
+        name="search_relevant_documents",
+        description=(
+            "Search for relevant documents across the knowledge base using semantic search. "
+            "Use this to find information in indexed documents by providing a natural language query "
+            "and the target workspace name."
+        ),
+        func=None,
+        coroutine=_deep_search,
+        args_schema=DeepSearchInput,
     )
 
 

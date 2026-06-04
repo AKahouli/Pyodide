@@ -157,6 +157,7 @@ message RunAgentTeamRequest {
     repeated AttachedFile attached_files = 10;                   // Files attached in this turn (images + documents)
     repeated Document previous_attached_files = 11;  // Already-indexed files from previous turns
     ConnectorRepo connector_repo = 12;
+    bool deep_search_enabled = 13;
 }
 
 message GenerateConversationNameRequest {
@@ -561,6 +562,7 @@ message RunPlaybookWorkflowRequest {
     google.protobuf.Struct trigger_context = 13;
     string trigger_context_json = 14;
     string user_language = 15;
+    bool deep_search = 16;
 }
 
 message ResumePlaybookWorkflowRequest {

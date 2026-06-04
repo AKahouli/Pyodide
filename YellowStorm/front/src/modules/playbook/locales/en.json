@@ -772,6 +772,7 @@
   "toolbar.scoring": "Scoring",
   "toolbar.scoringLlm": "LLM-based",
   "toolbar.scoringHeuristic": "Heuristic",
+  "toolbar.deepSearch": "Deep Search",
   "toolbar.stepAutopilot": "Step Autopilot",
   "node.match": "Match",
   "node.evaluationScore": "Evaluation score",

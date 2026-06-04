@@ -361,6 +361,9 @@ interface ConversationState {
   // Selected connector repository for the current conversation
   selectedConnectorRepo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null;
 
+  // Deep search toggle
+  deepSearchEnabled: boolean;
+
   // Stream state cache for background conversations
   streamingStateCache: Map<string, CachedStreamingState>;
 
@@ -441,6 +444,9 @@ interface ConversationState {
   // Connector repository selection
   setSelectedConnectorRepo: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null) => void;
 
+  // Deep search toggle
+  setDeepSearchEnabled: (enabled: boolean) => void;
+
   // Cleanup
   clearMessages: () => void;
   clearAll: () => void;
@@ -491,6 +497,7 @@ export const useConversationStore = create<ConversationState>()(
       selectedModelId: null,
       selectedWorkspaceIds: [],
       selectedConnectorRepo: null,
+      deepSearchEnabled: false,
 
       streamingStateCache: new Map(),
 
@@ -1458,6 +1465,10 @@ export const useConversationStore = create<ConversationState>()(
         set({ selectedConnectorRepo: repo });
       },
 
+      setDeepSearchEnabled: (enabled) => {
+        set({ deepSearchEnabled: enabled });
+      },
+
       // ===== Cleanup =====
 
       clearMessages: () => {
@@ -1705,6 +1716,10 @@ export const useResetSelectedWorkspaceIds = () => useConversationStore((s) => s.
 export const useSelectedConnectorRepo = () => useConversationStore((s) => s.selectedConnectorRepo);
 
 export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.setSelectedConnectorRepo);
+
+export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSearchEnabled);
+
+export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
 
 export const useBranchCache = () => useConversationStore(useShallow((s) => s.branchCache));
 

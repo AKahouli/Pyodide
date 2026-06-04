@@ -199,6 +199,32 @@ async def get_indexing_status(
         })
 
 
+@mcp.tool()
+async def search_relevant_documents(
+    query: str,
+    workspace_name: str,
+    top_k: int = 5,
+) -> str:
+    """Search for relevant documents using community-graph semantic search.
+
+    Args:
+        query: The search query string
+        workspace_name: The workspace to search in
+        top_k: Maximum number of results to return (default 5)
+
+    Returns:
+        JSON string with search results
+    """
+    import json as _json
+    from community_graph_client import search as _cg_search
+
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(
+        None, _cg_search, query, workspace_name, top_k
+    )
+    return _json.dumps(results, ensure_ascii=False)
+
+
 if __name__ == "__main__":
     transport = os.getenv("INDEXATION_MCP_TRANSPORT", "stdio")
     port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8020")))

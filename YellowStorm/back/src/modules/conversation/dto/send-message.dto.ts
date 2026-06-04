@@ -42,6 +42,11 @@ export class SendMessageDto {
   @IsBoolean()
   webSearchEnabled?: boolean;
 
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  deepSearchEnabled?: boolean;
+
   @ApiPropertyOptional({ description: 'Model ID to use for AI response' })
   @IsOptional()
   @IsString()

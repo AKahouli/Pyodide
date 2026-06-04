@@ -856,6 +856,7 @@
   "toolbar.scoring": "Score",
   "toolbar.scoringLlm": "Bas\u00e9 LLM",
   "toolbar.scoringHeuristic": "Heuristique",
+  "toolbar.deepSearch": "Recherche approfondie",
   "toolbar.stepAutopilot": "Autopilot \u00e9tape",
   "node.match": "Match",
   "node.evaluationScore": "Score d'\u00e9valuation",

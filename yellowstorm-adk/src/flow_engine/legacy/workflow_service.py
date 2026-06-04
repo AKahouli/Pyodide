@@ -399,6 +399,7 @@ async def run_playbook(
     step_execution_modes: Optional[Dict[str, str]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
     user_language: Optional[str] = None,
+    deep_search: bool = False,
 ) -> Dict[str, Any]:
     """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
@@ -455,6 +456,7 @@ async def run_playbook(
         "prompt_overrides": prompt_overrides or {},
         "clarification_transcripts_by_task": {},
         "task_description_overrides_by_task": {},
+        "deep_search": deep_search,
     }
 
     config = {"configurable": {"thread_id": thread_id}}

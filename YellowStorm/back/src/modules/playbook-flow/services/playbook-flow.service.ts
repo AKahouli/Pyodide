@@ -107,6 +107,7 @@ export class PlaybookFlowService {
       dataBindings,
       workspaces,
       reflectionEnabled: dto.reflectionEnabled ?? false,
+      deepSearch: dto.deepSearch ?? false,
       advisorScoringMode: dto.advisorScoringMode ?? 'llm',
       advisorAutopilotEnabled: dto.advisorAutopilotEnabled ?? false,
       advisorAutopilotTargetScore: dto.advisorAutopilotTargetScore,
@@ -258,6 +259,7 @@ export class PlaybookFlowService {
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
     if (dto.reflectionEnabled !== undefined) existing.reflectionEnabled = dto.reflectionEnabled;
+    if (dto.deepSearch !== undefined) existing.deepSearch = dto.deepSearch;
     if (dto.advisorScoringMode !== undefined) existing.advisorScoringMode = dto.advisorScoringMode;
     if (dto.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
     if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
@@ -342,6 +344,7 @@ export class PlaybookFlowService {
       if (fields.designSettings !== undefined) existing.designSettings = fields.designSettings as any;
       if (fields.settings !== undefined) existing.settings = fields.settings as any;
       if (fields.reflectionEnabled !== undefined) existing.reflectionEnabled = fields.reflectionEnabled;
+      if (fields.deepSearch !== undefined) existing.deepSearch = fields.deepSearch;
       if (fields.advisorScoringMode !== undefined) existing.advisorScoringMode = fields.advisorScoringMode;
       if (fields.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = fields.advisorAutopilotEnabled;
       if (fields.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = fields.advisorAutopilotTargetScore ?? undefined;
@@ -490,6 +493,7 @@ export class PlaybookFlowService {
       designSettings: existing.designSettings,
       isFavorite: existing.isFavorite,
       reflectionEnabled: existing.reflectionEnabled,
+      deepSearch: existing.deepSearch,
       advisorScoringMode: existing.advisorScoringMode ?? 'llm',
       advisorAutopilotEnabled: existing.advisorAutopilotEnabled,
       advisorAutopilotTargetScore: existing.advisorAutopilotTargetScore,
