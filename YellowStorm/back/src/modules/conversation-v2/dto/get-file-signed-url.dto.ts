@@ -8,6 +8,6 @@ export class GetFileSignedUrlDto {
   })
   @IsString()
   @MinLength(1)
-  @MaxLength(1024)
+  @MaxLength(4048)
   path!: string;
 }
