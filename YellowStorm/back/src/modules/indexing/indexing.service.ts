@@ -204,7 +204,7 @@ export class IndexingService {
       document.chunk_size = settings?.chunks || 4000;
       await document.save();
 
-      this.logger.debug('Indexing API call successful, waiting for webhook', {
+      this.logger.log('Indexing API call successful, waiting for webhook', {
         documentId,
         workspaceId,
         download_id: result.download_id,
@@ -463,7 +463,7 @@ export class IndexingService {
 
     await document.save();
 
-    this.logger.debug('Webhook processed successfully', {
+    this.logger.log('Webhook processed successfully', {
       documentId,
       workspaceId,
       previousStatus,

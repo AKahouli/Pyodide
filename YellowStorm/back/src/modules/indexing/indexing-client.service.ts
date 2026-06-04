@@ -68,6 +68,19 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    // Surface the webhook URL at startup so a misconfigured deployment is
+    // obvious without reverse-engineering it from request logs. The indexing
+    // service POSTs status callbacks here; if it falls back to localhost the
+    // callback never reaches us and documents stay stuck in `processing`.
+    if (this.webhookUrl.includes('localhost') || this.webhookUrl.includes('127.0.0.1')) {
+      this.logger.warn(
+        'Indexing webhook URL points to localhost — set BACKEND_URL to a publicly reachable URL or status callbacks will never arrive',
+        { webhookUrl: this.webhookUrl },
+      );
+    } else {
+      this.logger.log('Indexing webhook URL configured', { webhookUrl: this.webhookUrl });
+    }
+
     await this.authenticate();
   }
 
