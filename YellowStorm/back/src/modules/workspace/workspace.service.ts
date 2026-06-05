@@ -573,6 +573,32 @@ export class WorkspaceService implements OnModuleInit {
   }
 
   /**
+   * Resolve workspaceIds to a `{ workspaceId: storagePath }` map, where each
+   * path is `{ownerUserId}/{storagePrefix}` (rooted under the workspace OWNER,
+   * see getStoragePathsByIds). Unlike getStoragePathsByIds, this preserves the
+   * id→path association so callers can attach a path to a specific workspace.
+   * IDs that fail to resolve are omitted from the map.
+   */
+  async getStoragePathMapByIds(workspaceIds: string[]): Promise<Record<string, string>> {
+    if (workspaceIds.length === 0) return {};
+
+    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return {};
+
+    const docs = await this.workspaceModel
+      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
+      .select('createdBy storagePrefix')
+      .lean()
+      .exec();
+
+    const pathById: Record<string, string> = {};
+    for (const doc of docs) {
+      pathById[doc._id.toString()] = `${doc.createdBy.toString()}/${doc.storagePrefix}`;
+    }
+    return pathById;
+  }
+
+  /**
    * Resolve a single workspaceId to its `{ownerUserId, storagePrefix}` pair.
    * Used by the upload services to build object keys rooted under the
    * workspace owner — collaborator uploads land under the owner's prefix so

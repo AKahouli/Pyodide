@@ -19,6 +19,7 @@ from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import StreamingFormatter, MessageTransformer
 from src.smart_rag.tools import build_tree
+from src.skills.runtime import normalize_skills
 from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.engines.multi_agent.agentic_workflows.team_configuration")
@@ -120,6 +121,7 @@ def create_team_config(user_request: RunAgentTeamRequest) -> AgentTeamConfig:
         attached_images=user_request.attached_images,
         previous_attached_files=user_request.previous_attached_files,
         connector_repo=user_request.connector_repo,
+        skills=normalize_skills(user_request.skills),
     )
 
 

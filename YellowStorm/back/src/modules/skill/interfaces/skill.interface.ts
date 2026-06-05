@@ -13,6 +13,8 @@ export interface ISkillResponse {
   color: string;
   iconColor: 'light' | 'dark';
   categoryId: string | null;
+  /** Resolved category name (populated by findAllActive); used to exclude "System" skills. */
+  categoryName?: string | null;
   license: string;
   compatibility: string;
   metadata: Record<string, string>;
@@ -29,6 +31,7 @@ export interface ISkillCategoryResponse {
   id: string;
   name: string;
   description: string;
+  isSystem: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

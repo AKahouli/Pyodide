@@ -33,6 +33,7 @@ import { DocumentStatus } from '../../workspace/schemas/workspace-document.schem
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
+import { SkillService } from '../../skill/skill.service';
 import { randomUUID } from 'node:crypto';
 
 interface StreamRequest {
@@ -48,6 +49,7 @@ interface StreamRequest {
     repoName: string;
     repoUrl?: string;
   };
+  skillIds?: string[];
 }
 
 // Log every Nth chunk to avoid overwhelming logs
@@ -79,6 +81,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly workspaceService: WorkspaceService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
+    private readonly skillService: SkillService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -641,10 +644,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Resolve agent brain contexts, current-turn attached files, and previous files in parallel
     const currentFileIds = request.attachedFileIds || [];
-    const [, attachedFiles, previousAttachedFiles] = await Promise.all([
+    const [, attachedFiles, previousAttachedFiles, grpcSkills] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
       this.buildAttachedFiles(currentFileIds),
       this.buildPreviousAttachedFiles(systemWorkspaceId, currentFileIds),
+      request.skillIds?.length
+        ? this.skillService.findByIdsForGrpc(request.skillIds)
+        : Promise.resolve([]),
     ]);
 
     const grpcRequest = {
@@ -669,6 +675,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             },
           }
         : {}),
+      ...(grpcSkills.length ? { skills: grpcSkills } : {}),
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);

@@ -554,11 +554,15 @@ class ChatbotServicer(
         """
         # Extract workspace_names and brain_documents from repeated WorkspaceContext
         workspace_names = []
+        workspace_ids = []
         brain_documents = []
         if pb_agent.brain_context:
             for workspace in pb_agent.brain_context:
+                workspace_id = getattr(workspace, "workspace_id", "") or ""
+                if workspace_id:
+                    workspace_ids.append(workspace_id)
                 workspace_name = (
-                    getattr(workspace, "workspace_name", "") or workspace.workspace_id
+                    getattr(workspace, "workspace_name", "") or workspace_id
                 )
                 if workspace_name:
                     workspace_names.append(workspace_name)
@@ -591,20 +595,6 @@ class ChatbotServicer(
         raw_agent_params = (
             dict(pb_agent.agent_params.params) if pb_agent.HasField("agent_params") else {}
         )
-        # Extract mcp config from connector_bindings_json
-        mcp_config = None
-        connector_bindings_raw = raw_agent_params.get("connector_bindings_json")
-        if connector_bindings_raw:
-            try:
-                bindings = json.loads(connector_bindings_raw)
-                for binding in bindings:
-                    transport_type = binding.get("mcp_transport_type")
-                    server_url = binding.get("mcp_server_url")
-                    if transport_type and server_url:
-                        mcp_config = {"transport_type": transport_type, "server_url": server_url}
-                        break
-            except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse connector_bindings_json for agent {pb_agent.name}")
         return AgentSuggestion(
             id=pb_agent.id if pb_agent.id else "no_id",
             name=pb_agent.name,
@@ -652,7 +642,7 @@ class ChatbotServicer(
             html=False,
             vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,
             workspace_names=workspace_names,
-            brain_ids=workspace_names,
+            brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
             chatbot_name={
@@ -663,7 +653,7 @@ class ChatbotServicer(
             agent_params=raw_agent_params if raw_agent_params else None,
             agent_type=pb_agent.agent_type if pb_agent.agent_type else None,
             save_memory=pb_agent.save_memory,
-            mcp=mcp_config,
+            mcp=None,
         )
 
     async def _convert_agent_team_request_v2(
@@ -690,13 +680,17 @@ class ChatbotServicer(
         """
         # Extract workspace names and documents from multiple workspace contexts
         workspace_names = []
+        workspace_ids = []
         brain_documents = []
 
         # Iterate through all workspace contexts (now a repeated field)
         for workspace_ctx in pb_request.workspace_context:
+            workspace_id = getattr(workspace_ctx, "workspace_id", "") or ""
+            if workspace_id:
+                workspace_ids.append(workspace_id)
             workspace_name = (
                 getattr(workspace_ctx, "workspace_name", "")
-                or workspace_ctx.workspace_id
+                or workspace_id
             )
             if workspace_name:
                 workspace_names.append(workspace_name)
@@ -853,6 +847,7 @@ class ChatbotServicer(
                 workspace_names.append(workspace_name)
 
         workspace_names = workspace_names if workspace_names else None
+        workspace_ids = workspace_ids if workspace_ids else workspace_names
         ################
         # Extract chatbot_name from manager agent (agent_type="manager")
         # Manager agent is required - client must always provide one
@@ -891,6 +886,36 @@ class ChatbotServicer(
                     "repo_url": str(getattr(pb_request.connector_repo, "repo_url", "") or "").strip(),
                 }
 
+        # Conversation-level skills selected by the user in the composer.
+        skills = (
+            [
+                {
+                    "id": skill.id,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "instructions": skill.instructions,
+                    "license": skill.license,
+                    "compatibility": skill.compatibility,
+                    "metadata": dict(skill.metadata) if skill.metadata else {},
+                    "allowed_tools": list(skill.allowed_tools) if skill.allowed_tools else [],
+                    "files": [
+                        {
+                            "path": file.path,
+                            "kind": file.kind,
+                            "mime_type": file.mime_type,
+                            "content": file.content,
+                        }
+                        for file in skill.files
+                    ]
+                    if skill.files
+                    else [],
+                }
+                for skill in pb_request.skills
+            ]
+            if getattr(pb_request, "skills", None)
+            else None
+        )
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
@@ -913,12 +938,13 @@ class ChatbotServicer(
             available_tools=[],  # V2 removed this field
             vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,  # Use environment variable
             workspace_names=workspace_names,  # V2: workspace_context.workspace_id (singular) → V1: workspace_names (plural)
-            brain_ids=workspace_names,
+            brain_ids=workspace_ids,
             brain_documents=brain_documents,
             brain_relations=None,  # V2 removed this field
             search_web=False,  # V2 removed this field, default to False
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
+            skills=skills,
         )
 
     def _get_vectorstores_token(self) -> str:
@@ -1381,7 +1407,7 @@ class ChatbotServicer(
                     text_source=chatbot_pb2.TextSourceData(
                         type=str(text_source_data.get("type", "text")),
                         source=str(text_source_data.get("source", "")),
-                        external_id=str(
+                        file_name=str(
                             text_source_data.get("external_id")
                             or text_source_data.get("file_name", "")
                         ),
@@ -1404,7 +1430,7 @@ class ChatbotServicer(
                         path=str(image_source_data.get("path", "")),
                         page=str(image_source_data.get("page", "")),
                         file_name=str(image_source_data.get("file_name", "")),
-                        external_id=str(
+                        workspace_name=str(
                             image_source_data.get("external_id")
                             or image_source_data.get("workspace_name")
                             or image_source_data.get("file_name", "")
@@ -3086,7 +3112,7 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
             citation_kwargs["text_source"] = chatbot_pb2.TextSourceData(
                 type=str(ts.get("type", "text")),
                 source=str(ts.get("source", "")),
-                external_id=str(ts.get("external_id") or ts.get("file_name", "")),
+                file_name=str(ts.get("external_id") or ts.get("file_name", "")),
                 page=str(ts.get("page", "")),
                 page_content=str(ts.get("page_content", "")),
                 workspace_id=str(ts.get("workspace_id", "")),
@@ -3099,7 +3125,7 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
                 path=str(img.get("path", "")),
                 page=str(img.get("page", "")),
                 file_name=str(img.get("file_name", "")),
-                external_id=str(
+                workspace_name=str(
                     img.get("external_id")
                     or img.get("workspace_name")
                     or img.get("file_name", "")

@@ -536,6 +536,7 @@ def create_langchain_tools(
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
+    workspace_ceph_paths: Optional[List[str]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -556,6 +557,17 @@ def create_langchain_tools(
     """
     collector = ToolResultCollector(initial_components=initial_components)
     effective_file_names = file_names if file_names is not None else input_files
+    agent_params = agent_config.get("agent_params") or {}
+    session_id = str(agent_params.get("session_id") or "")
+    user_id = str(agent_params.get("user_id") or "")
+    # Prefer the authoritative Ceph paths ("user_id/workspace_name") resolved by the
+    # step node from the backend payload. Fall back to deriving them from document
+    # filepaths only when the backend did not supply explicit paths.
+    workspace_paths = list(workspace_ceph_paths or [])
+    if not workspace_paths:
+        workspace_paths = _collect_workspace_paths(
+            workspace_context, code_interpreter_files, user_id
+        )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -579,6 +591,9 @@ def create_langchain_tools(
             workspace_ids=connector_workspace_ids,
             file_names=effective_file_names,
             user_id=user_id,
+            external_ids=input_files,
+            session_id=session_id,
+            workspace_paths=workspace_paths,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -764,6 +779,60 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _collect_workspace_paths(
+    workspace_context: Optional[list],
+    code_interpreter_files: Optional[List[Dict[str, str]]] = None,
+    user_id: Optional[str] = None,
+) -> List[str]:
+    """Derive the sandbox workspace folder names sent to the MCP connector.
+
+    Each workspace becomes a folder under /mnt/workspace/<name> inside the sandbox VM.
+    Names are derived from the document's workspace_name (or its filepath), matching the
+    convention used by the code interpreter. Both the resolved input-port files
+    (code_interpreter_files) and the playbook-level workspace_context are inspected,
+    since the active source depends on how the workspace was wired to the step.
+    """
+    names: List[str] = []
+    seen = set()
+
+    def _add(name: str) -> None:
+        name = (name or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    # 1) Resolved input-port files (resolved_inputs_only mode).
+    for doc in code_interpreter_files or []:
+        if not isinstance(doc, dict):
+            continue
+        _add(
+            _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
+            or _extract_workspace_name_from_filepath(
+                str(doc.get("filepath", "")),
+                workspace_id=str(doc.get("workspace_id", "")).strip(),
+                owner_user_id=user_id,
+            )
+        )
+
+    # 2) Playbook-level workspace context (fallback_playbook mode).
+    for wc in workspace_context or []:
+        if not isinstance(wc, dict):
+            continue
+        for doc in wc.get("documents", []):
+            if not isinstance(doc, dict):
+                continue
+            _add(
+                _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
+                or _extract_workspace_name_from_filepath(
+                    str(doc.get("filepath", "")),
+                    workspace_id=str(doc.get("workspace_id", "")).strip(),
+                    owner_user_id=user_id,
+                )
+            )
+
+    return names
 
 
 def _merge_brain_data(agent_config: dict, workspace_context: Optional[list]) -> tuple:
@@ -1605,6 +1674,10 @@ def _create_connector_mcp_tools(
     workspace_ids: Optional[List[str]] = None,
     file_names: Optional[List[str]] = None,
     user_id: Optional[str] = None,
+    brain_ids: Optional[List[str]] = None,
+    external_ids: Optional[List[str]] = None,
+    session_id: str = "",
+    workspace_paths: Optional[List[str]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1707,6 +1780,8 @@ def _create_connector_mcp_tools(
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
                 _fn: Optional[List[str]] = file_names,
+                sid: str = session_id,
+                wsp: List[str] = list(workspace_paths or []),
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1729,16 +1804,12 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
+                        merged_params.pop("user_id", None)
 
-                        # Build context headers for streamable_http transport
                         effective_auth_headers = dict(ah)
                         if tt == "streamable_http":
-                            # Always override user_id / workspace_name / file_name
-                            # with known-good values so LLM-guessed or fixed_params
-                            # values (ObjectIds) can't reach the backend.
-                            if _uid:
-                                effective_auth_headers["user_id"] = _uid
-                                merged_params["user_id"] = _uid
+                            # Always override workspace_name / file_name with known-good
+                            # values so LLM-guessed or fixed_params values can't reach the backend.
                             if _fn:
                                 effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
                                 merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
@@ -1751,9 +1822,12 @@ def _create_connector_mcp_tools(
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
+                            if sid:
+                                effective_auth_headers["x-conversation-id"] = sid
+                            if wsp:
+                                effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             logger.info(
-                                "playbook_connector_mcp_context_headers user_id=%s file_name=%s workspace_id=%s",
-                                _uid,
+                                "playbook_connector_mcp_context_headers file_name=%s workspace_id=%s",
                                 effective_auth_headers.get("file_name"),
                                 effective_auth_headers.get("workspace_id"),
                             )
@@ -1798,6 +1872,30 @@ def _create_connector_mcp_tools(
                                 else 0,
                                 _log_payload(response),
                             )
+                            if response.get("ceph_path"):
+                                ceph_path = response.get("ceph_path", "")
+                                filename = (response.get("path") or ceph_path).rstrip("/").split("/")[-1]
+                                artifact_kind = infer_artifact_kind(filename) or "document"
+                                logger.info(
+                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s",
+                                    cid,
+                                    ak,
+                                    filename,
+                                    artifact_kind,
+                                    ceph_path,
+                                )
+                                collector.add_component("artifact", {
+                                    "file_path": ceph_path,
+                                    "filename": filename,
+                                    "artifact_kind": artifact_kind,
+                                    "output_port_id": "",
+                                })
+                                logger.info(
+                                    "mcp_file_artifact_emitted connector_id=%s filename=%s total_components=%d",
+                                    cid,
+                                    filename,
+                                    len(collector.components),
+                                )
                             response = _collect_connector_response_components(
                                 collector,
                                 response,

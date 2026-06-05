@@ -185,6 +185,7 @@ class MCPHelper:
                         workspace_ids=kwargs.get('workspace_ids'),
                         workspace_names=kwargs.get('workspace_names'),
                     ) or {}
+                headers.update(kwargs.get('auth_headers') or {})
                 return StreamableHTTPConnectionParams(url=url, headers=headers)
 
             elif mcp_type == 'excel':

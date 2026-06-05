@@ -43,6 +43,7 @@ import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
+import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
 import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
@@ -62,6 +63,13 @@ export function NewConversationPage() {
   const inputDisabled = useInputDisabled();
   const { status: usageStatus } = useUsage();
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
+
+  // Starting a brand-new conversation: no conversation is active yet, so clear
+  // any skill selection (and stale conversation id) carried over from the
+  // previously open conversation. Direct setState avoids PATCHing the old one.
+  useEffect(() => {
+    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [] });
+  }, []);
 
   const limitPlaceholder = useMemo(() => {
     if (!isLimitExceeded) return undefined;
@@ -122,7 +130,19 @@ export function NewConversationPage() {
     if (!text) return;
     setIsSending(true);
     try {
-      const { sessionId } = await conversationV2Api.createSession(workspaceIds);
+      const { sessionId, workspaceIds: sessionWorkspaceIds } =
+        await conversationV2Api.createSession(workspaceIds);
+
+      // Surface the new v2 session in the sidebar history immediately, rather
+      // than waiting for the next pointers refresh.
+      useConversationV2PointersStore.getState().prepend({
+        sessionId,
+        title: '',
+        status: 'active',
+        lastEventAt: new Date().toISOString(),
+        isShared: false,
+        workspaceIds: sessionWorkspaceIds ?? workspaceIds,
+      });
 
       // Persist + resolve the picked model BEFORE navigation, so:
       //   1. The session page's hydrateSelectedModelForSession finds it in
@@ -196,6 +216,9 @@ export function NewConversationPage() {
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
+        skillIds: useConversationStore.getState().selectedSkillIds.length
+          ? useConversationStore.getState().selectedSkillIds
+          : undefined,
       });
 
       clearAll();

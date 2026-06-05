@@ -397,10 +397,10 @@ async def call_mcp_tool(
     merged_env = _build_env(server_config, auth_env)
 
     logger.info(
-        "mcp_call_tool action=%s transport=%s headers=%s request_payload=%s",
+        "mcp_call_tool action=%s transport=%s header_names=%s request_payload=%s",
         action_key,
         transport_type,
-        merged_headers,
+        sorted((merged_headers or {}).keys()),
         _log_payload(params),
     )
 
@@ -442,8 +442,13 @@ async def call_mcp_tool(
             import httpx
 
             client_headers = merged_headers or {}
+            async def _inject_mcp_headers(request: httpx.Request) -> None:
+                for key, value in client_headers.items():
+                    request.headers[key] = value
+
             async with httpx.AsyncClient(
                 headers=client_headers,
+                event_hooks={"request": [_inject_mcp_headers]},
                 follow_redirects=True,
                 # read=None: no timeout on SSE stream reads (tool calls can take >5s)
                 timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),

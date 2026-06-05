@@ -42,6 +42,7 @@ describe('ConnectorService importFromMcp', () => {
         create,
         findOne,
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -134,6 +135,7 @@ describe('ConnectorService importFromMcp', () => {
         findByIdAndUpdate,
         findOne: jest.fn(),
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -216,6 +218,7 @@ describe('ConnectorService importFromMcp', () => {
         create,
         findOne,
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -270,6 +273,7 @@ describe('ConnectorService importFromMcp', () => {
         create,
         find,
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -321,6 +325,7 @@ describe('ConnectorService importFromMcp', () => {
         create,
         find,
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -352,6 +357,7 @@ describe('ConnectorService importFromMcp', () => {
         create: jest.fn(),
         find: jest.fn(),
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );
@@ -379,6 +385,7 @@ describe('ConnectorService importFromMcp', () => {
         create: jest.fn(),
         find: jest.fn(),
       } as any,
+      { find: jest.fn() } as any,
       logger as any,
       null as any,
     );

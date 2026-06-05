@@ -183,6 +183,7 @@ export class MessageController {
            modelId: dto.modelId,
            agentIds: dto.agentIds,
            connectorRepo: dto.connectorRepo,
+           skillIds: dto.skillIds,
          }, requestId, undefined, user.email)
          .catch((err) => {
           this.logger.error('Stream start failed', {

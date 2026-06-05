@@ -12,13 +12,16 @@ import { BadRequestException, ConflictException, NotFoundException } from '../ex
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
 import { Skill, SkillDocument, SkillFileKind } from './schemas/skill.schema';
-import { ISkillResponse } from './interfaces/skill.interface';
+import { SkillCategory, SkillCategoryDocument } from './schemas/skill-category.schema';
+import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
 
 @Injectable()
 export class SkillService {
   constructor(
     @InjectModel(Skill.name)
     private readonly skillModel: Model<SkillDocument>,
+    @InjectModel(SkillCategory.name)
+    private readonly skillCategoryModel: Model<SkillCategoryDocument>,
     @InjectModel(Agent.name)
     private readonly agentModel: Model<AgentDocument>,
     @InjectModel(AgentType.name)
@@ -111,6 +114,32 @@ export class SkillService {
     return skills.map((skill) => this.toResponse(skill));
   }
 
+  /** Resolve active skills by id and map them to the gRPC wire shape (snake_case). */
+  async findByIdsForGrpc(ids: string[]): Promise<IGrpcSkill[]> {
+    const skills = await this.findByIds(ids);
+    return skills.map((skill) => SkillService.toGrpcSkill(skill));
+  }
+
+  /** Convert an ISkillResponse to the gRPC `Skill` message shape. */
+  static toGrpcSkill(skill: ISkillResponse): IGrpcSkill {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      license: skill.license,
+      compatibility: skill.compatibility,
+      metadata: skill.metadata,
+      allowed_tools: skill.allowedTools,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mime_type: file.mimeType,
+        content: file.content,
+      })),
+    };
+  }
+
   async findAllActive(): Promise<ISkillResponse[]> {
     const skills = await this.skillModel
       .find({ isActive: true })
@@ -118,7 +147,43 @@ export class SkillService {
       .lean()
       .exec();
 
-    return skills.map((skill) => this.toResponse(skill));
+    const categoryNameById = await this.buildCategoryNameMap(skills);
+
+    return skills.map((skill) =>
+      this.toResponse({
+        ...skill,
+        categoryName: skill.categoryId
+          ? (categoryNameById.get(skill.categoryId.toString()) ?? null)
+          : null,
+      }),
+    );
+  }
+
+  /** Resolve category id -> name for the given skills in a single query. */
+  private async buildCategoryNameMap(
+    skills: Array<{ categoryId?: Types.ObjectId | null }>,
+  ): Promise<Map<string, string>> {
+    const categoryIds = Array.from(
+      new Set(
+        skills
+          .map((s) => s.categoryId?.toString())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    if (!categoryIds.length) return new Map();
+
+    const categories = await this.skillCategoryModel
+      .find({ _id: { $in: categoryIds.map((id) => new Types.ObjectId(id)) } })
+      .select('_id name')
+      .lean()
+      .exec();
+
+    return new Map(
+      categories.map((cat: Record<string, unknown>) => [
+        (cat._id as { toString(): string }).toString(),
+        cat.name as string,
+      ]),
+    );
   }
 
   async update(id: string, dto: UpdateSkillDto): Promise<ISkillResponse> {
@@ -282,6 +347,7 @@ export class SkillService {
       color: (doc.color as string) || '',
       iconColor: ((doc.iconColor as 'light' | 'dark') || 'light'),
       categoryId: doc.categoryId ? (doc.categoryId as { toString(): string }).toString() : null,
+      categoryName: (doc.categoryName as string | null | undefined) ?? null,
       license: (doc.license as string) || '',
       compatibility: (doc.compatibility as string) || '',
       metadata: (doc.metadata as Record<string, string>) || {},
