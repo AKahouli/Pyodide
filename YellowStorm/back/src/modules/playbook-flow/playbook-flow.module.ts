@@ -72,6 +72,7 @@ import { PlaybookFlowDesignService } from './services/playbook-flow-design.servi
 import { PlaybookFlowDesignOperationService } from './services/playbook-flow-design-operation.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
 import { PlaybookFlowAdvisorModelService } from './services/advisor/playbook-flow-advisor-model.service';
+import { PlaybookFlowAdvisorScriptReplacementService } from './services/advisor/playbook-flow-advisor-script-replacement.service';
 import { PlaybookFlowExecutionAdvisorService } from './services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './services/advisor/playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './services/advisor/playbook-flow-heuristic-advisor-evaluator.service';
@@ -207,6 +208,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowDesignOperationService,
     PlaybookFlowAdvisorService,
     PlaybookFlowAdvisorModelService,
+    PlaybookFlowAdvisorScriptReplacementService,
     PlaybookFlowHeuristicAdvisorEvaluatorService,
     PlaybookFlowLlmAdvisorEvaluatorService,
     PlaybookFlowExecutionAdvisorService,

@@ -22,12 +22,149 @@ import { FlowResponseAssemblerService } from '../domain/flow-response-assembler.
 import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.service';
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
+import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
 import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 
 @Injectable()
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
+
+  private stableStringify(value: unknown, seen = new WeakSet<object>()): string {
+    if (value === undefined) {
+      return 'undefined';
+    }
+
+    if (value === null) {
+      return 'null';
+    }
+    if (typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+
+    const objectValue = value as Record<string, unknown>;
+
+    if (seen.has(objectValue)) {
+      return JSON.stringify('[Circular]');
+    }
+
+    if (Array.isArray(value)) {
+      seen.add(objectValue);
+      const serialized = `[${value.map((item) => this.stableStringify(item, seen)).join(',')}]`;
+      seen.delete(objectValue);
+      return serialized;
+    }
+
+    seen.add(objectValue);
+    const serialized = `{${Object.keys(objectValue)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${this.stableStringify(objectValue[key], seen)}`)
+      .join(',')}}`;
+    seen.delete(objectValue);
+    return serialized;
+  }
+
+  private buildEditorStateHash(flow: FlowDocument | Record<string, unknown>): string {
+    const source = flow as Record<string, unknown>;
+    return this.stableStringify({
+      name: source.name,
+      description: source.description,
+      triggerConfig: source.triggerConfig,
+      settings: source.settings,
+      hitlPolicy: source.hitlPolicy,
+      hitlBlockers: source.hitlBlockers,
+      nodes: source.nodes,
+      controlEdges: source.controlEdges,
+      dataBindings: source.dataBindings,
+      workspaces: source.workspaces,
+      designSettings: source.designSettings,
+      reflectionEnabled: source.reflectionEnabled,
+      advisorScoringMode: source.advisorScoringMode,
+      advisorAutopilotEnabled: source.advisorAutopilotEnabled,
+      advisorAutopilotTargetScore: source.advisorAutopilotTargetScore,
+      advisorAutopilotMaxTurns: source.advisorAutopilotMaxTurns,
+    });
+  }
+
+  private buildSaveIdempotencyKey(flowId: string, clientMutationId: string): string {
+    return `flow-save:${flowId}:${clientMutationId}`;
+  }
+
+  private buildDeltaPatchSummary(dto: PatchPlaybookFlowDeltaDto) {
+    return {
+      scalarFields: Object.keys(dto.patch.fields ?? {}).length,
+      nodesUpserted: dto.patch.nodes?.upserts?.length ?? 0,
+      nodesDeleted: dto.patch.nodes?.deleteIds?.length ?? 0,
+      edgeChanges: dto.patch.controlEdges !== undefined ? 1 : 0,
+      dataBindingChanges: dto.patch.dataBindings !== undefined ? 1 : 0,
+      positionUpdates: dto.patch.nodes?.positionUpdates?.length ?? 0,
+    };
+  }
+
+
+  private async persistEditorWrite(
+    flowId: string,
+    ownerId: string,
+    expectedDefinitionRevision: number | undefined,
+    expectedUpdatedAt: string | undefined,
+    message: string,
+    existing: FlowDocument,
+  ): Promise<FlowDocument> {
+    const filter: Record<string, unknown> = { _id: flowId, ownerId };
+    if (expectedDefinitionRevision !== undefined) {
+      filter.$or = [
+        { definitionRevision: expectedDefinitionRevision },
+        ...(expectedDefinitionRevision === 0 ? [{ definitionRevision: { $exists: false } }] : []),
+      ];
+    } else if (expectedUpdatedAt !== undefined) {
+      filter.updatedAt = new Date(expectedUpdatedAt);
+    }
+
+    const saved = await this.flowModel.findOneAndUpdate(
+      filter,
+      {
+        $set: {
+          name: existing.name,
+          description: existing.description,
+          triggerConfig: existing.triggerConfig,
+          settings: existing.settings,
+          hitlPolicy: existing.hitlPolicy,
+          hitlBlockers: existing.hitlBlockers,
+          nodes: existing.nodes,
+          controlEdges: existing.controlEdges,
+          dataBindings: existing.dataBindings,
+          workspaces: existing.workspaces,
+          designSettings: existing.designSettings,
+          reflectionEnabled: existing.reflectionEnabled,
+          advisorScoringMode: existing.advisorScoringMode,
+          advisorAutopilotEnabled: existing.advisorAutopilotEnabled,
+          advisorAutopilotTargetScore: existing.advisorAutopilotTargetScore,
+          advisorAutopilotMaxTurns: existing.advisorAutopilotMaxTurns,
+        },
+        $inc: { definitionRevision: 1 },
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    ).catch((err: any) => {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${existing.name}" already exists.`,
+        );
+      }
+      throw err;
+    });
+
+    if (!saved) {
+      throw new ConflictException(ErrorCode.CONFLICT, message);
+    }
+
+    saved.definitionRevision = saved.definitionRevision ?? ((existing.definitionRevision ?? 0) + 1);
+
+    return saved;
+  }
 
   private async resolveUniqueName(ownerId: string, baseName: string): Promise<string> {
     const existing = await this.flowModel.exists({ ownerId, name: baseName });
@@ -65,6 +202,7 @@ export class PlaybookFlowService {
     private readonly workspacePolicy: FlowWorkspacePolicyService,
     private readonly graphSanitizer: FlowGraphSanitizerService,
     private readonly deltaPatchService: FlowDeltaPatchService,
+    private readonly idempotencyService: PlaybookFlowIdempotencyService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -187,6 +325,7 @@ export class PlaybookFlowService {
       items: items.map((item) => ({
         ...item,
         id: (item as unknown as Record<string, unknown>)._id as string,
+        definitionRevision: (item as { definitionRevision?: number }).definitionRevision ?? 0,
         executionStatus: latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.status ?? null,
         lastExecutionAt:
           latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.endedAt
@@ -234,9 +373,44 @@ export class PlaybookFlowService {
 
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
     const startedAt = Date.now();
+    const idempotencyKey = dto.clientMutationId
+      ? this.buildSaveIdempotencyKey(flowId, dto.clientMutationId)
+      : null;
+    let reservedByRequest = false;
+    let writeCommitted = false;
+    if (idempotencyKey) {
+      const reservation = await this.idempotencyService.reserveSave<IFlowResponse>(ownerId, idempotencyKey, dto);
+      if (reservation.type === 'duplicate') {
+        return reservation.responseBody;
+      }
+      if (reservation.type === 'duplicate-pending') {
+        const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+        if (reservation.expectedDefinitionRevision !== undefined
+          && reservation.expectedStateHash
+          && (existing.definitionRevision ?? 0) === reservation.expectedDefinitionRevision
+          && this.buildEditorStateHash(existing) === reservation.expectedStateHash) {
+          const response = this.responseAssembler.toBaseFlowResponse(existing);
+          await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, response as unknown as Record<string, unknown>);
+          return response;
+        }
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'Idempotency key reservation exists but save result was not recorded yet. Retry shortly with the same payload.',
+        );
+      }
+      reservedByRequest = true;
+    }
+
+    try {
     const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
 
-    if (dto.expectedUpdatedAt !== undefined) {
+    if (dto.expectedDefinitionRevision !== undefined) {
+      this.accessService.ensureExpectedDefinitionRevision(
+        existing.definitionRevision,
+        dto.expectedDefinitionRevision,
+        'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+      );
+    } else if (dto.expectedUpdatedAt !== undefined) {
       this.accessService.ensureExpectedUpdatedAt(
         (existing as { updatedAt?: Date }).updatedAt,
         dto.expectedUpdatedAt,
@@ -283,25 +457,49 @@ export class PlaybookFlowService {
       { allowDraftRouters: true },
     );
 
-    const saved = await existing.save().catch((err: any) => {
-      if (err.code === 11000) {
-        throw new ConflictException(
-          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
-          `A playbook named "${existing.name}" already exists.`,
-        );
-      }
-      throw err;
-    });
+    if (idempotencyKey) {
+      await this.idempotencyService.recordExpectedSaveState(
+        ownerId,
+        idempotencyKey,
+        this.buildEditorStateHash(existing),
+        (existing.definitionRevision ?? 0) + 1,
+      );
+    }
+
+    const saved = await this.persistEditorWrite(
+      flowId,
+      ownerId,
+      dto.expectedDefinitionRevision,
+      dto.expectedUpdatedAt,
+      'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+      existing,
+    );
     const raw = saved.toJSON() as unknown as IFlowResponse;
+    raw.definitionRevision = raw.definitionRevision ?? 0;
     raw.activeReplays = {};
     const durationMs = Date.now() - startedAt;
     this.logger.log(`playbook_save_duration_ms mode=full flowId=${flowId} durationMs=${durationMs}`);
+    writeCommitted = true;
+    if (idempotencyKey) {
+      try {
+        await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, raw as unknown as Record<string, unknown>);
+      } catch (err) {
+        this.logger.warn(`Failed to record idempotent full-save result for flow ${flowId}: ${(err as Error).message}`);
+      }
+    }
     return raw;
+    } catch (err) {
+      if (idempotencyKey && reservedByRequest && !writeCommitted) {
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+      }
+      throw err;
+    }
   }
 
   async applyDeltaPatch(flowId: string, ownerId: string, dto: PatchPlaybookFlowDeltaDto): Promise<{
     id: string;
     updatedAt: string;
+    definitionRevision: number;
     payloadHash?: string;
     applied: true;
     patchSummary: {
@@ -314,11 +512,61 @@ export class PlaybookFlowService {
     };
   }> {
     const startedAt = Date.now();
+    const idempotencyKey = dto.clientMutationId
+      ? this.buildSaveIdempotencyKey(flowId, dto.clientMutationId)
+      : null;
+    let reservedByRequest = false;
+    let writeCommitted = false;
+    if (idempotencyKey) {
+      const reservation = await this.idempotencyService.reserveSave<{
+        id: string;
+        updatedAt: string;
+        definitionRevision: number;
+        payloadHash?: string;
+        applied: true;
+        patchSummary: {
+          scalarFields: number;
+          nodesUpserted: number;
+          nodesDeleted: number;
+          edgeChanges: number;
+          dataBindingChanges: number;
+          positionUpdates: number;
+        };
+      }>(ownerId, idempotencyKey, dto);
+      if (reservation.type === 'duplicate') {
+        return reservation.responseBody;
+      }
+      if (reservation.type === 'duplicate-pending') {
+        const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+        if (reservation.expectedDefinitionRevision !== undefined
+          && reservation.expectedStateHash
+          && (existing.definitionRevision ?? 0) === reservation.expectedDefinitionRevision
+          && this.buildEditorStateHash(existing) === reservation.expectedStateHash) {
+          const response = {
+            id: String(existing._id),
+            updatedAt: ((existing as { updatedAt?: Date }).updatedAt ?? new Date()).toISOString(),
+            definitionRevision: existing.definitionRevision ?? 0,
+            ...(dto.payloadHash ? { payloadHash: dto.payloadHash } : {}),
+            applied: true as const,
+            patchSummary: this.buildDeltaPatchSummary(dto),
+          };
+          await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, response);
+          return response;
+        }
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'Idempotency key reservation exists but save result was not recorded yet. Retry shortly with the same payload.',
+        );
+      }
+      reservedByRequest = true;
+    }
+
+    try {
     const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
 
-    this.accessService.ensureExpectedUpdatedAt(
-      (existing as { updatedAt?: Date }).updatedAt,
-      dto.expectedUpdatedAt,
+    this.accessService.ensureExpectedDefinitionRevision(
+      existing.definitionRevision,
+      dto.expectedDefinitionRevision,
       'Playbook changed since this autosave started.',
     );
 
@@ -362,22 +610,45 @@ export class PlaybookFlowService {
       existing.dataBindings = patchedGraph.dataBindings as any;
     }
 
-    const saved = await existing.save().catch((err: any) => {
-      if (err.code === 11000) {
-        throw new ConflictException(
-          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
-          `A playbook named "${existing.name}" already exists.`,
-        );
-      }
-      throw err;
-    });
+    if (idempotencyKey) {
+      await this.idempotencyService.recordExpectedSaveState(
+        ownerId,
+        idempotencyKey,
+        this.buildEditorStateHash(existing),
+        (existing.definitionRevision ?? 0) + 1,
+      );
+    }
+
+    const saved = await this.persistEditorWrite(
+      flowId,
+      ownerId,
+      dto.expectedDefinitionRevision,
+      dto.expectedUpdatedAt,
+      'Playbook changed since this autosave started.',
+      existing,
+    );
 
     const durationMs = Date.now() - startedAt;
     this.logger.log(`playbook_save_duration_ms mode=delta flowId=${flowId} durationMs=${durationMs}`);
 
-    return {
+    const response: {
+      id: string;
+      updatedAt: string;
+      definitionRevision: number;
+      payloadHash?: string;
+      applied: true;
+      patchSummary: {
+        scalarFields: number;
+        nodesUpserted: number;
+        nodesDeleted: number;
+        edgeChanges: number;
+        dataBindingChanges: number;
+        positionUpdates: number;
+      };
+    } = {
       id: String(saved._id),
       updatedAt: ((saved as { updatedAt?: Date }).updatedAt ?? new Date()).toISOString(),
+      definitionRevision: saved.definitionRevision ?? 0,
       ...(dto.payloadHash ? { payloadHash: dto.payloadHash } : {}),
       applied: true,
       patchSummary: {
@@ -389,6 +660,21 @@ export class PlaybookFlowService {
         positionUpdates: patchedGraph.positionUpdates,
       },
     };
+    writeCommitted = true;
+    if (idempotencyKey) {
+      try {
+        await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, response);
+      } catch (err) {
+        this.logger.warn(`Failed to record idempotent delta-save result for flow ${flowId}: ${(err as Error).message}`);
+      }
+    }
+    return response;
+    } catch (err) {
+      if (idempotencyKey && reservedByRequest && !writeCommitted) {
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+      }
+      throw err;
+    }
   }
 
   async findById(flowId: string): Promise<FlowDocument> {

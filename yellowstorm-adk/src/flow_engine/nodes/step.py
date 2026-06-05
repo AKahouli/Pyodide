@@ -32,9 +32,8 @@ from src.flow_engine.nodes.step_hitl_handlers import (
     handle_interrupt_before,
 )
 from src.flow_engine.nodes.step_hitl_blockers import (
-    build_llm_judge_blocker_decision,
     evaluate_hitl_blocker,
-    evaluate_llm_judge_blocker,
+    handle_llm_judge_blocker,
     handle_smart_hitl_blocker,
 )
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
@@ -44,6 +43,7 @@ from src.flow_engine.nodes.step_tools import (
     parse_connector_bindings,
     run_step_with_tools,
 )
+from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
@@ -332,21 +332,17 @@ async def run_step(
         if early:
             return _with_human_context(early, new_human_context)
 
-        llm_judgement = await evaluate_llm_judge_blocker(
+        hitl = await handle_llm_judge_blocker(
             node_config,
             input_context if isinstance(input_context, dict) else {},
             hitl_policy,
             hitl_blockers,
             model_id,
-        )
-        hitl = handle_smart_hitl_blocker(
-            build_llm_judge_blocker_decision(llm_judgement),
             node_id,
             label,
             node_description,
             iteration,
             writer,
-            hitl_policy,
         )
         early, node_description, context_updates = _apply_hitl_result(hitl, node_id, iteration, writer, node_description)
         new_human_context.extend(context_updates)
@@ -379,15 +375,27 @@ async def run_step(
 
     if should_execute:
         try:
-            full_output, components, trace_collector = await _execute_step(
-                node_id, node_config, state, metadata, input_context,
-                node_description, output_contract, model_id, system_prompt,
-                structured_output, agent_config, connector_bindings,
-                iteration, label, writer, hitl_policy, hitl_blockers,
-                _merge_human_context(state, new_human_context),
-            )
+            deterministic_payload: dict[str, Any] | None = None
+            if metadata.get("executionStrategy") == "deterministic_script":
+                deterministic_payload = _execute_deterministic_step(
+                    metadata,
+                    input_context if isinstance(input_context, dict) else {},
+                    node_id,
+                    iteration,
+                )
+                full_output = str(deterministic_payload.get("output") or "")
+                components = []
+                trace_collector = None
+            else:
+                full_output, components, trace_collector = await _execute_step(
+                    node_id, node_config, state, metadata, input_context,
+                    node_description, output_contract, model_id, system_prompt,
+                    structured_output, agent_config, connector_bindings,
+                    iteration, label, writer, hitl_policy, hitl_blockers,
+                    _merge_human_context(state, new_human_context),
+                )
         except Exception as exc:
-            logger.error("[step] LLM call failed", node_id=node_id, error=str(exc))
+            logger.error("[step] Step execution failed", node_id=node_id, error=str(exc))
             writer({
                 "type": "NodeFailed",
                 "node_id": node_id,
@@ -395,7 +403,7 @@ async def run_step(
                 "payload": {"error": str(exc)},
             })
             return {
-                "errors": [{"node_id": node_id, "iteration": iteration, "message": f"LLM error: {exc}"}],
+                "errors": [{"node_id": node_id, "iteration": iteration, "message": f"Step execution error: {exc}"}],
                 "iterations": {node_id: iteration + 1},
             }
 
@@ -403,8 +411,9 @@ async def run_step(
         full_output = checkpoint.get("llm_output", "")
         components = checkpoint.get("components", [])
         trace_collector = None
+        deterministic_payload = None
 
-    result_payload = _build_result_payload(
+    result_payload = deterministic_payload or _build_result_payload(
         output_contract, full_output, components, node_id, iteration, trace_collector,
     )
 
@@ -645,6 +654,54 @@ async def _execute_step(
 
     logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
     return full_output, components, trace_collector
+
+
+def _execute_deterministic_step(
+    metadata: dict[str, Any],
+    input_context: dict[str, Any],
+    node_id: str,
+    iteration: int,
+) -> dict[str, Any]:
+    source = metadata.get("scriptSource")
+    if not isinstance(source, dict):
+        source = metadata.get("script_source")
+    if not isinstance(source, dict):
+        raise ValueError("Deterministic script metadata is missing scriptSource")
+    validation = metadata.get("scriptValidation")
+    if not isinstance(validation, dict):
+        validation = metadata.get("script_validation")
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
+        raise ValueError("Deterministic script requires passed validation metadata")
+    script = str(source.get("code") or "")
+    script_hash = str(source.get("sha256") or "")
+    actual_hash = _script_hash(script)
+    if script_hash != actual_hash:
+        raise ValueError("Deterministic script hash does not match script source")
+    if source.get("kind") != "advisor_generated":
+        logger.warning("[step] Running deterministic script from non-advisor source", node_id=node_id)
+    output = run_deterministic_script(script, input_context)
+    trace_metadata = {
+        "executionStrategy": "deterministic_script",
+        "scriptHash": script_hash,
+        "llmInferenceSkipped": True,
+    }
+    logger.info("[step] Deterministic script completed", node_id=node_id, iteration=iteration)
+    return {
+        "output": output,
+        "display_text": str(output),
+        "components": [],
+        "artifacts": [],
+        "node_id": node_id,
+        "iteration": iteration,
+        "raw_llm_output": "",
+        "traceMetadata": trace_metadata,
+    }
+
+
+def _script_hash(script: str) -> str:
+    import hashlib
+
+    return f"sha256:{hashlib.sha256(script.encode('utf-8')).hexdigest()}"
 
 
 def _build_result_payload(

@@ -64,6 +64,23 @@ export class PlaybookFlowReplayArtifactService {
     return this.mapReplayToResolvedArtifacts(replay);
   }
 
+  async resolveActiveReplayArtifact(
+    flowId: string,
+    taskId: string,
+  ): Promise<ResolvedReplayArtifacts | null> {
+    const replay = await this.replayModel.findOne({
+      flowId,
+      taskId,
+      status: FlowReplayValidationStatus.ACTIVE,
+    }).lean().exec();
+
+    if (!replay) {
+      return null;
+    }
+
+    return this.mapReplayToResolvedArtifacts(replay);
+  }
+
   private mapReplayToResolvedArtifacts(replay: Record<string, any>): ResolvedReplayArtifacts {
     return {
       taskId: replay.taskId,

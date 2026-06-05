@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .step_json_repair import recover_structured_response
+
 
 def requires_structured_response(output_contract: dict[str, Any] | None) -> bool:
     output_ports = _get_output_ports(output_contract)
@@ -161,6 +163,10 @@ def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
             if reasoning_trace:
                 result["reasoning_trace"] = reasoning_trace
             return result
+    recovered = recover_structured_response(response_text, candidates)
+    if recovered is not None:
+        return recovered
+
     if candidates:
         raise ValueError("Structured final response must include display_text and outputs")
     raise ValueError("Step did not return a JSON object")

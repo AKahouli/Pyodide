@@ -119,6 +119,7 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
       artifactsJson: JSON.stringify(params.taskResult.artifacts ?? [], null, 2),
       toolTraceJson: JSON.stringify(params.taskResult.toolTrace ?? [], null, 2),
       promptTraceJson: JSON.stringify(params.taskResult.llmPromptTrace ?? [], null, 2),
+      taskExecutionUsageJson: JSON.stringify(params.taskResult.usage ?? null, null, 2),
     };
 
     const systemTemplate = promptTemplate?.systemTemplate?.trim() || 'You are a strict Playbook Advisor. Return strict JSON only.';

@@ -63,6 +63,12 @@ async def test_clarification_before_allows_bounded_multi_round_default(monkeypat
     assert result.updated_description is not None
     assert "France" in result.updated_description
     assert "Distributors" in result.updated_description
+    assert "<HITL_Transcript>" in result.updated_description
+    assert "Assistant question 1: Which country?" in result.updated_description
+    assert "User answer 1: France" in result.updated_description
+    assert "Assistant question 2: Which lead type?" in result.updated_description
+    assert "User answer 2: Distributors" in result.updated_description
+    assert "Clarification from user:" not in result.updated_description
     assert [event["payload"]["interrupt_id"] for event in events] == [
         "step-1:clarification:1",
         "step-1:clarification:2",
@@ -146,6 +152,10 @@ async def test_clarification_after_uses_next_round_and_reexecutes(monkeypatch) -
     assert result.needs_reexec is True
     assert result.updated_description is not None
     assert "Distributors" in result.updated_description
+    assert "<HITL_Transcript>" in result.updated_description
+    assert "Assistant question 1: What type of agro leads should I search for?" in result.updated_description
+    assert "User answer 1: Distributors" in result.updated_description
+    assert "Clarification from user:" not in result.updated_description
     assert events[0]["payload"]["interrupt_id"] == "step-1:clarification:2"
 
 

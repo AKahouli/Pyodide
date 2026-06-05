@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
@@ -178,6 +178,7 @@ export interface PlaybookFlowIntentResponse {
 @Injectable()
 export class PlaybookFlowIntentService {
   constructor(
+    @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
     private readonly settingsService: PlaybookFlowSettingsService,
     private readonly promptService: PlaybookFlowPromptTemplateService,
