@@ -160,6 +160,21 @@ message RunAgentTeamRequest {
     repeated Skill skills = 13;                      // Conversation-level skills selected by the user
 }
 
+// Mono-agent request: a single specialized agent runs directly with its own
+// tools (no manager / no delegation). Mirrors RunAgentTeamRequest but carries
+// exactly one Agent and no agent_mode.
+message RunSingleAgentRequest {
+    UserContext user_context = 1;
+    string conversation_id = 2;
+    string query = 3;
+    Agent agent = 4;                                 // The single agent to run
+    repeated WorkspaceContext workspace_context = 5;
+    repeated AttachedFile attached_files = 6;         // Files attached in this turn (images + documents)
+    repeated Document previous_attached_files = 7;    // Already-indexed files from previous turns
+    ConnectorRepo connector_repo = 8;
+    repeated Skill skills = 9;                        // Conversation-level skills selected by the user
+}
+
 message GenerateConversationNameRequest {
     string query = 1;
     string model = 2;
@@ -373,6 +388,7 @@ message StreamChunk {
 
 service ChatbotService {
     rpc RunAgentTeam(RunAgentTeamRequest) returns (stream StreamChunk);
+    rpc RunSingleAgent(RunSingleAgentRequest) returns (stream StreamChunk);
     rpc GenerateConversationName(GenerateConversationNameRequest) returns (GenerateConversationNameResponse);
     rpc RunPlaybookWorkflow(RunPlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
     rpc ResumePlaybookWorkflow(ResumePlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
