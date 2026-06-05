@@ -587,6 +587,114 @@ describe('playbook store', () => {
     });
   });
 
+  it('normalizes automatic judge SSE metrics before updating execution state', async () => {
+    usePlaybookStore.setState({
+      executionCache: {
+        'e-auto': {
+          ...makeExecution({ id: 'e-auto' }),
+          taskResults: [{
+            ...makeExecution().taskResults[0],
+            taskId: 't1',
+            iteration: 0,
+            status: 'completed',
+            judgeStatus: 'evaluating',
+            judgeResult: null,
+          } as any],
+        },
+      },
+      currentExecution: {
+        ...makeExecution({ id: 'e-auto' }),
+        taskResults: [{
+          ...makeExecution().taskResults[0],
+          taskId: 't1',
+          iteration: 0,
+          status: 'completed',
+          judgeStatus: 'evaluating',
+          judgeResult: null,
+        } as any],
+      },
+    });
+
+    usePlaybookStore.getState().onStepJudgeUpdated({
+      executionId: 'e-auto',
+      taskId: 't1',
+      iteration: 0,
+      judgeStatus: 'evaluated',
+      judgeError: null,
+      judgeResult: {
+        accuracy_score: 96,
+        completeness_score: 92,
+        result_matching_score: 98,
+        overall_score: 95,
+        confidence: 94,
+        tool_usage_score: 90,
+        relevance_score: 99,
+        specificity_score: 93,
+        format_compliance_score: 88,
+        evidence_grounding_score: 97,
+        handoff_readiness_score: 94,
+        hitl_appropriateness_score: 98,
+        determinism_score: 96,
+        cost_efficiency_score: 84,
+        step_optimization_priority: 28,
+        playbook_optimization_priority: 41,
+        cost_optimization_priority: 22,
+      } as any,
+      judgeHistoryEntry: {
+        id: 'judge-1',
+        created_at: '2026-06-04T20:00:00.000Z',
+        attempt_number: 1,
+        scoring_mode: 'llm',
+        judge_result: {
+          accuracy_score: 96,
+          completeness_score: 92,
+          result_matching_score: 98,
+          overall_score: 95,
+          confidence: 94,
+          tool_usage_score: 90,
+          relevance_score: 99,
+          specificity_score: 93,
+          format_compliance_score: 88,
+          evidence_grounding_score: 97,
+          handoff_readiness_score: 94,
+          hitl_appropriateness_score: 98,
+          determinism_score: 96,
+          cost_efficiency_score: 84,
+          step_optimization_priority: 28,
+          playbook_optimization_priority: 41,
+          cost_optimization_priority: 22,
+        },
+      } as any,
+    });
+
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+    });
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].judgeHistory?.[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+    });
+  });
+
   it('survives execution_start SSE overwrite and correctly applies single-step judge SSE updates', () => {
     const playbook = makePlaybook({
       id: 'p1',

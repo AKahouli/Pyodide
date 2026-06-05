@@ -92,12 +92,33 @@ export class PlaybookFlowExecutionAdvisorService {
         { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true, blocking: false },
         { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false, blocking: false },
         { key: 'rewriteHints', category: 'determinism', defaultSelected: true, blocking: false },
+        { key: 'costOptimizationHints', category: 'cost_efficiency', defaultSelected: true, blocking: false },
+        { key: 'scriptReplacementHints', category: 'cost_efficiency', defaultSelected: false, blocking: false },
+        { key: 'llmStillRequiredReasons', category: 'cost_efficiency', defaultSelected: false, blocking: false },
       ];
 
       for (const { key, category, defaultSelected, blocking } of fieldMappings) {
         const entries = judgeResult[key];
         if (!Array.isArray(entries)) continue;
         entries.forEach((description: string, index: number) => {
+          const severity = category === 'cost_efficiency' && judgeResult.costOptimizationPriority >= 80
+            ? 'high'
+            : category === 'cost_efficiency' && judgeResult.costOptimizationPriority >= 50
+              ? 'medium'
+              : blocking
+                ? 'high'
+                : defaultSelected
+                  ? 'medium'
+                  : 'low';
+          const suggestedAction = key === 'scriptReplacementHints'
+            ? 'replace_with_deterministic_script'
+            : category === 'cost_efficiency'
+              ? 'optimize_prompt_cost'
+              : category === 'tooling'
+                ? 'improve_tooling'
+                : category === 'handoff'
+                  ? 'optimize_playbook'
+                  : 'optimize_step';
           items.push({
             id: `${tr.taskId}-${category}-${index}`,
             category,
@@ -106,9 +127,9 @@ export class PlaybookFlowExecutionAdvisorService {
             title: description.length > 80 ? description.slice(0, 80) + '...' : description,
             description,
             rationale: undefined,
-            severity: blocking ? 'high' : defaultSelected ? 'medium' : 'low',
+            severity,
             confidence: 0.8,
-            suggestedAction: category === 'tooling' ? 'improve_tooling' : category === 'handoff' ? 'optimize_playbook' : 'optimize_step',
+            suggestedAction,
             blocking,
             editable: true,
             defaultSelected,
@@ -311,6 +332,7 @@ export class PlaybookFlowExecutionAdvisorService {
     const findings = selectedFindings
       .map((item) => `- [${item.category}] ${item.description.trim()}`)
       .join('\n');
+    const hasCostFindings = selectedFindings.some((item) => item.category === 'cost_efficiency');
 
     if (dto.mode === 'optimize-step') {
       return [
@@ -319,6 +341,9 @@ export class PlaybookFlowExecutionAdvisorService {
         'Do not create, delete, reorder, or reconnect nodes. Do not modify unrelated steps, edges, ports, or data bindings unless strictly required to keep this selected step valid.',
         'Prefer updating the selected task description. Preserve the existing title unless the findings explicitly require a title change.',
         'Improve task purpose, required inputs, success criteria, expected result, output contract, evidence grounding, tool-use guidance, handoff readiness, and HITL/clarification rules where relevant.',
+        hasCostFindings
+          ? 'For cost-efficiency findings, optimize for lower inference cost while preserving output quality: shorten repeated instructions, narrow context, clarify strict output contracts, and add deterministic execution guidance where safe. Do not replace the step with code in this flow.'
+          : '',
         '',
         'Current selected step:',
         JSON.stringify({
@@ -411,7 +436,54 @@ export class PlaybookFlowExecutionAdvisorService {
       return this.heuristicEvaluator.evaluate(params);
     }
 
-    return this.llmEvaluator.evaluate(params);
+    const [llmResult, heuristicResult] = await Promise.all([
+      this.llmEvaluator.evaluate(params),
+      this.heuristicEvaluator.evaluate(params).catch(() => null),
+    ]);
+
+    if (!heuristicResult) {
+      return llmResult;
+    }
+
+    const merged = this.mergeCostEfficiencyFields(llmResult.judgeResult, heuristicResult.judgeResult);
+    return { ...llmResult, judgeResult: merged };
+  }
+
+  private mergeCostEfficiencyFields(
+    llm: FlowExecutionJudgeResult,
+    heuristic: FlowExecutionJudgeResult,
+  ): FlowExecutionJudgeResult {
+    const heuristicHasNoCostData = heuristic.costOptimizationPriority === 0
+      && heuristic.scriptReplacementHints.length === 0
+      && heuristic.costOptimizationHints.length === 0;
+    if (heuristicHasNoCostData) {
+      return llm;
+    }
+
+    const llmIsEmpty = llm.costOptimizationPriority === 0
+      && llm.scriptReplacementHints.length === 0
+      && llm.costOptimizationHints.length === 0;
+
+    if (!llmIsEmpty) {
+      return llm;
+    }
+
+    const costActionOverride = heuristic.recommendedAction === 'replace_with_deterministic_script'
+      || heuristic.recommendedAction === 'optimize_prompt_cost';
+
+    return {
+      ...llm,
+      costEfficiencyScore: heuristic.costEfficiencyScore,
+      costOptimizationPriority: heuristic.costOptimizationPriority,
+      estimatedTokenReductionPct: heuristic.estimatedTokenReductionPct,
+      estimatedLatencyReductionPct: heuristic.estimatedLatencyReductionPct,
+      costOptimizationHints: heuristic.costOptimizationHints,
+      scriptReplacementHints: heuristic.scriptReplacementHints,
+      llmStillRequiredReasons: heuristic.llmStillRequiredReasons,
+      recommendedAction: costActionOverride
+        ? heuristic.recommendedAction
+        : llm.recommendedAction,
+    };
   }
 
   private buildUpstreamContextJson(nodes: FlowNode[], taskId: string): string {

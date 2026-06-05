@@ -764,6 +764,12 @@ message TaskAdvisorToolTraceItem {
     string output_summary = 4;
 }
 
+message TaskAdvisorPromptTraceItem {
+    string stage = 1;
+    string model = 2;
+    string prompt = 3;
+}
+
 message TaskAdvisorRequest {
     string execution_id = 1;
     string owner_id = 2;
@@ -780,6 +786,8 @@ message TaskAdvisorRequest {
     repeated TaskAdvisorToolTraceItem tool_trace = 13;
     string artifacts_json = 14;
     google.protobuf.Struct task_metadata = 15;
+    Usage usage = 16;
+    repeated TaskAdvisorPromptTraceItem llm_prompt_trace = 17;
 }
 
 message TaskAdvisorResult {
@@ -809,6 +817,26 @@ message TaskAdvisorResult {
     string recommendation = 24;
     string reason = 25;
     string model = 26;
+    int32 relevance_score = 27;
+    int32 specificity_score = 28;
+    int32 format_compliance_score = 29;
+    int32 evidence_grounding_score = 30;
+    int32 handoff_readiness_score = 31;
+    int32 hitl_appropriateness_score = 32;
+    int32 determinism_score = 33;
+    int32 step_optimization_priority = 34;
+    int32 playbook_optimization_priority = 35;
+    string risk_severity = 36;
+    int32 blocking_issue_count = 37;
+    string downstream_impact_level = 38;
+    string recommended_action = 39;
+    int32 cost_efficiency_score = 40;
+    int32 cost_optimization_priority = 41;
+    int32 estimated_token_reduction_pct = 42;   // -1 means unknown.
+    int32 estimated_latency_reduction_pct = 43; // -1 means unknown.
+    repeated string cost_optimization_hints = 44;
+    repeated string script_replacement_hints = 45;
+    repeated string llm_still_required_reasons = 46;
 }
 
 enum NodeAdvisorSuggestionType {

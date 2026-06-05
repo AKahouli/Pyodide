@@ -103,3 +103,58 @@ def test_evaluate_task_execution_caps_format_violations() -> None:
 
     assert result["format_compliance_score"] < 80
     assert result["overall_score"] <= 65
+
+
+def test_evaluate_task_execution_recommends_prompt_cost_optimization_for_large_prompt() -> None:
+    result = evaluate_task_execution(
+        {
+            "execution_id": "exec-1",
+            "owner_id": "user-1",
+            "playbook_id": "playbook-1",
+            "task_id": "task-1",
+            "task_title": "Normalize payload",
+            "task_description": "Normalize JSON fields into the documented schema.",
+            "expected_result": "Valid JSON matching the schema",
+            "output_format_guide": "Return JSON only.",
+            "baseline_output": "",
+            "task_output": '{"status":"Valid JSON matching the schema","items":[]}',
+            "task_error": "",
+            "task_status": "completed",
+            "tool_trace": [],
+            "artifacts_json": "[]",
+            "task_metadata": {},
+            "usage": {"total_tokens": 9000},
+        }
+    )
+
+    assert result["cost_optimization_priority"] >= 50
+    assert result["recommended_action"] == "optimize_prompt_cost"
+    assert result["estimated_token_reduction_pct"] == 40
+    assert result["cost_optimization_hints"]
+
+
+def test_evaluate_task_execution_blocks_cost_override_for_quality_issues() -> None:
+    result = evaluate_task_execution(
+        {
+            "execution_id": "exec-1",
+            "owner_id": "user-1",
+            "playbook_id": "playbook-1",
+            "task_id": "task-1",
+            "task_title": "Normalize payload",
+            "task_description": "Normalize JSON fields into the documented schema.",
+            "expected_result": "Valid JSON matching the schema",
+            "output_format_guide": "Return JSON only.",
+            "baseline_output": "",
+            "task_output": "",
+            "task_error": "",
+            "task_status": "completed",
+            "tool_trace": [],
+            "artifacts_json": "[]",
+            "task_metadata": {},
+            "usage": {"total_tokens": 9000},
+        }
+    )
+
+    assert result["cost_optimization_priority"] >= 50
+    assert result["blocking_issue_count"] > 0
+    assert result["recommended_action"] != "replace_with_deterministic_script"

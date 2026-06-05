@@ -55,7 +55,117 @@ def build_execution_advisor_request(payload: dict[str, Any]) -> ExecutionAdvisor
         tool_trace=_parse_tool_trace(payload.get("tool_trace") or []),
         artifacts_json=str(payload.get("artifacts_json") or ""),
         task_metadata=payload.get("task_metadata") or {},
+        usage=payload.get("usage") or {},
+        llm_prompt_trace=payload.get("llm_prompt_trace") or [],
     )
+
+
+def _estimate_prompt_tokens(request: ExecutionAdvisorRequest) -> int:
+    """Estimate step inference size from usage first, then prompt text fallback."""
+
+    usage_total = request.usage.get("totalTokens") or request.usage.get("total_tokens")
+    if isinstance(usage_total, (int, float)) and usage_total > 0:
+        return int(usage_total)
+
+    prompt_chars = sum(
+        len(str(item.get("prompt") or ""))
+        for item in request.llm_prompt_trace
+        if isinstance(item, dict)
+    )
+    if prompt_chars > 0:
+        return max(1, prompt_chars // 4)
+
+    return max(1, len(request.task_description + request.task_output) // 4)
+
+
+def _looks_like_pure_transform(text: str) -> bool:
+    """Detect tasks that can plausibly run as deterministic transforms."""
+
+    keywords = {
+        "parse", "normalize", "validate", "convert", "map", "filter",
+        "sort", "calculate", "deduplicate", "extract", "format",
+        "json", "csv", "table", "schema", "regex", "router", "condition",
+    }
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _looks_like_llm_required(text: str) -> list[str]:
+    """Return explicit reasons that deterministic replacement should stay blocked."""
+
+    reasons: list[str] = []
+    lowered = text.lower()
+
+    if any(keyword in lowered for keyword in ["research", "find latest", "current", "web", "news"]):
+        reasons.append("The task appears to require external or current knowledge.")
+    if any(keyword in lowered for keyword in ["write", "draft", "creative", "narrative", "persuasive"]):
+        reasons.append("The task appears to require natural-language generation.")
+    if any(keyword in lowered for keyword in ["analyze", "assess", "judge", "recommend", "strategy"]):
+        reasons.append("The task appears to require semantic judgment or reasoning.")
+    if any(keyword in lowered for keyword in ["approve", "human", "sensitive", "legal", "medical", "financial"]):
+        reasons.append("The task may require human-sensitive review or policy judgment.")
+
+    return reasons
+
+
+def analyze_cost_efficiency(
+    request: ExecutionAdvisorRequest,
+    determinism: int,
+    specificity: int,
+) -> dict[str, Any]:
+    """Create conservative cost findings without generating executable code."""
+
+    task_text = " ".join([
+        request.task_title,
+        request.task_description,
+        request.expected_result,
+        request.output_format_guide,
+    ])
+    estimated_tokens = _estimate_prompt_tokens(request)
+    is_pure_transform = _looks_like_pure_transform(task_text)
+    llm_reasons = _looks_like_llm_required(task_text)
+    has_stable_contract = bool(
+        request.expected_result.strip() or request.output_format_guide.strip()
+    )
+    output_is_structured = request.task_output.strip().startswith(("{", "[", "|")) or "," in request.task_output[:200]
+
+    hints: list[str] = []
+    script_hints: list[str] = []
+    priority = 0
+    score = 75
+
+    if estimated_tokens > 4000:
+        priority += 30
+        score -= 20
+        hints.append("Prompt/context appears large; compact repeated instructions and only pass required upstream context.")
+    if estimated_tokens > 8000:
+        priority += 20
+        hints.append("Step has very high token usage; consider splitting context or replacing deterministic parts.")
+    if is_pure_transform and has_stable_contract:
+        priority += 25
+        hints.append("Task appears deterministic enough for cheaper execution.")
+        if not llm_reasons and output_is_structured and determinism >= 70 and specificity >= 60:
+            script_hints.append("Candidate for validated Python replacement because it looks like a pure structured transformation.")
+            priority += 50
+    if llm_reasons:
+        score -= 10
+        hints.append("LLM inference may still be needed; optimize prompt and model before attempting replacement.")
+
+    estimated_reduction = None
+    if script_hints:
+        estimated_reduction = 95
+    elif hints:
+        estimated_reduction = 25 if estimated_tokens <= 4000 else 40
+
+    return {
+        "cost_efficiency_score": max(0, min(100, score)),
+        "cost_optimization_priority": max(0, min(100, priority)),
+        "estimated_token_reduction_pct": estimated_reduction,
+        "estimated_latency_reduction_pct": estimated_reduction,
+        "cost_optimization_hints": hints,
+        "script_replacement_hints": script_hints,
+        "llm_still_required_reasons": llm_reasons,
+    }
 
 
 def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +197,7 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
     handoff_readiness = 60 if output_quality < 60 else 82
     specificity = score_specificity(request.task_output)
     determinism = score_determinism(request.task_description, request.expected_result, request.output_format_guide)
+    cost_findings = analyze_cost_efficiency(request, determinism, specificity)
     relevance = 80 if request.task_output.strip() else 10
     hitl_appropriateness = 70 if request.task_error.strip() else 85
     caps: list[int] = []
@@ -126,6 +237,11 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
         recommended_action = "improve_output_contract"
     elif tool_issue_count > 0 and tool_usage < min(step_priority, playbook_priority):
         recommended_action = "improve_tooling"
+    if blocking_issue_count == 0:
+        if cost_findings["script_replacement_hints"] and cost_findings["cost_optimization_priority"] >= 70:
+            recommended_action = "replace_with_deterministic_script"
+        elif cost_findings["cost_optimization_priority"] >= 50:
+            recommended_action = "optimize_prompt_cost"
 
     result = ExecutionAdvisorResult(
         accuracy_score=output_quality,
@@ -141,8 +257,12 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
         handoff_readiness_score=handoff_readiness,
         hitl_appropriateness_score=hitl_appropriateness,
         determinism_score=determinism,
+        cost_efficiency_score=cost_findings["cost_efficiency_score"],
         step_optimization_priority=step_priority,
         playbook_optimization_priority=playbook_priority,
+        cost_optimization_priority=cost_findings["cost_optimization_priority"],
+        estimated_token_reduction_pct=cost_findings["estimated_token_reduction_pct"],
+        estimated_latency_reduction_pct=cost_findings["estimated_latency_reduction_pct"],
         risk_severity=risk_severity,
         blocking_issue_count=blocking_issue_count,
         downstream_impact_level=downstream_impact_level,
@@ -164,6 +284,9 @@ def evaluate_task_execution(payload: dict[str, Any]) -> dict[str, Any]:
         tool_sequencing_issues=tool_findings["tool_sequencing_issues"],
         tool_usage_strengths=tool_findings["tool_usage_strengths"],
         tool_usage_recommendation="Use tool outputs explicitly in the final answer." if tool_findings["tool_output_use_issues"] else "Tool usage looks coherent for this step.",
+        cost_optimization_hints=cost_findings["cost_optimization_hints"],
+        script_replacement_hints=cost_findings["script_replacement_hints"],
+        llm_still_required_reasons=cost_findings["llm_still_required_reasons"],
         safe_auto_fix_type="optimize_step" if rewrite_hints else "none",
         recommendation=recommendation,
         reason="Deterministic execution advisor evaluation completed.",

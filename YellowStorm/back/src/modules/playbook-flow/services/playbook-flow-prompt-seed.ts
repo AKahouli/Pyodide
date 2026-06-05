@@ -258,7 +258,7 @@ Must always consider all the workflow structure (including edges) before evaluat
     key: 'evaluation.task.user', title: 'Evaluation task user prompt', category: 'evaluation',
     description: 'User prompt for evaluation task nodes.',
     systemTemplate: '',
-    userTemplate: 'Task: {{taskTitle}} — {{taskDescription}}\nExpected result:\n{{expectation}}\nBaseline:\n{{baselineSummary}}\nInputs:\n{{inputsJson}}\nRubric:\n{{rubricJson}}\nReturn JSON with score, verdict, findings.',
+    userTemplate: '{{taskDescription}}\nExpected result:\n{{expectation}}\nBaseline:\n{{baselineSummary}}\nInputs:\n{{inputsJson}}\nRubric:\n{{rubricJson}}\nReturn JSON with score, verdict, findings.',
     enabled: true, isBuiltIn: true, version: 1,
   },
   {
@@ -271,7 +271,7 @@ Must always consider all the workflow structure (including edges) before evaluat
     key: 'judge.node_reflection', title: 'Playbook Advisor step analysis', category: 'judge',
     description: 'Per-step Playbook Advisor analysis prompt.',
     systemTemplate: 'You are a strict Playbook Advisor. Evaluate step output against task contract, upstream context, tool quality, and whether the step should have paused for HITL clarification, approval, or review. Score every dimension 0-100. Return strict JSON only with ALL fields listed.',
-    userTemplate: `Task: {{taskTitle}} — {{taskDescription}}
+    userTemplate: `{{taskDescription}}
 Workflow goal: {{workflowGoal}}
 Expected result: {{expectedResult}}
 Upstream context: {{upstreamContextJson}}
@@ -279,6 +279,7 @@ Task output: {{taskOutput}}
 Artifacts: {{artifactsJson}}
 Tool trace: {{toolTraceJson}}
 Prompt trace: {{promptTraceJson}}
+Task execution usage: {{taskExecutionUsageJson}}
 
 Return strict JSON with ALL of these fields (no omissions):
 
@@ -296,8 +297,10 @@ Scoring fields (each 0-100 integer):
 - "handoffReadinessScore": whether downstream nodes can consume the output reliably
 - "hitlAppropriatenessScore": whether the step should have paused for clarification, approval, or review
 - "determinismScore": whether the task instruction is precise enough for stable future outputs
+- "costEfficiencyScore": whether the step is already cost-efficient for its required reasoning level
 - "stepOptimizationPriority": expected value of optimizing the selected step
 - "playbookOptimizationPriority": expected value of broader workflow optimization
+- "costOptimizationPriority": expected value of reducing LLM inference cost for this step
 
 Priority fields:
 - "riskSeverity": "low" | "medium" | "high" | "critical"
@@ -326,11 +329,23 @@ Tool usage analysis:
 - "toolUsageStrengths": aspects of tool usage that were effective
 - "toolUsageRecommendation": one-sentence summary recommendation for tool usage
 
+Cost efficiency analysis:
+- "estimatedTokenReductionPct": estimated percentage of LLM tokens that could be removed or avoided, or null if unknown
+- "estimatedLatencyReductionPct": estimated percentage of latency that could be reduced, or null if unknown
+- "costOptimizationHints": concrete low-risk changes to reduce prompt size, context, model cost, repeated inference, or unnecessary tool/LLM calls
+- "scriptReplacementHints": concrete reasons this step may be safely replaced by deterministic code, empty if not safe
+- "llmStillRequiredReasons": reasons LLM inference is still needed, such as judgment, research, synthesis, ambiguity, creative generation, or human-sensitive decision-making
+
+Cost safety rules:
+- Only recommend "replace_with_deterministic_script" when the step is a pure deterministic transformation, parser, validator, formatter, calculator, filter, mapper, router, or schema normalizer.
+- Do not recommend script replacement when the task requires open-ended reasoning, creative writing, subjective judgment, current external knowledge, research, policy interpretation, human approval, sensitive decisions, or external side effects.
+- Prefer "optimize_prompt_cost" when cost can be reduced but LLM reasoning is still required.
+
 Actionable outcome:
 - Do not decide whether optimization is allowed. Optimization actions are user-driven. Your role is to evaluate quality, identify risks, and recommend the most useful next action.
 - "safeAutoFixType": "optimize_step" if a safe automatic rewrite would improve this step, otherwise "none"
 - "recommendation": "update_current_playbook" | "generate_new_optimized_playbook" | "none"
-- "recommendedAction": "optimize_step" | "optimize_playbook" | "review_only" | "add_hitl_guard" | "improve_tooling" | "improve_output_contract"
+- "recommendedAction": "optimize_step" | "optimize_playbook" | "review_only" | "add_hitl_guard" | "improve_tooling" | "improve_output_contract" | "optimize_prompt_cost" | "switch_to_cheaper_model" | "add_result_cache" | "replace_with_deterministic_script"
 - "availableActions": { "optimizeStep": true, "optimizePlaybook": true }
 - "reason": concise justification for the overallScore and recommendation`,
     enabled: true, isBuiltIn: true, version: 4,

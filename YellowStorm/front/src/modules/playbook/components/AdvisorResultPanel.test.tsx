@@ -44,8 +44,10 @@ describe('AdvisorResultPanel', () => {
           handoffReadinessScore: 59,
           hitlAppropriatenessScore: 77,
           determinismScore: 63,
+          costEfficiencyScore: 52,
           stepOptimizationPriority: 88,
           playbookOptimizationPriority: 42,
+          costOptimizationPriority: 76,
           missingFacts: [],
           incoherences: [],
           unsupportedClaims: [],
@@ -56,6 +58,9 @@ describe('AdvisorResultPanel', () => {
           toolOutputUseIssues: [],
           toolSequencingIssues: [],
           toolUsageStrengths: [],
+          costOptimizationHints: ['Compact repeated instructions.'],
+          scriptReplacementHints: ['Candidate for validated Python replacement.'],
+          llmStillRequiredReasons: [],
           rewriteHints: [],
         } as any}
       />,
@@ -67,5 +72,8 @@ describe('AdvisorResultPanel', () => {
     expect(screen.getByText('detail.judge.relevanceScore')).toBeInTheDocument();
     expect(screen.getByText('detail.judge.determinismScore')).toBeInTheDocument();
     expect(screen.getByText('detail.judge.stepOptimizationPriority')).toBeInTheDocument();
+    expect(screen.getByText('detail.judge.costOptimizationPriority')).toBeInTheDocument();
+    expect(screen.getByText('detail.judge.costOptimizationHints')).toBeInTheDocument();
+    expect(screen.getByText('Candidate for validated Python replacement.')).toBeInTheDocument();
   });
 });

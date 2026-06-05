@@ -46,6 +46,14 @@ export class PlaybookFlowExecutionAdvisorMapper {
             args: toGrpcStruct((item.args ?? {}) as Record<string, unknown>),
           }))
         : [],
+      usage: this.buildUsage(params.taskResult),
+      llm_prompt_trace: Array.isArray(params.taskResult.llmPromptTrace)
+        ? params.taskResult.llmPromptTrace.map((item: any) => ({
+            stage: String(item.stage || ''),
+            model: String(item.model || ''),
+            prompt: String(item.prompt || ''),
+          }))
+        : [],
       artifacts_json: JSON.stringify(params.taskResult.artifacts ?? []),
       task_metadata: toGrpcStruct(metadata),
     };
@@ -57,7 +65,15 @@ export class PlaybookFlowExecutionAdvisorMapper {
       const value = raw[key];
       return typeof value === 'number' && Number.isFinite(value) ? value : 0;
     };
+    const numberValueWithDefault = (key: string, fallback: number) => {
+      const value = raw[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    };
     const stringValue = (key: string) => String(raw[key] || '');
+    const nullableNumberValue = (key: string) => {
+      const value = raw[key];
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    };
 
     return {
       accuracyScore: numberValue('accuracy_score'),
@@ -73,8 +89,12 @@ export class PlaybookFlowExecutionAdvisorMapper {
       handoffReadinessScore: numberValue('handoff_readiness_score'),
       hitlAppropriatenessScore: numberValue('hitl_appropriateness_score'),
       determinismScore: numberValue('determinism_score'),
+      costEfficiencyScore: numberValueWithDefault('cost_efficiency_score', 50),
       stepOptimizationPriority: numberValue('step_optimization_priority'),
       playbookOptimizationPriority: numberValue('playbook_optimization_priority'),
+      costOptimizationPriority: numberValue('cost_optimization_priority'),
+      estimatedTokenReductionPct: nullableNumberValue('estimated_token_reduction_pct'),
+      estimatedLatencyReductionPct: nullableNumberValue('estimated_latency_reduction_pct'),
       riskSeverity: this.mapRiskSeverity(raw.risk_severity),
       blockingIssueCount: numberValue('blocking_issue_count'),
       downstreamImpactLevel: this.mapDownstreamImpactLevel(raw.downstream_impact_level),
@@ -96,6 +116,9 @@ export class PlaybookFlowExecutionAdvisorMapper {
       toolSequencingIssues: list('tool_sequencing_issues'),
       toolUsageStrengths: list('tool_usage_strengths'),
       toolUsageRecommendation: stringValue('tool_usage_recommendation'),
+      costOptimizationHints: list('cost_optimization_hints'),
+      scriptReplacementHints: list('script_replacement_hints'),
+      llmStillRequiredReasons: list('llm_still_required_reasons'),
       safeAutoFixType: raw.safe_auto_fix_type === 'optimize_step' ? 'optimize_step' : 'none',
       recommendation: this.mapRecommendation(raw.recommendation),
       reason: stringValue('reason'),
@@ -113,6 +136,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
     const list = (key: keyof FlowExecutionJudgeResult) => Array.isArray(parsed[key]) ? parsed[key].map(String) : [];
     const score = (key: keyof FlowExecutionJudgeResult) => this.clampScore(parsed[key]);
     const text = (key: keyof FlowExecutionJudgeResult) => typeof parsed[key] === 'string' ? parsed[key] : '';
+    const nullableScore = (key: keyof FlowExecutionJudgeResult) => this.nullableScore(parsed[key]);
 
     return {
       accuracyScore: score('accuracyScore'),
@@ -128,8 +152,14 @@ export class PlaybookFlowExecutionAdvisorMapper {
       handoffReadinessScore: score('handoffReadinessScore'),
       hitlAppropriatenessScore: score('hitlAppropriatenessScore'),
       determinismScore: score('determinismScore'),
+      costEfficiencyScore: Object.prototype.hasOwnProperty.call(parsed, 'costEfficiencyScore')
+        ? score('costEfficiencyScore')
+        : 50,
       stepOptimizationPriority: score('stepOptimizationPriority'),
       playbookOptimizationPriority: score('playbookOptimizationPriority'),
+      costOptimizationPriority: score('costOptimizationPriority'),
+      estimatedTokenReductionPct: nullableScore('estimatedTokenReductionPct'),
+      estimatedLatencyReductionPct: nullableScore('estimatedLatencyReductionPct'),
       riskSeverity: this.mapRiskSeverity(parsed.riskSeverity),
       blockingIssueCount: typeof parsed.blockingIssueCount === 'number' && Number.isFinite(parsed.blockingIssueCount)
         ? Math.max(0, Math.round(parsed.blockingIssueCount))
@@ -153,6 +183,9 @@ export class PlaybookFlowExecutionAdvisorMapper {
       toolSequencingIssues: list('toolSequencingIssues'),
       toolUsageStrengths: list('toolUsageStrengths'),
       toolUsageRecommendation: text('toolUsageRecommendation'),
+      costOptimizationHints: list('costOptimizationHints'),
+      scriptReplacementHints: list('scriptReplacementHints'),
+      llmStillRequiredReasons: list('llmStillRequiredReasons'),
       safeAutoFixType: parsed.safeAutoFixType === 'optimize_step' ? 'optimize_step' : 'none',
       recommendation: this.mapRecommendation(parsed.recommendation),
       reason: text('reason'),
@@ -245,13 +278,35 @@ export class PlaybookFlowExecutionAdvisorMapper {
       || value === 'add_hitl_guard'
       || value === 'improve_tooling'
       || value === 'improve_output_contract'
+      || value === 'optimize_prompt_cost'
+      || value === 'switch_to_cheaper_model'
+      || value === 'add_result_cache'
+      || value === 'replace_with_deterministic_script'
       ? value
       : 'review_only';
+  }
+
+  private buildUsage(taskResult: FlowTaskResultDocument | Record<string, unknown>): Record<string, unknown> {
+    const usage = (taskResult.usage ?? {}) as Record<string, unknown>;
+    return {
+      input_tokens: typeof usage.inputTokens === 'number' ? usage.inputTokens : 0,
+      output_tokens: typeof usage.outputTokens === 'number' ? usage.outputTokens : 0,
+      total_tokens: typeof usage.totalTokens === 'number' ? usage.totalTokens : 0,
+      model: typeof usage.model === 'string' ? usage.model : '',
+    };
   }
 
   private clampScore(value: unknown): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  private nullableScore(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return null;
     }
 
     return Math.max(0, Math.min(100, Math.round(value)));

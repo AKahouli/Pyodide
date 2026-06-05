@@ -35,6 +35,9 @@ import type {
   AdvisorRemediationItem,
   AdvisorRemediationPreviewRequest,
   AdvisorRemediationPreviewResponse,
+  AdvisorScriptReplacementApplyRequest,
+  AdvisorScriptReplacementPreviewResponse,
+  AdvisorScriptReplacementRequest,
   PlaybookEvaluationBaseline,
   PlaybookEvaluationExecution,
   PlaybookRepeatabilitySummary,
@@ -59,6 +62,7 @@ import type {
   HumanApprovalConfig,
   RetryPolicy,
   AdvisorScoringMode,
+  AdvisorRecommendedAction,
   RouterDecision,
   TaskResult,
   PatchPlaybookFlowDeltaData,
@@ -661,6 +665,177 @@ function toNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+type JsonRecord = Record<string, unknown>;
+
+type JudgeHistoryEntry = NonNullable<TaskResult['judgeHistory']>[number];
+
+function asRecord(value: unknown): JsonRecord | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
+}
+
+function parseNumberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function parseNullableNumberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+}
+
+function parseEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  if (typeof value !== 'string') return undefined;
+  return (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
+
+function normalizeJudgeScoringMode(rawScoringMode: unknown, model: string | null): 'heuristic' | 'llm' {
+  if (rawScoringMode === 'heuristic') return 'heuristic';
+  if (rawScoringMode === 'llm') return 'llm';
+  return model === 'deterministic-execution-advisor' ? 'heuristic' : 'llm';
+}
+
+function normalizeJudgeAvailableActions(value: unknown): { optimizeStep: true; optimizePlaybook: true } | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const optimizeStep = parseBoolean(record.optimizeStep ?? record.optimize_step, false);
+  const optimizePlaybook = parseBoolean(record.optimizePlaybook ?? record.optimize_playbook, false);
+  return optimizeStep && optimizePlaybook ? { optimizeStep: true, optimizePlaybook: true } : undefined;
+}
+
+function normalizeJudgeUsage(rawUsage: unknown): JudgeHistoryEntry['usage'] {
+  const record = asRecord(rawUsage);
+  if (!record) return null;
+  return {
+    inputTokens: parseNullableNumberValue(record.inputTokens ?? record.input_tokens),
+    outputTokens: parseNullableNumberValue(record.outputTokens ?? record.output_tokens),
+    totalTokens: parseNullableNumberValue(record.totalTokens ?? record.total_tokens),
+    model: toNullableString(record.model),
+  };
+}
+
+function normalizeJudgeResultScores(record: JsonRecord) {
+  return {
+    accuracyScore: parseNumberValue(record.accuracyScore ?? record.accuracy_score) ?? 0,
+    completenessScore: parseNumberValue(record.completenessScore ?? record.completeness_score) ?? 0,
+    resultMatchingScore: parseNumberValue(record.resultMatchingScore ?? record.result_matching_score) ?? 0,
+    overallScore: parseNumberValue(record.overallScore ?? record.overall_score) ?? 0,
+    confidence: parseNumberValue(record.confidence) ?? 0,
+    toolUsageScore: parseNumberValue(record.toolUsageScore ?? record.tool_usage_score) ?? 0,
+    relevanceScore: parseNumberValue(record.relevanceScore ?? record.relevance_score),
+    specificityScore: parseNumberValue(record.specificityScore ?? record.specificity_score),
+    formatComplianceScore: parseNumberValue(record.formatComplianceScore ?? record.format_compliance_score),
+    evidenceGroundingScore: parseNumberValue(record.evidenceGroundingScore ?? record.evidence_grounding_score),
+    handoffReadinessScore: parseNumberValue(record.handoffReadinessScore ?? record.handoff_readiness_score),
+    hitlAppropriatenessScore: parseNumberValue(record.hitlAppropriatenessScore ?? record.hitl_appropriateness_score),
+    determinismScore: parseNumberValue(record.determinismScore ?? record.determinism_score),
+    costEfficiencyScore: parseNumberValue(record.costEfficiencyScore ?? record.cost_efficiency_score),
+    stepOptimizationPriority: parseNumberValue(record.stepOptimizationPriority ?? record.step_optimization_priority),
+    playbookOptimizationPriority: parseNumberValue(record.playbookOptimizationPriority ?? record.playbook_optimization_priority),
+    costOptimizationPriority: parseNumberValue(record.costOptimizationPriority ?? record.cost_optimization_priority),
+    estimatedTokenReductionPct: parseNumberValue(record.estimatedTokenReductionPct ?? record.estimated_token_reduction_pct),
+    estimatedLatencyReductionPct: parseNumberValue(record.estimatedLatencyReductionPct ?? record.estimated_latency_reduction_pct),
+    blockingIssueCount: parseNumberValue(record.blockingIssueCount ?? record.blocking_issue_count),
+  };
+}
+
+function normalizeJudgeResultMetadata(record: JsonRecord) {
+  return {
+    expectedResultSource: parseEnum(record.expectedResultSource ?? record.expected_result_source, ['node_field', 'golden_baseline', 'none']) ?? 'none',
+    expectedResultType: parseEnum(
+      record.expectedResultType ?? record.expected_result_type,
+      ['exact_value', 'semantic_description', 'numeric_presentation', 'document_generation', 'baseline_comparison', 'none'],
+    ) ?? 'none',
+    expectedResultMatched: parseBoolean(record.expectedResultMatched ?? record.expected_result_matched, false),
+    expectedResultReason: toNullableString(record.expectedResultReason ?? record.expected_result_reason) ?? '',
+    missingFacts: parseStringArray(record.missingFacts ?? record.missing_facts),
+    incoherences: parseStringArray(record.incoherences),
+    unsupportedClaims: parseStringArray(record.unsupportedClaims ?? record.unsupported_claims),
+    handoffRisks: parseStringArray(record.handoffRisks ?? record.handoff_risks),
+    rewriteHints: parseStringArray(record.rewriteHints ?? record.rewrite_hints),
+    toolSelectionIssues: parseStringArray(record.toolSelectionIssues ?? record.tool_selection_issues),
+    missingToolCalls: parseStringArray(record.missingToolCalls ?? record.missing_tool_calls),
+    redundantToolCalls: parseStringArray(record.redundantToolCalls ?? record.redundant_tool_calls),
+    toolOutputUseIssues: parseStringArray(record.toolOutputUseIssues ?? record.tool_output_use_issues),
+    toolSequencingIssues: parseStringArray(record.toolSequencingIssues ?? record.tool_sequencing_issues),
+    toolUsageStrengths: parseStringArray(record.toolUsageStrengths ?? record.tool_usage_strengths),
+    toolUsageRecommendation: toNullableString(record.toolUsageRecommendation ?? record.tool_usage_recommendation) ?? '',
+    costOptimizationHints: parseStringArray(record.costOptimizationHints ?? record.cost_optimization_hints),
+    scriptReplacementHints: parseStringArray(record.scriptReplacementHints ?? record.script_replacement_hints),
+    llmStillRequiredReasons: parseStringArray(record.llmStillRequiredReasons ?? record.llm_still_required_reasons),
+    reason: toNullableString(record.reason) ?? '',
+  };
+}
+
+function normalizeJudgeResultConfig(record: JsonRecord) {
+  return {
+    riskSeverity: parseEnum(record.riskSeverity ?? record.risk_severity, ['low', 'medium', 'high', 'critical']),
+    downstreamImpactLevel: parseEnum(record.downstreamImpactLevel ?? record.downstream_impact_level, ['none', 'low', 'medium', 'high']),
+    recommendedAction: parseEnum(
+      record.recommendedAction ?? record.recommended_action,
+      [
+        'optimize_step',
+        'optimize_playbook',
+        'review_only',
+        'add_hitl_guard',
+        'improve_tooling',
+        'improve_output_contract',
+        'optimize_prompt_cost',
+        'switch_to_cheaper_model',
+        'add_result_cache',
+        'replace_with_deterministic_script',
+      ] as const,
+    ) as AdvisorRecommendedAction | undefined,
+    availableActions: normalizeJudgeAvailableActions(record.availableActions ?? record.available_actions),
+    safeAutoFixType: parseEnum(record.safeAutoFixType ?? record.safe_auto_fix_type, ['optimize_step', 'none']) ?? 'none',
+    recommendation: parseEnum(
+      record.recommendation,
+      ['none', 'update_current_playbook', 'generate_new_optimized_playbook'],
+    ) ?? 'none',
+  };
+}
+
+export function normalizeJudgeResult(raw: unknown): NonNullable<TaskResult['judgeResult']> {
+  const record = asRecord(raw) ?? {};
+  return {
+    ...normalizeJudgeResultScores(record),
+    ...normalizeJudgeResultMetadata(record),
+    ...normalizeJudgeResultConfig(record),
+  };
+}
+
+export function normalizeJudgeHistoryEntry(raw: unknown, index = 0): JudgeHistoryEntry {
+  const record = asRecord(raw) ?? {};
+  const model = toNullableString(record.model) ?? null;
+  return {
+    id: toNullableString(record.id) ?? `judge-${index + 1}`,
+    createdAt: toNullableString(record.createdAt ?? record.created_at) ?? '',
+    attemptNumber: parseNullableNumberValue(record.attemptNumber ?? record.attempt_number),
+    model,
+    scoringMode: normalizeJudgeScoringMode(record.scoringMode ?? record.scoring_mode, model),
+    usage: normalizeJudgeUsage(record.usage),
+    llmPromptTrace: Array.isArray(record.llmPromptTrace ?? record.llm_prompt_trace)
+      ? (record.llmPromptTrace ?? record.llm_prompt_trace) as import('./types').LLMPromptTraceItem[]
+      : [],
+    judgeResult: normalizeJudgeResult(record.judgeResult ?? record.judge_result ?? {}),
+  };
+}
+
 function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | null {
   if (!raw || typeof raw !== 'object') return null;
   const record = raw as Record<string, unknown>;
@@ -795,19 +970,12 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     traceMetadata: raw.traceMetadata ?? null,
     judgeStatus: raw.judgeStatus ?? 'idle',
     judgeScoringMode: raw.judgeScoringMode === 'heuristic' ? 'heuristic' : raw.judgeScoringMode === 'llm' ? 'llm' : null,
-    judgeResult: raw.judgeResult ?? null,
+    judgeResult: (raw.judgeResult ?? raw.judge_result)
+      ? normalizeJudgeResult(raw.judgeResult ?? raw.judge_result)
+      : null,
     judgeError: toNullableString(raw.judgeError),
-    judgeHistory: Array.isArray(raw.judgeHistory)
-      ? raw.judgeHistory.map((entry: any) => ({
-          ...entry,
-          scoringMode: entry?.scoringMode === 'heuristic'
-            ? 'heuristic'
-            : entry?.model === 'deterministic-execution-advisor'
-              ? 'heuristic'
-              : 'llm',
-          usage: entry?.usage ?? null,
-          llmPromptTrace: Array.isArray(entry?.llmPromptTrace) ? entry.llmPromptTrace : [],
-        }))
+    judgeHistory: Array.isArray(raw.judgeHistory ?? raw.judge_history)
+      ? (raw.judgeHistory ?? raw.judge_history).map(normalizeJudgeHistoryEntry)
       : [],
     advisorTurnCount: toNullableNumber(raw.advisorTurnCount) ?? undefined,
     advisorTurnHistory: Array.isArray(raw.advisorTurnHistory) ? raw.advisorTurnHistory : [],
@@ -1159,6 +1327,30 @@ export async function previewAdvisorRemediation(
 ): Promise<AdvisorRemediationPreviewResponse> {
   const response = await apiClient.post<ApiResponse<AdvisorRemediationPreviewResponse>>(
     API_ENDPOINTS.playbooks.advisorRemediationPreview(playbookId),
+    data,
+    { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function previewAdvisorScriptReplacement(
+  playbookId: string,
+  data: AdvisorScriptReplacementRequest,
+): Promise<AdvisorScriptReplacementPreviewResponse> {
+  const response = await apiClient.post<ApiResponse<AdvisorScriptReplacementPreviewResponse>>(
+    API_ENDPOINTS.playbooks.advisorScriptPreview(playbookId),
+    data,
+    { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function applyAdvisorScriptReplacement(
+  playbookId: string,
+  data: AdvisorScriptReplacementApplyRequest,
+): Promise<{ targetTaskId: string; scriptHash: string; definitionRevision: number }> {
+  const response = await apiClient.post<ApiResponse<{ targetTaskId: string; scriptHash: string; definitionRevision: number }>>(
+    API_ENDPOINTS.playbooks.advisorScriptApply(playbookId),
     data,
     { timeout: 180000 },
   );

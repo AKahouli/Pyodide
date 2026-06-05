@@ -31,6 +31,8 @@ class ExecutionAdvisorRequest:
     tool_trace: list[ExecutionAdvisorToolTraceItem] = field(default_factory=list)
     artifacts_json: str = ""
     task_metadata: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
+    llm_prompt_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -48,8 +50,10 @@ class ExecutionAdvisorResult:
     handoff_readiness_score: int
     hitl_appropriateness_score: int
     determinism_score: int
+    cost_efficiency_score: int
     step_optimization_priority: int
     playbook_optimization_priority: int
+    cost_optimization_priority: int
     risk_severity: str
     blocking_issue_count: int
     downstream_impact_level: str
@@ -71,7 +75,12 @@ class ExecutionAdvisorResult:
     tool_sequencing_issues: list[str] = field(default_factory=list)
     tool_usage_strengths: list[str] = field(default_factory=list)
     tool_usage_recommendation: str = ""
+    cost_optimization_hints: list[str] = field(default_factory=list)
+    script_replacement_hints: list[str] = field(default_factory=list)
+    llm_still_required_reasons: list[str] = field(default_factory=list)
     safe_auto_fix_type: str = "none"
     recommendation: str = "none"
     reason: str = ""
+    estimated_token_reduction_pct: int | None = None
+    estimated_latency_reduction_pct: int | None = None
     model: str = "deterministic-execution-advisor"

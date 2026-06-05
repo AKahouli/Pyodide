@@ -1096,6 +1096,15 @@ async def _execute_step_direct(
         prompt_overrides=prompt_overrides or (task or {}).get("prompt_overrides") or {},
         output_mode=output_mode,
     )
+    task_metadata = task.get("task_metadata") or task.get("metadata") or {}
+    replay_instructions = ""
+    if isinstance(task_metadata, dict):
+        replay_instructions = str(task_metadata.get("replay_instructions") or "").strip()
+    if (
+        replay_instructions
+        and execution_mode in ("replay_strict", "replay_flex", "replay_adaptive")
+    ):
+        user_prompt = f"{user_prompt}\n\n{replay_instructions}"
     user_prompt = user_prompt.replace("{{UserLanguage}}", user_language or "en")
     llm_prompt_trace: List[Dict[str, Any]] = []
 
@@ -1766,7 +1775,7 @@ async def _adapt_replay_tool_args(
         fallback=(
             "Tool name: {{toolName}}\nOriginal args JSON:\n{{originalArgsJson}}\n\n"
             "Reference task title: {{referenceTaskTitle}}\nReference task description: {{referenceTaskDescription}}\n\n"
-            "Current task title: {{taskTitle}}\nCurrent task description: {{taskDescription}}\nCurrent user query: {{currentQuery}}\nDependency context: {{dependencyContext}}\n\n"
+            "Current task description: {{taskDescription}}\nCurrent user query: {{currentQuery}}\nDependency context: {{dependencyContext}}\n\n"
             "Previous replay tool outputs:\n{{previousOutputs}}\n\n"
             "Return the adapted args as JSON with the same top-level keys as the original args."
         ),

@@ -1296,6 +1296,138 @@ describe('getExecution', () => {
     });
   });
 
+  it('normalizes judge result metrics from execution task results', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-judge',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            judge_result: {
+              accuracy_score: 96,
+              completeness_score: 92,
+              result_matching_score: 98,
+              overall_score: 95,
+              confidence: 94,
+              tool_usage_score: 90,
+              relevance_score: 99,
+              specificity_score: 93,
+              format_compliance_score: 88,
+              evidence_grounding_score: 97,
+              handoff_readiness_score: 94,
+              hitl_appropriateness_score: 98,
+              determinism_score: 96,
+              cost_efficiency_score: 84,
+              step_optimization_priority: 28,
+              playbook_optimization_priority: 41,
+              cost_optimization_priority: 22,
+            },
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-judge');
+
+    expect(execution.taskResults[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+      costEfficiencyScore: 84,
+    });
+  });
+
+  it('normalizes snake_case judge history result metrics from execution task results', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-judge-history',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            judge_history: [{
+              id: 'judge-1',
+              created_at: '2025-01-01T00:00:01.000Z',
+              attempt_number: 1,
+              scoring_mode: 'llm',
+              judge_result: {
+                accuracy_score: 96,
+                completeness_score: 92,
+                result_matching_score: 90,
+                overall_score: 93,
+                confidence: 95,
+                tool_usage_score: 98,
+                relevance_score: 99,
+                specificity_score: 93,
+                format_compliance_score: 88,
+                evidence_grounding_score: 97,
+                handoff_readiness_score: 94,
+                hitl_appropriateness_score: 98,
+                determinism_score: 96,
+                cost_efficiency_score: 91,
+                step_optimization_priority: 28,
+                playbook_optimization_priority: 41,
+                cost_optimization_priority: 24,
+              },
+            }],
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-judge-history');
+
+    expect(execution.taskResults[0].judgeHistory?.[0]).toMatchObject({
+      createdAt: '2025-01-01T00:00:01.000Z',
+      attemptNumber: 1,
+      scoringMode: 'llm',
+      judgeResult: {
+        overallScore: 93,
+        relevanceScore: 99,
+        specificityScore: 93,
+        formatComplianceScore: 88,
+        evidenceGroundingScore: 97,
+        handoffReadinessScore: 94,
+        hitlAppropriatenessScore: 98,
+        determinismScore: 96,
+        costEfficiencyScore: 91,
+        stepOptimizationPriority: 28,
+        playbookOptimizationPriority: 41,
+        costOptimizationPriority: 24,
+      },
+    });
+  });
+
   it('restores iterator iterations from snake_case fields and serialized output payloads', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({

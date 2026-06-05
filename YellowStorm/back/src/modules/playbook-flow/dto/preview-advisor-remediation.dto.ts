@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsNumber, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
-const REMEDIATION_CATEGORIES = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat', 'format', 'hitl', 'determinism', 'expected_result'] as const;
+const REMEDIATION_CATEGORIES = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat', 'format', 'hitl', 'determinism', 'expected_result', 'cost_efficiency'] as const;
 const REMEDIATION_MODES = ['optimize-step', 'update-current', 'generate-new'] as const;
 
 export class PreviewAdvisorRemediationItemDto {
@@ -39,4 +39,32 @@ export class PreviewAdvisorRemediationDto {
   @ValidateNested({ each: true })
   @Type(() => PreviewAdvisorRemediationItemDto)
   items!: PreviewAdvisorRemediationItemDto[];
+}
+
+export class PreviewAdvisorScriptReplacementDto {
+  @ApiProperty()
+  @IsString()
+  executionId!: string;
+
+  @ApiProperty()
+  @IsString()
+  targetTaskId!: string;
+
+  @ApiProperty({ type: [PreviewAdvisorRemediationItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PreviewAdvisorRemediationItemDto)
+  items!: PreviewAdvisorRemediationItemDto[];
+
+  @ApiPropertyOptional({ type: [Number] })
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  validationIterationIds?: number[];
+}
+
+export class ApplyAdvisorScriptReplacementDto extends PreviewAdvisorScriptReplacementDto {
+  @ApiProperty()
+  @IsString()
+  script!: string;
 }

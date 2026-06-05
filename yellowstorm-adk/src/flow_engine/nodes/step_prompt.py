@@ -37,9 +37,8 @@ def build_step_prompt(
     hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
-        "Task Title:",
-        label,
-        "",
+#        "Task Title:",
+#        label,
         "Task Node ID:",
         node_id,
     ]

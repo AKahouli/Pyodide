@@ -207,7 +207,6 @@ def build_clarification_pre_prompt(
     )
     prompt = prompt.replace("{{UserLanguage}}", user_language or "en")
     blocks: list[str] = [prompt]
-    blocks.append(f"Task title: {label}")
     blocks.append(f"Task description:\n{node_description}")
     if user_query.strip():
         blocks.append(f"User request:\n{user_query.strip()}")
@@ -266,7 +265,6 @@ def build_blocker_judge_prompt(
         "If prior user feedback is insufficient, contradictory, or too broad, block again and ask a better question with brief examples.",
         "For clarify actions, the message must be one direct user-facing question asking only for the missing information.",
         "For approval actions, the message must be one concise approval request.",
-        f"Task title: {label}",
         f"Task description:\n{node_description}",
         f"Current inputs/context:\n{json.dumps(input_context, ensure_ascii=False, default=str)}",
         f"Prior HITL feedback:\n{json.dumps(feedback_history or [], ensure_ascii=False, default=str)}",

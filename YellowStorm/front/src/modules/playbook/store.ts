@@ -50,6 +50,8 @@ import type {
   ToolBinding,
   RequestPlaybookIntentData,
   AdvisorRemediationPreviewRequest,
+  AdvisorScriptReplacementApplyRequest,
+  AdvisorScriptReplacementRequest,
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
@@ -3756,9 +3758,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                   ...tr,
                   judgeStatus: data.judgeStatus,
                   judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
-                  judgeResult: data.judgeResult ?? null,
+                  judgeResult: data.judgeResult ? api.normalizeJudgeResult(data.judgeResult) : null,
                   judgeError: data.judgeError ?? null,
-                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
+                  judgeHistory: data.judgeHistoryEntry
+                    ? [...(tr.judgeHistory || []), api.normalizeJudgeHistoryEntry(data.judgeHistoryEntry, (tr.judgeHistory || []).length)]
+                    : tr.judgeHistory || [],
                 }
               : tr;
           });
@@ -4437,6 +4441,16 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
       previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
         return api.previewAdvisorRemediation(playbookId, data);
+      },
+
+      previewAdvisorScriptReplacement: async (playbookId: string, data: AdvisorScriptReplacementRequest) => {
+        return api.previewAdvisorScriptReplacement(playbookId, data);
+      },
+
+      applyAdvisorScriptReplacement: async (playbookId: string, data: AdvisorScriptReplacementApplyRequest) => {
+        const result = await api.applyAdvisorScriptReplacement(playbookId, data);
+        await get().fetchPlaybook(playbookId);
+        return result;
       },
 
       revertToSnapshot: async (playbookId, messageId) => {

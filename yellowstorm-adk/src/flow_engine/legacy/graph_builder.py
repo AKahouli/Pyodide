@@ -112,7 +112,6 @@ def _build_clarification_pre_prompt(
         )
     clarification_prompt = clarification_prompt.replace("{{UserLanguage}}", user_language or "en")
     context_blocks: List[str] = [clarification_prompt]
-    context_blocks.append(f"Task title: {task_config.get('title', '')}")
     context_blocks.append(f"Task description:\n{task_description}")
     if user_query.strip():
         context_blocks.append(f"User request:\n{user_query.strip()}")
@@ -137,7 +136,6 @@ def _build_execution_clarification_guidance(
         "instead of inventing details. If the task is clear, complete the task normally.\n"
         "Treat missing company names, time ranges, targets, data sources, deliverable format, "
         "or other essential requirements as a reason to ask one question before proceeding.\n"
-        f"Task title: {task_config.get('title', '')}\n"
         f"Task description:\n{task_description}"
     )
 

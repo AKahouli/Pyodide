@@ -8,6 +8,7 @@ from src.flow_engine.legacy.step_executor import (
     _execute_with_tools,
     _attach_result_text_for_citations,
     _collect_generated_artifacts,
+    _execute_step_direct,
     _execute_evaluation_task,
     _build_plain_text_artifact,
     _build_task_artifacts_from_structured_outputs,
@@ -185,6 +186,64 @@ async def test_replay_tool_calls_resolve_connector_action_key_suffix() -> None:
     assert response == "baseline"
     assert tool_trace[0]["tool_name"] == "perform_filtered_search"
     assert "forecast" in synthesis_context
+
+
+@pytest.mark.asyncio
+async def test_execute_step_direct_appends_replay_instructions_in_replay_mode(
+    monkeypatch,
+) -> None:
+    from src.flow_engine.legacy import step_executor as module
+    from src.flow_engine.tools import langchain_factory
+
+    captured: dict[str, str] = {}
+
+    def fake_settings() -> SimpleNamespace:
+        return SimpleNamespace(
+            LITELLM_API_BASE_URL="http://example.test",
+            LITELLM_API_SECRET_KEY="secret",
+        )
+
+    async def fake_execute_with_tools(
+        settings,
+        model_name,
+        system_prompt,
+        user_prompt,
+        tools,
+        temperature=0.7,
+        prompt_trace=None,
+        on_progress=None,
+        output_mode="plain",
+        task=None,
+        prompt_registry=None,
+        stream_final_output=True,
+        **kwargs,
+    ):
+        captured["user_prompt"] = user_prompt
+        return ("ok", [], [], [], {"total_tokens": 0})
+
+    monkeypatch.setattr(module, "_execute_with_tools", fake_execute_with_tools)
+    monkeypatch.setattr(
+        langchain_factory,
+        "create_langchain_tools",
+        lambda *args, **kwargs: ([SimpleNamespace(name="search")], None),
+    )
+    monkeypatch.setattr("src.config.settings.get_settings", fake_settings)
+
+    result = await _execute_step_direct(
+        task={
+            "id": "task-1",
+            "title": "Replay task",
+            "description": "Describe the result",
+            "task_metadata": {"replay_instructions": "### Replay policy\nUse current evidence only."},
+            "output_ports": [{"id": "summary", "artifact_kind": "text"}],
+        },
+        agent={"name": "Agent", "instructions": "Base instructions", "skills": []},
+        execution_mode="replay_flex",
+    )
+
+    assert result["status"] == "completed"
+    assert "### Replay policy" in captured["user_prompt"]
+    assert "Use current evidence only." in captured["user_prompt"]
 
 
 @pytest.mark.asyncio

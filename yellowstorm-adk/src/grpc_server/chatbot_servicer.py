@@ -217,6 +217,9 @@ class ChatbotServicer(
             always_print_fields_with_no_presence=True,
         )
         result = evaluate_task_execution(payload)
+        token_reduction = result.get("estimated_token_reduction_pct")
+        latency_reduction = result.get("estimated_latency_reduction_pct")
+        cost_efficiency_score = result.get("cost_efficiency_score")
 
         return chatbot_pb2.TaskAdvisorResult(
             accuracy_score=int(result.get("accuracy_score", 0) or 0),
@@ -225,6 +228,23 @@ class ChatbotServicer(
             overall_score=int(result.get("overall_score", 0) or 0),
             confidence=float(result.get("confidence", 0) or 0),
             tool_usage_score=int(result.get("tool_usage_score", 0) or 0),
+            relevance_score=int(result.get("relevance_score", 0) or 0),
+            specificity_score=int(result.get("specificity_score", 0) or 0),
+            format_compliance_score=int(result.get("format_compliance_score", 0) or 0),
+            evidence_grounding_score=int(result.get("evidence_grounding_score", 0) or 0),
+            handoff_readiness_score=int(result.get("handoff_readiness_score", 0) or 0),
+            hitl_appropriateness_score=int(result.get("hitl_appropriateness_score", 0) or 0),
+            determinism_score=int(result.get("determinism_score", 0) or 0),
+            step_optimization_priority=int(result.get("step_optimization_priority", 0) or 0),
+            playbook_optimization_priority=int(result.get("playbook_optimization_priority", 0) or 0),
+            risk_severity=str(result.get("risk_severity", "low") or "low"),
+            blocking_issue_count=int(result.get("blocking_issue_count", 0) or 0),
+            downstream_impact_level=str(result.get("downstream_impact_level", "none") or "none"),
+            recommended_action=str(result.get("recommended_action", "review_only") or "review_only"),
+            cost_efficiency_score=int(round(cost_efficiency_score)) if isinstance(cost_efficiency_score, (int, float)) else 50,
+            cost_optimization_priority=int(result.get("cost_optimization_priority", 0) or 0),
+            estimated_token_reduction_pct=int(round(token_reduction)) if isinstance(token_reduction, (int, float)) else -1,
+            estimated_latency_reduction_pct=int(round(latency_reduction)) if isinstance(latency_reduction, (int, float)) else -1,
             expected_result_source=str(result.get("expected_result_source", "none") or "none"),
             expected_result_type=str(result.get("expected_result_type", "none") or "none"),
             expected_result_matched=bool(result.get("expected_result_matched", False)),
@@ -241,6 +261,9 @@ class ChatbotServicer(
             tool_sequencing_issues=[str(item) for item in result.get("tool_sequencing_issues", [])],
             tool_usage_strengths=[str(item) for item in result.get("tool_usage_strengths", [])],
             tool_usage_recommendation=str(result.get("tool_usage_recommendation", "") or ""),
+            cost_optimization_hints=[str(item) for item in result.get("cost_optimization_hints", [])],
+            script_replacement_hints=[str(item) for item in result.get("script_replacement_hints", [])],
+            llm_still_required_reasons=[str(item) for item in result.get("llm_still_required_reasons", [])],
             safe_auto_fix_type=str(result.get("safe_auto_fix_type", "none") or "none"),
             recommendation=str(result.get("recommendation", "none") or "none"),
             reason=str(result.get("reason", "") or ""),

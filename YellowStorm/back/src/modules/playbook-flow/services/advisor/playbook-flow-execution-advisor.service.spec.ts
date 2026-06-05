@@ -51,8 +51,12 @@ function createService() {
         handoffReadinessScore: 80,
         hitlAppropriatenessScore: 80,
         determinismScore: 80,
+        costEfficiencyScore: 50,
         stepOptimizationPriority: 20,
         playbookOptimizationPriority: 20,
+        costOptimizationPriority: 0,
+        estimatedTokenReductionPct: null,
+        estimatedLatencyReductionPct: null,
         riskSeverity: 'low',
         blockingIssueCount: 0,
         downstreamImpactLevel: 'none',
@@ -74,6 +78,9 @@ function createService() {
         toolSequencingIssues: [],
         toolUsageStrengths: [],
         toolUsageRecommendation: 'Looks fine',
+        costOptimizationHints: [],
+        scriptReplacementHints: [],
+        llmStillRequiredReasons: [],
         safeAutoFixType: 'none',
         recommendation: 'none',
         reason: 'Done',
@@ -100,8 +107,12 @@ function createService() {
         handoffReadinessScore: 84,
         hitlAppropriatenessScore: 84,
         determinismScore: 84,
+        costEfficiencyScore: 50,
         stepOptimizationPriority: 16,
         playbookOptimizationPriority: 16,
+        costOptimizationPriority: 0,
+        estimatedTokenReductionPct: null,
+        estimatedLatencyReductionPct: null,
         riskSeverity: 'low',
         blockingIssueCount: 0,
         downstreamImpactLevel: 'none',
@@ -123,6 +134,9 @@ function createService() {
         toolSequencingIssues: [],
         toolUsageStrengths: [],
         toolUsageRecommendation: 'Looks fine',
+        costOptimizationHints: [],
+        scriptReplacementHints: [],
+        llmStillRequiredReasons: [],
         safeAutoFixType: 'none',
         recommendation: 'none',
         reason: 'Done',
@@ -172,7 +186,7 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
     const result = await service.runTaskEvaluation('exec-1', 'task-1', 'user-1');
 
     expect(llmEvaluator.evaluate).toHaveBeenCalledTimes(1);
-    expect(heuristicEvaluator.evaluate).not.toHaveBeenCalled();
+    expect(heuristicEvaluator.evaluate).toHaveBeenCalledTimes(1);
     expect(taskResultDocument.save).toHaveBeenCalledTimes(2);
     expect(streamEvents.emitStepJudgeStarted).toHaveBeenCalledWith('user-1', 'exec-1', 'task-1', undefined, 'llm');
     expect(streamEvents.emitStepJudgeUpdated).toHaveBeenCalledWith(

@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
@@ -28,6 +29,7 @@ import type {
   AdvisorIntentApplyRequest,
   AdvisorRemediationItem,
   AdvisorRemediationMode,
+  AdvisorScriptReplacementPreviewResponse,
   PlaybookEvaluationExecution,
   PlaybookExecution,
   PlaybookPageMode,
@@ -51,6 +53,7 @@ const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   hitl: 'bg-red-100 text-red-700 border-red-200',
   determinism: 'bg-indigo-100 text-indigo-700 border-indigo-200',
   expected_result: 'bg-amber-100 text-amber-700 border-amber-200',
+  cost_efficiency: 'bg-lime-100 text-lime-700 border-lime-200',
 };
 
 type JudgeResultLike = {
@@ -65,6 +68,10 @@ type JudgeResultLike = {
   toolSequencingIssues?: string[];
   toolUsageStrengths?: string[];
   rewriteHints?: string[];
+  costOptimizationHints?: string[];
+  scriptReplacementHints?: string[];
+  llmStillRequiredReasons?: string[];
+  costOptimizationPriority?: number;
 };
 
 function buildLocalRemediationItems(
@@ -88,9 +95,30 @@ function buildLocalRemediationItems(
     { key: 'toolSequencingIssues', entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true, blocking: false },
     { key: 'toolUsageStrengths', entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false, blocking: false },
     { key: 'rewriteHints', entries: judgeResult.rewriteHints || [], category: 'determinism', defaultSelected: true, blocking: false },
+    { key: 'costOptimizationHints', entries: judgeResult.costOptimizationHints || [], category: 'cost_efficiency', defaultSelected: true, blocking: false },
+    { key: 'scriptReplacementHints', entries: judgeResult.scriptReplacementHints || [], category: 'cost_efficiency', defaultSelected: false, blocking: false },
+    { key: 'llmStillRequiredReasons', entries: judgeResult.llmStillRequiredReasons || [], category: 'cost_efficiency', defaultSelected: false, blocking: false },
   ];
   for (const { key, entries, category, defaultSelected, blocking } of mappings) {
     entries.forEach((description, index) => {
+      const severity = category === 'cost_efficiency' && (judgeResult.costOptimizationPriority ?? 0) >= 80
+        ? 'high'
+        : category === 'cost_efficiency' && (judgeResult.costOptimizationPriority ?? 0) >= 50
+          ? 'medium'
+          : blocking
+            ? 'high'
+            : defaultSelected
+              ? 'medium'
+              : 'low';
+      const suggestedAction = key === 'scriptReplacementHints'
+        ? 'replace_with_deterministic_script'
+        : category === 'cost_efficiency'
+          ? 'optimize_prompt_cost'
+          : category === 'tooling'
+            ? 'improve_tooling'
+            : category === 'handoff'
+              ? 'optimize_playbook'
+              : 'optimize_step';
       items.push({
         id: `local-${category}-${index}`,
         category,
@@ -98,9 +126,9 @@ function buildLocalRemediationItems(
         targetTaskId,
         title: description.length > 80 ? description.slice(0, 80) + '...' : description,
         description,
-        severity: blocking ? 'high' : defaultSelected ? 'medium' : 'low',
+        severity,
         confidence: 0.8,
-        suggestedAction: category === 'tooling' ? 'improve_tooling' : category === 'handoff' ? 'optimize_playbook' : 'optimize_step',
+        suggestedAction,
         blocking,
         editable: true,
         defaultSelected,
@@ -490,6 +518,8 @@ export function ExecutionStepDetail({
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const replayPlanning = step ? execution?.replayPlanningByTask?.[step.taskId] ?? null : null;
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
+  const previewAdvisorScriptReplacement = usePlaybookStore((s) => s.previewAdvisorScriptReplacement);
+  const applyAdvisorScriptReplacement = usePlaybookStore((s) => s.applyAdvisorScriptReplacement);
   const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
@@ -517,10 +547,15 @@ export function ExecutionStepDetail({
   const [remediationDialogMode, setRemediationDialogMode] = useState<AdvisorRemediationMode>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
+  const [scriptPreview, setScriptPreview] = useState<AdvisorScriptReplacementPreviewResponse | null>(null);
+  const [scriptPreviewOpen, setScriptPreviewOpen] = useState(false);
+  const [scriptPreviewLoading, setScriptPreviewLoading] = useState(false);
+  const [scriptApplyLoading, setScriptApplyLoading] = useState(false);
   const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
   const [missingAdvisorTaskIds, setMissingAdvisorTaskIds] = useState<string[]>([]);
   const [runningAdvisorPreflight, setRunningAdvisorPreflight] = useState(false);
   const [copiedToClipboard, setCopiedToClipboard] = useState(false);
+  const [shouldSelectLatestJudgeHistory, setShouldSelectLatestJudgeHistory] = useState(false);
   const executionSnapshotTask = useMemo(() => {
     const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
@@ -650,6 +685,7 @@ export function ExecutionStepDetail({
   );
   const canApplyAdvisorChanges = typeof onApplyAdvisorIntent === 'function';
   const remediationCount = stepJudgeResult?.rewriteHints?.length ?? 0;
+  const hasScriptReplacementCandidate = (stepJudgeResult?.scriptReplacementHints?.length ?? 0) > 0;
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
@@ -917,6 +953,50 @@ export function ExecutionStepDetail({
     });
   }, [buildSelectedRemediationItems, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
 
+  const handlePreviewScriptReplacement = useCallback(async () => {
+    if (!currentPlaybook || !execution || !step) return;
+    const items = buildLocalRemediationItems(stepJudgeResult, 'optimize-step', step.taskId)
+      .filter((item) => item.suggestedAction === 'replace_with_deterministic_script')
+      .map((item) => ({ id: item.id, category: item.category, description: item.description }));
+    if (!items.length) return;
+    setScriptPreviewLoading(true);
+    try {
+      const preview = await previewAdvisorScriptReplacement(currentPlaybook.id, {
+        executionId: execution.id,
+        targetTaskId: step.taskId,
+        items,
+      });
+      setScriptPreview(preview);
+      setScriptPreviewOpen(true);
+    } catch (error) {
+      showError(t('detail.remediation.scriptPreviewFailed'));
+    } finally {
+      setScriptPreviewLoading(false);
+    }
+  }, [currentPlaybook, execution, previewAdvisorScriptReplacement, step, stepJudgeResult, t]);
+
+  const handleApplyScriptReplacement = useCallback(async () => {
+    if (!currentPlaybook || !execution || !step || !scriptPreview) return;
+    setScriptApplyLoading(true);
+    try {
+      const items = buildLocalRemediationItems(stepJudgeResult, 'optimize-step', step.taskId)
+        .filter((item) => item.suggestedAction === 'replace_with_deterministic_script')
+        .map((item) => ({ id: item.id, category: item.category, description: item.description }));
+      await applyAdvisorScriptReplacement(currentPlaybook.id, {
+        executionId: execution.id,
+        targetTaskId: step.taskId,
+        items,
+        script: scriptPreview.candidate.script,
+      });
+      showSuccess(t('detail.remediation.scriptApplied'));
+      setScriptPreviewOpen(false);
+    } catch (error) {
+      showError(t('detail.remediation.scriptApplyFailed'));
+    } finally {
+      setScriptApplyLoading(false);
+    }
+  }, [applyAdvisorScriptReplacement, currentPlaybook, execution, scriptPreview, step, stepJudgeResult, t]);
+
   const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
     if (!currentPlaybook || !execution || !step) return;
     setReapplyingIndex(historyIndex);
@@ -966,10 +1046,29 @@ export function ExecutionStepDetail({
     setSelectedJudgeHistoryId((current) => {
       if (!judgeHistory.length) return null;
       const latestJudgeHistoryId = judgeHistory[judgeHistory.length - 1].id;
+      if (shouldSelectLatestJudgeHistory) {
+        return latestJudgeHistoryId;
+      }
       if (current && judgeHistory.some((entry) => entry.id === current)) return current;
       return latestJudgeHistoryId;
     });
-  }, [judgeHistory, step?.taskId]);
+  }, [judgeHistory, shouldSelectLatestJudgeHistory, step?.taskId]);
+
+  useEffect(() => {
+    if (
+      shouldSelectLatestJudgeHistory
+      && stepJudgeStatus !== 'evaluating'
+      && selectedJudgeHistory?.id === latestJudgeHistory?.id
+    ) {
+      setShouldSelectLatestJudgeHistory(false);
+    }
+  }, [latestJudgeHistory?.id, selectedJudgeHistory?.id, shouldSelectLatestJudgeHistory, stepJudgeStatus]);
+
+  const handleRunAdvisorEvaluation = useCallback(() => {
+    if (!step || !onRequestRunAdvisorEvaluation) return;
+    setShouldSelectLatestJudgeHistory(true);
+    onRequestRunAdvisorEvaluation(step.taskId, step.iteration);
+  }, [onRequestRunAdvisorEvaluation, step]);
 
   const handleSaveEvaluationBaseline = useCallback(async () => {
     if (!execution || !step) return;
@@ -1303,11 +1402,11 @@ export function ExecutionStepDetail({
           </div>
         )}
         <Tabs value={detailActiveTab} onValueChange={handleActiveTabChange} className="gap-4">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
-            <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
-            <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
-            <TabsTrigger value="traces">{t('detail.tabs.traces')}</TabsTrigger>
+          <TabsList className="flex w-full justify-start gap-1 overflow-x-auto sm:grid sm:grid-cols-4">
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="results">{t('detail.tabs.results')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="judge">{t('detail.tabs.judge')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="traces">{t('detail.tabs.traces')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
@@ -1851,7 +1950,7 @@ export function ExecutionStepDetail({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId, step.iteration)}
+                  onClick={handleRunAdvisorEvaluation}
                   disabled={!canRunAdvisorEvaluation || stepJudgeStatus === 'evaluating'}
                 >
                   {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
@@ -2048,6 +2147,12 @@ export function ExecutionStepDetail({
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.previewChanges')}
                       </Button>
+                      {hasScriptReplacementCandidate && (
+                        <Button size="sm" variant="outline" onClick={() => void handlePreviewScriptReplacement()} disabled={scriptPreviewLoading}>
+                          {scriptPreviewLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {t('detail.remediation.previewScriptReplacement')}
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.applyToCurrentPlaybook')}
@@ -2079,6 +2184,52 @@ export function ExecutionStepDetail({
                   loading={remediationLoading}
                   onApply={handleApplyRemediations}
                 />
+
+                <Dialog open={scriptPreviewOpen} onOpenChange={setScriptPreviewOpen}>
+                  <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>{t('detail.remediation.scriptPreviewTitle')}</DialogTitle>
+                      <DialogDescription>{t('detail.remediation.scriptPreviewDescription')}</DialogDescription>
+                    </DialogHeader>
+                    {scriptPreview && (
+                      <div className="space-y-4 text-sm">
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.validationStatus')}</div>
+                            <div className="font-medium">{t(`detail.remediation.validation.${scriptPreview.validation.status}`)}</div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.validationSamples')}</div>
+                            <div className="font-medium">{scriptPreview.validation.passedCount}/{scriptPreview.validation.sampleCount}</div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.estimatedTokenReduction')}</div>
+                            <div className="font-medium">{formatPercent(scriptPreview.estimatedTokenReductionPct)}</div>
+                          </div>
+                        </div>
+                        {scriptPreview.warnings.length > 0 && (
+                          <Alert>
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle>{t('detail.remediation.scriptWarnings')}</AlertTitle>
+                            <AlertDescription>
+                              <ul className="list-disc space-y-1 pl-4">
+                                {scriptPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                              </ul>
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap">{scriptPreview.candidate.script}</pre>
+                      </div>
+                    )}
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setScriptPreviewOpen(false)}>{t('detail.remediation.cancel')}</Button>
+                      <Button onClick={() => void handleApplyScriptReplacement()} disabled={!scriptPreview || scriptPreview.validation.status !== 'passed' || scriptApplyLoading}>
+                        {scriptApplyLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.remediation.applyScriptReplacement')}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">

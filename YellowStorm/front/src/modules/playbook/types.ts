@@ -1089,12 +1089,16 @@ export interface TaskResult {
     handoffReadinessScore?: number;
     hitlAppropriatenessScore?: number;
     determinismScore?: number;
+    costEfficiencyScore?: number;
     stepOptimizationPriority?: number;
     playbookOptimizationPriority?: number;
+    costOptimizationPriority?: number;
+    estimatedTokenReductionPct?: number | null;
+    estimatedLatencyReductionPct?: number | null;
     riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
     blockingIssueCount?: number;
     downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
-    recommendedAction?: 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
+    recommendedAction?: AdvisorRecommendedAction;
     availableActions?: { optimizeStep: true; optimizePlaybook: true };
     expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
     expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
@@ -1112,6 +1116,9 @@ export interface TaskResult {
     toolSequencingIssues: string[];
     toolUsageStrengths: string[];
     toolUsageRecommendation: string;
+    costOptimizationHints?: string[];
+    scriptReplacementHints?: string[];
+    llmStillRequiredReasons?: string[];
     safeAutoFixType: 'optimize_step' | 'none';
     recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
@@ -1144,12 +1151,16 @@ export interface TaskResult {
       handoffReadinessScore?: number;
       hitlAppropriatenessScore?: number;
       determinismScore?: number;
+      costEfficiencyScore?: number;
       stepOptimizationPriority?: number;
       playbookOptimizationPriority?: number;
+      costOptimizationPriority?: number;
+      estimatedTokenReductionPct?: number | null;
+      estimatedLatencyReductionPct?: number | null;
       riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
       blockingIssueCount?: number;
       downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
-      recommendedAction?: 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
+      recommendedAction?: AdvisorRecommendedAction;
       availableActions?: { optimizeStep: true; optimizePlaybook: true };
       expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
       expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
@@ -1167,6 +1178,9 @@ export interface TaskResult {
       toolSequencingIssues: string[];
       toolUsageStrengths: string[];
       toolUsageRecommendation: string;
+      costOptimizationHints?: string[];
+      scriptReplacementHints?: string[];
+      llmStillRequiredReasons?: string[];
       safeAutoFixType: 'optimize_step' | 'none';
       recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
       reason: string;
@@ -2032,8 +2046,9 @@ export interface ResumeFromStepData {
   payload?: Record<string, unknown>;
 }
 
-export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat' | 'format' | 'hitl' | 'determinism' | 'expected_result';
-export type AdvisorRemediationSuggestedAction = 'optimize_step' | 'optimize_playbook' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract';
+export type AdvisorRecommendedAction = 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract' | 'optimize_prompt_cost' | 'switch_to_cheaper_model' | 'add_result_cache' | 'replace_with_deterministic_script';
+export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat' | 'format' | 'hitl' | 'determinism' | 'expected_result' | 'cost_efficiency';
+export type AdvisorRemediationSuggestedAction = Exclude<AdvisorRecommendedAction, 'review_only'>;
 
 export interface AdvisorRemediationItem {
   id: string;
@@ -2082,6 +2097,45 @@ export interface AdvisorRemediationPreviewResponse {
     errors: string[];
     warnings: string[];
   };
+}
+
+export interface AdvisorScriptReplacementRequest {
+  executionId: string;
+  targetTaskId: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
+  validationIterationIds?: number[];
+}
+
+export interface AdvisorScriptReplacementApplyRequest extends AdvisorScriptReplacementRequest {
+  script: string;
+}
+
+export interface AdvisorScriptReplacementPreviewResponse {
+  targetTaskId: string;
+  candidate: {
+    language: 'python';
+    runtime: 'python3.11';
+    script: string;
+    entrypoint: 'run';
+    inputContract: Record<string, unknown>;
+    outputContract: Record<string, unknown>;
+    dependencies: string[];
+    deterministic: boolean;
+  };
+  validation: {
+    status: 'passed' | 'failed' | 'needs_review';
+    sampleCount: number;
+    passedCount: number;
+    failedCount: number;
+    failures: Array<{
+      iteration: number;
+      reason: string;
+      expectedSummary: string;
+      actualSummary: string;
+    }>;
+  };
+  estimatedTokenReductionPct: number | null;
+  warnings: string[];
 }
 
 // ===== Store =====
@@ -2286,6 +2340,8 @@ export interface PlaybookActions {
   runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
   previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
+  previewAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementRequest) => Promise<AdvisorScriptReplacementPreviewResponse>;
+  applyAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementApplyRequest) => Promise<{ targetTaskId: string; scriptHash: string; definitionRevision: number }>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
   pendingRerunTaskId: string | null;
   setPendingRerunTaskId: (taskId: string | null) => void;

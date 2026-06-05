@@ -94,10 +94,12 @@ function MetricGroup({
   return (
     <div className="rounded-md border bg-muted/20 p-3">
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
         {metrics.map((metric) => (
-          <div key={metric.label} className={cn('rounded border px-2 py-1.5', getScoreTone(metric.value))}>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{metric.label}</div>
+          <div key={metric.label} className={cn('min-w-0 rounded border px-2 py-1.5', getScoreTone(metric.value))}>
+            <div className="text-[11px] leading-tight uppercase tracking-wide text-muted-foreground break-words whitespace-normal">
+              {metric.label}
+            </div>
             <div className="mt-1 text-sm font-semibold">{formatPercent(metric.value)}</div>
           </div>
         ))}
@@ -180,6 +182,24 @@ export function AdvisorResultPanel({
       badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
       items: judgeResult.toolUsageStrengths || [],
     },
+    {
+      title: t('detail.judge.costOptimizationHints'),
+      badge: t('detail.remediation.category.cost_efficiency'),
+      badgeClassName: 'bg-lime-100 text-lime-700 border-lime-200',
+      items: judgeResult.costOptimizationHints || [],
+    },
+    {
+      title: t('detail.judge.scriptReplacementHints'),
+      badge: t('detail.remediation.category.cost_efficiency'),
+      badgeClassName: 'bg-lime-100 text-lime-700 border-lime-200',
+      items: judgeResult.scriptReplacementHints || [],
+    },
+    {
+      title: t('detail.judge.llmStillRequiredReasons'),
+      badge: t('detail.remediation.category.cost_efficiency'),
+      badgeClassName: 'bg-lime-100 text-lime-700 border-lime-200',
+      items: judgeResult.llmStillRequiredReasons || [],
+    },
   ];
 
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
@@ -187,23 +207,23 @@ export function AdvisorResultPanel({
   return (
     <div className={cn('space-y-4', className)}>
       <div className="rounded-lg border bg-muted/20 p-4">
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
           <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeResult.overallScore))}>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
+            <div className="text-xs leading-tight uppercase tracking-wide text-muted-foreground break-words whitespace-normal">{t('detail.judge.overallScore')}</div>
             <div className="mt-1 text-lg font-semibold">{formatPercent(judgeResult.overallScore)}</div>
           </div>
           <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeResult.toolUsageScore))}>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
+            <div className="text-xs leading-tight uppercase tracking-wide text-muted-foreground break-words whitespace-normal">{t('detail.judge.toolUsageScore')}</div>
             <div className="mt-1 text-lg font-semibold">{formatPercent(judgeResult.toolUsageScore)}</div>
           </div>
           <div className={cn('rounded-md border px-3 py-2', getExpectedMatchTone(normalizedExpectedResultSource, normalizedResultMatchingScore))}>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedMatch')}</div>
+            <div className="text-xs leading-tight uppercase tracking-wide text-muted-foreground break-words whitespace-normal">{t('detail.judge.expectedMatch')}</div>
             <div className="mt-1 text-lg font-semibold">
               {normalizedExpectedResultSource === 'none' ? t('detail.judge.notEvaluated') : formatPercent(normalizedResultMatchingScore)}
             </div>
           </div>
           <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeResult.confidence))}>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
+            <div className="text-xs leading-tight uppercase tracking-wide text-muted-foreground break-words whitespace-normal">{t('detail.judge.confidence')}</div>
             <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeResult.confidence)}</div>
           </div>
         </div>
@@ -219,7 +239,7 @@ export function AdvisorResultPanel({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <div className="mt-4 grid gap-3 xl:grid-cols-3">
           <MetricGroup
             title={t('detail.judge.qualityMetrics')}
             metrics={[
@@ -244,6 +264,8 @@ export function AdvisorResultPanel({
             metrics={[
               { label: t('detail.judge.stepOptimizationPriority'), value: judgeResult.stepOptimizationPriority },
               { label: t('detail.judge.playbookOptimizationPriority'), value: judgeResult.playbookOptimizationPriority },
+              { label: t('detail.judge.costOptimizationPriority'), value: judgeResult.costOptimizationPriority },
+              { label: t('detail.judge.costEfficiencyScore'), value: judgeResult.costEfficiencyScore },
             ]}
           />
         </div>

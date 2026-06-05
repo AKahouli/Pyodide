@@ -84,6 +84,95 @@ describe('query-backed playbook stream dispatcher', () => {
     ]);
   });
 
+  it('normalizes automatic judge SSE metrics in the query execution cache', () => {
+    queryClient.setQueryData(playbookKeys.execution('exec-1'), makeExecution({
+      taskResults: [{ taskId: 'task-1', status: 'completed', judgeStatus: 'evaluating', judgeResult: null } as PlaybookExecution['taskResults'][number]],
+    }));
+
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_step_judge_updated',
+      data: {
+        executionId: 'exec-1',
+        taskId: 'task-1',
+        judgeStatus: 'evaluated',
+        judgeResult: {
+          accuracy_score: 96,
+          completeness_score: 92,
+          result_matching_score: 98,
+          overall_score: 95,
+          confidence: 94,
+          tool_usage_score: 90,
+          relevance_score: 99,
+          specificity_score: 93,
+          format_compliance_score: 88,
+          evidence_grounding_score: 97,
+          handoff_readiness_score: 94,
+          hitl_appropriateness_score: 98,
+          determinism_score: 96,
+          cost_efficiency_score: 84,
+          step_optimization_priority: 28,
+          playbook_optimization_priority: 41,
+          cost_optimization_priority: 22,
+        } as any,
+        judgeHistoryEntry: {
+          id: 'judge-1',
+          created_at: '2026-06-04T20:00:00.000Z',
+          attempt_number: 1,
+          scoring_mode: 'llm',
+          judge_result: {
+            accuracy_score: 96,
+            completeness_score: 92,
+            result_matching_score: 98,
+            overall_score: 95,
+            confidence: 94,
+            tool_usage_score: 90,
+            relevance_score: 99,
+            specificity_score: 93,
+            format_compliance_score: 88,
+            evidence_grounding_score: 97,
+            handoff_readiness_score: 94,
+            hitl_appropriateness_score: 98,
+            determinism_score: 96,
+            cost_efficiency_score: 84,
+            step_optimization_priority: 28,
+            playbook_optimization_priority: 41,
+            cost_optimization_priority: 22,
+          },
+        } as any,
+      },
+    }, { queryClient });
+
+    const execution = queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution('exec-1'));
+    expect(execution?.taskResults[0].judgeResult).toMatchObject({
+      accuracyScore: 96,
+      overallScore: 95,
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+    });
+    expect(execution?.taskResults[0].judgeHistory?.[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+    });
+  });
+
   it('removes terminal executions from the active cache and updates history status', () => {
     const execution = makeExecution();
     queryClient.setQueryData(playbookKeys.execution('exec-1'), execution);
