@@ -62,6 +62,27 @@ export class ClassifierFileService {
 
     if (documents.length === 0) return [];
 
+    // TEMP diagnostic: surface the raw indexing status stored on each document.
+    const statusCounts = documents.reduce<Record<string, number>>((acc, d) => {
+      const s = (d as { indexingStatus?: string }).indexingStatus ?? 'undefined';
+      acc[s] = (acc[s] ?? 0) + 1;
+      return acc;
+    }, {});
+    this.logger.log('[indexing-status] listFiles statuses', {
+      workspaceId,
+      // Which Mongo DB/host is this running process actually connected to?
+      connectedDb: this.documentModel.db.name,
+      connectedHost: this.documentModel.db.host,
+      total: documents.length,
+      counts: statusCounts,
+      sample: documents.slice(0, 5).map((d) => ({
+        name: (d as { originalName?: string; filename?: string }).originalName
+          ?? (d as { filename?: string }).filename,
+        indexingStatus: (d as { indexingStatus?: string }).indexingStatus ?? null,
+        lastIndexedAt: (d as { lastIndexedAt?: Date }).lastIndexedAt ?? null,
+      })),
+    });
+
     const assignments = await this.assignmentModel
       .find({ workspaceId: wsObjectId, documentId: { $in: documents.map((d) => d._id) } })
       .lean()
@@ -246,6 +267,11 @@ export class ClassifierFileService {
       folderId,
       assignmentSource: source,
       path: (doc.path as string | undefined) ?? undefined,
+      indexingStatus: (doc.indexingStatus ?? 'none') as IClassifierFileResponse['indexingStatus'],
+      indexingError: (doc.indexingError as string | undefined) ?? undefined,
+      lastIndexedAt: doc.lastIndexedAt instanceof Date
+        ? doc.lastIndexedAt.toISOString()
+        : (doc.lastIndexedAt as string | undefined) ?? undefined,
     };
   }
 }

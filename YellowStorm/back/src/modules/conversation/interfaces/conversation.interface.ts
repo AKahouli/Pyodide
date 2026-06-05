@@ -16,6 +16,7 @@ export interface UpdateConversationData {
   participantEmails?: string[];
   participants?: { email: string; job?: string }[];
   projectId?: string | null;
+  skillIds?: string[];
 }
 
 export interface ConversationQueryParams {
@@ -62,6 +63,7 @@ export interface ConversationResponse {
   createdBy: string;
   ownerName?: string;
   workspaces: string[];
+  selectedSkills: string[];
   systemWorkspaceId?: string;
   lastMessageAt?: string;
   messageCount: number;

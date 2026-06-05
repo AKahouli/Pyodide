@@ -185,6 +185,7 @@ export class MessageController {
           modelId: dto.modelId,
           agentIds: dto.agentIds,
           connectorRepo: dto.connectorRepo,
+          skillIds: dto.skillIds,
         }, requestId, undefined, user.email)
         .catch((err) => {
           this.logger.error('Stream start failed', {
@@ -193,7 +194,6 @@ export class MessageController {
             error: (err as Error).message,
           });
           this.messageService.markStreamFailed(aiMessage.id);
-          // Error event will be sent via SSE by the stream service
         });
     } else {
       this.logger.log('Skipping AI response due to member tags', {

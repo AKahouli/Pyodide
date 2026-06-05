@@ -425,6 +425,16 @@ export class WorkspaceDocumentService {
     document.url = document.path; // Canonical object key (no presigned signature)
     await document.save();
 
+    // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
+    if (!document.isFolder) {
+      this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+        this.logger.warn('Failed to queue document for indexing', {
+          documentId: document._id,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+    }
+
     // Update workspace storage usage
     await this.workspaceService.updateStorageUsage(workspaceId, document.size, 1);
 
@@ -521,6 +531,14 @@ export class WorkspaceDocumentService {
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
       parentId: folderId ? new Types.ObjectId(folderId) : undefined,
+    });
+
+    // Trigger indexing (non-blocking)
+    this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+      this.logger.warn('Failed to queue document for indexing', {
+        documentId: document._id,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
     });
 
     // Update workspace storage
@@ -899,6 +917,16 @@ export class WorkspaceDocumentService {
         document.uploadedAt = new Date();
         document.url = document.path;
         await document.save();
+
+        // Trigger indexing (non-blocking). Skip folders — nothing to index.
+        if (!document.isFolder) {
+          this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+            this.logger.warn('Failed to queue document for indexing', {
+              documentId: document._id,
+              error: err instanceof Error ? err.message : 'Unknown error',
+            });
+          });
+        }
 
         // Update workspace storage
         await this.workspaceService.updateStorageUsage(workspaceId, document.size, 1);

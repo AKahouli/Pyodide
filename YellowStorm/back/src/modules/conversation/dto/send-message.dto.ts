@@ -74,4 +74,10 @@ export class SendMessageDto {
   @ValidateNested()
   @Type(() => ConnectorRepoDto)
   connectorRepo?: ConnectorRepoDto;
+
+  @ApiPropertyOptional({ description: 'Selected skill IDs applied to this conversation', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  skillIds?: string[];
 }

@@ -105,6 +105,38 @@ def _get_connector_repo(config: Any) -> Optional[Dict[str, str]]:
     return connector_repo if isinstance(connector_repo, dict) else None
 
 
+def _get_team_skills(config: Any) -> List[Dict[str, Any]]:
+    """Conversation-level skills selected by the user (applied to every agent)."""
+    skills = getattr(config, "skills", None)
+    return skills if isinstance(skills, list) else []
+
+
+def merge_skills(
+    agent_skills: Optional[List[Any]],
+    team_skills: Optional[List[Any]],
+) -> List[Any]:
+    """Combine an agent's own skills with the conversation-level skills.
+
+    Conversation skills are appended; duplicates (by id, falling back to name)
+    are dropped so the catalog and activation tool stay clean.
+    """
+    merged: List[Any] = list(agent_skills or [])
+
+    def _key(skill: Any) -> str:
+        getter = skill.get if isinstance(skill, dict) else lambda k, d=None: getattr(skill, k, d)
+        return str(getter("id") or getter("name") or "").strip()
+
+    seen = {_key(skill) for skill in merged if _key(skill)}
+    for skill in team_skills or []:
+        key = _key(skill)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(skill)
+    return merged
+
+
 def create_agent_for_delegation(
     helper,
     tool_helper,
@@ -576,7 +608,7 @@ def create_standard_agent_with_tools(
         snowflake_tool=True if "snowflake connector" in tools else False,
         dataviz_tool=True if "dataviz" in tools else False,
         formviz_tool=True if "formviz" in tools else False,
-        skills=agent_config.get("skills", []),
+        skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
         doc_tree=doc_tree,
         brain_tree=brain_tree,
         top_k=top_k,

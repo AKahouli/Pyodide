@@ -13,7 +13,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
 import { Skill, SkillDocument, SkillFileKind } from './schemas/skill.schema';
 import { SkillCategory, SkillCategoryDocument } from './schemas/skill-category.schema';
-import { ISkillResponse } from './interfaces/skill.interface';
+import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
 
 @Injectable()
 export class SkillService {
@@ -112,6 +112,32 @@ export class SkillService {
       .exec();
 
     return skills.map((skill) => this.toResponse(skill));
+  }
+
+  /** Resolve active skills by id and map them to the gRPC wire shape (snake_case). */
+  async findByIdsForGrpc(ids: string[]): Promise<IGrpcSkill[]> {
+    const skills = await this.findByIds(ids);
+    return skills.map((skill) => SkillService.toGrpcSkill(skill));
+  }
+
+  /** Convert an ISkillResponse to the gRPC `Skill` message shape. */
+  static toGrpcSkill(skill: ISkillResponse): IGrpcSkill {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      license: skill.license,
+      compatibility: skill.compatibility,
+      metadata: skill.metadata,
+      allowed_tools: skill.allowedTools,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mime_type: file.mimeType,
+        content: file.content,
+      })),
+    };
   }
 
   async findAllActive(): Promise<ISkillResponse[]> {

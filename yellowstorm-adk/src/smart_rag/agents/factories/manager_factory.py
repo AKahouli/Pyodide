@@ -7,7 +7,9 @@ from src.logger.logging import get_logger
 from src.smart_rag.agents.factories.delegation_factory_helper import (
     _append_connector_repo_context,
     _get_connector_repo,
+    _get_team_skills,
 )
+from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 from src.smart_rag.agents.core import DocumentHelpers
 from src.smart_rag.infrastructure.processing import add_additional_context, add_timestamp_to_agent
 
@@ -79,6 +81,11 @@ class ManagerAgentFactory:
         # Add manager-specific tools if provided
         if manager_specific_tools:
             tools = self._add_manager_specific_tools(tools, manager_specific_tools)
+
+        # Let the manager lazily load any conversation-level skill's full instructions.
+        activate_skill_tool = make_activate_skill_tool(_get_team_skills(self.config))
+        if activate_skill_tool:
+            tools = tools + [activate_skill_tool]
 
         model = self.llm_factory.create_no_parallel_tool_calls_llm(
             self.chatbot_name,
@@ -161,6 +168,13 @@ class ManagerAgentFactory:
         manager_instruction = _append_connector_repo_context(
             manager_instruction,
             _get_connector_repo(self.config),
+        )
+
+        # Expose the conversation-level skills to the manager (catalog only; the
+        # activation tool is wired in create_manager_agent).
+        manager_instruction = inject_skill_catalog(
+            manager_instruction,
+            _get_team_skills(self.config),
         )
 
         # Add parallel execution instructions

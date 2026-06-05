@@ -37,6 +37,7 @@ export interface Conversation {
   isArchived: boolean;
   isShared: boolean;
   workspaces?: string[];
+  selectedSkills?: string[];
   systemWorkspaceId?: string;
   createdAt: string;
   updatedAt: string;
@@ -157,6 +158,7 @@ export interface SendMessagePayload {
   memberIds?: string[];
   parentMessageId?: string;
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
+  skillIds?: string[];
 }
 
 export interface CreateReportPayload {

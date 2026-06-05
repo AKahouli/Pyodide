@@ -364,6 +364,9 @@ interface ConversationState {
   // Deep search toggle
   deepSearchEnabled: boolean;
 
+  // Selected skill IDs for the current conversation (applied to every message)
+  selectedSkillIds: string[];
+
   // Stream state cache for background conversations
   streamingStateCache: Map<string, CachedStreamingState>;
 
@@ -447,6 +450,12 @@ interface ConversationState {
   // Deep search toggle
   setDeepSearchEnabled: (enabled: boolean) => void;
 
+  // Skill selection (applied to every message in the conversation)
+  setSelectedSkillIds: (skillIds: string[]) => void;
+  toggleSelectedSkill: (skillId: string) => void;
+  clearSelectedSkills: () => void;
+  persistSelectedSkills: () => void;
+
   // Cleanup
   clearMessages: () => void;
   clearAll: () => void;
@@ -498,6 +507,7 @@ export const useConversationStore = create<ConversationState>()(
       selectedWorkspaceIds: [],
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
+      selectedSkillIds: [],
 
       streamingStateCache: new Map(),
 
@@ -729,7 +739,13 @@ export const useConversationStore = create<ConversationState>()(
         set({ conversationLoading: true, currentConversationId: id });
         try {
           const conversation = await api.fetchConversation(id);
-          set({ currentConversation: conversation, conversationLoading: false });
+          // Restore the skills selected for this conversation (persisted server-side)
+          // so they survive a page refresh and conversation switches.
+          set({
+            currentConversation: conversation,
+            conversationLoading: false,
+            selectedSkillIds: conversation.selectedSkills ?? [],
+          });
         } catch (err) {
           set({ currentConversation: null, conversationLoading: false });
           console.error('[ConversationStore] setCurrentConversation error:', err);
@@ -884,6 +900,14 @@ export const useConversationStore = create<ConversationState>()(
           isAwaitingFirstChunk: !payload.memberIds?.length,
           optimisticMessages: [...s.optimisticMessages, optimisticMsg],
         }));
+
+        // Persist the conversation's skill selection (covers new conversations,
+        // where toggles happened before the conversation existed).
+        if (payload.skillIds?.length) {
+          api
+            .updateConversation(conversationId, { skillIds: payload.skillIds })
+            .catch((err) => console.error('[ConversationStore] persist skills on send error:', err));
+        }
 
         try {
           // Strip attachedFiles (frontend-only for optimistic display) before sending to API
@@ -1469,6 +1493,36 @@ export const useConversationStore = create<ConversationState>()(
         set({ deepSearchEnabled: enabled });
       },
 
+      setSelectedSkillIds: (skillIds) => {
+        set({ selectedSkillIds: skillIds });
+        get().persistSelectedSkills();
+      },
+
+      toggleSelectedSkill: (skillId) => {
+        set((s) => ({
+          selectedSkillIds: s.selectedSkillIds.includes(skillId)
+            ? s.selectedSkillIds.filter((id) => id !== skillId)
+            : [...s.selectedSkillIds, skillId],
+        }));
+        get().persistSelectedSkills();
+      },
+
+      clearSelectedSkills: () => {
+        set({ selectedSkillIds: [] });
+        get().persistSelectedSkills();
+      },
+
+      // Persist the current skill selection onto the active conversation so it
+      // survives refreshes. No-op when there is no conversation yet (new chat) —
+      // the selection is then persisted on send.
+      persistSelectedSkills: () => {
+        const { currentConversationId, selectedSkillIds } = get();
+        if (!currentConversationId) return;
+        api
+          .updateConversation(currentConversationId, { skillIds: selectedSkillIds })
+          .catch((err) => console.error('[ConversationStore] persistSelectedSkills error:', err));
+      },
+
       // ===== Cleanup =====
 
       clearMessages: () => {
@@ -1720,6 +1774,12 @@ export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.s
 export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSearchEnabled);
 
 export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
+
+export const useSelectedSkillIds = () => useConversationStore((s) => s.selectedSkillIds);
+
+export const useToggleSelectedSkill = () => useConversationStore((s) => s.toggleSelectedSkill);
+
+export const useSetSelectedSkillIds = () => useConversationStore((s) => s.setSelectedSkillIds);
 
 export const useBranchCache = () => useConversationStore(useShallow((s) => s.branchCache));
 

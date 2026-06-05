@@ -6,8 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { BadgeCount } from '@/components/ui/badge-count';
 import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore, useWorkspaces, useWorkspaceLoading } from '../store';
-import type { Workspace } from '../types';
+import { useWorkspaceStore, useWorkspaces, useWorkspaceLoading, useSharedWorkspaces } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
 
 type WorkspaceSelectProps = Readonly<{
@@ -21,15 +20,24 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
   const { t } = useModuleTranslation('workspace');
   const [open, setOpen] = useState(false);
   const workspaces = useWorkspaces();
+  const sharedWorkspaces = useSharedWorkspaces();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
-  const { fetchWorkspaces } = useWorkspaceStore();
+  const { fetchWorkspaces, fetchSharedWorkspaces } = useWorkspaceStore();
 
-  // Load workspaces on mount if list is empty
+  // Load both own and shared-with-me workspaces on mount if the lists are empty.
   useEffect(() => {
     if (workspaces.length === 0 && !isLoadingWorkspaces) {
       fetchWorkspaces(1);
     }
   }, [workspaces.length, isLoadingWorkspaces, fetchWorkspaces]);
+
+  useEffect(() => {
+    if (sharedWorkspaces.length === 0 && !isLoadingWorkspaces) {
+      fetchSharedWorkspaces(1);
+    }
+    // Only run on mount-equivalent; guarded by length check above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchSharedWorkspaces]);
 
   const handleToggle = useCallback(
     (workspaceId: string) => {
@@ -45,8 +53,37 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
   const selectedCount = selectedIds.length;
   const hasSelection = selectedCount > 0;
 
+  const renderItem = (ws: { id: string; name: string; documentCount: number }, subtitle?: string) => (
+    <CommandItem
+      key={ws.id}
+      value={`${ws.name} ${subtitle ?? ''}`}
+      onSelect={() => handleToggle(ws.id)}
+      onClick={(e) => {
+        e?.stopPropagation?.();
+        handleToggle(ws.id);
+      }}
+      className='cursor-pointer'>
+      <div className={cn('mr-2 h-4 w-4 rounded border border-primary flex items-center justify-center', selectedIds.includes(ws.id) && 'bg-primary text-primary-foreground')}>
+        {selectedIds.includes(ws.id) && (
+          <svg className='h-3 w-3' fill='currentColor' viewBox='0 0 20 20'>
+            <path d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' />
+          </svg>
+        )}
+      </div>
+      <div className='flex-1 min-w-0'>
+        <span className='block truncate'>{ws.name}</span>
+        {subtitle && <span className='block truncate text-xs text-muted-foreground'>{subtitle}</span>}
+      </div>
+      {ws.documentCount > 0 && (
+        <Badge variant='outline' className='ml-2 text-xs'>
+          {ws.documentCount}
+        </Badge>
+      )}
+    </CommandItem>
+  );
+
   const renderContent = () => {
-    if (isLoadingWorkspaces) {
+    if (isLoadingWorkspaces && workspaces.length === 0 && sharedWorkspaces.length === 0) {
       return (
         <div className='flex items-center justify-center py-8'>
           <div className='h-4 w-4 animate-spin border-2 border-current border-t-transparent rounded-full' />
@@ -54,38 +91,28 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
       );
     }
 
-    if (workspaces.length === 0) {
+    if (workspaces.length === 0 && sharedWorkspaces.length === 0) {
       return <div className='text-center py-8 text-sm text-muted-foreground'>{t('select.noWorkspaces')}</div>;
     }
 
+    const ownerName = (o: { firstName?: string; lastName?: string; email: string }) =>
+      [o.firstName, o.lastName].filter(Boolean).join(' ').trim() || o.email;
+
     return (
-      <CommandGroup>
-        {workspaces.map((workspace) => (
-          <CommandItem
-            key={workspace.id}
-            value={workspace.name}
-            onSelect={() => handleToggle(workspace.id)}
-            onClick={(e) => {
-              e?.stopPropagation?.();
-              handleToggle(workspace.id);
-            }}
-            className='cursor-pointer'>
-            <div className={cn('mr-2 h-4 w-4 rounded border border-primary flex items-center justify-center', selectedIds.includes(workspace.id) && 'bg-primary text-primary-foreground')}>
-              {selectedIds.includes(workspace.id) && (
-                <svg className='h-3 w-3' fill='currentColor' viewBox='0 0 20 20'>
-                  <path d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' />
-                </svg>
-              )}
-            </div>
-            <span className='flex-1 truncate'>{workspace.name}</span>
-            {workspace.documentCount > 0 && (
-              <Badge variant='outline' className='ml-2 text-xs'>
-                {workspace.documentCount}
-              </Badge>
+      <>
+        {workspaces.length > 0 && (
+          <CommandGroup heading={t('select.ownGroup', { defaultValue: 'Mes workspaces' })}>
+            {workspaces.map((workspace) => renderItem(workspace))}
+          </CommandGroup>
+        )}
+        {sharedWorkspaces.length > 0 && (
+          <CommandGroup heading={t('select.sharedGroup', { defaultValue: 'Partagés avec moi' })}>
+            {sharedWorkspaces.map((workspace) =>
+              renderItem(workspace, t('select.sharedBy', { defaultValue: 'Partagé par {{name}}', name: ownerName(workspace.owner) })),
             )}
-          </CommandItem>
-        ))}
-      </CommandGroup>
+          </CommandGroup>
+        )}
+      </>
     );
   };
 

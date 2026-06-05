@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Loader2, Settings2, Sparkles } from 'lucide-react';
+import { Check, Loader2, Settings2, Sparkles } from 'lucide-react';
 import {
   PromptInputActionMenuSub,
   PromptInputActionMenuSubContent,
@@ -17,7 +17,9 @@ const MAX_VISIBLE = 5;
 interface RecentSkillsMenuProps {
   skills: SkillOption[];
   loading: boolean;
-  /** Selecting a skill — not wired into the conversation yet, just records it as recent. */
+  /** IDs of skills currently selected for the conversation. */
+  selectedIds: string[];
+  /** Toggles a skill for the conversation. */
   onSelectSkill: (skill: SkillOption) => void;
   /** Opens the full management modal. */
   onOpenManage: () => void;
@@ -25,10 +27,10 @@ interface RecentSkillsMenuProps {
 
 /**
  * The "+ → Skills" submenu: shows recently-used skills (logo, name) and a
- * persistent "Manage skills" entry. Selection is scaffolding only for now —
- * skills are not yet applied to the conversation.
+ * persistent "Manage skills" entry. Selecting a skill toggles it for the whole
+ * conversation; selected skills are sent with every message.
  */
-export function RecentSkillsMenu({ skills, loading, onSelectSkill, onOpenManage }: RecentSkillsMenuProps) {
+export function RecentSkillsMenu({ skills, loading, selectedIds, onSelectSkill, onOpenManage }: RecentSkillsMenuProps) {
   const { t } = useModuleTranslation('common');
   const { recentIds } = useRecentSkills();
 
@@ -63,12 +65,23 @@ export function RecentSkillsMenu({ skills, loading, onSelectSkill, onOpenManage 
             {t('skills.noSkills') || 'No skills available'}
           </div>
         ) : (
-          recentSkills.map((skill) => (
-            <DropdownMenuItem key={skill.id} className='gap-2' onSelect={() => onSelectSkill(skill)}>
-              <SkillLogo skill={skill} size={24} />
-              <span className='flex-1 truncate font-medium'>{skill.name}</span>
-            </DropdownMenuItem>
-          ))
+          recentSkills.map((skill) => {
+            const isSelected = selectedIds.includes(skill.id);
+            return (
+              <DropdownMenuItem
+                key={skill.id}
+                className='gap-2'
+                // Keep the menu open so several skills can be toggled in a row.
+                onSelect={(e) => {
+                  e.preventDefault();
+                  onSelectSkill(skill);
+                }}>
+                <SkillLogo skill={skill} size={24} />
+                <span className='flex-1 truncate font-medium'>{skill.name}</span>
+                {isSelected && <Check className='size-4 text-primary' />}
+              </DropdownMenuItem>
+            );
+          })
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem className='gap-2' onSelect={() => onOpenManage()}>

@@ -158,6 +158,7 @@ message RunAgentTeamRequest {
     repeated Document previous_attached_files = 11;  // Already-indexed files from previous turns
     ConnectorRepo connector_repo = 12;
     bool deep_search_enabled = 13;
+    repeated Skill skills = 14;
 }
 
 message GenerateConversationNameRequest {
