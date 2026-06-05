@@ -40,24 +40,8 @@ def test_normalize_mcp_response_extracts_sources_and_citations_from_inline_text(
     normalized = _normalize_mcp_response(payload, "fallback")
 
     assert normalized["text"] == "Quarterly revenue increased by 18%."
-    assert normalized["sources"] == [
-        {
-            "title": "Q1-report.txt",
-            "url": "https://contoso.sharepoint.com/q1-report.txt",
-        }
-    ]
-    assert normalized["citation_sources"] == [
-        {
-            "type": "text",
-            "source": "Q1-report.txt",
-            "file_name": "item-123",
-            "page": "",
-            "page_content": "Quarterly revenue increased by 18%.",
-            "workspace_id": "",
-            "workspace_name": "",
-            "reference": "",
-        }
-    ]
+    assert "sources" not in normalized
+    assert "citation_sources" not in normalized
 
 
 def test_normalize_mcp_response_uses_workspace_id_as_text_workspace_name():
@@ -74,7 +58,7 @@ def test_normalize_mcp_response_uses_workspace_id_as_text_workspace_name():
     normalized = _normalize_mcp_response(
         payload,
         fallback_text=str(payload),
-        action_key="searchv2_search_document_blocks",
+        action_key="logicalsearchtest_locate_answer_citations",
     )
 
     assert normalized["citation_sources"][0]["workspace_id"] == "699ec209f4340d089727f766"
@@ -102,7 +86,11 @@ def test_register_connector_response_sources_assigns_references_and_updates_text
         ],
     }
 
-    updated = _register_connector_response_sources(response, tool_context)
+    updated = _register_connector_response_sources(
+        response,
+        tool_context,
+        action_key="logicalsearchtest_locate_answer_citations",
+    )
 
     assert updated["citation_sources"][0]["reference"] == "1"
     assert "Use citation [1]" in updated["text"]
@@ -130,15 +118,23 @@ def test_register_connector_response_sources_reuses_existing_reference():
         ],
     }
 
-    first = _register_connector_response_sources(dict(response), tool_context)
-    second = _register_connector_response_sources(dict(response), tool_context)
+    first = _register_connector_response_sources(
+        dict(response),
+        tool_context,
+        action_key="logicalsearchtest_locate_answer_citations",
+    )
+    second = _register_connector_response_sources(
+        dict(response),
+        tool_context,
+        action_key="logicalsearchtest_locate_answer_citations",
+    )
 
     assert first["citation_sources"][0]["reference"] == "1"
     assert second["citation_sources"][0]["reference"] == "1"
     assert len(tool_context.state["_connector_text_sources"]) == 1
 
 
-def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks():
+def test_normalize_mcp_response_suppresses_citations_from_searchv2_result_blocks():
     payload = {
         "result": """
         [
@@ -168,11 +164,8 @@ def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks()
         action_key="searchv2_search_document_blocks",
     )
 
-    assert len(normalized["citation_sources"]) == 2
-    assert normalized["citation_sources"][0]["source"] == "SLA_Indicateurs_Performance.docx"
-    assert normalized["citation_sources"][0]["file_name"] == "69e643d725a48c9410bff182"
-    assert normalized["citation_sources"][0]["page"] == "1"
-    assert normalized["citation_sources"][0]["workspace_name"] == "69e643ae25a48c9410bff159"
+    assert "citation_sources" not in normalized
+    assert "sources" not in normalized
 
 
 def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload():
@@ -202,7 +195,4 @@ def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload()
     )
 
     assert normalized["result"] == payload
-    assert len(normalized["citation_sources"]) == 2
-    assert normalized["citation_sources"][0]["source"] == "Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx"
-    assert normalized["citation_sources"][0]["file_name"] == "69e7a3d9f884ead0089920a8"
-    assert normalized["citation_sources"][0]["workspace_name"] == "69e7a3d5f884ead008992093"
+    assert "citation_sources" not in normalized

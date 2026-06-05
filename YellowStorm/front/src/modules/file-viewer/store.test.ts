@@ -31,6 +31,22 @@ describe('file-viewer store', () => {
     expect(state.activeTabId).toBe('url:https://example.test/a.txt');
   });
 
+  it('keeps citation bbox in pending navigation', () => {
+    useFileViewerStore.getState().openFileFromUrl('https://example.test/a.pdf', 'a.pdf', 'application/pdf', {
+      page: 2,
+      highlightText: 'exact quote',
+      highlightBBox: [10, 20, 30, 40],
+    });
+
+    expect(useFileViewerStore.getState().pendingNavigation).toEqual({
+      tabId: 'url:https://example.test/a.pdf',
+      page: 2,
+      highlightText: 'exact quote',
+      highlightBBox: [10, 20, 30, 40],
+      spreadsheet: undefined,
+    });
+  });
+
   it('closes last tab and closes viewer', () => {
     const store = useFileViewerStore.getState();
     store.openFileFromUrl('https://example.test/a.txt', 'a.txt', 'text/plain');

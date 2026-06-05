@@ -872,7 +872,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
           tasks: cleaned.tasks,
           edges: cleaned.edges,
           dataBindings: cleaned.dataBindings,
-          expectedUpdatedAt: sourcePlaybook.updatedAt,
+          expectedDefinitionRevision: sourcePlaybook.definitionRevision,
         });
       } catch {
         showWarning(t('clipboard.crossPlaybookCleanupFailed', { name: payload.sourcePlaybookName ?? payload.sourcePlaybookId }));

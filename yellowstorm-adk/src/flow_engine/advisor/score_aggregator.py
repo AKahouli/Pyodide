@@ -49,5 +49,35 @@ def score_tool_usage(tool_trace_count: int, tool_issue_count: int) -> int:
     return clamp_score(85 - (tool_issue_count * 8))
 
 
-def score_overall(scores: list[int]) -> int:
-    return clamp_score(sum(scores) / len(scores)) if scores else 0
+def score_specificity(task_output: str) -> int:
+    output = task_output.strip()
+    if not output:
+        return 10
+    if len(output) < 80:
+        return 55
+    return 82
+
+
+def score_determinism(task_description: str, expected_result: str, output_format_guide: str) -> int:
+    score = 45
+    if len(task_description.strip()) >= 80:
+        score += 20
+    if expected_result.strip():
+        score += 15
+    if output_format_guide.strip():
+        score += 15
+    return clamp_score(score)
+
+
+def score_overall(metrics: dict[str, int], caps: list[int]) -> int:
+    weighted = (
+        metrics["accuracy_score"] * 0.25
+        + metrics["completeness_score"] * 0.15
+        + metrics["result_matching_score"] * 0.15
+        + metrics["relevance_score"] * 0.10
+        + metrics["format_compliance_score"] * 0.15
+        + metrics["evidence_grounding_score"] * 0.10
+        + metrics["handoff_readiness_score"] * 0.10
+    )
+    score = clamp_score(weighted)
+    return min([score, *caps]) if caps else score

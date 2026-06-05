@@ -58,7 +58,7 @@ export class PlaybookFlowQueueService {
       { ownerId, status: 'queued' },
       { status: 'running', queuePosition: 0, startedAt: new Date() },
       { sort: { createdAt: 1 }, new: true },
-    ).select('+snapshot replaySource').exec();
+    ).select('+snapshot').exec();
 
     if (!next) return null;
 

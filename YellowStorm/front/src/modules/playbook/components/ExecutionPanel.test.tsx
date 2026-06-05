@@ -1,13 +1,23 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionPanel } from './ExecutionPanel';
 import { usePlaybookStore } from '../store';
+import { usePlaybookUiStore } from '../uiStore';
 import { makeExecution, makeExecutionSummary, makePlaybook } from '../test-utils';
 
 vi.mock('./PlaybookStatusBadge', () => ({
   PlaybookStatusBadge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
 }));
+
+function selectStepInBothStores(taskId: string | null) {
+  usePlaybookStore.getState().selectStep(taskId);
+}
+
+function setStepIdDirectly(taskId: string | null) {
+  usePlaybookStore.setState({ selectedStepId: taskId });
+  usePlaybookUiStore.setState({ selectedStepId: taskId });
+}
 
 describe('ExecutionPanel', () => {
   beforeEach(() => {
@@ -24,7 +34,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.noExecution')).toBeInTheDocument();
   });
 
-  it('auto-loads latest execution when history exists and playbook matches', () => {
+  it('auto-loads latest execution when history exists and playbook matches', async () => {
     const summary = makeExecutionSummary({ id: 'e1', playbookId: 'p1' });
     const playbook = makePlaybook({ id: 'p1' });
     const execution = makeExecution({ id: 'e1', playbookId: 'p1' });
@@ -34,10 +44,10 @@ describe('ExecutionPanel', () => {
       currentPlaybook: playbook,
       executionCache: { e1: execution },
     });
-    render(<ExecutionPanel />);
-    // Auto-load kicks in — should show the execution with badge(s)
-    expect(screen.getAllByTestId('badge').length).toBeGreaterThan(0);
-    expect(usePlaybookStore.getState().currentExecution?.id).toBe('e1');
+    render(<ExecutionPanel playbookId="p1" />);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('badge').length).toBeGreaterThan(0);
+    });
   });
 
   it('does not render another playbook execution when scoped to a different playbook', () => {
@@ -130,8 +140,8 @@ describe('ExecutionPanel', () => {
       currentExecution: execution,
       currentPlaybook: playbook,
       executionHistory: [makeExecutionSummary({ id: execution.id, playbookId: execution.playbookId, status: 'completed' })],
-      selectedStepId: 't1',
     });
+    setStepIdDirectly('t1');
 
     const user = userEvent.setup();
     render(<ExecutionPanel />);
@@ -150,9 +160,9 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
-      selectedStepId: 't1',
       runAdvisorEvaluation,
     });
+    setStepIdDirectly('t1');
 
     render(<ExecutionPanel />);
 
@@ -172,10 +182,10 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
-      selectedStepId: 't1',
       runAdvisorEvaluation,
       executingPlaybookIds: ['p1'],
     });
+    setStepIdDirectly('t1');
 
     render(<ExecutionPanel />);
 
@@ -265,8 +275,8 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
-      selectedStepId: 't1',
     });
+    setStepIdDirectly('t1');
     render(<ExecutionPanel />);
     expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
   });

@@ -31,6 +31,8 @@ describe('conversation utils', () => {
             file_name: 'contract.docx',
             page: '2',
             content: 'Clause de penalites',
+            highlight_text: 'Clause de penalites exacte',
+            highlight_bbox: [10, 20, 30, 40],
             workspace_name: 'codeinterpreter',
             reference: '[2]',
           },
@@ -44,7 +46,9 @@ describe('conversation utils', () => {
       expect(parts[0].citations?.[0]).toMatchObject({
         source: 'user-1/codeinterpreter/contract.docx',
         page: '2',
-        pageContent: 'Clause de penalites',
+        pageContent: 'Clause de penalites exacte',
+        highlightText: 'Clause de penalites exacte',
+        highlightBBox: [10, 20, 30, 40],
         workspaceId: 'codeinterpreter',
         reference: '[2]',
       });
