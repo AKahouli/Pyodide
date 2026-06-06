@@ -18,7 +18,7 @@ from src.flow_engine.nodes.step_hitl import (
 
 logger = get_logger(__name__)
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 50
 MAX_IMAGES_PER_ITERATION = 50
 MAX_IMAGES_TOTAL = 50
 

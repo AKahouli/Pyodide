@@ -109,15 +109,24 @@ def build_step_prompt(
             'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'
         ])
     else:
-        lines.extend([
-        "",
-        "Reasoning Trace:",
-        "After your final answer, **MUST ALWAYS append** a separate reasoning trace JSON block on a new line using this exact format:",
-        "Example:",
-        "---PUBLIC_REASONING_TRACE_JSON---",
-        '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',
-        "where keys: id (string), type (string), label (string), description (string), confidence (number 0-1, optional). Each item represents one step of your reasoning process."  
-        
+      lines.extend([
+        """Reasoning Trace:
+After your final answer, you MUST ALWAYS append a separate reasoning trace JSON block on a new line using the exact format below.
+CRITICAL CONSTRAINTS FOR TRACE CONTENT:
+To prevent bias injection, your trace must be strictly abstract and process-oriented. 
+1. DO NOT include specific facts, entity names, numbers, data values, or search results in the `label` or `description` fields.
+2. Describe the *cognitive steps* you took (e.g., "extracted metrics", "identified entities"), NOT the *data* you found (e.g., "extracted $10M", "identified Agrial").
 
+Format Requirements: 
+Keys must be: id (string), type (string), label (string), description (string), confidence (number 0-1, optional).
+
+Good Example (Abstract Process - DO THIS):
+---PUBLIC_REASONING_TRACE_JSON---
+[{"id":"step_1","type":"observation","label":"Identified candidate entities","description":"Selected entities from search results matching the geographical and sector criteria.","confidence":0.96}]
+
+Bad Example (Contains Facts - DO NOT DO THIS):
+---PUBLIC_REASONING_TRACE_JSON---
+[{"id":"step_1","type":"observation","label":"Identified InVivo and Agrial","description":"Selected company A, company B, and  company C from French agro-sector cooperatives.","confidence":0.96}]
+"""
     ])
     return "\n".join(lines)

@@ -310,11 +310,11 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+function getExecutionModeLabelKey(mode?: string): string {
+  if (mode === 'replay_strict') return 'execution.modeLabel.exactReference';
+  if (mode === 'replay_flex') return 'execution.modeLabel.flexibleReference';
+  if (mode === 'replay_adaptive') return 'execution.modeLabel.referenceChecked';
+  return 'execution.modeLabel.liveRun';
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -1504,7 +1504,7 @@ export function ExecutionStepDetail({
                   <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                     <div className="font-medium">{t('detail.provenance.title')}</div>
                     <div className="mt-2 space-y-1 text-muted-foreground">
-                      <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
+                      <div>{t('detail.provenance.mode')}: {t(getExecutionModeLabelKey(execution?.executionMode) as any)}</div>
                       {replaySource && (
                         <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                       )}
@@ -1906,7 +1906,7 @@ export function ExecutionStepDetail({
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : execution?.id && step?.taskId ? null : (
               <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">
                 {isEvaluationPending ? (
                   <Loader2 className="h-5 w-5 animate-spin" />

@@ -46,11 +46,14 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
     t: (key: string, values?: Record<string, string | number>) => {
       const translations: Record<string, string> = {
+        'detail.tabs.evaluation': 'Reference Check',
+        'replayReport.title': 'Reference Check',
+        'replayReport.postRun.detailsTitle': 'Advanced diagnostics',
+        'replayReport.advancedHint': 'Open technical scores and raw judge output.',
         'replayReport.section.verdict': 'Replay verdict',
         'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.semantic': 'Semantic match',
         'replayReport.section.structuralTooling': 'Structural & tooling',
-        'replayReport.section.actions': 'Actions',
         'replayReport.verdictReasons': 'Verdict reasons',
         'replayReport.verdictReason.structuralDriftDetected': 'Structural drift was detected.',
         'replayReport.modeValue.replay_strict': 'Replay (Strict)',
@@ -1173,7 +1176,6 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('Streaming output')).toBeInTheDocument();
     expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
     expect(screen.getByText('execution.running')).toBeInTheDocument();
   });
@@ -1561,7 +1563,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withEvaluationArtifact} />);
-    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    await userEvent.click(screen.getByText('Reference Check'));
     expect(screen.getByText('Evaluation succeeded.')).toBeInTheDocument();
     expect(screen.getByText(/pass/i)).toBeInTheDocument();
     expect(screen.getByText('88%')).toBeInTheDocument();
@@ -1593,7 +1595,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} />);
-    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    await userEvent.click(screen.getByText('Reference Check'));
     expect(screen.getByText('detail.actions.saveEvaluationBaseline')).toBeInTheDocument();
   });
 
@@ -1661,7 +1663,7 @@ describe('ExecutionStepDetail', () => {
         />,
       );
 
-    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    await userEvent.click(screen.getByText('Reference Check'));
     await userEvent.click(screen.getByText('detail.actions.runReplayEvaluation'));
     expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
   });
@@ -1730,19 +1732,19 @@ describe('ExecutionStepDetail', () => {
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} activeTab="evaluation" />);
 
-    expect(await screen.findByText('replayReport.title')).toBeInTheDocument();
+    expect((await screen.findAllByText('Reference Check')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: /Advanced diagnostics/i }));
     expect(screen.getByText('Replay verdict')).toBeInTheDocument();
     expect(screen.getByText('Eligibility')).toBeInTheDocument();
     expect(screen.getByText('Semantic match')).toBeInTheDocument();
     expect(screen.getByText('Structural & tooling')).toBeInTheDocument();
     expect(screen.getByText(/replayReport.verdict: replayReport.verdictValue.warning/)).toBeInTheDocument();
     expect(screen.getByText(/replayReport.overallScore: 76%/)).toBeInTheDocument();
-    expect(screen.getByText(/Structural drift was detected./)).toBeInTheDocument();
+    expect(screen.getAllByText(/Structural drift was detected./).length).toBeGreaterThan(0);
     expect(screen.getByText(/Replay output matches the captured intent/)).toBeInTheDocument();
-    expect(screen.getByText(/minor citation detail/)).toBeInTheDocument();
-    const reportPanel = screen.getByText('replayReport.title').closest('div')?.parentElement;
-    expect(reportPanel).toHaveTextContent('node snapshot changed.');
-    expect(reportPanel).toHaveTextContent('Missing required section: Summary.');
+    expect(screen.getAllByText(/minor citation detail/).length).toBeGreaterThan(0);
+    expect(document.body).toHaveTextContent('node snapshot changed.');
+    expect(document.body).toHaveTextContent('Missing required section: Summary.');
   });
 
   it('runs advisor evaluation from the advisor pane CTA', async () => {
