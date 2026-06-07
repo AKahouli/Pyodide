@@ -187,7 +187,7 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
         </div>
         <div className="space-y-1.5">
           {value.outputLabels.map((label, idx) => (
-            <div key={`${label}-${idx}`} className="flex items-center gap-2">
+            <div key={idx} className="flex items-center gap-2">
               <Input
                 value={label}
                 onChange={(event) => updateLabel(idx, event.target.value)}
@@ -265,7 +265,7 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
               const sourcePorts = sourceTask?.outputPorts ?? [];
 
               return (
-                <div key={`${condition.label}-${idx}`} className="space-y-2 rounded-md border p-2">
+                <div key={idx} className="space-y-2 rounded-md border p-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <Label className="text-xs">{t('routerEditor.routeLabel')}</Label>
