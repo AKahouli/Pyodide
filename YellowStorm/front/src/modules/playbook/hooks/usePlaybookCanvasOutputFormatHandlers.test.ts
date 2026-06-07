@@ -18,6 +18,7 @@ describe('usePlaybookCanvasOutputFormatHandlers', () => {
   const grabOutputFormatTemplate = vi.fn();
   const fetchOutputFormatTemplate = vi.fn();
   const validateTaskReplay = vi.fn();
+  const onBaselineSaved = vi.fn();
 
   const getTaskResultForNode = vi.fn();
 
@@ -62,6 +63,7 @@ describe('usePlaybookCanvasOutputFormatHandlers', () => {
         outputFormatDraft: 'Draft text',
         executionForNodeActions,
         getTaskResultForNode,
+        onBaselineSaved,
         validateTaskReplay,
       }),
     );
@@ -185,6 +187,7 @@ describe('usePlaybookCanvasOutputFormatHandlers', () => {
       },
     });
     expect(grabOutputFormatTemplate).toHaveBeenCalledWith('playbook-1', 'task-1', { executionId: 'execution-1' });
+    expect(onBaselineSaved).toHaveBeenCalledWith('task-1');
   });
 
   it('does not save baseline for incomplete tasks', async () => {
@@ -198,6 +201,7 @@ describe('usePlaybookCanvasOutputFormatHandlers', () => {
 
     expect(validateTaskReplay).not.toHaveBeenCalled();
     expect(grabOutputFormatTemplate).not.toHaveBeenCalled();
+    expect(onBaselineSaved).not.toHaveBeenCalled();
   });
 
   it('enables baseline action only when task result is completed', () => {

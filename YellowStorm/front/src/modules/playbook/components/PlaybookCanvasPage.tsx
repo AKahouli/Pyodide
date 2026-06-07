@@ -78,6 +78,7 @@ import { DataBindingEdge } from './DataBindingEdge';
 import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
+import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
@@ -295,6 +296,7 @@ function PlaybookCanvasInner() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [evaluationDialogOpen, setEvaluationDialogOpen] = useState(false);
   const [nodeAdvisorOpen, setNodeAdvisorOpen] = useState(false);
+  const [referenceModePrompt, setReferenceModePrompt] = useState<ReferenceModePromptState>(null);
   const [nodeAdvisorLoading, setNodeAdvisorLoading] = useState(false);
   const [nodeAdvisorTaskId, setNodeAdvisorTaskId] = useState<string | null>(null);
   const [nodeAdvisorSuggestions, setNodeAdvisorSuggestions] = useState<PlaybookNodeAdvisorSuggestion[]>([]);
@@ -896,6 +898,17 @@ function PlaybookCanvasInner() {
     [nodes, updateNodeData],
   );
 
+  const handleReferenceModeChoice = useCallback(
+    (mode: StepReplayMode) => {
+      if (!playbook || !referenceModePrompt) return;
+      updateTasks(playbook.tasks.map((task) => (
+        task.id === referenceModePrompt.taskId ? { ...task, stepReplayMode: mode } : task
+      )));
+      setReferenceModePrompt(null);
+    },
+    [playbook, referenceModePrompt, updateTasks],
+  );
+
   const executionForNodeActions =
     currentExecution?.playbookId === id
       ? currentExecution
@@ -904,6 +917,17 @@ function PlaybookCanvasInner() {
   const getTaskResultForNode = useCallback(
     (nodeId: string) => executionForNodeActions?.taskResults.find((tr) => tr.taskId === nodeId) || null,
     [executionForNodeActions],
+  );
+
+  const handleBaselineSaved = useCallback(
+    (nodeId: string) => {
+      const task = playbook?.tasks.find((candidate) => candidate.id === nodeId);
+      setReferenceModePrompt({
+        taskId: nodeId,
+        taskTitle: task?.title || getTaskResultForNode(nodeId)?.nodeTitle || nodeId,
+      });
+    },
+    [getTaskResultForNode, playbook?.tasks],
   );
 
   const {
@@ -932,6 +956,7 @@ function PlaybookCanvasInner() {
     outputFormatDraft,
     executionForNodeActions,
     getTaskResultForNode,
+    onBaselineSaved: handleBaselineSaved,
     validateTaskReplay,
   });
 
@@ -2623,6 +2648,11 @@ function PlaybookCanvasInner() {
         onConfirm={handleImportConfirm}
         importedName={pendingImport?.name ?? ''}
         isDirty={isDirty}
+      />
+      <ReferenceModePromptDialog
+        prompt={referenceModePrompt}
+        onClose={() => setReferenceModePrompt(null)}
+        onChooseMode={handleReferenceModeChoice}
       />
 
       {/* Main content area with optional workspace explorer */}

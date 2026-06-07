@@ -11,6 +11,7 @@ import { PortContentViewer } from './PortContentViewer';
 import { ReplayReportPanel } from './ReplayReportPanel';
 import { ReplayContextMappingCard } from './ReplayContextMappingCard';
 import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
+import { getStepNumberTone } from './ExecutionStepList';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -1232,6 +1233,9 @@ export function ExecutionStepDetail({
             </div>
           )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className={cn('flex h-6 min-w-6 shrink-0 items-center justify-center rounded border px-1 text-[11px] font-bold shadow-sm', getStepNumberTone(step.status, true))}>
+              {(currentTask?.executionOrder ?? (step.order - 1)) + 1}
+            </span>
             <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
@@ -1482,7 +1486,7 @@ export function ExecutionStepDetail({
                           data-testid="step-result-markdown"
                           className={cn(
                             'rounded-lg bg-muted/50 p-4',
-                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]',
                           )}
                         >
                           <MessageProvider fileViewerDisplayMode="floating">

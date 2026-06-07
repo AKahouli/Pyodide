@@ -1272,7 +1272,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Product A')).toBeInTheDocument();
   });
 
-  it('preserves plain-text line breaks in fallback output styling', () => {
+  it('uses compact fallback output styling', () => {
     render(
       <ExecutionStepDetail
         step={{
@@ -1282,7 +1282,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByTestId('step-result-markdown')).toHaveClass('[&_p]:whitespace-pre-wrap');
+    expect(screen.getByTestId('step-result-markdown')).toHaveClass('[&_*]:!text-[14px]');
   });
 
   it('prefers displayText over raw output json', () => {
