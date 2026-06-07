@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, Clock, GripVertical, Loader2, Sparkles } from 'lucide-react';
+import { ChevronDown, Clock, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
+import type { PlaybookIntentConstructionStatus } from '../types';
 
 function releasePointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
   if (typeof target.hasPointerCapture === 'function' && !target.hasPointerCapture(pointerId)) {
@@ -52,6 +53,9 @@ interface Props {
   onPositionChange?: (offset: { x: number; y: number }) => void;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
+  constructionStatus?: PlaybookIntentConstructionStatus;
+  constructionProgress?: string;
+  onCancelConstruction?: () => void;
 }
 
 function getConfidenceColor(score: number): string {
@@ -78,6 +82,9 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   onPositionChange,
   collapsed: collapsedProp,
   onCollapsedChange,
+  constructionStatus = 'idle',
+  constructionProgress,
+  onCancelConstruction,
 }: Readonly<Props>, forwardedRef) {
   const { t } = useModuleTranslation('playbook');
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
@@ -256,6 +263,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   };
 
   const showHistory = historyOpen && history.length > 0;
+  const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
 
   const setContainerNode = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -355,14 +363,35 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                 >
                   <Clock className="h-4 w-4" />
                 </Button>
-                <Button type="button" className="h-9 w-28 justify-center" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
-                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  {t('intentBar.actions.suggest')}
+                <Button
+                  type="button"
+                  className="h-9 w-28 justify-center"
+                  variant={constructionActive ? 'destructive' : 'default'}
+                  onClick={constructionActive ? onCancelConstruction : handleSuggestClick}
+                  disabled={constructionActive ? !onCancelConstruction : loading || value.trim().length < 3}
+                >
+                  {constructionActive ? <X className="mr-2 h-4 w-4" /> : loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {constructionActive ? t('intentBar.actions.stop') : t('intentBar.actions.suggest')}
                 </Button>
               </div>
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+            {constructionActive ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  <span className="truncate">{constructionProgress || t('intentBar.construction.streaming')}</span>
+                </span>
+                {onCancelConstruction ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={onCancelConstruction}>
+                    <X className="mr-1 h-4 w-4" />
+                    {t('intentBar.construction.cancel')}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
 
             {showHistory ? (
               <div className="flex min-h-0 flex-1 flex-col space-y-1.5">
