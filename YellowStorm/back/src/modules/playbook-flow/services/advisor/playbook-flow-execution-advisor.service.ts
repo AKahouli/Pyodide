@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -13,6 +13,8 @@ import { PlaybookFlowStreamEventsService } from '../playbook-flow-stream-events.
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './playbook-flow-heuristic-advisor-evaluator.service';
 import { PlaybookFlowLlmAdvisorEvaluatorService } from './playbook-flow-llm-advisor-evaluator.service';
+import { PlaybookFlowIntentService, type PlaybookFlowIntentResponse } from '../playbook-flow-intent.service';
+import { PlaybookFlowService } from '../playbook-flow.service';
 import type {
   FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
@@ -22,7 +24,22 @@ import type {
   AdvisorRemediationCategory,
 } from '../../interfaces/playbook-flow-execution-advisor.interface';
 import type { RunFlowExecutionAdvisorDto } from '../../dto/run-flow-execution-advisor.dto';
+import type { PreviewAdvisorRemediationDto } from '../../dto/preview-advisor-remediation.dto';
 import type { AdvisorScoringMode, FlowNode } from '../../schemas/playbook-flow.schema';
+
+export interface AdvisorRemediationPreviewResponse {
+  suggestion: PlaybookFlowIntentResponse['suggestions'][number];
+  suggestions: PlaybookFlowIntentResponse['suggestions'];
+  expectedDefinitionRevision: number;
+  intent: string;
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  };
+}
+
+const FALLBACK_STEP_FINDING = 'No specific advisor findings were selected. Improve this selected task so future executions are more deterministic, robust, and aligned with the expected output.';
 
 @Injectable()
 export class PlaybookFlowExecutionAdvisorService {
@@ -39,6 +56,9 @@ export class PlaybookFlowExecutionAdvisorService {
     private readonly mapper: PlaybookFlowExecutionAdvisorMapper,
     private readonly heuristicEvaluator: PlaybookFlowHeuristicAdvisorEvaluatorService,
     private readonly llmEvaluator: PlaybookFlowLlmAdvisorEvaluatorService,
+    @Inject(forwardRef(() => PlaybookFlowService))
+    private readonly flowService: PlaybookFlowService,
+    private readonly intentService: PlaybookFlowIntentService,
   ) {}
 
   async getRemediations(executionId: string, ownerId: string, taskId?: string): Promise<AdvisorRemediationItem[]> {
@@ -60,24 +80,45 @@ export class PlaybookFlowExecutionAdvisorService {
       const scope = taskId ? 'task' as const : 'playbook' as const;
       const targetTaskId = taskId ?? null;
 
-      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean }> = [
-        { key: 'missingFacts', category: 'structure', defaultSelected: true },
-        { key: 'incoherences', category: 'prompt', defaultSelected: true },
-        { key: 'unsupportedClaims', category: 'contract', defaultSelected: true },
-        { key: 'handoffRisks', category: 'handoff', defaultSelected: true },
-        { key: 'toolSelectionIssues', category: 'tooling', defaultSelected: true },
-        { key: 'missingToolCalls', category: 'tooling', defaultSelected: true },
-        { key: 'redundantToolCalls', category: 'tooling', defaultSelected: false },
-        { key: 'toolOutputUseIssues', category: 'tooling', defaultSelected: true },
-        { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true },
-        { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false },
-        { key: 'rewriteHints', category: 'prompt', defaultSelected: true },
+      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean; blocking: boolean }> = [
+        { key: 'missingFacts', category: 'structure', defaultSelected: true, blocking: false },
+        { key: 'incoherences', category: 'prompt', defaultSelected: true, blocking: false },
+        { key: 'unsupportedClaims', category: 'evidence', defaultSelected: true, blocking: true },
+        { key: 'handoffRisks', category: 'handoff', defaultSelected: true, blocking: true },
+        { key: 'toolSelectionIssues', category: 'tooling', defaultSelected: true, blocking: false },
+        { key: 'missingToolCalls', category: 'tooling', defaultSelected: true, blocking: true },
+        { key: 'redundantToolCalls', category: 'tooling', defaultSelected: false, blocking: false },
+        { key: 'toolOutputUseIssues', category: 'evidence', defaultSelected: true, blocking: true },
+        { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true, blocking: false },
+        { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false, blocking: false },
+        { key: 'rewriteHints', category: 'determinism', defaultSelected: true, blocking: false },
+        { key: 'costOptimizationHints', category: 'cost_efficiency', defaultSelected: true, blocking: false },
+        { key: 'scriptReplacementHints', category: 'cost_efficiency', defaultSelected: false, blocking: false },
+        { key: 'llmStillRequiredReasons', category: 'cost_efficiency', defaultSelected: false, blocking: false },
       ];
 
-      for (const { key, category, defaultSelected } of fieldMappings) {
+      for (const { key, category, defaultSelected, blocking } of fieldMappings) {
         const entries = judgeResult[key];
         if (!Array.isArray(entries)) continue;
         entries.forEach((description: string, index: number) => {
+          const severity = category === 'cost_efficiency' && judgeResult.costOptimizationPriority >= 80
+            ? 'high'
+            : category === 'cost_efficiency' && judgeResult.costOptimizationPriority >= 50
+              ? 'medium'
+              : blocking
+                ? 'high'
+                : defaultSelected
+                  ? 'medium'
+                  : 'low';
+          const suggestedAction = key === 'scriptReplacementHints'
+            ? 'replace_with_deterministic_script'
+            : category === 'cost_efficiency'
+              ? 'optimize_prompt_cost'
+              : category === 'tooling'
+                ? 'improve_tooling'
+                : category === 'handoff'
+                  ? 'optimize_playbook'
+                  : 'optimize_step';
           items.push({
             id: `${tr.taskId}-${category}-${index}`,
             category,
@@ -86,15 +127,58 @@ export class PlaybookFlowExecutionAdvisorService {
             title: description.length > 80 ? description.slice(0, 80) + '...' : description,
             description,
             rationale: undefined,
+            severity,
+            confidence: 0.8,
+            suggestedAction,
+            blocking,
             editable: true,
             defaultSelected,
-            source: { kind: 'judge_result', field: category, index },
+            source: { kind: 'judge_result', field: String(key), index },
           });
         });
       }
     }
 
     return items;
+  }
+
+  async previewRemediation(
+    flowId: string,
+    ownerId: string,
+    dto: PreviewAdvisorRemediationDto,
+  ): Promise<AdvisorRemediationPreviewResponse> {
+    const execution = await this.executionModel.findById(dto.executionId).lean().exec();
+    if (!execution || String(execution.ownerId) !== String(ownerId) || String(execution.flowId) !== String(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
+    }
+
+    const flow = await this.flowService.findOne(flowId, ownerId) as any;
+    const targetNode = dto.targetTaskId
+      ? (flow.nodes || []).find((node: { id: string }) => node.id === dto.targetTaskId) || null
+      : null;
+
+    if (dto.mode === 'optimize-step' && (!dto.targetTaskId || !targetNode)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Playbook task not found');
+    }
+
+    const intent = this.buildRemediationIntent(dto, targetNode);
+    const analysis = await this.intentService.analyze(flowId, ownerId, {
+      intent,
+      selectedTaskId: dto.targetTaskId,
+    });
+    const selection = this.selectAdvisorSuggestion(analysis.suggestions, dto);
+
+    if (!selection.suggestion) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Advisor remediation did not produce an applicable suggestion.');
+    }
+
+    return {
+      suggestion: selection.suggestion,
+      suggestions: analysis.suggestions,
+      expectedDefinitionRevision: flow.definitionRevision ?? 0,
+      intent,
+      validation: selection.validation,
+    };
   }
 
   async runTaskEvaluation(
@@ -241,6 +325,89 @@ export class PlaybookFlowExecutionAdvisorService {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
   }
 
+  private buildRemediationIntent(dto: PreviewAdvisorRemediationDto, targetNode: any | null): string {
+    const selectedFindings = dto.items.length > 0
+      ? dto.items
+      : [{ category: 'determinism', description: FALLBACK_STEP_FINDING }];
+    const findings = selectedFindings
+      .map((item) => `- [${item.category}] ${item.description.trim()}`)
+      .join('\n');
+    const hasCostFindings = selectedFindings.some((item) => item.category === 'cost_efficiency');
+
+    if (dto.mode === 'optimize-step') {
+      return [
+        `Optimize only the selected step "${targetNode?.label || dto.targetTaskId}" based on these advisor findings.`,
+        'Return exactly one single_change suggestion with operationType "update_node" and targetTaskId equal to the selected task id.',
+        'Do not create, delete, reorder, or reconnect nodes. Do not modify unrelated steps, edges, ports, or data bindings unless strictly required to keep this selected step valid.',
+        'Prefer updating the selected task description. Preserve the existing title unless the findings explicitly require a title change.',
+        'Improve task purpose, required inputs, success criteria, expected result, output contract, evidence grounding, tool-use guidance, handoff readiness, and HITL/clarification rules where relevant.',
+        hasCostFindings
+          ? 'For cost-efficiency findings, optimize for lower inference cost while preserving output quality: shorten repeated instructions, narrow context, clarify strict output contracts, and add deterministic execution guidance where safe. Do not replace the step with code in this flow.'
+          : '',
+        '',
+        'Current selected step:',
+        JSON.stringify({
+          id: targetNode?.id || dto.targetTaskId,
+          title: targetNode?.label || '',
+          description: targetNode?.description || targetNode?.metadata?.description || '',
+        }, null, 2),
+        '',
+        'Advisor findings:',
+        findings,
+      ].join('\n');
+    }
+
+    return [
+      dto.mode === 'generate-new'
+        ? 'Plan a broader optimization of the current playbook based on these structured advisor findings.'
+        : 'Optimize the current playbook based on these structured advisor findings.',
+      'Return a valid PlaybookIntentSuggestion. Preserve the user\'s original intent and keep the workflow valid.',
+      'Prefer minimal valid changes that improve graph structure, handoffs, output contracts, validation/evaluation steps, HITL checkpoints, tool placement, and data binding compatibility.',
+      '',
+      'Advisor findings:',
+      findings,
+    ].join('\n');
+  }
+
+  private selectAdvisorSuggestion(
+    suggestions: PlaybookFlowIntentResponse['suggestions'],
+    dto: PreviewAdvisorRemediationDto,
+  ): { suggestion: PlaybookFlowIntentResponse['suggestions'][number] | null; validation: AdvisorRemediationPreviewResponse['validation'] } {
+    const ranked = suggestions
+      .filter((suggestion) => !suggestion.isDirectIntentFallback)
+      .sort((left, right) => right.confidence - left.confidence);
+    if (dto.mode !== 'optimize-step') {
+      const suggestion = ranked.find((candidate) => candidate.kind === 'workflow_plan') || ranked[0] || null;
+      return { suggestion, validation: { valid: Boolean(suggestion), errors: suggestion ? [] : ['No valid playbook-level suggestion was produced.'], warnings: [] } };
+    }
+
+    const rejected: string[] = [];
+    const suggestion = ranked.find((candidate) => {
+      if (candidate.kind !== 'single_change') {
+        rejected.push(`${candidate.id}: expected single_change suggestion.`);
+        return false;
+      }
+      if (candidate.operationType !== 'update_node') {
+        rejected.push(`${candidate.id}: expected update_node operation.`);
+        return false;
+      }
+      if (candidate.targetTaskId !== dto.targetTaskId) {
+        rejected.push(`${candidate.id}: targeted ${candidate.targetTaskId || 'no task'} instead of ${dto.targetTaskId}.`);
+        return false;
+      }
+      return true;
+    }) || null;
+
+    return {
+      suggestion,
+      validation: {
+        valid: Boolean(suggestion),
+        errors: suggestion ? [] : rejected,
+        warnings: [],
+      },
+    };
+  }
+
   private async loadOutputFormatGuide(flowId: string, taskId: string): Promise<string | null> {
     const template = await this.outputFormatModel.findOne({
       flowId: new Types.ObjectId(flowId),
@@ -269,7 +436,54 @@ export class PlaybookFlowExecutionAdvisorService {
       return this.heuristicEvaluator.evaluate(params);
     }
 
-    return this.llmEvaluator.evaluate(params);
+    const [llmResult, heuristicResult] = await Promise.all([
+      this.llmEvaluator.evaluate(params),
+      this.heuristicEvaluator.evaluate(params).catch(() => null),
+    ]);
+
+    if (!heuristicResult) {
+      return llmResult;
+    }
+
+    const merged = this.mergeCostEfficiencyFields(llmResult.judgeResult, heuristicResult.judgeResult);
+    return { ...llmResult, judgeResult: merged };
+  }
+
+  private mergeCostEfficiencyFields(
+    llm: FlowExecutionJudgeResult,
+    heuristic: FlowExecutionJudgeResult,
+  ): FlowExecutionJudgeResult {
+    const heuristicHasNoCostData = heuristic.costOptimizationPriority === 0
+      && heuristic.scriptReplacementHints.length === 0
+      && heuristic.costOptimizationHints.length === 0;
+    if (heuristicHasNoCostData) {
+      return llm;
+    }
+
+    const llmIsEmpty = llm.costOptimizationPriority === 0
+      && llm.scriptReplacementHints.length === 0
+      && llm.costOptimizationHints.length === 0;
+
+    if (!llmIsEmpty) {
+      return llm;
+    }
+
+    const costActionOverride = heuristic.recommendedAction === 'replace_with_deterministic_script'
+      || heuristic.recommendedAction === 'optimize_prompt_cost';
+
+    return {
+      ...llm,
+      costEfficiencyScore: heuristic.costEfficiencyScore,
+      costOptimizationPriority: heuristic.costOptimizationPriority,
+      estimatedTokenReductionPct: heuristic.estimatedTokenReductionPct,
+      estimatedLatencyReductionPct: heuristic.estimatedLatencyReductionPct,
+      costOptimizationHints: heuristic.costOptimizationHints,
+      scriptReplacementHints: heuristic.scriptReplacementHints,
+      llmStillRequiredReasons: heuristic.llmStillRequiredReasons,
+      recommendedAction: costActionOverride
+        ? heuristic.recommendedAction
+        : llm.recommendedAction,
+    };
   }
 
   private buildUpstreamContextJson(nodes: FlowNode[], taskId: string): string {

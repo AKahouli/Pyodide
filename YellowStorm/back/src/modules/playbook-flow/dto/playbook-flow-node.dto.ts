@@ -259,4 +259,8 @@ export class FlowNodeDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
 }

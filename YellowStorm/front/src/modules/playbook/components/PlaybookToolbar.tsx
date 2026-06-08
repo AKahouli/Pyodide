@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload, Search } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -36,8 +36,6 @@ interface Props {
   onAdvisorScoringModeChange?: (mode: import('../types').AdvisorScoringMode) => void;
   onDownloadAllResults?: () => void;
   canDownloadAllResults?: boolean;
-  deepSearch: boolean;
-  onToggleDeepSearch: () => void;
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
   triggersOpen?: boolean;
@@ -72,8 +70,6 @@ export function PlaybookToolbar({
   onAdvisorScoringModeChange,
   onDownloadAllResults,
   canDownloadAllResults = false,
-  deepSearch,
-  onToggleDeepSearch,
   onTriggers,
   triggersOpen = false,
   designSettings,
@@ -113,15 +109,6 @@ export function PlaybookToolbar({
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
         </Button>
       )}
-      <Button
-        variant={deepSearch ? 'default' : 'outline'}
-        size="sm"
-        onClick={onToggleDeepSearch}
-        className="px-2 sm:px-3"
-      >
-        <Search className="h-4 w-4 sm:mr-1" />
-        <span className="hidden sm:inline">{t('toolbar.deepSearch')}</span>
-      </Button>
       <Popover open={runSettingsOpen} onOpenChange={setRunSettingsOpen}>
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm" className="px-2 sm:px-3" aria-label={t('toolbar.runSettings')} title={t('toolbar.runSettings')}>

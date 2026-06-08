@@ -97,7 +97,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       const params = new URLSearchParams();
       params.append('username', this.username);
       params.append('password', this.password);
-      const response = await axios.post(`${this.apiAdkUrl}/token`, params, {
+      const response = await axios.post(`${this.apiUrl}/token`, params, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
       this.accessToken = response.data.access_token;

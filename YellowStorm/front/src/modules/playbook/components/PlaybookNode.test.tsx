@@ -34,7 +34,7 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 vi.mock('@/modules/agent/store', () => ({
-  useAgentStore: (selector: any) => selector({ getAgentById: () => ({ name: 'Agent' }) }),
+  useAgentStore: (selector: any) => selector({ getAgentById: () => ({ name: 'Agent' }), createAgent: vi.fn(), updateAgent: vi.fn() }),
   useAgentTypes: () => [],
   useModels: () => [],
 }));

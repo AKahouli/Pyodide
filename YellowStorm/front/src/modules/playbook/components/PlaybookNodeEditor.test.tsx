@@ -106,11 +106,22 @@ vi.mock('@/components/ui/searchable-select', () => ({
 }));
 
 vi.mock('./PlaybookDataFlowSection', () => ({
-  PlaybookDataFlowSection: ({ onInputPortsChange, onOutputPortsChange, inputPortsOverride, outputPortsOverride }: any) => (
+  PlaybookDataFlowSection: ({
+    inputPortsOverride,
+    outputPortsOverride,
+    showOutputPorts = true,
+    canEditOutputPortNames = true,
+    canEditOutputPortKinds = true,
+    canModifyOutputPorts = true,
+  }: any) => (
     <div data-testid="data-flow-section">
       <span>dataFlow.sectionTitle</span>
       {inputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
-      {outputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
+      <span data-testid="data-flow-show-outputs">{String(showOutputPorts)}</span>
+      <span data-testid="data-flow-can-edit-output-names">{String(canEditOutputPortNames)}</span>
+      <span data-testid="data-flow-can-edit-output-kinds">{String(canEditOutputPortKinds)}</span>
+      <span data-testid="data-flow-can-modify-outputs">{String(canModifyOutputPorts)}</span>
+      {showOutputPorts && outputPortsOverride?.map((p: any) => <span key={p.id} data-testid="data-flow-output-port">{p.name}</span>)}
     </div>
   ),
 }));
@@ -184,6 +195,26 @@ const iteratorTask: PlaybookTask = {
     itemVariable: 'item',
     outputVariable: 'processed_items',
     errorStrategy: 'stop',
+  },
+  evaluationConfig: undefined,
+};
+
+const routerTask: PlaybookTask = {
+  ...baseTask,
+  taskType: 'generic',
+  nodeType: 'router',
+  title: 'Route document',
+  description: 'Pick the next branch',
+  inputPorts: [{ id: 'doc_type', name: 'Doc type', artifactKind: 'data', required: false }],
+  outputPorts: [
+    { id: 'retry', name: 'retry', artifactKind: 'text' },
+    { id: 'done', name: 'done', artifactKind: 'text' },
+  ],
+  routerConfig: {
+    outputLabels: ['retry', 'done'],
+    maxIterations: 3,
+    conditions: [],
+    defaultLabel: 'done',
   },
   evaluationConfig: undefined,
 };
@@ -348,6 +379,24 @@ describe('PlaybookNodeEditor', () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it('keeps router output artifact kinds editable without duplicating label editing', () => {
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={routerTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('data-flow-show-outputs')).toHaveTextContent('true');
+    expect(screen.getByTestId('data-flow-can-edit-output-names')).toHaveTextContent('false');
+    expect(screen.getByTestId('data-flow-can-edit-output-kinds')).toHaveTextContent('true');
+    expect(screen.getByTestId('data-flow-can-modify-outputs')).toHaveTextContent('false');
+    expect(screen.queryAllByTestId('data-flow-output-port')).toHaveLength(2);
   });
 
   it('renders data flow section before retry policy for generic steps', () => {

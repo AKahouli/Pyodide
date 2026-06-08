@@ -134,6 +134,9 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
     ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
+    ...(node.deepSearch === true || metadata.deep_search === true
+      ? { deep_search: true }
+      : {}),
   };
 }
 
@@ -365,6 +368,19 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private hasUnresolvedRequiredContext(planning: ReplayPlanningSummary): boolean {
     const replayPlanService = this.replayPlanService ?? new PlaybookFlowReplayPlanService();
     return replayPlanService.hasUnresolvedRequiredContext(planning.contextMapping);
+  }
+
+  private resolveStepExecutionMode(
+    node: { id: string; metadata?: Record<string, unknown> },
+    stepModes: Record<string, string>,
+    globalExecMode: string,
+    validStepModes: Set<string>,
+  ): string {
+    const savedStepMode = typeof node.metadata?.stepReplayMode === 'string'
+      ? node.metadata.stepReplayMode
+      : undefined;
+    const rawStepMode = stepModes[node.id] || savedStepMode || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
+    return validStepModes.has(rawStepMode) ? rawStepMode : 'live';
   }
 
   /** Keeps runtime HITL memory payloads lean and stable across the NestJS to ADK boundary. */
@@ -1066,6 +1082,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   ): Promise<void> {
     try {
       const snapshot = (snapshotOverride || this.builderService.buildSnapshot((flow || {}) as any)) as any;
+      const dsSnapshotNodes = (snapshot.nodes || []).filter((n: any) => n.deepSearch);
+      this.logger.warn(`[deep-search-debug] snapshot has ${snapshot.nodes?.length ?? 0} nodes, ${dsSnapshotNodes.length} with deepSearch=true: ${dsSnapshotNodes.map((n: any) => n.id).join(',')}`);
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
       const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
@@ -1137,6 +1155,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const globalExecMode = executionMeta?.executionMode || 'live';
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
+      const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
+      const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       const replayFingerprintNodes = ((snapshot.nodes as Array<Record<string, unknown>> | undefined) || []).map((node) => {
         if (!executionModelIdOverride || typeof executionModelIdOverride !== 'string') {
           return { ...node };
@@ -1156,9 +1176,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         ...(snapshot as FlowSnapshot),
         nodes: replayFingerprintNodes as unknown as FlowSnapshot['nodes'],
       });
+      const replayModeNodeIds = enrichedNodes
+        .filter((node: any) => REPLAY_MODES.has(this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES)))
+        .map((node: any) => node.id);
       const nodesEligibleForReplay = singleStepTargetId
         ? [singleStepTargetId]
-          : taskNodeIds;
+        : Array.from(new Set([...taskNodeIds, ...replayModeNodeIds]));
       const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
       const activeOutputFormatTemplates = this.outputFormatService
         ? await this.outputFormatService.getActiveTemplates(flowId, nodesEligibleForReplay)
@@ -1185,17 +1208,23 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
 
       const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
-      const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
-      const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       for (const node of enrichedNodes) {
         const taskId = node.id;
-        const rawStepMode = stepModes[taskId] || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
-        const stepMode = VALID_STEP_MODES.has(rawStepMode) ? rawStepMode : 'live';
+        const stepMode = this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES);
         const isReplayMode = REPLAY_MODES.has(stepMode);
         node.metadata = { ...node.metadata, execution_mode: stepMode };
         if (!isReplayMode) continue;
-        const artifacts = replayArtifacts.get(taskId);
-        if (!artifacts) continue;
+        let artifacts = replayArtifacts.get(taskId);
+        if (!artifacts) {
+          artifacts = await this.replayArtifactService.resolveActiveReplayArtifact(flowId, taskId) ?? undefined;
+          if (artifacts) {
+            replayArtifacts.set(taskId, artifacts);
+          }
+        }
+        if (!artifacts) {
+          this.logger.warn(`Replay skipped for task ${taskId}: missing_replay_baseline`);
+          continue;
+        }
         const currentNodeSnapshot = replayFingerprintNodesById.get(taskId) ?? { ...node };
         const eligibilityThreshold = this.systemService
           ? (await this.systemService.getPlaybookSettings().catch(() => null))?.replayEligibilityConfidenceThreshold
@@ -1334,7 +1363,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         execution_id: executionId,
         flow_id: flowId,
         owner_id: normalizedOwnerId,
-        deep_search: snapshot?.deepSearch || (flow as any)?.deepSearch || false,
+
       snapshot: {
         nodes: (enrichedNodes as any[]).map((n) => ({
           id: n.id,
@@ -1573,6 +1602,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .find({ executionId })
       .sort({ decidedAt: 1 })
       .lean();
+    const hitlEvents = execution.hitlEvents ?? [];
 
       return {
         ...(execution.toJSON() as unknown as IFlowExecutionResponse),
@@ -1605,6 +1635,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           judgeResult: (r as any).judgeResult ?? null,
           judgeError: (r as any).judgeError ?? null,
           judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
+          hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
         };
       }),
       routerDecisions: routerDecisions.map((r) => ({
@@ -1660,7 +1691,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       const claimedExecution = await this.executionModel
         .findById(next.id)
-        .select('+snapshot replaySource')
+        .select('+snapshot')
         .lean();
 
       if (!claimedExecution) {

@@ -44,6 +44,24 @@ function createService() {
         overallScore: 76,
         confidence: 80,
         toolUsageScore: 68,
+        relevanceScore: 80,
+        specificityScore: 80,
+        formatComplianceScore: 80,
+        evidenceGroundingScore: 80,
+        handoffReadinessScore: 80,
+        hitlAppropriatenessScore: 80,
+        determinismScore: 80,
+        costEfficiencyScore: 50,
+        stepOptimizationPriority: 20,
+        playbookOptimizationPriority: 20,
+        costOptimizationPriority: 0,
+        estimatedTokenReductionPct: null,
+        estimatedLatencyReductionPct: null,
+        riskSeverity: 'low',
+        blockingIssueCount: 0,
+        downstreamImpactLevel: 'none',
+        recommendedAction: 'review_only',
+        availableActions: { optimizeStep: true, optimizePlaybook: true },
         expectedResultSource: 'node_field',
         expectedResultType: 'semantic_description',
         expectedResultMatched: true,
@@ -60,6 +78,9 @@ function createService() {
         toolSequencingIssues: [],
         toolUsageStrengths: [],
         toolUsageRecommendation: 'Looks fine',
+        costOptimizationHints: [],
+        scriptReplacementHints: [],
+        llmStillRequiredReasons: [],
         safeAutoFixType: 'none',
         recommendation: 'none',
         reason: 'Done',
@@ -79,6 +100,24 @@ function createService() {
         overallScore: 80,
         confidence: 84,
         toolUsageScore: 73,
+        relevanceScore: 84,
+        specificityScore: 84,
+        formatComplianceScore: 84,
+        evidenceGroundingScore: 84,
+        handoffReadinessScore: 84,
+        hitlAppropriatenessScore: 84,
+        determinismScore: 84,
+        costEfficiencyScore: 50,
+        stepOptimizationPriority: 16,
+        playbookOptimizationPriority: 16,
+        costOptimizationPriority: 0,
+        estimatedTokenReductionPct: null,
+        estimatedLatencyReductionPct: null,
+        riskSeverity: 'low',
+        blockingIssueCount: 0,
+        downstreamImpactLevel: 'none',
+        recommendedAction: 'review_only',
+        availableActions: { optimizeStep: true, optimizePlaybook: true },
         expectedResultSource: 'node_field',
         expectedResultType: 'semantic_description',
         expectedResultMatched: true,
@@ -95,6 +134,9 @@ function createService() {
         toolSequencingIssues: [],
         toolUsageStrengths: [],
         toolUsageRecommendation: 'Looks fine',
+        costOptimizationHints: [],
+        scriptReplacementHints: [],
+        llmStillRequiredReasons: [],
         safeAutoFixType: 'none',
         recommendation: 'none',
         reason: 'Done',
@@ -110,6 +152,8 @@ function createService() {
     emitStepJudgeUpdated: jest.fn(),
   };
   const mapper = new PlaybookFlowExecutionAdvisorMapper();
+  const flowService = { findOne: jest.fn() };
+  const intentService = { analyze: jest.fn() };
 
   return {
     service: new PlaybookFlowExecutionAdvisorService(
@@ -120,6 +164,8 @@ function createService() {
       mapper,
       heuristicEvaluator as any,
       llmEvaluator as any,
+      flowService as any,
+      intentService as any,
     ),
     executionModel,
     taskResultModel,
@@ -127,6 +173,8 @@ function createService() {
     outputFormatModel,
     heuristicEvaluator,
     llmEvaluator,
+    flowService,
+    intentService,
     streamEvents,
   };
 }
@@ -138,7 +186,7 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
     const result = await service.runTaskEvaluation('exec-1', 'task-1', 'user-1');
 
     expect(llmEvaluator.evaluate).toHaveBeenCalledTimes(1);
-    expect(heuristicEvaluator.evaluate).not.toHaveBeenCalled();
+    expect(heuristicEvaluator.evaluate).toHaveBeenCalledTimes(1);
     expect(taskResultDocument.save).toHaveBeenCalledTimes(2);
     expect(streamEvents.emitStepJudgeStarted).toHaveBeenCalledWith('user-1', 'exec-1', 'task-1', undefined, 'llm');
     expect(streamEvents.emitStepJudgeUpdated).toHaveBeenCalledWith(
@@ -203,5 +251,142 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
       expect.objectContaining({ judgeStatus: 'failed', judgeError: 'llm failed', advisorScoringMode: 'llm' }),
       undefined,
     );
+  });
+
+  it('previews optimize-step remediation with the model suggestion instead of direct fallback', async () => {
+    const { service, executionModel, flowService, intentService } = createService();
+    (executionModel.findById as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          id: 'exec-1',
+          ownerId: 'user-1',
+          flowId: 'flow-1',
+        }),
+      }),
+    });
+    flowService.findOne.mockResolvedValue({
+      definitionRevision: 3,
+      nodes: [{ id: 'task-1', label: 'Generate PDF', description: 'Old description' }],
+    });
+    intentService.analyze.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'intent-fallback',
+          kind: 'single_change',
+          label: '',
+          summary: 'advisor prompt text',
+          reason: '',
+          confidence: 1,
+          operationType: 'update_node',
+          task: { title: 'advisor prompt text', description: 'advisor prompt text' },
+          targetTaskId: 'task-1',
+          isDirectIntentFallback: true,
+        },
+        {
+          id: 'intent-0',
+          kind: 'single_change',
+          label: 'Improve PDF generation',
+          summary: '',
+          reason: '',
+          confidence: 0.65,
+          operationType: 'update_node',
+          task: { title: 'Generate PDF', description: 'Improved description' },
+          targetTaskId: 'task-1',
+          isDirectIntentFallback: false,
+        },
+      ],
+      model: 'model',
+      settings: {},
+    });
+
+    const preview = await service.previewRemediation('flow-1', 'user-1', {
+      executionId: 'exec-1',
+      mode: 'optimize-step',
+      targetTaskId: 'task-1',
+      items: [{ id: 'item-1', category: 'prompt', description: 'Clarify output filename.' }],
+    });
+
+    expect(preview.suggestion.id).toBe('intent-0');
+    expect(preview.suggestion.kind).toBe('single_change');
+    if (preview.suggestion.kind === 'single_change') {
+      expect(preview.suggestion.task).toMatchObject({ description: 'Improved description' });
+    }
+    expect(preview.validation.valid).toBe(true);
+    expect(preview.expectedDefinitionRevision).toBe(3);
+  });
+
+  it('builds optimize-step fallback intent with no selected findings', async () => {
+    const { service, executionModel, flowService, intentService } = createService();
+    (executionModel.findById as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1' }),
+      }),
+    });
+    flowService.findOne.mockResolvedValue({
+      definitionRevision: 3,
+      nodes: [{ id: 'task-1', label: 'Generate PDF', description: 'Old description' }],
+    });
+    intentService.analyze.mockResolvedValueOnce({
+      suggestions: [{
+        id: 'intent-1',
+        kind: 'single_change',
+        label: 'Improve step',
+        summary: '',
+        reason: '',
+        confidence: 0.7,
+        operationType: 'update_node',
+        task: { description: 'Improved deterministic contract' },
+        targetTaskId: 'task-1',
+        isDirectIntentFallback: false,
+      }],
+      model: 'model',
+      settings: {},
+    });
+
+    const preview = await service.previewRemediation('flow-1', 'user-1', {
+      executionId: 'exec-1',
+      mode: 'optimize-step',
+      targetTaskId: 'task-1',
+      items: [],
+    });
+
+    expect(preview.suggestion.id).toBe('intent-1');
+    expect(preview.intent).toContain('No specific advisor findings were selected');
+  });
+
+  it('rejects optimize-step suggestions targeting another task', async () => {
+    const { service, executionModel, flowService, intentService } = createService();
+    (executionModel.findById as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1' }),
+      }),
+    });
+    flowService.findOne.mockResolvedValue({
+      definitionRevision: 3,
+      nodes: [{ id: 'task-1', label: 'Generate PDF', description: 'Old description' }],
+    });
+    intentService.analyze.mockResolvedValueOnce({
+      suggestions: [{
+        id: 'bad-intent',
+        kind: 'single_change',
+        label: 'Wrong target',
+        summary: '',
+        reason: '',
+        confidence: 0.9,
+        operationType: 'update_node',
+        task: { description: 'Wrong node' },
+        targetTaskId: 'task-2',
+        isDirectIntentFallback: false,
+      }],
+      model: 'model',
+      settings: {},
+    });
+
+    await expect(service.previewRemediation('flow-1', 'user-1', {
+      executionId: 'exec-1',
+      mode: 'optimize-step',
+      targetTaskId: 'task-1',
+      items: [],
+    })).rejects.toThrow('Advisor remediation did not produce an applicable suggestion.');
   });
 });

@@ -16,6 +16,24 @@ def _log_payload(value: Any) -> str:
         return str(value)
 
 
+def _is_locate_answer_citations_action(action_key: str) -> bool:
+    return "locate_answer_citations" in str(action_key or "")
+
+
+def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
+    stripped = dict(response)
+    stripped.pop("citation_sources", None)
+    stripped.pop("citations", None)
+    stripped.pop("sources", None)
+    return stripped
+
+
+def _loggable_payload(action_key: str, payload: Any) -> Any:
+    if _is_locate_answer_citations_action(action_key):
+        return payload
+    return "[non-locator MCP payload omitted]"
+
+
 def _display_source_name(value: Any) -> str:
     """Normalize a source field to a human-readable filename when possible."""
     text = str(value or "").strip()
@@ -255,16 +273,21 @@ def _normalize_mcp_response(
         if block_citation_sources:
             response["citation_sources"] = block_citation_sources
 
+        returned_response = (
+            response
+            if _is_locate_answer_citations_action(action_key)
+            else _strip_legacy_citation_fields(response)
+        )
         logger.info(
             "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
-            sorted(response.keys()),
+            sorted(returned_response.keys()),
             0,
-            len(response.get("citation_sources", []))
-            if isinstance(response.get("citation_sources"), list)
+            len(returned_response.get("citation_sources", []))
+            if isinstance(returned_response.get("citation_sources"), list)
             else 0,
-            len(response.get("text", "")) if isinstance(response.get("text"), str) else 0,
+            len(returned_response.get("text", "")) if isinstance(returned_response.get("text"), str) else 0,
         )
-        return response
+        return returned_response
 
     if not isinstance(parsed_payload, dict):
         return fallback_text
@@ -353,19 +376,25 @@ def _normalize_mcp_response(
     if normalized_sources:
         response["sources"] = normalized_sources
 
-    logger.info(
-        "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
-        sorted(response.keys()),
-        len(response.get("sources", []))
-        if isinstance(response.get("sources"), list)
-        else 0,
-        len(response.get("citation_sources", []))
-        if isinstance(response.get("citation_sources"), list)
-        else 0,
-        len(response.get("text", "")) if isinstance(response.get("text"), str) else 0,
+    returned_response = (
+        response
+        if _is_locate_answer_citations_action(action_key)
+        else _strip_legacy_citation_fields(response)
     )
 
-    return response
+    logger.info(
+        "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
+        sorted(returned_response.keys()),
+        len(returned_response.get("sources", []))
+        if isinstance(returned_response.get("sources"), list)
+        else 0,
+        len(returned_response.get("citation_sources", []))
+        if isinstance(returned_response.get("citation_sources"), list)
+        else 0,
+        len(returned_response.get("text", "")) if isinstance(returned_response.get("text"), str) else 0,
+    )
+
+    return returned_response
 
 
 async def call_mcp_tool(
@@ -494,18 +523,23 @@ async def call_mcp_tool(
             else:
                 texts.append(str(part))
         response_text = "\n".join(texts) if texts else str(result)
+        logged_response = (
+            response_text
+            if _is_locate_answer_citations_action(action_key)
+            else "[non-locator MCP response omitted]"
+        )
         logger.info(
             "mcp_tool_response action=%s response_length=%s full_response=%s",
             action_key,
-            len(response_text),
-            response_text,
+            len(logged_response),
+            logged_response,
         )
         if parsed_payload is not None:
             logger.info(
                 "mcp_tool_structured_payload_detected action=%s payload_type=%s payload=%s",
                 action_key,
                 type(parsed_payload).__name__,
-                _log_payload(parsed_payload),
+                _log_payload(_loggable_payload(action_key, parsed_payload)),
             )
         else:
             logger.info(
@@ -526,7 +560,7 @@ async def call_mcp_tool(
                 len(normalized_response.get("citation_sources", []))
                 if isinstance(normalized_response.get("citation_sources"), list)
                 else 0,
-                _log_payload(normalized_response),
+                _log_payload(_loggable_payload(action_key, normalized_response)),
             )
         return normalized_response
     except Exception as e:

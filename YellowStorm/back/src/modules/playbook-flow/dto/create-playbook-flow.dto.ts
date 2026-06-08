@@ -81,10 +81,6 @@ export class CreatePlaybookFlowDto {
   @IsOptional()
   reflectionEnabled?: boolean;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  deepSearch?: boolean;
-
   @ApiPropertyOptional({ enum: ADVISOR_SCORING_MODES, default: 'llm' })
   @IsOptional()
   @IsEnum(ADVISOR_SCORING_MODES)

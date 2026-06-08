@@ -123,6 +123,24 @@ def _log_payload(value: Any) -> str:
     except (TypeError, ValueError):
         return str(value)
 
+
+def _is_locate_answer_citations_tool(tool_name: str) -> bool:
+    return "locate_answer_citations" in str(tool_name or "")
+
+
+def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
+    stripped = dict(response)
+    stripped.pop("citation_sources", None)
+    stripped.pop("citations", None)
+    stripped.pop("sources", None)
+    return stripped
+
+
+def _loggable_connector_payload(tool_name: str, payload: Any) -> Any:
+    if _is_locate_answer_citations_tool(tool_name):
+        return payload
+    return "[non-locator MCP response omitted]"
+
 # --- ToolResultCollector ---
 
 
@@ -209,6 +227,11 @@ def _format_reference_marker(value: Any) -> str:
     return f"[{reference}]" if reference else ""
 
 
+def _reference_number(value: Any) -> int:
+    reference = _normalize_reference_token(value)
+    return int(reference) if reference.isdigit() else 0
+
+
 def _component_to_connector_citation_source(
     component: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
@@ -275,14 +298,76 @@ def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
     return "::".join(parts)
 
 
+def _normalize_connector_citation_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(source)
+    normalized["type"] = str(normalized.get("type") or "text")
+
+    if not normalized.get("page") and "page_number" in normalized:
+        normalized["page"] = normalized.get("page_number")
+    if "page" in normalized:
+        normalized["page"] = str(normalized.get("page") or "")
+
+    highlight_text = normalized.get("highlight_text") or normalized.get("highlightText")
+    if highlight_text and not normalized.get("page_content"):
+        normalized["page_content"] = highlight_text
+    if highlight_text:
+        normalized["highlight_text"] = str(highlight_text)
+        normalized["page_content"] = str(normalized.get("page_content") or "")
+
+    if "highlight_bbox" not in normalized and "highlightBBox" in normalized:
+        normalized["highlight_bbox"] = normalized.get("highlightBBox")
+    if "block_bbox" not in normalized and "blockBBox" in normalized:
+        normalized["block_bbox"] = normalized.get("blockBBox")
+
+    if normalized["type"] != "image" and not normalized.get("source"):
+        normalized["source"] = normalized.get("path") or ""
+
+    if not normalized.get("file_name"):
+        normalized["file_name"] = (
+            normalized.get("filename")
+            or normalized.get("fileName")
+            or ""
+        )
+
+    return normalized
+
+
+def _compact_citation_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    keys = (
+        "type",
+        "source",
+        "path",
+        "file_name",
+        "page",
+        "page_content",
+        "workspace_id",
+        "workspace_name",
+        "reference",
+        "highlight_text",
+        "highlight_bbox",
+        "block_bbox",
+    )
+    return {
+        key: source[key]
+        for key in keys
+        if key in source and source[key] not in ("", None)
+    }
+
+
 def _collect_connector_response_components(
     collector: ToolResultCollector,
     response: Any,
+    tool_name: str = "",
 ) -> Any:
     if not isinstance(response, dict):
         return response
 
-    normalized_response = dict(response)
+    is_located_answer_citations = _is_locate_answer_citations_tool(tool_name)
+    normalized_response = (
+        dict(response)
+        if is_located_answer_citations
+        else _strip_legacy_citation_fields(response)
+    )
     logger.info(
         "playbook_connector_component_collection_start response_keys=%s source_count=%s citation_source_count=%s response=%s",
         sorted(normalized_response.keys()),
@@ -292,10 +377,10 @@ def _collect_connector_response_components(
         len(normalized_response.get("citation_sources", []))
         if isinstance(normalized_response.get("citation_sources"), list)
         else 0,
-        _log_payload(normalized_response),
+        _log_payload(_loggable_connector_payload(tool_name, normalized_response)),
     )
 
-    sources = normalized_response.get("sources")
+    sources = normalized_response.get("sources") if is_located_answer_citations else None
     if isinstance(sources, list):
         new_sources: List[Dict[str, str]] = []
         for source in sources:
@@ -325,6 +410,8 @@ def _collect_connector_response_components(
 
     citation_sources = normalized_response.get("citation_sources")
     if not isinstance(citation_sources, list):
+        citation_sources = normalized_response.get("citations")
+    if not isinstance(citation_sources, list):
         return normalized_response
 
     assigned_references: List[str] = []
@@ -334,7 +421,9 @@ def _collect_connector_response_components(
         if not isinstance(raw_source, dict):
             continue
 
-        source = dict(raw_source)
+        source = _normalize_connector_citation_source(raw_source)
+        if is_located_answer_citations:
+            source["citation_origin"] = "locate_answer_citations"
         source_type = str(source.get("type") or "text")
         if source_type != "image":
             workspace_id = str(source.get("workspace_id") or "").strip()
@@ -345,7 +434,14 @@ def _collect_connector_response_components(
         reference = collector._connector_source_signatures.get(signature)
         is_new_source = reference is None
         if reference is None:
-            reference = _format_reference_marker(collector.next_connector_reference())
+            reference = _format_reference_marker(source.get("reference"))
+            if reference:
+                collector._connector_reference_counter = max(
+                    collector._connector_reference_counter,
+                    _reference_number(reference),
+                )
+            else:
+                reference = _format_reference_marker(collector.next_connector_reference())
             collector._connector_source_signatures[signature] = reference
             ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
             logger.warning(
@@ -369,7 +465,7 @@ def _collect_connector_response_components(
                 _log_payload(source),
             )
         source["reference"] = reference
-        normalized_citation_sources.append(source)
+        normalized_citation_sources.append(_compact_citation_source(source))
         assigned_references.append(reference)
 
         if not is_new_source:
@@ -390,28 +486,39 @@ def _collect_connector_response_components(
                     "reference": reference,
                 },
             }
+            if source.get("citation_origin"):
+                component_payload["citation_origin"] = source.get("citation_origin")
             collector.add_component(
                 "citation",
                 component_payload,
             )
         else:
+            text_source = {
+                "type": "text",
+                "source": str(source.get("source") or ""),
+                "page": str(source.get("page") or ""),
+                "page_content": str(source.get("page_content") or ""),
+                "reference": reference,
+            }
+            if source.get("file_name"):
+                text_source["file_name"] = str(source.get("file_name") or "")
+            if source.get("workspace_id"):
+                text_source["workspace_id"] = str(source.get("workspace_id") or "")
+            if source.get("workspace_name"):
+                text_source["workspace_name"] = str(source.get("workspace_name") or "")
+            if source.get("highlight_text"):
+                text_source["highlight_text"] = str(source.get("highlight_text") or "")
+            if source.get("highlight_bbox"):
+                text_source["highlight_bbox"] = source.get("highlight_bbox")
+            if source.get("block_bbox"):
+                text_source["block_bbox"] = source.get("block_bbox")
+            text_source = _compact_citation_source(text_source)
             component_payload = {
                 "parent_id": "",
-                "text_source": {
-                    "type": "text",
-                    "source": str(source.get("source") or ""),
-                    "file_name": str(source.get("file_name") or ""),
-                    "page": str(source.get("page") or ""),
-                    "page_content": str(source.get("page_content") or ""),
-                    "workspace_id": str(source.get("workspace_id") or ""),
-                    "workspace_name": str(
-                        source.get("workspace_name")
-                        or source.get("workspace_id")
-                        or ""
-                    ),
-                    "reference": reference,
-                },
+                "text_source": text_source,
             }
+            if source.get("citation_origin"):
+                component_payload["citation_origin"] = source.get("citation_origin")
             collector.add_component(
                 "citation",
                 component_payload,
@@ -596,6 +703,7 @@ def create_langchain_tools(
             external_ids=input_files,
             session_id=session_id,
             workspace_paths=workspace_paths,
+            deep_search=deep_search,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -1122,62 +1230,19 @@ def _create_search_tools(
         user_id=user_id,
     )
 
-    # Track how many sources we've already collected so we only emit new ones
+    # Track how many sources we've already observed so repeated searches do not
+    # reprocess the same SearchToolkit citation state.
     # Must be defined before the file_names check so both paths can use it
     prev_text_count = 0
     prev_image_count = 0
 
     def _collect_new_citations():
-        """Emit citation components only for sources added since the last call."""
+        """Drain legacy SearchToolkit citations without returning them."""
         nonlocal prev_text_count, prev_image_count
-
-        new_text = getattr(toolkit, "sources_text", [])[prev_text_count:]
-        new_image = getattr(toolkit, "sources_image", [])[prev_image_count:]
 
         prev_text_count = len(getattr(toolkit, "sources_text", []))
         prev_image_count = len(getattr(toolkit, "sources_image", []))
 
-        for src in new_text:
-            obj = src.get("object", {})
-            content = obj.get("content", {})
-            reference = _format_reference_marker(src.get("reference", ""))
-            collector.add_component(
-                "citation",
-                {
-                    "parent_id": "",
-                    "text_source": {
-                        "type": "text",
-                        "source": content.get("source", ""),
-                        "file_name": content.get("file_name", ""),
-                        "page": str(content.get("page", "")),
-                        "page_content": content.get("page_content", ""),
-                        "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
-                        "reference": reference,
-                    },
-                },
-            )
-
-        for src in new_image:
-            obj = src.get("object", {})
-            content = obj.get("content", {})
-            reference = _format_reference_marker(src.get("reference", ""))
-            collector.add_component(
-                "citation",
-                {
-                    "parent_id": "",
-                    "image_source": {
-                        "type": "image",
-                        "path": content.get("path", ""),
-                        "page": str(content.get("page", "")),
-                        "file_name": content.get("file_name", ""),
-                        "workspace_name": content.get("workspace_name", ""),
-                        "workspace_id": content.get("workspace_id") or content.get("brain_id", ""),
-                        "height": str(content.get("height", "")),
-                        "width": str(content.get("width", "")),
-                        "reference": reference,
-                    },
-                },
-            )
 
     # When file_names is provided, only create filtered search tool
     if file_names:
@@ -1639,20 +1704,22 @@ def _create_plan_tool() -> StructuredTool:
 
 class DeepSearchInput(BaseModel):
     query: str = Field(description="The search query string.")
-    workspace_name: str = Field(description="The workspace to search in.")
+    workspace_id: str = Field(description="The workspace ID to search in.")
     top_k: int = Field(default=5, description="Maximum number of results to return.")
 
 
 def _create_deep_search_tool() -> Optional[StructuredTool]:
     """Create a deep search tool that calls the MCP indexation server."""
-    from src.config.settings import settings as app_settings
+    from src.config.settings import get_settings
+
+    app_settings = get_settings()
 
     mcp_url = getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None) or getattr(app_settings, "VECTORSTORE_MCP_URL", None)
     if not mcp_url:
         logger.warning("VECTORSTORE_MCP_URL not configured, skipping deep search tool")
         return None
 
-    async def _deep_search(query: str, workspace_name: str, top_k: int = 5) -> str:
+    async def _deep_search(query: str, workspace_id: str, top_k: int = 5) -> str:
         from src.flow_engine.mcp import call_mcp_tool
 
         try:
@@ -1661,7 +1728,7 @@ def _create_deep_search_tool() -> Optional[StructuredTool]:
                 mcp_url,
                 {},
                 "search_relevant_documents",
-                {"query": query, "workspace_name": workspace_name, "top_k": top_k},
+                {"query": query, "workspace_id": workspace_id, "top_k": top_k},
             )
             if isinstance(result, dict):
                 return json.dumps(result, ensure_ascii=False)
@@ -1731,6 +1798,7 @@ def _create_connector_mcp_tools(
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
+    deep_search: bool = False,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1802,6 +1870,8 @@ def _create_connector_mcp_tools(
 
         for action in actions:
             action_key = action.get("action_key", "")
+            if action_key == "search_relevant_documents" and not deep_search:
+                continue
             action_label = action.get("label") or action_key
             action_description = (
                 action.get("description") or f"Connector action '{action_key}'"
@@ -1867,9 +1937,12 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
                                 merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
                             else:
-                                # No explicit file binding — strip any LLM-guessed file_name (e.g. "*")
-                                merged_params.pop("file_name", None)
-                                effective_auth_headers.pop("file_name", None)
+                                llm_file_name = merged_params.get("file_name")
+                                if isinstance(llm_file_name, str) and llm_file_name.strip() and llm_file_name != "*":
+                                    effective_auth_headers["file_name"] = llm_file_name
+                                else:
+                                    merged_params.pop("file_name", None)
+                                    effective_auth_headers.pop("file_name", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
@@ -1902,13 +1975,15 @@ def _create_connector_mcp_tools(
                             auth_headers=effective_auth_headers,
                             auth_env=ae,
                         )
+                        is_located_citation_tool = _is_locate_answer_citations_tool(ak)
+                        logged_response = _loggable_connector_payload(ak, response)
                         logger.info(
                             "playbook_connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
                             cid,
                             ak,
                             tn,
                             type(response).__name__,
-                            _log_payload(response),
+                            _log_payload(logged_response),
                         )
                         if isinstance(response, dict):
                             logger.info(
@@ -1916,14 +1991,16 @@ def _create_connector_mcp_tools(
                                 cid,
                                 ak,
                                 tn,
-                                sorted(response.keys()),
+                                sorted(response.keys()) if is_located_citation_tool else [],
                                 len(response.get("sources", []))
-                                if isinstance(response.get("sources"), list)
+                                if is_located_citation_tool
+                                and isinstance(response.get("sources"), list)
                                 else 0,
                                 len(response.get("citation_sources", []))
-                                if isinstance(response.get("citation_sources"), list)
+                                if is_located_citation_tool
+                                and isinstance(response.get("citation_sources"), list)
                                 else 0,
-                                _log_payload(response),
+                                _log_payload(logged_response),
                             )
                             if response.get("ceph_path"):
                                 ceph_path = response.get("ceph_path", "")
@@ -1952,6 +2029,7 @@ def _create_connector_mcp_tools(
                             response = _collect_connector_response_components(
                                 collector,
                                 response,
+                                tool_name=ak,
                             )
                         return response
                     except Exception as e:

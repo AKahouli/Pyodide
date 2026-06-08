@@ -1,14 +1,34 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useConversationV2Stream } from './useStream';
+
+// The connection hook gates on auth; pretend we're signed in.
+vi.mock('@/modules/auth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
+
+// Sending is now a POST (no EventSource-per-message). Mock the API so we can
+// assert the call without hitting the network. The store also imports this
+// module, so the same mock backs `store.sendMessage`.
+const sendMessageMock = vi.fn().mockResolvedValue(undefined);
+vi.mock('./api', () => ({
+  conversationV2Api: {
+    sendMessage: (...args: unknown[]) => sendMessageMock(...args),
+    listEvents: vi.fn().mockResolvedValue({ items: [], nextSince: 0 }),
+  },
+}));
+
+import { useConversationV2StreamConnection } from './useStream';
 import { useConversationV2Store } from './store';
+import { conversationV2StreamService } from './conversationV2Stream';
+import { AUTH_STORAGE_KEYS } from '@/lib/api';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
+  static readonly CLOSED = 2;
   url: string;
+  readyState = 1;
   closed = false;
   listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
   onerror: ((ev: Event) => void) | null = null;
+  onopen: ((ev: Event) => void) | null = null;
   constructor(url: string) {
     this.url = url;
     MockEventSource.instances.push(this);
@@ -16,7 +36,10 @@ class MockEventSource {
   addEventListener(type: string, cb: (e: MessageEvent) => void) {
     (this.listeners[type] ||= []).push(cb);
   }
-  close() { this.closed = true; }
+  close() {
+    this.closed = true;
+    this.readyState = MockEventSource.CLOSED;
+  }
   emit(type: string, data: unknown) {
     const ev = { data: JSON.stringify(data) } as MessageEvent;
     (this.listeners[type] || []).forEach((cb) => cb(ev));
@@ -25,69 +48,62 @@ class MockEventSource {
 
 vi.stubGlobal('EventSource', MockEventSource);
 
-describe('useConversationV2Stream', () => {
+function mountConnection() {
+  return renderHook(() => useConversationV2StreamConnection());
+}
+
+describe('conversation-v2 per-user stream pipe', () => {
   beforeEach(() => {
     MockEventSource.instances.length = 0;
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'test-token');
     useConversationV2Store.getState().reset();
+    sendMessageMock.mockClear();
   });
-  afterEach(() => vi.clearAllMocks());
-
-  it('opens an EventSource with the message + clientEventId in the query string', () => {
-    renderHook(() => useConversationV2Stream());
-    act(() => {
-      useConversationV2Store.getState().setSessionId('s1');
-    });
-    const { result } = renderHook(() => useConversationV2Stream());
-    act(() => result.current.send('hello'));
-    const es = MockEventSource.instances.at(-1)!;
-    expect(es.url).toContain('conversation-v2/sessions/s1/stream');
-    expect(es.url).toContain('message=hello');
-    expect(es.url).toMatch(/clientEventId=[0-9a-fA-F-]{36}/);
+  afterEach(() => {
+    conversationV2StreamService.disconnect();
+    vi.clearAllMocks();
   });
 
-  it('forwards the selected connector repo in the stream query string', () => {
-    const { result } = renderHook(() => useConversationV2Stream());
-    act(() => {
-      useConversationV2Store.getState().setSessionId('s1');
-      useConversationV2Store.getState().setSelectedConnectorRepo({
-        connectorId: 'connector-1',
-        connectorName: 'GitHub',
-        repoId: 'repo-1',
-        repoName: 'org-name/repo-name',
-        repoUrl: 'https://github.com/org-name/repo-name',
-      });
+  it('opens ONE EventSource to the per-user pipe (not per conversation)', () => {
+    mountConnection();
+    expect(MockEventSource.instances).toHaveLength(1);
+    const es = MockEventSource.instances.at(-1)!;
+    expect(es.url).toContain('/conversation-v2/stream');
+    expect(es.url).toContain('token=test-token');
+    // No conversation id in the URL — the pipe carries all conversations.
+    expect(es.url).not.toMatch(/sessions\//);
+  });
+
+  it('sendMessage optimistically echoes the user message and POSTs it', async () => {
+    useConversationV2Store.getState().setSessionId('s1');
+    await act(async () => {
+      await useConversationV2Store.getState().sendMessage('hi');
     });
 
-    act(() => result.current.send('create a task'));
-
-    const es = MockEventSource.instances.at(-1)!;
-    expect(es.url).toContain('connectorId=connector-1');
-    expect(es.url).toContain('connectorName=GitHub');
-    expect(es.url).toContain('connectorRepoId=repo-1');
-    expect(es.url).toContain('connectorRepoName=org-name%2Frepo-name');
-    expect(es.url).toContain(
-      'connectorRepoUrl=https%3A%2F%2Fgithub.com%2Forg-name%2Frepo-name',
+    const state = useConversationV2Store.getState();
+    expect(state.events).toHaveLength(1);
+    expect((state.events[0] as { role: string }).role).toBe('user');
+    expect(state.streaming).toBe(true);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ message: 'hi' }),
     );
   });
 
-  it('optimistically echoes the user message and then upserts via SSE without duplicating', () => {
-    const { result } = renderHook(() => useConversationV2Stream());
-    act(() => useConversationV2Store.getState().setSessionId('s1'));
-    act(() => result.current.send('hi'));
+  it('upserts the SSE echo over the optimistic message without duplicating', async () => {
+    mountConnection();
+    useConversationV2Store.getState().setSessionId('s1');
+    await act(async () => {
+      await useConversationV2Store.getState().sendMessage('hi');
+    });
+    const clientEventId = (
+      useConversationV2Store.getState().events[0] as { event_id: string }
+    ).event_id;
 
-    // send() optimistically adds the user message immediately so the bubble
-    // is visible before the backend's user frame arrives.
-    const stateAfterSend = useConversationV2Store.getState();
-    expect(stateAfterSend.events).toHaveLength(1);
-    const optimistic = stateAfterSend.events[0] as { role: string; event_id: string };
-    expect(optimistic.role).toBe('user');
-    const clientEventId = optimistic.event_id;
-
-    // Backend echoes the same user message back over SSE (same event_id,
-    // now with a sequence). It should REPLACE the optimistic one, not append.
     const es = MockEventSource.instances.at(-1)!;
     act(() =>
       es.emit('message', {
+        sessionId: 's1',
         event_id: clientEventId,
         timestamp: 1,
         role: 'user',
@@ -97,28 +113,57 @@ describe('useConversationV2Stream', () => {
     );
     expect(useConversationV2Store.getState().events).toHaveLength(1);
 
-    // Assistant reply appends normally.
     act(() =>
       es.emit('message', {
+        sessionId: 's1',
         event_id: 'a1',
         timestamp: 1,
         role: 'assistant',
-        content: 'hi',
+        content: 'hello',
         sequence: 2,
       }),
     );
-    const finalState = useConversationV2Store.getState();
-    expect(finalState.events).toHaveLength(2);
-    expect((finalState.events[0] as { role: string }).role).toBe('user');
-    expect((finalState.events[1] as { role: string }).role).toBe('assistant');
+    const final = useConversationV2Store.getState();
+    expect(final.events).toHaveLength(2);
+    expect((final.events[1] as { role: string }).role).toBe('assistant');
   });
 
-  it('closes the EventSource on done', () => {
-    const { result } = renderHook(() => useConversationV2Stream());
-    act(() => useConversationV2Store.getState().setSessionId('s1'));
-    act(() => result.current.send('hi'));
+  it('routes events for OTHER conversations into the background cache', () => {
+    mountConnection();
+    useConversationV2Store.getState().setSessionId('s1');
+
     const es = MockEventSource.instances.at(-1)!;
-    act(() => es.emit('done', { event_id: 'e1', timestamp: 1 }));
-    expect(es.closed).toBe(true);
+    act(() =>
+      es.emit('message', {
+        sessionId: 's2',
+        event_id: 'b1',
+        timestamp: 1,
+        role: 'assistant',
+        content: 'background reply',
+        sequence: 1,
+      }),
+    );
+
+    const state = useConversationV2Store.getState();
+    // Current view (s1) is untouched...
+    expect(state.events).toHaveLength(0);
+    // ...but s2's live state accumulated in the cache.
+    const cached = state.streamingStateCache.get('s2');
+    expect(cached?.events).toHaveLength(1);
+  });
+
+  it('clears the thinking state when a done event arrives for the current session', async () => {
+    mountConnection();
+    useConversationV2Store.getState().setSessionId('s1');
+    await act(async () => {
+      await useConversationV2Store.getState().sendMessage('hi');
+    });
+    expect(useConversationV2Store.getState().streaming).toBe(true);
+
+    const es = MockEventSource.instances.at(-1)!;
+    // Contiguous sequence (1) so no gap-backfill is triggered — the done is
+    // applied synchronously.
+    act(() => es.emit('done', { sessionId: 's1', event_id: 'd1', timestamp: 1, sequence: 1 }));
+    expect(useConversationV2Store.getState().streaming).toBe(false);
   });
 });

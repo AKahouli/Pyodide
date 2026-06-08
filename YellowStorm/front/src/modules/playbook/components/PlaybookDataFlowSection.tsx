@@ -38,6 +38,10 @@ interface Props {
   onInputPortsChange?: (ports: TaskInputPort[]) => void;
   onOutputPortsChange?: (ports: TaskOutputPort[]) => void;
   canEditPorts?: boolean;
+  showOutputPorts?: boolean;
+  canEditOutputPortNames?: boolean;
+  canEditOutputPortKinds?: boolean;
+  canModifyOutputPorts?: boolean;
 }
 
 const ARTIFACT_KINDS: ArtifactKind[] = ['text', 'document', 'code', 'image', 'data', 'dashboard'];
@@ -170,6 +174,10 @@ export function PlaybookDataFlowSection({
   onInputPortsChange,
   onOutputPortsChange,
   canEditPorts = true,
+  showOutputPorts = true,
+  canEditOutputPortNames = true,
+  canEditOutputPortKinds = true,
+  canModifyOutputPorts = true,
 }: Props) {
   const { t: rawT } = useModuleTranslation('playbook');
   const t = rawT as TFunction;
@@ -367,7 +375,14 @@ export function PlaybookDataFlowSection({
     return <p className="text-xs text-muted-foreground">{t('dataFlow.empty')}</p>;
   }
 
-  const maxRows = Math.max(inputPorts.length, outputPorts.length, 1);
+  const maxRows = Math.max(inputPorts.length, showOutputPorts ? outputPorts.length : 0, 1);
+  const gridClassName = showOutputPorts
+    ? 'grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-0'
+    : 'grid grid-cols-[1fr_auto_1fr] gap-0';
+  const rowClassName = showOutputPorts
+    ? 'grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center border-b border-border/40'
+    : 'grid grid-cols-[1fr_auto_1fr] items-center border-b border-border/40';
+  const dataRowsColSpanClassName = showOutputPorts ? 'col-span-5' : 'col-span-3';
 
   return (
     <div className="space-y-4">
@@ -378,7 +393,7 @@ export function PlaybookDataFlowSection({
         </div>
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-0">
+      <div className={gridClassName}>
         {/* Column headers */}
         <div className="rounded-t-lg bg-blue-500/8 px-3 py-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-600">
@@ -391,18 +406,22 @@ export function PlaybookDataFlowSection({
             {t('dataFlow.inputsColumn')}
           </span>
         </div>
-        <div className="w-8" />
-        <div className="rounded-t-lg bg-amber-500/8 px-3 py-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-600">
-            {t('dataFlow.outputsColumn')}
-          </span>
-        </div>
+        {showOutputPorts ? (
+          <>
+            <div className="w-8" />
+            <div className="rounded-t-lg bg-amber-500/8 px-3 py-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-600">
+                {t('dataFlow.outputsColumn')}
+              </span>
+            </div>
+          </>
+        ) : null}
 
         {/* Data rows */}
-        <div className="col-span-5">
+        <div className={dataRowsColSpanClassName}>
           {Array.from({ length: maxRows }).map((_, rowIdx) => {
             const inputPort = inputPorts[rowIdx];
-            const outputPort = outputPorts[rowIdx];
+            const outputPort = showOutputPorts ? outputPorts[rowIdx] : undefined;
             const binding = inputPort ? bindingByPort.get(inputPort.id) : undefined;
             const isResolved = binding ? isDataBindingResolved(binding) : false;
             const isMissingRequired = inputPort?.required && !isResolved;
@@ -410,7 +429,7 @@ export function PlaybookDataFlowSection({
             return (
               <div
                 key={rowIdx}
-                className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center border-b border-border/40"
+                className={rowClassName}
               >
                 {/* Source column */}
                 <div className="px-3 py-2.5">
@@ -446,20 +465,26 @@ export function PlaybookDataFlowSection({
                   )}
                 </div>
 
-                <div className="w-8" />
+                {showOutputPorts ? (
+                  <>
+                    <div className="w-8" />
 
-                {/* Output column */}
-                <div className="px-3 py-2.5">
-                  {outputPort && (
-                    <OutputPortCell
-                      port={outputPort}
-                      canEdit={canEditPorts}
-                      onUpdate={updateOutputPort}
-                      onRemove={removeOutputPort}
-                      t={t}
-                    />
-                  )}
-                </div>
+                    {/* Output column */}
+                    <div className="px-3 py-2.5">
+                      {outputPort && (
+                        <OutputPortCell
+                          port={outputPort}
+                          canEditName={canEditPorts && canEditOutputPortNames}
+                          canEditKind={canEditPorts && canEditOutputPortKinds}
+                          canRemove={canEditPorts && canModifyOutputPorts}
+                          onUpdate={updateOutputPort}
+                          onRemove={removeOutputPort}
+                          t={t}
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : null}
               </div>
             );
           })}
@@ -480,23 +505,27 @@ export function PlaybookDataFlowSection({
             </Button>
           )}
         </div>
-        <div className="w-8" />
-        <div />
-        <div className="w-8" />
-        <div className="px-3 py-2">
-          {canEditPorts && onOutputPortsChange && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs text-amber-600 hover:text-amber-700"
-              onClick={addOutputPort}
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" />
-              {t('dataFlow.addOutput')}
-            </Button>
-          )}
-        </div>
+        {showOutputPorts ? (
+          <>
+            <div className="w-8" />
+            <div />
+            <div className="w-8" />
+            <div className="px-3 py-2">
+              {canEditPorts && canModifyOutputPorts && onOutputPortsChange && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-amber-600 hover:text-amber-700"
+                  onClick={addOutputPort}
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  {t('dataFlow.addOutput')}
+                </Button>
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
 
       {pendingDataFlowMismatch && (
@@ -1020,13 +1049,15 @@ function InputPortCell({ port, canEdit, isMissingRequired, onUpdate, onRemove, t
 
 interface OutputPortCellProps {
   port: TaskOutputPort;
-  canEdit: boolean;
+  canEditName: boolean;
+  canEditKind: boolean;
+  canRemove: boolean;
   onUpdate: (portId: string, patch: Partial<TaskOutputPort>) => void;
   onRemove: (portId: string) => void;
   t: TFunction;
 }
 
-function OutputPortCell({ port, canEdit, onUpdate, onRemove, t }: OutputPortCellProps) {
+function OutputPortCell({ port, canEditName, canEditKind, canRemove, onUpdate, onRemove, t }: OutputPortCellProps) {
   const colors = PORT_COLORS[port.artifactKind];
 
   return (
@@ -1034,29 +1065,29 @@ function OutputPortCell({ port, canEdit, onUpdate, onRemove, t }: OutputPortCell
       <div
         className={cn('h-3 w-3 shrink-0 rounded-full', colors?.dot ?? 'bg-muted')}
       />
-      <input
-        type="text"
-        value={port.name}
-        disabled={!canEdit}
-        onChange={(e) => onUpdate(port.id, { name: e.target.value })}
-        className="min-w-0 flex-1 border-b border-transparent bg-transparent text-sm outline-none focus:border-primary disabled:opacity-60"
-        placeholder={t('ports.portName')}
-      />
-      <select
-        value={port.artifactKind}
-        disabled={!canEdit}
-        onChange={(e) =>
-          onUpdate(port.id, { artifactKind: e.target.value as ArtifactKind })
-        }
-        className="h-7 rounded border bg-background px-1 text-xs disabled:opacity-60"
-      >
+        <input
+          type="text"
+          value={port.name}
+          disabled={!canEditName}
+          onChange={(e) => onUpdate(port.id, { name: e.target.value })}
+          className="min-w-0 flex-1 border-b border-transparent bg-transparent text-sm outline-none focus:border-primary disabled:opacity-60"
+          placeholder={t('ports.portName')}
+        />
+        <select
+          value={port.artifactKind}
+          disabled={!canEditKind}
+          onChange={(e) =>
+            onUpdate(port.id, { artifactKind: e.target.value as ArtifactKind })
+          }
+          className="h-7 rounded border bg-background px-1 text-xs disabled:opacity-60"
+        >
         {ARTIFACT_KINDS.map((kind) => (
           <option key={kind} value={kind}>
             {t(`artifactKind.${kind}`)}
           </option>
         ))}
       </select>
-      {canEdit && (
+      {canRemove && (
         <button
           type="button"
           onClick={() => onRemove(port.id)}

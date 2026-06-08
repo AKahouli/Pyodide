@@ -172,6 +172,9 @@ export class FlowNode {
 
   @Prop({ required: false, type: Object })
   metadata?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  deepSearch?: boolean;
 }
 
 @Schema({ timestamps: true })
@@ -181,6 +184,9 @@ export class Flow {
 
   @Prop({ required: true, type: Number, default: 1 })
   schemaVersion!: number;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  definitionRevision!: number;
 
   @Prop({ required: true, type: String, minlength: 2, maxlength: 100 })
   name!: string;
@@ -228,9 +234,6 @@ export class Flow {
 
   @Prop({ required: false, type: Boolean, default: false })
   reflectionEnabled?: boolean;
-
-  @Prop({ required: false, type: Boolean, default: false })
-  deepSearch?: boolean;
 
   @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: 'llm' })
   advisorScoringMode?: AdvisorScoringMode;

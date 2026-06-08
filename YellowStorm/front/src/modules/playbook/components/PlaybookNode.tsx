@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -19,7 +19,6 @@ import {
 } from '@/components/ai-elements/node';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
-import { BaselineBadgePopover } from './BaselineBadgePopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
@@ -33,7 +32,7 @@ import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import { createCompatibleInputPort } from '../utils/port-compatibility';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference, ValidatedTaskReplay } from '../types';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -345,7 +344,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
     return latest?.taskResults ?? null;
   });
-  const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
@@ -359,6 +357,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [agentDialogSaving, setAgentDialogSaving] = useState(false);
   const updateAgent = useAgentStore((s) => s.updateAgent);
+  const createAgent = useAgentStore((s) => s.createAgent);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
@@ -427,53 +426,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
+  const deepSearchClass = data.deepSearch ? 'ring-1 ring-amber-500/30' : '';
   const recentlyChangedClass = isRecentlyChanged
     ? 'ring-2 ring-primary/70 shadow-[0_0_12px_2px_rgba(59,130,246,0.15)] animate-[ys-node-flash_1.6s_ease-in-out_infinite]'
     : '';
-  const replayBadgeLabel = currentTask?.activeReplayLabel
-    ? currentTask.activeReplayVersion
-      ? t('baselineBadge.versionedLabel', { label: currentTask.activeReplayLabel, version: currentTask.activeReplayVersion })
-      : t('baselineBadge.customLabel', { label: currentTask.activeReplayLabel })
-    : currentTask?.activeReplayVersion
-      ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
-      : t('detail.badges.baseline');
   const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline);
-  const showOutputFormatBadge = false;
+  const canSaveReference = Boolean(actions?.canSaveBaseline(id));
   const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
-  const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
-    ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
-    : t('detail.badges.outputFormat');
-  const activeReplay: ValidatedTaskReplay | null = currentTask?.activeReplayId
-    ? {
-        id: currentTask.activeReplayId,
-        playbookId: playbookId || '',
-        taskId: id,
-        taskTitle: currentTask.title,
-        agentName: '',
-        createdBy: '',
-        referenceExecutionId: '',
-        referenceExecutionNumber: currentTask.activeReplayVersion || 0,
-        validationVersion: currentTask.activeReplayVersion || 0,
-        status: 'active',
-        mode: 'strict_replay',
-        toolCalls: [],
-        referenceOutput: null,
-        preserveOutputFormat: currentTask.activeReplayPreserveOutputFormat,
-        outputFormatGuide: null,
-        formatGuideStatus: currentTask.activeReplayFormatGuideStatus ?? 'disabled',
-        formatGuideError: currentTask.activeReplayFormatGuideError ?? null,
-        isStale: currentTask.activeReplayIsStale,
-        staleReasons: currentTask.activeReplayStaleReasons,
-        label: currentTask.activeReplayLabel ?? null,
-        replayConfig: currentTask.activeReplayReplayConfig ?? {
-          replayOutputFormat: false,
-          replayToolTrace: false,
-          replayReasoningChain: true,
-        },
-        createdAt: '',
-        updatedAt: '',
-      }
-    : null;
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
 
@@ -501,8 +460,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     if (!agent) return;
     setAgentDialogSaving(true);
     try {
-      await updateAgent(agent.id, {
+      const payload = {
         name: data.name,
+        slug: data.slug,
         agentType: data.agentType,
         role: data.role,
         description: data.description,
@@ -517,14 +477,21 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         connectors: data.connectors,
         isActive: data.isActive,
         isDefaultForType: data.isDefaultForType,
-      });
+      };
+
+      if (agent.isDefault) {
+        const cloned = await createAgent(payload);
+        nodeDataActions?.updateNodeData(id, { assignedAgentId: cloned.id });
+      } else {
+        await updateAgent(agent.id, payload);
+      }
       setAgentDialogOpen(false);
     } catch {
       // handled by store toast
     } finally {
       setAgentDialogSaving(false);
     }
-  }, [agent, updateAgent]);
+  }, [agent, id, createAgent, updateAgent, nodeDataActions]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -674,6 +641,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             ringClass,
             selectedClass,
             disabledClass,
+            deepSearchClass,
             recentlyChangedClass,
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
@@ -861,7 +829,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               <p className="text-xs text-muted-foreground/60 italic">{t('node.noDescription')}</p>
             )}
 
-            {(showReplayBadge || showOptimizationBadge) && (
+            {(showReplayBadge || canSaveReference || showOptimizationBadge) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {showOptimizationBadge && (
                   <NodeMetaBadge
@@ -870,29 +838,25 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   />
                 )}
                 {showReplayBadge && (
-                  <BaselineBadgePopover
-                    task={effectiveTask}
-                    playbookId={playbookId || ''}
-                    replay={activeReplay}
+                  <NodeMetaBadge
+                    label={currentTask?.activeReplayIsStale ? t('node.replayNeedsUpdate') : t('node.replayReady')}
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
-                      : 'border-amber-500/30 bg-amber-100 text-amber-700'}
-                    badgeLabel={replayBadgeLabel}
-                    isBusy={Boolean(currentTask?.isSavingReplayBaseline)}
-                    onOpenOutputFormatEditor={nodeDataActions?.openOutputFormatEditor}
+                      : 'border-emerald-500/30 bg-emerald-100 text-emerald-700'}
                   />
                 )}
-                {showReplayBadge && currentTask?.activeReplayOverallScore != null && (
-                  <NodeMetaBadge
-                    label={`${Math.round(currentTask.activeReplayOverallScore)}%`}
-                    toneClassName={
-                      currentTask.activeReplayOverallScore >= 80
-                        ? 'border-emerald-500/30 bg-emerald-100 text-emerald-700'
-                        : currentTask.activeReplayOverallScore >= 60
-                          ? 'border-amber-500/30 bg-amber-100 text-amber-700'
-                          : 'border-red-500/30 bg-red-50 text-red-700'
-                    }
-                  />
+                {!showReplayBadge && canSaveReference && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void actions?.onSaveBaseline(id);
+                    }}
+                  >
+                    <Repeat2 className="h-2.5 w-2.5" />
+                    {t('node.makeReplayable')}
+                  </button>
                 )}
               </div>
             )}
@@ -1024,6 +988,29 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">{t('node.executeStep')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-7 w-7",
+                        data.deepSearch
+                          ? "text-amber-500 hover:text-amber-600 bg-amber-500/10"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        nodeDataActions?.updateNodeData(id, { deepSearch: !data.deepSearch });
+                      }}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {data.deepSearch ? t('node.deepSearchDisable') : t('node.deepSearchEnable')}
+                  </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>

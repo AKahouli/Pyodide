@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCanvasStepStatusMap } from './PlaybookCanvasPage';
+import { buildCanvasStepStatusMap } from '../utils/playbook-canvas-status';
 import type { PlaybookExecution, PlaybookTask } from '../types';
 
 describe('buildCanvasStepStatusMap', () => {
