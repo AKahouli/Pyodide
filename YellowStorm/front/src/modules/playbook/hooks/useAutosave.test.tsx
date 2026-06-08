@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAutosave } from './useAutosave';
 import type { DataBinding, PlaybookTask } from '../types';
 
+const actorSendMock = vi.hoisted(() => vi.fn());
+const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ code: 'ERR_0000' })));
 const storeState = vi.hoisted(() => ({
   isDirty: false,
   isSaving: false,
@@ -39,6 +41,26 @@ vi.mock('../store', () => ({
     }),
 }));
 
+vi.mock('../features', () => ({
+  playbookFeatures: {
+    xstateAutosaveEnabled: true,
+  },
+}));
+
+vi.mock('../machines/autosave/useAutosaveActor', () => ({
+  useAutosaveActor: () => ({
+    status: 'clean',
+    canSaveNow: true,
+    isSaving: false,
+    isBlockedByConflict: false,
+    send: actorSendMock,
+  }),
+}));
+
+vi.mock('@/lib/api-error', () => ({
+  parseApiError: parseApiErrorMock,
+}));
+
 describe('useAutosave', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -49,6 +71,7 @@ describe('useAutosave', () => {
     storeState.lastAutosaveDurationMs = null;
     storeState.autosaveBackoffUntil = null;
     storeState.currentPlaybook = { tasks: [], dataBindings: [] };
+    parseApiErrorMock.mockReturnValue({ code: 'ERR_0000' });
   });
 
   it('debounces save when dirty version changes', () => {
@@ -130,5 +153,31 @@ describe('useAutosave', () => {
 
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
     expect(result.current.hasIncompleteBindings).toBe(true);
+  });
+
+  it('reports autosave conflicts to the autosave actor', async () => {
+    const conflictError = new Error('conflict');
+    storeState.saveCurrentPlaybook.mockRejectedValueOnce(conflictError);
+    parseApiErrorMock.mockReturnValue({ code: 'ERR_1005' });
+
+    const { result } = renderHook(() => useAutosave());
+
+    await expect(result.current.saveNow()).rejects.toThrow('conflict');
+
+    expect(actorSendMock).toHaveBeenCalledWith({ type: 'SAVE_NOW', reason: 'manual' });
+    expect(actorSendMock).toHaveBeenCalledWith({ type: 'CONFLICT_DETECTED', errorCode: 'ERR_1005' });
+  });
+
+  it('reports non-conflict autosave failures as generic delta failures', async () => {
+    const saveError = new Error('save failed');
+    storeState.saveCurrentPlaybook.mockRejectedValueOnce(saveError);
+    parseApiErrorMock.mockReturnValue({ code: 'ERR_1000' });
+
+    const { result } = renderHook(() => useAutosave());
+
+    await expect(result.current.saveNow()).rejects.toThrow('save failed');
+
+    expect(actorSendMock).toHaveBeenCalledWith({ type: 'SAVE_NOW', reason: 'manual' });
+    expect(actorSendMock).toHaveBeenCalledWith({ type: 'DELTA_SAVE_FAILED' });
   });
 });

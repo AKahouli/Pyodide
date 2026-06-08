@@ -245,6 +245,8 @@ export const API_ENDPOINTS = {
     all: '/agents/all',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
+    a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
+    a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
   },
   tools: {
     active: '/tools/active',
@@ -288,6 +290,9 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    advisorRemediationPreview: (id: string) => `/playbooks/${id}/advisor-remediations/preview`,
+    advisorScriptPreview: (id: string) => `/playbooks/${id}/advisor-remediations/script-preview`,
+    advisorScriptApply: (id: string) => `/playbooks/${id}/advisor-remediations/script-apply`,
     nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,

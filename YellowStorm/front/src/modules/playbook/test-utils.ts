@@ -99,6 +99,7 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
     advisorAutopilotEnabled: false,
     advisorAutopilotTargetScore: null,
     advisorAutopilotMaxTurns: null,
+    definitionRevision: 0,
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
     ...overrides,

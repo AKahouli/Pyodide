@@ -198,5 +198,20 @@
   "card.duplicate": "Duplicate",
   "card.duplicatePrefix": "Copy of",
   "card.creativityLabel": "Creativity",
-  "card.updated": "Updated {{ago}}"
+  "card.updated": "Updated {{ago}}",
+  "a2a.publish": "Publish to A2A",
+  "a2a.rotateKey": "Rotate A2A key",
+  "a2a.toasts.published": "Agent published over A2A",
+  "a2a.toasts.rotated": "A2A key rotated",
+  "a2a.errors.publishFailed": "Failed to publish agent over A2A",
+  "a2a.errors.rotateFailed": "Failed to rotate A2A key",
+  "a2a.dialog.titlePublished": "Agent published over A2A",
+  "a2a.dialog.titleRotated": "A2A key rotated",
+  "a2a.dialog.warning": "Copy the API key now — for security it will not be shown again. Rotating the key invalidates the previous one.",
+  "a2a.dialog.endpoint": "Message endpoint",
+  "a2a.dialog.agentCard": "Agent card URL",
+  "a2a.dialog.apiKeyHeader": "API key header",
+  "a2a.dialog.apiKey": "API key",
+  "a2a.dialog.copied": "Copied to clipboard",
+  "a2a.dialog.done": "Done"
 }

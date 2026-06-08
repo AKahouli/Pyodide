@@ -73,6 +73,27 @@ export const conversationV2Api = {
       nextSince: res.data.data.nextSince,
     };
   },
+  /**
+   * Send a message and kick off the AI response. Returns immediately — the
+   * resulting events arrive on the persistent per-user SSE pipe
+   * (`/conversation-v2/stream`), not this request. Replaces the old
+   * EventSource-per-message flow.
+   */
+  async sendMessage(
+    sessionId: string,
+    body: {
+      message: string;
+      model?: string;
+      clientEventId?: string;
+      connectorId?: string;
+      connectorName?: string;
+      connectorRepoId?: string;
+      connectorRepoName?: string;
+      connectorRepoUrl?: string;
+    },
+  ): Promise<void> {
+    await apiClient.post(`/conversation-v2/sessions/${sessionId}/message`, body);
+  },
   async stopSession(sessionId: string): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/stop`, {});
   },

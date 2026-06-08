@@ -51,31 +51,6 @@ class ChatbotServiceStub(object):
                 request_serializer=chatbot__pb2.GenerateConversationNameRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.GenerateConversationNameResponse.FromString,
                 _registered_method=True)
-        self.RunPlaybookWorkflow = channel.unary_stream(
-                '/chatbot.ChatbotService/RunPlaybookWorkflow',
-                request_serializer=chatbot__pb2.RunPlaybookWorkflowRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.PlaybookStreamChunk.FromString,
-                _registered_method=True)
-        self.ResumePlaybookWorkflow = channel.unary_stream(
-                '/chatbot.ChatbotService/ResumePlaybookWorkflow',
-                request_serializer=chatbot__pb2.ResumePlaybookWorkflowRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.PlaybookStreamChunk.FromString,
-                _registered_method=True)
-        self.RunStep = channel.unary_unary(
-                '/chatbot.ChatbotService/RunStep',
-                request_serializer=chatbot__pb2.RunStepRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.StepResponse.FromString,
-                _registered_method=True)
-        self.RunStepStream = channel.unary_stream(
-                '/chatbot.ChatbotService/RunStepStream',
-                request_serializer=chatbot__pb2.RunStepRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.PlaybookStreamChunk.FromString,
-                _registered_method=True)
-        self.ResumeStep = channel.unary_unary(
-                '/chatbot.ChatbotService/ResumeStep',
-                request_serializer=chatbot__pb2.ResumeStepRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.StepResponse.FromString,
-                _registered_method=True)
         self.EvaluateSemanticMatch = channel.unary_unary(
                 '/chatbot.ChatbotService/EvaluateSemanticMatch',
                 request_serializer=chatbot__pb2.EvaluateSemanticMatchRequest.SerializeToString,
@@ -85,11 +60,6 @@ class ChatbotServiceStub(object):
                 '/chatbot.ChatbotService/GeneratePlaybook',
                 request_serializer=chatbot__pb2.GeneratePlaybookRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.GeneratePlaybookResponse.FromString,
-                _registered_method=True)
-        self.StopPlaybookWorkflow = channel.unary_unary(
-                '/chatbot.ChatbotService/StopPlaybookWorkflow',
-                request_serializer=chatbot__pb2.StopPlaybookWorkflowRequest.SerializeToString,
-                response_deserializer=chatbot__pb2.StopPlaybookWorkflowResponse.FromString,
                 _registered_method=True)
         self.EvaluateTask = channel.unary_unary(
                 '/chatbot.ChatbotService/EvaluateTask',
@@ -126,36 +96,6 @@ class ChatbotServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def RunPlaybookWorkflow(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ResumePlaybookWorkflow(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def RunStep(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def RunStepStream(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ResumeStep(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def EvaluateSemanticMatch(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -163,12 +103,6 @@ class ChatbotServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GeneratePlaybook(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StopPlaybookWorkflow(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -204,31 +138,6 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
                     request_deserializer=chatbot__pb2.GenerateConversationNameRequest.FromString,
                     response_serializer=chatbot__pb2.GenerateConversationNameResponse.SerializeToString,
             ),
-            'RunPlaybookWorkflow': grpc.unary_stream_rpc_method_handler(
-                    servicer.RunPlaybookWorkflow,
-                    request_deserializer=chatbot__pb2.RunPlaybookWorkflowRequest.FromString,
-                    response_serializer=chatbot__pb2.PlaybookStreamChunk.SerializeToString,
-            ),
-            'ResumePlaybookWorkflow': grpc.unary_stream_rpc_method_handler(
-                    servicer.ResumePlaybookWorkflow,
-                    request_deserializer=chatbot__pb2.ResumePlaybookWorkflowRequest.FromString,
-                    response_serializer=chatbot__pb2.PlaybookStreamChunk.SerializeToString,
-            ),
-            'RunStep': grpc.unary_unary_rpc_method_handler(
-                    servicer.RunStep,
-                    request_deserializer=chatbot__pb2.RunStepRequest.FromString,
-                    response_serializer=chatbot__pb2.StepResponse.SerializeToString,
-            ),
-            'RunStepStream': grpc.unary_stream_rpc_method_handler(
-                    servicer.RunStepStream,
-                    request_deserializer=chatbot__pb2.RunStepRequest.FromString,
-                    response_serializer=chatbot__pb2.PlaybookStreamChunk.SerializeToString,
-            ),
-            'ResumeStep': grpc.unary_unary_rpc_method_handler(
-                    servicer.ResumeStep,
-                    request_deserializer=chatbot__pb2.ResumeStepRequest.FromString,
-                    response_serializer=chatbot__pb2.StepResponse.SerializeToString,
-            ),
             'EvaluateSemanticMatch': grpc.unary_unary_rpc_method_handler(
                     servicer.EvaluateSemanticMatch,
                     request_deserializer=chatbot__pb2.EvaluateSemanticMatchRequest.FromString,
@@ -238,11 +147,6 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
                     servicer.GeneratePlaybook,
                     request_deserializer=chatbot__pb2.GeneratePlaybookRequest.FromString,
                     response_serializer=chatbot__pb2.GeneratePlaybookResponse.SerializeToString,
-            ),
-            'StopPlaybookWorkflow': grpc.unary_unary_rpc_method_handler(
-                    servicer.StopPlaybookWorkflow,
-                    request_deserializer=chatbot__pb2.StopPlaybookWorkflowRequest.FromString,
-                    response_serializer=chatbot__pb2.StopPlaybookWorkflowResponse.SerializeToString,
             ),
             'EvaluateTask': grpc.unary_unary_rpc_method_handler(
                     servicer.EvaluateTask,
@@ -349,141 +253,6 @@ class ChatbotService(object):
             _registered_method=True)
 
     @staticmethod
-    def RunPlaybookWorkflow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/chatbot.ChatbotService/RunPlaybookWorkflow',
-            chatbot__pb2.RunPlaybookWorkflowRequest.SerializeToString,
-            chatbot__pb2.PlaybookStreamChunk.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ResumePlaybookWorkflow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/chatbot.ChatbotService/ResumePlaybookWorkflow',
-            chatbot__pb2.ResumePlaybookWorkflowRequest.SerializeToString,
-            chatbot__pb2.PlaybookStreamChunk.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def RunStep(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chatbot.ChatbotService/RunStep',
-            chatbot__pb2.RunStepRequest.SerializeToString,
-            chatbot__pb2.StepResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def RunStepStream(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/chatbot.ChatbotService/RunStepStream',
-            chatbot__pb2.RunStepRequest.SerializeToString,
-            chatbot__pb2.PlaybookStreamChunk.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ResumeStep(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chatbot.ChatbotService/ResumeStep',
-            chatbot__pb2.ResumeStepRequest.SerializeToString,
-            chatbot__pb2.StepResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
     def EvaluateSemanticMatch(request,
             target,
             options=(),
@@ -527,33 +296,6 @@ class ChatbotService(object):
             '/chatbot.ChatbotService/GeneratePlaybook',
             chatbot__pb2.GeneratePlaybookRequest.SerializeToString,
             chatbot__pb2.GeneratePlaybookResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StopPlaybookWorkflow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chatbot.ChatbotService/StopPlaybookWorkflow',
-            chatbot__pb2.StopPlaybookWorkflowRequest.SerializeToString,
-            chatbot__pb2.StopPlaybookWorkflowResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -162,6 +162,60 @@ export class FlowTaskJudgeResult {
   @Prop({ required: false, type: Number, default: 0 })
   toolUsageScore?: number;
 
+  @Prop({ required: false, type: Number, default: 0 })
+  relevanceScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  specificityScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  formatComplianceScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  evidenceGroundingScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  handoffReadinessScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  hitlAppropriatenessScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  determinismScore?: number;
+
+  @Prop({ required: false, type: Number, default: 50 })
+  costEfficiencyScore?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  stepOptimizationPriority?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  playbookOptimizationPriority?: number;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  costOptimizationPriority?: number;
+
+  @Prop({ required: false, type: Number, default: null })
+  estimatedTokenReductionPct?: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  estimatedLatencyReductionPct?: number | null;
+
+  @Prop({ required: false, type: String, default: 'low' })
+  riskSeverity?: string;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  blockingIssueCount?: number;
+
+  @Prop({ required: false, type: String, default: 'none' })
+  downstreamImpactLevel?: string;
+
+  @Prop({ required: false, type: String, default: 'review_only' })
+  recommendedAction?: string;
+
+  @Prop({ required: false, type: Object, default: { optimizeStep: true, optimizePlaybook: true } })
+  availableActions?: { optimizeStep: boolean; optimizePlaybook: boolean };
+
   @Prop({ required: false, type: String, default: 'none' })
   expectedResultSource?: string;
 
@@ -209,6 +263,15 @@ export class FlowTaskJudgeResult {
 
   @Prop({ required: false, type: String, default: '' })
   toolUsageRecommendation?: string;
+
+  @Prop({ required: false, type: [String], default: [] })
+  costOptimizationHints?: string[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  scriptReplacementHints?: string[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  llmStillRequiredReasons?: string[];
 
   @Prop({ required: false, type: String, default: 'none' })
   safeAutoFixType?: string;

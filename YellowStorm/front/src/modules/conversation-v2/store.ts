@@ -45,12 +45,50 @@ interface State {
     repoName: string;
     repoUrl?: string;
   } | null;
+  /**
+   * Live state for conversations that are streaming in the BACKGROUND (i.e. not
+   * the one currently on screen). Events arriving on the per-user pipe for a
+   * non-current session accumulate here, keyed by sessionId, so switching to
+   * that conversation is instant and shows everything that streamed while it
+   * was off-screen. Mirrors v1's `streamingStateCache`.
+   */
+  streamingStateCache: Map<string, SessionSlice>;
+}
+
+/**
+ * The portion of a conversation's live state that must survive being switched
+ * away from. The top-level store fields above hold this for the CURRENT
+ * session; `streamingStateCache` holds one of these per background session.
+ */
+export interface SessionSlice {
+  events: AgentEvent[];
+  lastSequence: number;
+  liveToolCallId: string | null;
+  liveAssistantIds: Set<string>;
+  title: string | null;
+  streaming: boolean;
+  streamError: string | null;
 }
 
 interface Actions {
   setSessionId: (id: string | null) => void;
   setStreaming: (s: boolean) => void;
   handleEvent: (event: AgentEvent) => void;
+  /**
+   * Entry point for an event off the per-user pipe. Routes by `sessionId`:
+   * events for the current session render live; events for other sessions
+   * accumulate in `streamingStateCache`.
+   */
+  handleStreamEvent: (type: AgentEvent['type'], data: Record<string, unknown>) => void;
+  /**
+   * Switch the on-screen conversation, preserving background streams. Stashes
+   * the outgoing session's live state if it is still streaming, and hydrates
+   * the incoming one from cache when available. Returns true when hydrated from
+   * cache (caller can skip the server reload + spinner).
+   */
+  switchToSession: (id: string) => boolean;
+  /** Send a message in the current session (optimistic echo + POST). */
+  sendMessage: (message: string, model?: string) => Promise<void>;
   replayEvents: (events: AgentEvent[]) => void;
   reset: () => void;
   openToolPanel: (toolCallId: string) => void;
@@ -102,7 +140,142 @@ const initial: State = {
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
+      streamingStateCache: new Map<string, SessionSlice>(),
 };
+
+/** Empty slice for a not-yet-seen background session. */
+function emptySlice(): SessionSlice {
+  return {
+    events: [],
+    lastSequence: 0,
+    liveToolCallId: null,
+    liveAssistantIds: new Set<string>(),
+    title: null,
+    streaming: true,
+    streamError: null,
+  };
+}
+
+/**
+ * Pure reducer applying a single agent event to a session slice. Mirrors the
+ * data transforms in `handleEvent` (upsert tool/step/message by id, replace
+ * plan, track liveToolCallId/liveAssistantIds, terminal flags) WITHOUT the
+ * current-session UI side effects (panel auto-open, typewriter). Used for
+ * background sessions in `streamingStateCache`.
+ */
+function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
+  const incomingSeq = (event as { sequence?: number }).sequence;
+  if (typeof incomingSeq === 'number' && incomingSeq <= slice.lastSequence) {
+    return slice; // stale or duplicate
+  }
+  const lastSequence =
+    typeof incomingSeq === 'number'
+      ? Math.max(slice.lastSequence, incomingSeq)
+      : slice.lastSequence;
+  const base: SessionSlice = { ...slice, lastSequence };
+
+  switch (event.type) {
+    case 'title':
+      return { ...base, title: event.title };
+    case 'done':
+      return { ...base, streaming: false, liveToolCallId: null };
+    case 'error':
+      return { ...base, streamError: event.error, streaming: false, liveToolCallId: null };
+    case 'tool': {
+      const turnStart = currentTurnStartIndex(slice.events);
+      const idx = findIndexFrom(
+        slice.events,
+        turnStart,
+        (e) => e.type === 'tool' && e.tool_call_id === event.tool_call_id,
+      );
+      const isMessageTool = (event.name || '').toLowerCase() === 'message';
+      const liveToolCallId = !isMessageTool ? event.tool_call_id : slice.liveToolCallId;
+      let events: AgentEvent[];
+      if (idx >= 0) {
+        events = slice.events.slice();
+        events[idx] = event;
+      } else {
+        events = [...slice.events, event];
+      }
+      return { ...base, events, liveToolCallId };
+    }
+    case 'step': {
+      const turnStart = currentTurnStartIndex(slice.events);
+      const idx = findIndexFrom(
+        slice.events,
+        turnStart,
+        (e) => e.type === 'step' && e.id === event.id,
+      );
+      let events: AgentEvent[];
+      if (idx >= 0) {
+        events = slice.events.slice();
+        events[idx] = event;
+      } else {
+        events = [...slice.events, event];
+      }
+      return { ...base, events };
+    }
+    case 'plan': {
+      const filtered = slice.events.filter((e) => e.type !== 'plan');
+      return { ...base, events: [...filtered, event] };
+    }
+    case 'wait':
+      return base;
+    case 'message': {
+      const liveAssistantIds =
+        event.role === 'assistant'
+          ? new Set(slice.liveAssistantIds).add(event.event_id)
+          : slice.liveAssistantIds;
+      const existingIdx = slice.events.findIndex(
+        (e) => e.type === 'message' && e.event_id === event.event_id,
+      );
+      let events: AgentEvent[];
+      if (existingIdx >= 0) {
+        events = slice.events.slice();
+        events[existingIdx] = event;
+      } else {
+        events = [...slice.events, event];
+      }
+      return { ...base, events, liveAssistantIds };
+    }
+    default:
+      return { ...base, events: [...slice.events, event] };
+  }
+}
+
+/** Snapshot the current top-level session state into a slice (for caching). */
+function sliceFromState(s: State): SessionSlice {
+  return {
+    events: s.events,
+    lastSequence: s.lastSequence,
+    liveToolCallId: s.liveToolCallId,
+    liveAssistantIds: s.liveAssistantIds,
+    title: s.title,
+    streaming: s.streaming,
+    streamError: s.streamError,
+  };
+}
+
+/** The view fields reset when entering a session with no cached slice. */
+function freshViewState(): Partial<State> {
+  return {
+    events: [],
+    title: null,
+    streaming: false,
+    streamError: null,
+    lastSequence: 0,
+    liveToolCallId: null,
+    liveAssistantIds: new Set<string>(),
+    selectedToolCallId: null,
+    rightPanelMode: 'closed',
+    filesSheetOpen: false,
+    systemWorkspaceId: null,
+    workspaceIds: [],
+    typewriterSessionId: null,
+    typewriterName: null,
+    selectedConnectorRepo: null,
+  };
+}
 
 export const useConversationV2Store = create<State & Actions>()(
   devtools(
@@ -110,7 +283,150 @@ export const useConversationV2Store = create<State & Actions>()(
       ...initial,
       setSessionId: (id) => set({ sessionId: id }, false, 'setSessionId'),
       setStreaming: (s) => set({ streaming: s }, false, 'setStreaming'),
-      reset: () => set(initial, false, 'reset'),
+      // Reset the on-screen view but PRESERVE the background-stream cache —
+      // starting a new chat must not wipe other conversations still streaming.
+      reset: () =>
+        set((s) => ({ ...initial, streamingStateCache: s.streamingStateCache }), false, 'reset'),
+
+      switchToSession: (id) => {
+        const s = get();
+        let cache = s.streamingStateCache;
+        // Stash the outgoing session's live state if it is still streaming, so
+        // returning to it is instant and nothing streamed off-screen is lost.
+        if (s.sessionId && s.sessionId !== id && s.streaming) {
+          cache = new Map(cache);
+          cache.set(s.sessionId, sliceFromState(s));
+        }
+        const cached = cache.get(id);
+        if (cached) {
+          const newCache = new Map(cache);
+          newCache.delete(id);
+          set(
+            {
+              ...freshViewState(),
+              sessionId: id,
+              events: cached.events,
+              lastSequence: cached.lastSequence,
+              liveToolCallId: cached.liveToolCallId,
+              liveAssistantIds: cached.liveAssistantIds,
+              title: cached.title,
+              streaming: cached.streaming,
+              streamError: cached.streamError,
+              streamingStateCache: newCache,
+            },
+            false,
+            'switchToSession/hydrate',
+          );
+          return true;
+        }
+        set(
+          { ...freshViewState(), sessionId: id, streamingStateCache: cache },
+          false,
+          'switchToSession/fresh',
+        );
+        return false;
+      },
+
+      sendMessage: async (message, model) => {
+        const sessionId = get().sessionId;
+        if (!sessionId) return;
+        // Optimistically echo the user message under a client id; the backend
+        // persists the same id and re-emits it over the pipe, where the
+        // `message` upsert replaces this echo instead of duplicating it.
+        const clientEventId = crypto.randomUUID();
+        get().handleEvent({
+          type: 'message',
+          event_id: clientEventId,
+          timestamp: Math.floor(Date.now() / 1000),
+          role: 'user',
+          content: message,
+          attachments: [],
+        } as AgentEvent);
+        set({ streaming: true, streamError: null }, false, 'sendMessage/optimistic');
+
+        const repo = get().selectedConnectorRepo;
+        try {
+          await conversationV2Api.sendMessage(sessionId, {
+            message,
+            model,
+            clientEventId,
+            ...(repo
+              ? {
+                  connectorId: repo.connectorId,
+                  connectorName: repo.connectorName,
+                  connectorRepoId: repo.repoId,
+                  connectorRepoName: repo.repoName,
+                  connectorRepoUrl: repo.repoUrl,
+                }
+              : {}),
+          });
+        } catch (err) {
+          set(
+            { streaming: false, streamError: (err as Error).message },
+            false,
+            'sendMessage/error',
+          );
+        }
+      },
+
+      handleStreamEvent: (type, data) => {
+        const sessionId = typeof data.sessionId === 'string' ? data.sessionId : null;
+        const { sessionId: _omit, ...rest } = data;
+        const event = { type, ...rest } as AgentEvent;
+        const state = get();
+
+        // Background session — accumulate in the cache; mirror title to sidebar.
+        if (sessionId && sessionId !== state.sessionId) {
+          set(
+            (s) => {
+              const cache = new Map(s.streamingStateCache);
+              const prev = cache.get(sessionId) ?? emptySlice();
+              cache.set(sessionId, reduceSession(prev, event));
+              return { streamingStateCache: cache };
+            },
+            false,
+            `handleStreamEvent/bg/${type}`,
+          );
+          if (event.type === 'title' && event.title) {
+            const title = event.title;
+            useConversationV2PointersStore.setState(
+              (p) => ({
+                items: p.items.map((row) =>
+                  row.sessionId === sessionId ? { ...row, title } : row,
+                ),
+              }),
+              false,
+              'pointers/title-sync-bg',
+            );
+          }
+          return;
+        }
+
+        // Current session — gap-backfill (a jump in sequence means we missed
+        // events, e.g. across a pipe reconnect) then apply live.
+        const seq = (event as { sequence?: number }).sequence;
+        if (typeof seq === 'number' && seq > state.lastSequence + 1 && state.sessionId) {
+          const fillFrom = state.lastSequence;
+          const sid = state.sessionId;
+          (async () => {
+            let cursor = fillFrom;
+            while (cursor < seq - 1) {
+              try {
+                const { items, nextSince } = await conversationV2Api.listEvents(sid, cursor, 200);
+                if (items.length === 0) break;
+                for (const e of items) get().handleEvent(e);
+                if (nextSince === cursor) break;
+                cursor = nextSince;
+              } catch {
+                return; // a later event will trigger another attempt
+              }
+            }
+            get().handleEvent(event);
+          })();
+        } else {
+          get().handleEvent(event);
+        }
+      },
       openToolPanel: (toolCallId) =>
         set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
       jumpToLive: () =>

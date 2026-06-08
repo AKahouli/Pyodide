@@ -115,9 +115,6 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     logger.info("[gRPC] Available services:")
     logger.info("  - chatbot.ChatbotService/RunAgentTeam (V2 streaming)")
     logger.info("  - chatbot.ChatbotService/GenerateConversationName (V2 unary)")
-    logger.info("  - chatbot.ChatbotService/RunPlaybookWorkflow (unary)")
-    logger.info("  - chatbot.ChatbotService/ResumePlaybookWorkflow (unary)")
-    logger.info("  - chatbot.ChatbotService/RunStep (unary)")
     if pf_grpc is not None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/Run (streaming)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/Cancel (unary)")

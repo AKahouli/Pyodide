@@ -16,6 +16,7 @@ export interface IFlowResponse {
   id: string;
   ownerId: string;
   schemaVersion: number;
+  definitionRevision: number;
   name: string;
   description?: string;
   executionStatus?: 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'cancelled' | null;

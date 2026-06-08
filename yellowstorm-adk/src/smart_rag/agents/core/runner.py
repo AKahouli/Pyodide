@@ -31,6 +31,16 @@ _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
 
 
+def _is_locate_answer_citations_tool(tool_name: str) -> bool:
+    return "locate_answer_citations" in str(tool_name or "")
+
+
+def _loggable_structured_response(tool_name: str, response: Any) -> Any:
+    if _is_locate_answer_citations_tool(tool_name):
+        return response
+    return "[non-locator structured response omitted]"
+
+
 def _display_source_name(value: Any) -> str:
     """Normalize a source field to a filename when it contains a URL or path."""
     text = str(value or "").strip()
@@ -1349,26 +1359,28 @@ class AgentRunner:
         """Emit supported source components from structured tool responses."""
         try:
             response_data = function_response.response
+            tool_name = getattr(function_response, "name", "unknown")
             logger.info(
                 "[STRUCTURED TOOL RESPONSE] tool=%s response_type=%s full_response=%s",
-                getattr(function_response, "name", "unknown"),
+                tool_name,
                 type(response_data).__name__,
-                _log_payload(response_data),
+                _log_payload(_loggable_structured_response(tool_name, response_data)),
             )
             if not isinstance(response_data, dict):
                 return
 
-            self._register_connector_citation_sources_from_response(
-                response_data,
-                session_state if session_state is not None else {},
-                getattr(function_response, "name", "unknown"),
-            )
+            if _is_locate_answer_citations_tool(tool_name):
+                self._register_connector_citation_sources_from_response(
+                    response_data,
+                    session_state if session_state is not None else {},
+                    tool_name,
+                )
 
             sources = response_data.get("sources", [])
-            if isinstance(sources, list) and sources:
+            if _is_locate_answer_citations_tool(tool_name) and isinstance(sources, list) and sources:
                 logger.info(
                     "[STRUCTURED TOOL RESPONSE] tool=%s streaming_sources_count=%s",
-                    getattr(function_response, "name", "unknown"),
+                    tool_name,
                     len(sources),
                 )
                 sources_chunk = self.streaming_formatter.format_component_event(
@@ -1381,8 +1393,10 @@ class AgentRunner:
             else:
                 logger.info(
                     "[STRUCTURED TOOL RESPONSE] tool=%s no_sources_to_stream keys=%s",
-                    getattr(function_response, "name", "unknown"),
-                    sorted(response_data.keys()),
+                    tool_name,
+                    sorted(response_data.keys())
+                    if _is_locate_answer_citations_tool(tool_name)
+                    else [],
                 )
         except Exception as e:
             logger.error(
