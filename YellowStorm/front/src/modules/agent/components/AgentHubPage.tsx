@@ -179,6 +179,7 @@ export function AgentHubPage() {
               onView={ops.openView}
               onDuplicate={ops.duplicateAgent}
               onPublishA2A={ops.publishOrRotateA2A}
+              onRevokeA2A={ops.setRevokingAgent}
               publishingA2AId={ops.a2aProcessingId}
             />
           )}
@@ -196,6 +197,36 @@ export function AgentHubPage() {
       />
 
       <A2APublishDialog result={ops.a2aResult} onClose={() => ops.setA2aResult(null)} />
+
+      <AlertDialog
+        open={!!ops.revokingAgent}
+        onOpenChange={(open) => {
+          if (!open) ops.setRevokingAgent(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('a2a.revokeDialog.title', { defaultValue: 'Revoke A2A agent?' })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('a2a.revokeDialog.description', {
+                defaultValue:
+                  'This agent will stop serving over A2A and its API key will be invalidated. You can publish it again later.',
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('list.deleteDialog.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={ops.confirmRevokeA2A}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t('a2a.revokeDialog.confirm', { defaultValue: 'Revoke' })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {ops.viewingAgent && (
         <CreateEditAgentDialog

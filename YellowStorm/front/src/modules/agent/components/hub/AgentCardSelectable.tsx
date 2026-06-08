@@ -15,6 +15,7 @@ interface AgentCardSelectableProps {
   onView?: (agent: Agent) => void;
   onDuplicate?: (agent: Agent) => void;
   onPublishA2A?: (agent: Agent) => void;
+  onRevokeA2A?: (agent: Agent) => void;
   publishingA2A?: boolean;
 }
 
@@ -29,6 +30,7 @@ export function AgentCardSelectable({
   onView,
   onDuplicate,
   onPublishA2A,
+  onRevokeA2A,
   publishingA2A,
 }: AgentCardSelectableProps) {
   const isSelectable = !agent.isDefault;
@@ -77,6 +79,7 @@ export function AgentCardSelectable({
           onView={selectMode ? undefined : onView}
           onDuplicate={selectMode ? undefined : onDuplicate}
           onPublishA2A={selectMode ? undefined : onPublishA2A}
+          onRevokeA2A={selectMode ? undefined : onRevokeA2A}
           publishingA2A={publishingA2A}
         />
       </div>

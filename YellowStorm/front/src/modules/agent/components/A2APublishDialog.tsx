@@ -80,18 +80,10 @@ export function A2APublishDialog({ result, onClose }: A2APublishDialogProps) {
 
         {result && (
           <div className="space-y-4 py-2">
-            {!result.rotated && (
-              <>
-                <CopyField
-                  label={t('a2a.dialog.endpoint', { defaultValue: 'Message endpoint' })}
-                  value={result.url}
-                />
-                <CopyField
-                  label={t('a2a.dialog.agentCard', { defaultValue: 'Agent card URL' })}
-                  value={result.agentCardUrl}
-                />
-              </>
-            )}
+            <CopyField
+              label={t('a2a.dialog.agentCard', { defaultValue: 'Agent card URL' })}
+              value={result.agentCardUrl}
+            />
             <CopyField
               label={t('a2a.dialog.apiKeyHeader', { defaultValue: 'API key header' })}
               value={result.apiKeyHeader}
