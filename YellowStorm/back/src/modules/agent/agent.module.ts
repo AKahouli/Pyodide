@@ -4,7 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentService } from './agent.service';
+import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { Agent, AgentSchema } from './schemas/agent.schema';
+import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ToolModule } from '../tool/tool.module';
@@ -16,6 +18,7 @@ import { ConnectedAppModule } from '../connected-app/connected-app.module';
 @Module({
   imports: [
     ConfigModule,
+    ConfigModule.forFeature(a2aAdminConfig),
     MongooseModule.forFeature([
       { name: Agent.name, schema: AgentSchema },
     ]),
@@ -28,7 +31,7 @@ import { ConnectedAppModule } from '../connected-app/connected-app.module';
     ConnectedAppModule,
   ],
   controllers: [AgentController, AdminAgentController],
-  providers: [AgentService],
-  exports: [AgentService],
+  providers: [AgentService, A2AAdminGrpcClientService],
+  exports: [AgentService, A2AAdminGrpcClientService],
 })
 export class AgentModule {}

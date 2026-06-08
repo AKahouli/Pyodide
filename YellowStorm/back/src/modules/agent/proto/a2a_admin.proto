@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package a2a_admin;
+
+import "chatbot.proto";
+
+// Management API for publishing agents over the A2A protocol.
+
+message PublishAgentRequest {
+    chatbot.Agent agent = 1;   // Full agent definition; agent.id is the URL segment
+    string user_id = 2;        // Owner (optional)
+}
+
+message PublishAgentResponse {
+    string agent_id = 1;
+    string url = 2;             // Message endpoint (empty base if A2A_PUBLIC_BASE_URL unset)
+    string agent_card_url = 3;
+    string api_key = 4;         // Returned once
+    string api_key_header = 5;
+}
+
+message RotateKeyRequest {
+    string agent_id = 1;
+}
+
+message RotateKeyResponse {
+    string agent_id = 1;
+    string api_key = 2;
+    string api_key_header = 3;
+}
+
+message SetAgentEnabledRequest {
+    string agent_id = 1;
+    bool enabled = 2;
+}
+
+message SetAgentEnabledResponse {
+    string agent_id = 1;
+    bool enabled = 2;
+}
+
+message GetAgentRequest {
+    string agent_id = 1;
+}
+
+message GetAgentResponse {
+    bool found = 1;
+    string agent_id = 2;
+    string name = 3;
+    bool enabled = 4;
+    string api_key_prefix = 5;
+    string created_at = 6;
+    string updated_at = 7;
+}
+
+service A2AAdminService {
+    rpc PublishAgent(PublishAgentRequest) returns (PublishAgentResponse);
+    rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+    rpc SetAgentEnabled(SetAgentEnabledRequest) returns (SetAgentEnabledResponse);
+    rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+}
