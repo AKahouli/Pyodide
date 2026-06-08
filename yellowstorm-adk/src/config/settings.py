@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     # gRPC Configuration
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
+
+    # A2A gateway (publish agents over the A2A protocol for Copilot Studio)
+    A2A_DATABASE_URL: Optional[str] = None          # defaults to DATABASE_URL
+    A2A_GRPC_TARGET: Optional[str] = None           # defaults to 127.0.0.1:GRPC_PORT
+    A2A_API_KEY_HEADER: str = "X-API-Key"
+    A2A_PUBLIC_BASE_URL: Optional[str] = None       # e.g. https://host (else derived from request)
     PLAYBOOK_STREAM_QUEUE_MAXSIZE: int = 128
     STEP_STREAM_QUEUE_MAXSIZE: int = 64
     LANGGRAPH_CHECKPOINT_PATH: Optional[str] = None

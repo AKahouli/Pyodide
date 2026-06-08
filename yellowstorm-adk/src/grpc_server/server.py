@@ -84,6 +84,18 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     chatbot_pb2_grpc.add_ChatbotServiceServicer_to_server(servicer, server)
     logger.info("[gRPC] ChatbotServicer registered")
 
+    # A2A agent management (publish / rotate / enable / get)
+    try:
+        from src.grpc_generated import a2a_admin_pb2_grpc
+        from src.grpc_server.a2a_admin_servicer import A2AAdminServicer
+
+        a2a_admin_pb2_grpc.add_A2AAdminServiceServicer_to_server(
+            A2AAdminServicer(), server
+        )
+        logger.info("[gRPC] A2AAdminServicer registered")
+    except Exception as e:
+        logger.error(f"[gRPC] Failed to register A2AAdminServicer: {e}", exc_info=True)
+
     if pf_grpc is not None and PlaybookFlowRuntimeServicer is not None:
         await init_checkpointer()
         pf_servicer = PlaybookFlowRuntimeServicer()
