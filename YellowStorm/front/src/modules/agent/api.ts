@@ -14,6 +14,7 @@ import type {
   SkillOption,
   A2APublishResult,
   A2ARotateKeyResult,
+  A2ARevokeResult,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -67,6 +68,17 @@ export async function publishAgentToA2A(id: string): Promise<A2APublishResult> {
 export async function rotateAgentA2AKey(id: string): Promise<A2ARotateKeyResult> {
   const response = await apiClient.post<ApiResponse<A2ARotateKeyResult>>(
     API_ENDPOINTS.agents.a2aRotateKey(id),
+  );
+  return response.data.data;
+}
+
+/**
+ * Revoke a published A2A agent. Its card and message endpoint stop serving and
+ * the agent returns to the unpublished state.
+ */
+export async function revokeAgentA2A(id: string): Promise<A2ARevokeResult> {
+  const response = await apiClient.post<ApiResponse<A2ARevokeResult>>(
+    API_ENDPOINTS.agents.a2aRevoke(id),
   );
   return response.data.data;
 }

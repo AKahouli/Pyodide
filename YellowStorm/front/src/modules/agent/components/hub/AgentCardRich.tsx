@@ -1,4 +1,4 @@
-import { Copy, Eye, Globe, Loader2, Lock, Pencil, Trash2 } from 'lucide-react';
+import { Ban, Copy, Eye, Globe, Loader2, Lock, Pencil, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ interface AgentCardRichProps {
   onView?: (agent: Agent) => void;
   onDuplicate?: (agent: Agent) => void;
   onPublishA2A?: (agent: Agent) => void;
+  onRevokeA2A?: (agent: Agent) => void;
   publishingA2A?: boolean;
 }
 
@@ -67,6 +68,7 @@ export function AgentCardRich({
   onView,
   onDuplicate,
   onPublishA2A,
+  onRevokeA2A,
   publishingA2A = false,
 }: AgentCardRichProps) {
   const { t, language } = useModuleTranslation('agent');
@@ -150,6 +152,21 @@ export function AgentCardRich({
           ) : (
             <Globe className="h-3.5 w-3.5" />
           )}
+        </Button>
+      )}
+      {isOwned && agent.a2aPublished && onRevokeA2A && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          disabled={publishingA2A}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRevokeA2A(agent);
+          }}
+          title={t('a2a.revoke', { defaultValue: 'Revoke A2A agent' })}
+        >
+          <Ban className="h-3.5 w-3.5" />
         </Button>
       )}
       {isOwned && onDelete && (

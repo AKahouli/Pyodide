@@ -197,12 +197,7 @@ export const useAgentStore = create<AgentStore>()(
         set((state) => ({
           agents: state.agents.map((a) =>
             a.id === id
-              ? {
-                  ...a,
-                  a2aPublished: true,
-                  a2aUrl: result.url,
-                  a2aAgentCardUrl: result.agentCardUrl,
-                }
+              ? { ...a, a2aPublished: true, a2aAgentCardUrl: result.agentCardUrl }
               : a,
           ),
         }));
@@ -210,7 +205,26 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       rotateAgentA2AKey: async (id) => {
-        return api.rotateAgentA2AKey(id);
+        const result = await api.rotateAgentA2AKey(id);
+        // The card URL can change on rotation; keep the cached agent in sync.
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === id ? { ...a, a2aAgentCardUrl: result.agentCardUrl } : a,
+          ),
+        }));
+        return result;
+      },
+
+      revokeAgentA2A: async (id) => {
+        const result = await api.revokeAgentA2A(id);
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === id
+              ? { ...a, a2aPublished: false, a2aAgentCardUrl: undefined }
+              : a,
+          ),
+        }));
+        return result;
       },
 
       // ===== Evaluation Implementation =====

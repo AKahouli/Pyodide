@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../../logger';
 import { Agent, AgentDocument } from '../schemas/agent.schema';
@@ -8,6 +9,7 @@ import { A2AAdminGrpcClientService } from './a2a-admin.grpc-client.service';
 import {
   ChatbotAgentInput,
   PublishAgentResult,
+  RevokeAgentResult,
   RotateKeyResult,
 } from '../types/a2a-admin.types';
 import {
@@ -18,9 +20,10 @@ import {
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 /**
- * Application service that publishes a personal agent over the A2A protocol and
- * rotates its API key. It bridges the persisted Agent document (ownership +
- * gRPC-agent assembly via {@link AgentService}) with the A2A admin gRPC client.
+ * Application service that publishes a personal agent over the A2A protocol,
+ * rotates its API key, and revokes it. It bridges the persisted Agent document
+ * (ownership + gRPC-agent assembly via {@link AgentService}) with the A2A admin
+ * gRPC client.
  *
  * Only personal (non-default) agents owned by the caller may be published.
  */
@@ -31,9 +34,21 @@ export class A2APublishService {
     private readonly agentModel: Model<AgentDocument>,
     private readonly agentService: AgentService,
     private readonly grpcClient: A2AAdminGrpcClientService,
+    private readonly config: ConfigService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(A2APublishService.name);
+  }
+
+  /**
+   * The gRPC service returns the agent-card path relative to the A2A serving
+   * surface (it already starts with `/`). Prepend `API_ADK_URL` so callers get
+   * an absolute, reachable URL. Falls back to the relative path if unset.
+   */
+  private toAbsoluteCardUrl(cardPath: string): string {
+    const base = this.config.get<string>('a2aAdmin.apiAdkUrl', '').replace(/\/+$/, '');
+    if (!base || !cardPath) return cardPath;
+    return `${base}${cardPath}`;
   }
 
   /**
@@ -69,13 +84,14 @@ export class A2APublishService {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_A2A_PUBLISH_FAILED);
     }
 
+    const agentCardUrl = this.toAbsoluteCardUrl(result.agentCardUrl);
+
     await this.agentModel
       .findByIdAndUpdate(agentId, {
         $set: {
           a2aPublished: true,
           a2aAgentId: result.agentId,
-          a2aUrl: result.url,
-          a2aAgentCardUrl: result.agentCardUrl,
+          a2aAgentCardUrl: agentCardUrl,
           a2aApiKeyHeader: result.apiKeyHeader,
           a2aPublishedAt: new Date(),
         },
@@ -88,11 +104,12 @@ export class A2APublishService {
       a2aAgentId: result.agentId,
     });
 
-    return result;
+    return { ...result, agentCardUrl };
   }
 
   /**
-   * Rotate the API key for an already-published agent. Returns the new key once.
+   * Rotate the API key for an already-published agent. Returns the new key (and
+   * the agent-card URL so the UI can re-display it) once.
    */
   async rotateKey(userId: string, agentId: string): Promise<RotateKeyResult> {
     const agent = await this.loadOwnedPersonalAgent(userId, agentId);
@@ -102,14 +119,52 @@ export class A2APublishService {
     }
 
     const result = await this.grpcClient.rotateKey(agent.a2aAgentId);
+    const agentCardUrl = this.toAbsoluteCardUrl(result.agentCardUrl);
 
     await this.agentModel
       .findByIdAndUpdate(agentId, {
-        $set: { a2aApiKeyHeader: result.apiKeyHeader },
+        $set: {
+          a2aApiKeyHeader: result.apiKeyHeader,
+          a2aAgentCardUrl: agentCardUrl,
+        },
       })
       .exec();
 
     this.logger.log('A2A API key rotated', {
+      agentId,
+      userId,
+      a2aAgentId: agent.a2aAgentId,
+    });
+
+    return { ...result, agentCardUrl };
+  }
+
+  /**
+   * Revoke a published agent: the A2A card and message endpoint stop serving.
+   * Clears the local publish state so the UI offers "publish" again.
+   */
+  async revokeAgent(userId: string, agentId: string): Promise<RevokeAgentResult> {
+    const agent = await this.loadOwnedPersonalAgent(userId, agentId);
+
+    if (!agent.a2aPublished || !agent.a2aAgentId) {
+      throw new ConflictException(ErrorCode.CUSTOM_AGENT_A2A_NOT_PUBLISHED);
+    }
+
+    const result = await this.grpcClient.revokeAgent(agent.a2aAgentId);
+
+    await this.agentModel
+      .findByIdAndUpdate(agentId, {
+        $set: { a2aPublished: false },
+        $unset: {
+          a2aAgentId: '',
+          a2aAgentCardUrl: '',
+          a2aApiKeyHeader: '',
+          a2aPublishedAt: '',
+        },
+      })
+      .exec();
+
+    this.logger.log('Agent revoked from A2A', {
       agentId,
       userId,
       a2aAgentId: agent.a2aAgentId,

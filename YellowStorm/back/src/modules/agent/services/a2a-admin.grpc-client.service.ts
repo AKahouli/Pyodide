@@ -15,6 +15,7 @@ import {
   ChatbotAgentInput,
   GetAgentResult,
   PublishAgentResult,
+  RevokeAgentResult,
   RotateKeyResult,
   SetAgentEnabledResult,
 } from '../types/a2a-admin.types';
@@ -170,7 +171,7 @@ export class A2AAdminGrpcClientService
 
   /**
    * Publish an agent over the A2A protocol. `agent.id` becomes the URL segment.
-   * Returns the message endpoint, agent-card URL, and the one-time API key.
+   * Returns the agent-card URL and the one-time API key.
    */
   async publishAgent(
     agent: ChatbotAgentInput,
@@ -185,7 +186,6 @@ export class A2AAdminGrpcClientService
           err: grpc.ServiceError | null,
           response: {
             agent_id: string;
-            url: string;
             agent_card_url: string;
             api_key: string;
             api_key_header: string;
@@ -194,7 +194,6 @@ export class A2AAdminGrpcClientService
           if (err) return reject(err);
           resolve({
             agentId: response.agent_id,
-            url: response.url,
             agentCardUrl: response.agent_card_url,
             apiKey: response.api_key,
             apiKeyHeader: response.api_key_header,
@@ -204,7 +203,10 @@ export class A2AAdminGrpcClientService
     });
   }
 
-  /** Rotate the API key for a published agent. Returns the new key once. */
+  /**
+   * Rotate the API key for a published agent. Returns the new key (the old one
+   * stops working) and the agent-card URL.
+   */
   async rotateKey(agentId: string): Promise<RotateKeyResult> {
     return new Promise((resolve, reject) => {
       this.client.RotateKey(
@@ -213,14 +215,41 @@ export class A2AAdminGrpcClientService
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
-          response: { agent_id: string; api_key: string; api_key_header: string },
+          response: {
+            agent_id: string;
+            agent_card_url: string;
+            api_key: string;
+            api_key_header: string;
+          },
         ) => {
           if (err) return reject(err);
           resolve({
             agentId: response.agent_id,
+            agentCardUrl: response.agent_card_url,
             apiKey: response.api_key,
             apiKeyHeader: response.api_key_header,
           });
+        },
+      );
+    });
+  }
+
+  /**
+   * Revoke a published agent: its card and message endpoint return 404.
+   * Re-exposing the agent is done by publishing it again.
+   */
+  async revokeAgent(agentId: string): Promise<RevokeAgentResult> {
+    return new Promise((resolve, reject) => {
+      this.client.RevokeAgent(
+        { agent_id: agentId },
+        new grpc.Metadata(),
+        this.unaryDeadline,
+        (
+          err: grpc.ServiceError | null,
+          response: { agent_id: string; revoked: boolean },
+        ) => {
+          if (err) return reject(err);
+          resolve({ agentId: response.agent_id, revoked: !!response.revoked });
         },
       );
     });

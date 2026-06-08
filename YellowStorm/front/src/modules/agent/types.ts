@@ -23,9 +23,7 @@ export interface Agent {
   isActive: boolean;
   /** Whether this agent has been published over the A2A protocol. */
   a2aPublished?: boolean;
-  /** A2A message endpoint (only present once published). */
-  a2aUrl?: string;
-  /** A2A agent-card URL (only present once published). */
+  /** A2A agent-card URL, absolute (only present once published). */
   a2aAgentCardUrl?: string;
   createdBy: string;
   createdAt: string;
@@ -38,7 +36,6 @@ export interface Agent {
  */
 export interface A2APublishResult {
   agentId: string;
-  url: string;
   agentCardUrl: string;
   apiKey: string;
   apiKeyHeader: string;
@@ -46,8 +43,14 @@ export interface A2APublishResult {
 
 export interface A2ARotateKeyResult {
   agentId: string;
+  agentCardUrl: string;
   apiKey: string;
   apiKeyHeader: string;
+}
+
+export interface A2ARevokeResult {
+  agentId: string;
+  revoked: boolean;
 }
 
 /**
@@ -208,6 +211,7 @@ export interface AgentActions {
   refreshAgents: () => Promise<void>;
   publishAgentToA2A: (id: string) => Promise<A2APublishResult>;
   rotateAgentA2AKey: (id: string) => Promise<A2ARotateKeyResult>;
+  revokeAgentA2A: (id: string) => Promise<A2ARevokeResult>;
   
   // Evaluation Actions
   fetchDatasets: () => Promise<void>;
