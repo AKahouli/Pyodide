@@ -27,6 +27,7 @@ export interface UsePlaybookCanvasOutputFormatHandlersParams {
   outputFormatDraft: string;
   executionForNodeActions: PlaybookExecution | null;
   getTaskResultForNode: (nodeId: string) => { status?: string; output?: string | null; components?: unknown[] | null } | null;
+  onBaselineSaved?: (nodeId: string) => void;
   validateTaskReplay: (
     playbookId: string,
     taskId: string,
@@ -66,6 +67,7 @@ export function usePlaybookCanvasOutputFormatHandlers({
   outputFormatDraft,
   executionForNodeActions,
   getTaskResultForNode,
+  onBaselineSaved,
   validateTaskReplay,
 }: UsePlaybookCanvasOutputFormatHandlersParams): UsePlaybookCanvasOutputFormatHandlersResult {
   const openOutputFormatEditor = useCallback(async (taskId: string) => {
@@ -153,8 +155,9 @@ export function usePlaybookCanvasOutputFormatHandlers({
           console.debug('Failed to refresh output format after baseline save', error);
         }
       }
+      onBaselineSaved?.(nodeId);
     },
-    [executionForNodeActions, getTaskResultForNode, id, grabOutputFormatTemplate, validateTaskReplay],
+    [executionForNodeActions, getTaskResultForNode, id, grabOutputFormatTemplate, onBaselineSaved, validateTaskReplay],
   );
 
   const canSaveBaseline = useCallback(

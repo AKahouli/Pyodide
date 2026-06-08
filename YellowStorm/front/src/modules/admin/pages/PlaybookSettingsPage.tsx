@@ -19,7 +19,7 @@ import type { AdminModelResponse, AdminPlaybookSettings } from '../types';
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
 
 const DEFAULT_INTENT_NORMALIZATION_LIMITS = {
-  maxWorkflowPlanChanges: 8,
+  maxWorkflowPlanChanges: 100,
   maxInputPorts: 4,
   maxOutputPorts: 4,
   maxIteratorBodySteps: 12,
@@ -27,7 +27,7 @@ const DEFAULT_INTENT_NORMALIZATION_LIMITS = {
 };
 
 const LIMIT_FIELD_CONFIG = [
-  { key: 'maxWorkflowPlanChanges', min: 1, max: 50 },
+  { key: 'maxWorkflowPlanChanges', min: 1, max: 100 },
   { key: 'maxInputPorts', min: 1, max: 20 },
   { key: 'maxOutputPorts', min: 1, max: 20 },
   { key: 'maxIteratorBodySteps', min: 1, max: 50 },

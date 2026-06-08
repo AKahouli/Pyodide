@@ -31,6 +31,22 @@ beforeAll(() => {
 });
 
 describe('AIMessageContent charts', () => {
+  it('renders markdown lists with compact shared spacing', () => {
+    const parts: MessageContentPart[] = [
+      {
+        type: 'text',
+        content: '- **Best approach:** use a newsletter funnel\n- **Core strategy:** publish useful insights\n  - AI adoption\n  - data strategy',
+      },
+    ];
+
+    const { container } = render(<AIMessageContent parts={parts} />);
+    const list = container.querySelector('ul');
+    const listItem = container.querySelector('li');
+
+    expect(list).toHaveClass('my-2');
+    expect(listItem).toHaveClass('my-0', 'leading-relaxed');
+  });
+
   it('renders inline citation markers without bracket text', () => {
     const parts: MessageContentPart[] = [
       {

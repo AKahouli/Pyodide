@@ -71,7 +71,7 @@ function normalizePlaybookIntentNormalizationLimits(
       value?.maxWorkflowPlanChanges,
       DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
       1,
-      50,
+      100,
     ),
     maxInputPorts: normalizeLimit(
       value?.maxInputPorts,

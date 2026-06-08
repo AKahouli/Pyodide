@@ -201,6 +201,71 @@ def test_build_prompt_sandbox_note_can_be_appended() -> None:
 
 
 class TestStepResultReasoningTrace:
+    def test_plain_text_response_extracts_public_reasoning_trace(self):
+        response = (
+            "invoice\n"
+            "---PUBLIC_REASONING_TRACE_JSON---\n"
+            '[{"id":"step_1","type":"observation","label":"Inspected document metadata",'
+            '"description":"Used source cues.","confidence":0.99}]'
+        )
+
+        result = finalize_step_result(
+            {"ports": [{"id": "default", "type": "text"}]},
+            response,
+        )
+
+        assert result["output"] == "invoice"
+        assert result["display_text"] == "invoice"
+        assert result["outputs"]["default"]["content"] == "invoice"
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Inspected document metadata",
+                "description": "Used source cues.",
+                "confidence": 0.99,
+            }
+        ]
+
+    def test_plain_text_response_ignores_malformed_public_reasoning_trace(self):
+        response = "invoice\n---PUBLIC_REASONING_TRACE_JSON---\nnot-json"
+
+        result = finalize_step_result(
+            {"ports": [{"id": "default", "type": "text"}]},
+            response,
+        )
+
+        assert result["output"] == "invoice"
+        assert result["outputs"]["default"]["content"] == "invoice"
+        assert "reasoning_trace" not in result
+
+    def test_plain_text_response_uses_last_public_reasoning_trace_marker(self):
+        response = (
+            "Some echoed instructions\n"
+            "---PUBLIC_REASONING_TRACE_JSON---\n"
+            "[{\"id\":\"example\",\"type\":\"observation\",\"label\":\"Example\",\"description\":\"Example only.\"}]\n"
+            "invoice\n"
+            "---PUBLIC_REASONING_TRACE_JSON---\n"
+            '[{"id":"step_1","type":"observation","label":"Inspected document metadata",'
+            '"description":"Used source cues."}]'
+        )
+
+        result = finalize_step_result(
+            {"ports": [{"id": "default", "type": "text"}]},
+            response,
+        )
+
+        assert result["output"] == "Some echoed instructions\n---PUBLIC_REASONING_TRACE_JSON---\n[{\"id\":\"example\",\"type\":\"observation\",\"label\":\"Example\",\"description\":\"Example only.\"}]\ninvoice"
+        assert result["outputs"]["default"]["content"] == result["output"]
+        assert result["reasoning_trace"] == [
+            {
+                "id": "step_1",
+                "type": "observation",
+                "label": "Inspected document metadata",
+                "description": "Used source cues.",
+            }
+        ]
+
     def test_structured_response_extracts_reasoning_trace(self):
         response = json.dumps({
             "display_text": "Summary",

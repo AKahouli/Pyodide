@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +15,30 @@ vi.mock('../store', () => ({
 }));
 
 describe('PlaybookRouterConfigSection', () => {
+  it('keeps focus while typing an output label', async () => {
+    currentPlaybookState.value = makePlaybook();
+
+    function Harness() {
+      const [value, setValue] = useState({
+        outputLabels: ['retry', 'done', '__error__'],
+        maxIterations: 3,
+        defaultLabel: 'retry',
+        conditions: [],
+      });
+
+      return <PlaybookRouterConfigSection value={value} onChange={setValue} />;
+    }
+
+    render(<Harness />);
+
+    const input = screen.getAllByRole('textbox')[0];
+    await userEvent.click(input);
+    await userEvent.type(input, 'x');
+
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue('retryx');
+  });
+
   it('adds a deterministic condition with source selectors', async () => {
     const onChange = vi.fn();
     currentPlaybookState.value = makePlaybook({
