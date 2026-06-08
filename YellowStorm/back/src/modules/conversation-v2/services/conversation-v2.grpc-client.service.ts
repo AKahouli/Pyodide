@@ -14,6 +14,7 @@ import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { Observable } from 'rxjs';
+import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import {
   ConversationV2Event,
   SessionWithEvents,
@@ -296,6 +297,7 @@ export class ConversationV2GrpcClientService
       repoName: string;
       repoUrl?: string;
     },
+    skills?: IGrpcSkill[],
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
       const request: Record<string, unknown> = {
@@ -313,6 +315,7 @@ export class ConversationV2GrpcClientService
           repo_url: connectorRepo.repoUrl ?? '',
         };
       }
+      if (skills?.length) request.skills = skills;
       const call = this.client.Chat(request);
       call.on('data', (raw: RawProtoEvent) => {
         try {

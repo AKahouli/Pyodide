@@ -18,6 +18,7 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ChatCompletionModule } from '@modules/chat-completion';
 import { ModelsModule } from '@modules/models/models.module';
+import { SkillModule } from '@modules/skill/skill.module';
 import { ConversationV2NameGeneratorService } from './services/conversation-v2-name-generator.service';
 import conversationV2Config from '@config/conversation-v2.config';
 import {
@@ -37,6 +38,7 @@ import {
     forwardRef(() => WorkspaceModule),
     ChatCompletionModule,
     ModelsModule,
+    SkillModule,
     MongooseModule.forFeature([
       { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
       { name: ConversationV2Event.name, schema: ConversationV2EventSchema },

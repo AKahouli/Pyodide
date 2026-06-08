@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, Matches, MinLength } from 'class-validator';
+import { IsArray, IsOptional, IsString, MaxLength, Matches, MinLength } from 'class-validator';
 
 export class SendMessageQueryDto {
   @IsString()
@@ -53,6 +53,11 @@ export class SendMessageQueryDto {
   @IsOptional()
   @IsString()
   connectorRepoUrl?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skillIds?: string[];
 }
 
 /**
@@ -97,4 +102,9 @@ export class SendMessageBodyDto {
   @IsOptional()
   @IsString()
   connectorRepoUrl?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skillIds?: string[];
 }

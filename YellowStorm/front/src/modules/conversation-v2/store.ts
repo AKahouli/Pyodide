@@ -45,6 +45,8 @@ interface State {
     repoName: string;
     repoUrl?: string;
   } | null;
+  /** Skill IDs selected for the conversation; sent with every message. */
+  selectedSkillIds: string[];
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -116,6 +118,10 @@ interface Actions {
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
+  /** Replace the full set of selected skills for the conversation. */
+  setSelectedSkillIds: (ids: string[]) => void;
+  /** Toggle one skill on/off for the conversation. */
+  toggleSelectedSkill: (id: string) => void;
   /** Optimistic rename of the current session. Updates title and pointer list. */
   renameCurrent: (title: string) => Promise<void>;
   /** Delete the current session. Resolves once removed from pointer list. */
@@ -140,6 +146,7 @@ const initial: State = {
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
+      selectedSkillIds: [],
       streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -345,6 +352,7 @@ export const useConversationV2Store = create<State & Actions>()(
         set({ streaming: true, streamError: null }, false, 'sendMessage/optimistic');
 
         const repo = get().selectedConnectorRepo;
+        const skillIds = get().selectedSkillIds;
         try {
           await conversationV2Api.sendMessage(sessionId, {
             message,
@@ -359,6 +367,7 @@ export const useConversationV2Store = create<State & Actions>()(
                   connectorRepoUrl: repo.repoUrl,
                 }
               : {}),
+            ...(skillIds.length ? { skillIds } : {}),
           });
         } catch (err) {
           set(
@@ -451,6 +460,18 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       setSelectedConnectorRepo: (repo) =>
         set({ selectedConnectorRepo: repo }, false, 'setSelectedConnectorRepo'),
+      setSelectedSkillIds: (ids) =>
+        set({ selectedSkillIds: ids }, false, 'setSelectedSkillIds'),
+      toggleSelectedSkill: (id) =>
+        set(
+          (s) => ({
+            selectedSkillIds: s.selectedSkillIds.includes(id)
+              ? s.selectedSkillIds.filter((x) => x !== id)
+              : [...s.selectedSkillIds, id],
+          }),
+          false,
+          'toggleSelectedSkill',
+        ),
       renameCurrent: async (title) => {
         const id = get().sessionId;
         if (!id) return;

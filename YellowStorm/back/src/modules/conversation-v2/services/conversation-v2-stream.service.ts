@@ -16,6 +16,8 @@ import { ConversationV2NameGeneratorService } from './conversation-v2-name-gener
 import { ConversationV2SessionService } from './conversation-v2-session.service';
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { SkillService } from '@modules/skill/skill.service';
+import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 export interface StartStreamRequest {
@@ -29,6 +31,7 @@ export interface StartStreamRequest {
     repoName: string;
     repoUrl?: string;
   };
+  skillIds?: string[];
 }
 
 interface ActiveStream {
@@ -67,6 +70,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly sessions: ConversationV2SessionService,
     private readonly gateway: ConversationV2StreamGatewayService,
     private readonly workspaceDocuments: WorkspaceDocumentService,
+    private readonly skillService: SkillService,
   ) {}
 
   onModuleDestroy(): void {
@@ -172,7 +176,10 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       });
     }
 
-    this.runGrpc(userId, sessionId, aiSessionId, systemWorkspaceId, req);
+    const skills = req.skillIds?.length
+      ? await this.skillService.findByIdsForGrpc(req.skillIds)
+      : [];
+    this.runGrpc(userId, sessionId, aiSessionId, systemWorkspaceId, req, skills);
   }
 
   /**
@@ -201,6 +208,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     aiSessionId: string,
     systemWorkspaceId: string | null,
     req: StartStreamRequest,
+    skills: IGrpcSkill[],
   ): void {
     const key = `${userId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
@@ -262,7 +270,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : req.message;
 
     const subscription = this.grpcClient
-      .chat(userId, aiSessionId, gRpcMessage, req.model, req.connectorRepo)
+      .chat(userId, aiSessionId, gRpcMessage, req.model, req.connectorRepo, skills)
       .subscribe({
         next: (event) => {
           resetIdle();

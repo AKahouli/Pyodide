@@ -36,7 +36,10 @@ import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-d
 import { useChefs, useDefaultModel, useModels } from '@/modules/models';
 import { useConversationV2PointersStore, useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
-import { getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
+import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
+import { RecentSkillsMenu } from '@/modules/skill/components/RecentSkillsMenu';
+import { ManageSkillsDialog } from '@/modules/skill/components/ManageSkillsDialog';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void;
@@ -67,12 +70,26 @@ export function Composer({ onSend }: ComposerProps) {
   const [connectorDialogOpen, setConnectorDialogOpen] = useState(false);
   const [selectedConnector, setSelectedConnector] = useState<ConnectorOption | null>(null);
 
+  const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
+  const selectedSkillIds = useConversationV2Store((s) => s.selectedSkillIds);
+  const toggleSelectedSkill = useConversationV2Store((s) => s.toggleSelectedSkill);
+
   useEffect(() => {
     setConnectorsLoading(true);
     getActiveConnectors()
       .then((data) => setConnectors(data || []))
       .catch((err) => console.error('Failed to fetch connectors:', err))
       .finally(() => setConnectorsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    setSkillsLoading(true);
+    getActiveSkills()
+      .then((data) => setSkills(data || []))
+      .catch((err) => console.error('Failed to fetch skills:', err))
+      .finally(() => setSkillsLoading(false));
   }, []);
 
   const handleRepositorySelect = useCallback(
@@ -190,6 +207,13 @@ export function Composer({ onSend }: ComposerProps) {
                         )}
                       </PromptInputActionMenuSubContent>
                     </PromptInputActionMenuSub>
+                    <RecentSkillsMenu
+                      skills={skills}
+                      loading={skillsLoading}
+                      selectedIds={selectedSkillIds}
+                      onSelectSkill={(skill) => toggleSelectedSkill(skill.id)}
+                      onOpenManage={() => setManageSkillsOpen(true)}
+                    />
                   </PromptInputActionMenuContent>
                 </PromptInputActionMenu>
                 {selectedConnectorRepo && (
@@ -198,6 +222,18 @@ export function Composer({ onSend }: ComposerProps) {
                     {selectedConnectorRepo.repoName}
                   </span>
                 )}
+                {skills
+                  .filter((s) => selectedSkillIds.includes(s.id))
+                  .map((s) => (
+                    <button
+                      key={s.id}
+                      type='button'
+                      onClick={() => toggleSelectedSkill(s.id)}
+                      className='inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground'
+                    >
+                      {s.name}
+                    </button>
+                  ))}
                 {streaming && (
                   <PromptInputButton type='button' onClick={() => void pause()}>
                     <PauseIcon className='size-4' />
@@ -226,6 +262,14 @@ export function Composer({ onSend }: ComposerProps) {
           onOpenChange={setConnectorDialogOpen}
           connector={selectedConnector}
           onRepositorySelect={handleRepositorySelect}
+        />
+        <ManageSkillsDialog
+          open={manageSkillsOpen}
+          onOpenChange={setManageSkillsOpen}
+          skills={skills}
+          loading={skillsLoading}
+          selectedIds={selectedSkillIds}
+          onToggleSkill={(skill) => toggleSelectedSkill(skill.id)}
         />
       </div>
     </div>

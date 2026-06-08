@@ -7,6 +7,9 @@ import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import {
   PromptInput,
+  PromptInputActionMenu,
+  PromptInputActionMenuContent,
+  PromptInputActionMenuTrigger,
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
@@ -43,10 +46,13 @@ import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
 import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
+import { RecentSkillsMenu, ManageSkillsDialog } from '@/modules/skill';
+import { getActiveSkills } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
 
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
@@ -69,6 +75,9 @@ export function NewConversationPage() {
   // previously open conversation. Direct setState avoids PATCHing the old one.
   useEffect(() => {
     useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [] });
+    // The agent (v2) path keeps its own skill selection in the conv-v2 store;
+    // reset it too so skills from a previous v2 session don't leak in.
+    useConversationV2Store.getState().setSelectedSkillIds([]);
   }, []);
 
   const limitPlaceholder = useMemo(() => {
@@ -334,6 +343,22 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
   const { t } = useModuleTranslation('conversation');
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
 
+  // Skills selected for the agent (v2) conversation. Kept in the conv-v2 store
+  // so the session page's initial send (and every later message) ships them.
+  const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
+  const selectedSkillIds = useConversationV2Store((s) => s.selectedSkillIds);
+  const toggleSelectedSkill = useConversationV2Store((s) => s.toggleSelectedSkill);
+
+  useEffect(() => {
+    setSkillsLoading(true);
+    getActiveSkills()
+      .then((data) => setSkills(data || []))
+      .catch((err) => console.error('Failed to fetch skills:', err))
+      .finally(() => setSkillsLoading(false));
+  }, []);
+
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -373,6 +398,30 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           />
         </PromptInputBody>
         <PromptInputFooter>
+          <PromptInputActionMenu>
+            <PromptInputActionMenuTrigger />
+            <PromptInputActionMenuContent>
+              <RecentSkillsMenu
+                skills={skills}
+                loading={skillsLoading}
+                selectedIds={selectedSkillIds}
+                onSelectSkill={(skill) => toggleSelectedSkill(skill.id)}
+                onOpenManage={() => setManageSkillsOpen(true)}
+              />
+            </PromptInputActionMenuContent>
+          </PromptInputActionMenu>
+          {skills
+            .filter((s) => selectedSkillIds.includes(s.id))
+            .map((s) => (
+              <button
+                key={s.id}
+                type='button'
+                onClick={() => toggleSelectedSkill(s.id)}
+                className='inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground'
+              >
+                {s.name}
+              </button>
+            ))}
           <WorkspaceSelect
             selectedIds={selectedWorkspaceIds}
             onChange={setSelectedWorkspaceIds}
@@ -419,6 +468,14 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
         </PromptInputFooter>
       </PromptInput>
+      <ManageSkillsDialog
+        open={manageSkillsOpen}
+        onOpenChange={setManageSkillsOpen}
+        skills={skills}
+        loading={skillsLoading}
+        selectedIds={selectedSkillIds}
+        onToggleSkill={(skill) => toggleSelectedSkill(skill.id)}
+      />
     </PromptInputProvider>
   );
 }

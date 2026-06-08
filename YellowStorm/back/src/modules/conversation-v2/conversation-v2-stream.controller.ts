@@ -156,6 +156,7 @@ export class ConversationV2StreamController {
             repoUrl: body.connectorRepoUrl,
           }
         : undefined,
+      skillIds: body.skillIds,
     });
     return { accepted: true };
   }
