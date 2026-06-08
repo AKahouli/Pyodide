@@ -17,7 +17,10 @@ from google.adk.tools import AgentTool
 from google.adk.tools.mcp_tool import MCPToolset
 
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
-from src.smart_rag.tools.utilities.connector_tools import create_connector_tools
+from src.smart_rag.tools.utilities.connector_tools import (
+    ConnectorToolContext,
+    create_connector_tools,
+)
 from src.smart_rag.agents.factories.tool_factory import ToolFactory
 from src.smart_rag.infrastructure.diagram.reference_tracker import (
     DiagramReferenceTracker,
@@ -259,8 +262,12 @@ class AgentFactory:
                 tools.extend(
                     create_connector_tools(
                         connector_bindings,
-                        workspace_id=connector_workspace_id,
-                        brain_ids=brain_ids,
+                        ConnectorToolContext(
+                            workspace_id=connector_workspace_id,
+                            brain_ids=brain_ids,
+                            brain_documents=brain_documents,
+                            session_id=session_id,
+                        ),
                     )
                 )
             except Exception as e:
