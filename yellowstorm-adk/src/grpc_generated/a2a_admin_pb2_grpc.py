@@ -44,10 +44,10 @@ class A2AAdminServiceStub(object):
                 request_serializer=a2a__admin__pb2.RotateKeyRequest.SerializeToString,
                 response_deserializer=a2a__admin__pb2.RotateKeyResponse.FromString,
                 _registered_method=True)
-        self.SetAgentEnabled = channel.unary_unary(
-                '/a2a_admin.A2AAdminService/SetAgentEnabled',
-                request_serializer=a2a__admin__pb2.SetAgentEnabledRequest.SerializeToString,
-                response_deserializer=a2a__admin__pb2.SetAgentEnabledResponse.FromString,
+        self.RevokeAgent = channel.unary_unary(
+                '/a2a_admin.A2AAdminService/RevokeAgent',
+                request_serializer=a2a__admin__pb2.RevokeAgentRequest.SerializeToString,
+                response_deserializer=a2a__admin__pb2.RevokeAgentResponse.FromString,
                 _registered_method=True)
         self.GetAgent = channel.unary_unary(
                 '/a2a_admin.A2AAdminService/GetAgent',
@@ -71,7 +71,7 @@ class A2AAdminServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def SetAgentEnabled(self, request, context):
+    def RevokeAgent(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -96,10 +96,10 @@ def add_A2AAdminServiceServicer_to_server(servicer, server):
                     request_deserializer=a2a__admin__pb2.RotateKeyRequest.FromString,
                     response_serializer=a2a__admin__pb2.RotateKeyResponse.SerializeToString,
             ),
-            'SetAgentEnabled': grpc.unary_unary_rpc_method_handler(
-                    servicer.SetAgentEnabled,
-                    request_deserializer=a2a__admin__pb2.SetAgentEnabledRequest.FromString,
-                    response_serializer=a2a__admin__pb2.SetAgentEnabledResponse.SerializeToString,
+            'RevokeAgent': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevokeAgent,
+                    request_deserializer=a2a__admin__pb2.RevokeAgentRequest.FromString,
+                    response_serializer=a2a__admin__pb2.RevokeAgentResponse.SerializeToString,
             ),
             'GetAgent': grpc.unary_unary_rpc_method_handler(
                     servicer.GetAgent,
@@ -172,7 +172,7 @@ class A2AAdminService(object):
             _registered_method=True)
 
     @staticmethod
-    def SetAgentEnabled(request,
+    def RevokeAgent(request,
             target,
             options=(),
             channel_credentials=None,
@@ -185,9 +185,9 @@ class A2AAdminService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/a2a_admin.A2AAdminService/SetAgentEnabled',
-            a2a__admin__pb2.SetAgentEnabledRequest.SerializeToString,
-            a2a__admin__pb2.SetAgentEnabledResponse.FromString,
+            '/a2a_admin.A2AAdminService/RevokeAgent',
+            a2a__admin__pb2.RevokeAgentRequest.SerializeToString,
+            a2a__admin__pb2.RevokeAgentResponse.FromString,
             options,
             channel_credentials,
             insecure,

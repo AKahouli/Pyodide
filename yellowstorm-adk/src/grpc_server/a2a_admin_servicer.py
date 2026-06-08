@@ -24,6 +24,10 @@ def _public_url(agent_id: str) -> str:
     return f"{base}/a2a/{agent_id}" if base else f"/a2a/{agent_id}"
 
 
+def _agent_card_url(agent_id: str) -> str:
+    return f"{_public_url(agent_id)}/.well-known/agent-card.json"
+
+
 class A2AAdminServicer(a2a_admin_pb2_grpc.A2AAdminServiceServicer):
     """Manage published A2A agents."""
 
@@ -42,12 +46,10 @@ class A2AAdminServicer(a2a_admin_pb2_grpc.A2AAdminServiceServicer):
             definition=definition,
             user_id=request.user_id or None,
         )
-        url = _public_url(agent_id)
         logger.info(f"[gRPC] A2A agent published: {agent_id}")
         return a2a_admin_pb2.PublishAgentResponse(
             agent_id=agent_id,
-            url=url,
-            agent_card_url=f"{url}/.well-known/agent-card.json",
+            agent_card_url=_agent_card_url(agent_id),
             api_key=api_key,
             api_key_header=_api_key_header(),
         )
@@ -58,16 +60,20 @@ class A2AAdminServicer(a2a_admin_pb2_grpc.A2AAdminServiceServicer):
             await context.abort(grpc.StatusCode.NOT_FOUND, "agent not found")
         return a2a_admin_pb2.RotateKeyResponse(
             agent_id=request.agent_id,
+            agent_card_url=_agent_card_url(request.agent_id),
             api_key=api_key,
             api_key_header=_api_key_header(),
         )
 
-    async def SetAgentEnabled(self, request, context):
-        ok = await A2AAgentRepository.set_enabled(request.agent_id, request.enabled)
+    async def RevokeAgent(self, request, context):
+        # Remove the agent from the A2A surface (card + message endpoint -> 404).
+        # Re-exposing is done by publishing the agent again.
+        ok = await A2AAgentRepository.set_enabled(request.agent_id, False)
         if not ok:
             await context.abort(grpc.StatusCode.NOT_FOUND, "agent not found")
-        return a2a_admin_pb2.SetAgentEnabledResponse(
-            agent_id=request.agent_id, enabled=request.enabled
+        logger.info(f"[gRPC] A2A agent revoked: {request.agent_id}")
+        return a2a_admin_pb2.RevokeAgentResponse(
+            agent_id=request.agent_id, revoked=True
         )
 
     async def GetAgent(self, request, context):
