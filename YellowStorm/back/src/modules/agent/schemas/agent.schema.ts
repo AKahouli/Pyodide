@@ -74,6 +74,28 @@ export class Agent extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   createdBy!: Types.ObjectId;
 
+  // ===== A2A publishing =====
+  // Set once the agent is published over the A2A protocol. The API key itself is
+  // never stored (it is returned once by the gRPC service); only non-secret
+  // metadata is persisted so the UI knows whether to publish or rotate the key.
+  @Prop({ default: false })
+  a2aPublished!: boolean;
+
+  @Prop({ type: String })
+  a2aAgentId?: string;
+
+  @Prop({ type: String })
+  a2aUrl?: string;
+
+  @Prop({ type: String })
+  a2aAgentCardUrl?: string;
+
+  @Prop({ type: String })
+  a2aApiKeyHeader?: string;
+
+  @Prop({ type: Date })
+  a2aPublishedAt?: Date;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

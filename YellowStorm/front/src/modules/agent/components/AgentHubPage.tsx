@@ -21,6 +21,7 @@ import { AgentHubFilters } from './hub/AgentHubFilters';
 import { AgentHubGrid } from './hub/AgentHubGrid';
 import { AgentHubBulkActionBar } from './hub/AgentHubBulkActionBar';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
+import { A2APublishDialog } from './A2APublishDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function AgentHubPage() {
@@ -177,6 +178,8 @@ export function AgentHubPage() {
               onDelete={ops.setDeletingAgent}
               onView={ops.openView}
               onDuplicate={ops.duplicateAgent}
+              onPublishA2A={ops.publishOrRotateA2A}
+              publishingA2AId={ops.a2aProcessingId}
             />
           )}
         </div>
@@ -191,6 +194,8 @@ export function AgentHubPage() {
         onSave={ops.handleSave}
         saving={ops.saving}
       />
+
+      <A2APublishDialog result={ops.a2aResult} onClose={() => ops.setA2aResult(null)} />
 
       {ops.viewingAgent && (
         <CreateEditAgentDialog

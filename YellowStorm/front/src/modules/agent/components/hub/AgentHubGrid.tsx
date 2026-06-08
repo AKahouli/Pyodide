@@ -17,6 +17,8 @@ interface AgentHubGridProps {
   onDelete: (agent: Agent) => void;
   onView: (agent: Agent) => void;
   onDuplicate: (agent: Agent) => void;
+  onPublishA2A: (agent: Agent) => void;
+  publishingA2AId: string | null;
 }
 
 export function AgentHubGrid({
@@ -29,6 +31,8 @@ export function AgentHubGrid({
   onDelete,
   onView,
   onDuplicate,
+  onPublishA2A,
+  publishingA2AId,
 }: AgentHubGridProps) {
   const { t } = useModuleTranslation('agent');
 
@@ -72,6 +76,8 @@ export function AgentHubGrid({
                   onDelete={onDelete}
                   onView={onView}
                   onDuplicate={onDuplicate}
+                  onPublishA2A={onPublishA2A}
+                  publishingA2A={publishingA2AId === agent.id}
                 />
               ))}
             </div>
