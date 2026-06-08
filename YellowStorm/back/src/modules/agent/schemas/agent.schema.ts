@@ -85,9 +85,6 @@ export class Agent extends Document {
   a2aAgentId?: string;
 
   @Prop({ type: String })
-  a2aUrl?: string;
-
-  @Prop({ type: String })
   a2aAgentCardUrl?: string;
 
   @Prop({ type: String })

@@ -29,7 +29,6 @@ export interface ChatbotAgentInput {
 
 export interface PublishAgentResult {
   agentId: string;
-  url: string;
   agentCardUrl: string;
   apiKey: string;
   apiKeyHeader: string;
@@ -37,8 +36,14 @@ export interface PublishAgentResult {
 
 export interface RotateKeyResult {
   agentId: string;
+  agentCardUrl: string;
   apiKey: string;
   apiKeyHeader: string;
+}
+
+export interface RevokeAgentResult {
+  agentId: string;
+  revoked: boolean;
 }
 
 export interface SetAgentEnabledResult {

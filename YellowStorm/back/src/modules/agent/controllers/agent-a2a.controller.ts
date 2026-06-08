@@ -17,6 +17,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
 import {
   PublishAgentResult,
+  RevokeAgentResult,
   RotateKeyResult,
 } from '../types/a2a-admin.types';
 
@@ -51,5 +52,18 @@ export class AgentA2AController {
     @Param('agentId') agentId: string,
   ): Promise<RotateKeyResult> {
     return this.a2aPublishService.rotateKey(user._id.toString(), agentId);
+  }
+
+  @Post('revoke')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke a published A2A agent' })
+  @ApiParam({ name: 'agentId', description: 'Agent ID' })
+  @ApiResponse({ status: 200, description: 'Agent revoked from the A2A surface' })
+  @ApiResponse({ status: 409, description: 'Agent has not been published over A2A' })
+  async revoke(
+    @CurrentUser() user: UserDocument,
+    @Param('agentId') agentId: string,
+  ): Promise<RevokeAgentResult> {
+    return this.a2aPublishService.revokeAgent(user._id.toString(), agentId);
   }
 }

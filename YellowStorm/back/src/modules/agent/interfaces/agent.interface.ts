@@ -20,7 +20,6 @@ export interface IAgentResponse {
   // A2A publishing state (non-secret). The API key is never returned here; it is
   // only surfaced once by the dedicated publish/rotate endpoints.
   a2aPublished: boolean;
-  a2aUrl?: string;
   a2aAgentCardUrl?: string;
   createdBy: string;
   createdAt: Date;

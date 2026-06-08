@@ -8,12 +8,10 @@ import { useModuleTranslation } from '@/modules/localization';
 
 /**
  * Credentials surfaced in the A2A dialog after a publish or key rotation.
- * `rotated` distinguishes the two so the dialog can adjust its copy. For a
- * rotation the endpoint URLs are carried over from the agent we acted on.
+ * `rotated` distinguishes the two so the dialog can adjust its copy.
  */
 export interface A2ADialogState {
   agent: Agent;
-  url: string;
   agentCardUrl: string;
   apiKey: string;
   apiKeyHeader: string;
@@ -29,6 +27,7 @@ export interface UseAgentOperationsResult {
   duplicating: boolean;
   a2aResult: A2ADialogState | null;
   a2aProcessingId: string | null;
+  revokingAgent: Agent | null;
   openCreate: () => void;
   openEdit: (agent: Agent) => void;
   openView: (agent: Agent) => void;
@@ -36,15 +35,23 @@ export interface UseAgentOperationsResult {
   setShowCreateEditDialog: (open: boolean) => void;
   setViewingAgent: (agent: Agent | null) => void;
   setA2aResult: (result: A2ADialogState | null) => void;
+  setRevokingAgent: (agent: Agent | null) => void;
   handleSave: (data: UserAgentFormValues) => Promise<void>;
   confirmDelete: () => Promise<void>;
   duplicateAgent: (agent: Agent) => Promise<void>;
   publishOrRotateA2A: (agent: Agent) => Promise<void>;
+  confirmRevokeA2A: () => Promise<void>;
 }
 
 export function useAgentOperations(): UseAgentOperationsResult {
-  const { createAgent, updateAgent, deleteAgent, publishAgentToA2A, rotateAgentA2AKey } =
-    useAgentStore();
+  const {
+    createAgent,
+    updateAgent,
+    deleteAgent,
+    publishAgentToA2A,
+    rotateAgentA2AKey,
+    revokeAgentA2A,
+  } = useAgentStore();
   const { t } = useModuleTranslation('agent');
 
   const [showCreateEditDialog, setShowCreateEditDialog] = useState(false);
@@ -55,6 +62,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
   const [duplicating, setDuplicating] = useState(false);
   const [a2aResult, setA2aResult] = useState<A2ADialogState | null>(null);
   const [a2aProcessingId, setA2aProcessingId] = useState<string | null>(null);
+  const [revokingAgent, setRevokingAgent] = useState<Agent | null>(null);
 
   const openCreate = useCallback(() => {
     setEditingAgent(null);
@@ -171,8 +179,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           const result = await rotateAgentA2AKey(agent.id);
           setA2aResult({
             agent,
-            url: agent.a2aUrl ?? '',
-            agentCardUrl: agent.a2aAgentCardUrl ?? '',
+            agentCardUrl: result.agentCardUrl,
             apiKey: result.apiKey,
             apiKeyHeader: result.apiKeyHeader,
             rotated: true,
@@ -182,7 +189,6 @@ export function useAgentOperations(): UseAgentOperationsResult {
           const result = await publishAgentToA2A(agent.id);
           setA2aResult({
             agent,
-            url: result.url,
             agentCardUrl: result.agentCardUrl,
             apiKey: result.apiKey,
             apiKeyHeader: result.apiKeyHeader,
@@ -206,6 +212,23 @@ export function useAgentOperations(): UseAgentOperationsResult {
     [publishAgentToA2A, rotateAgentA2AKey, t],
   );
 
+  const confirmRevokeA2A = useCallback(async () => {
+    if (!revokingAgent) return;
+    const agent = revokingAgent;
+    setA2aProcessingId(agent.id);
+    try {
+      await revokeAgentA2A(agent.id);
+      setRevokingAgent(null);
+      toast.success(t('a2a.toasts.revoked', { defaultValue: 'Agent revoked from A2A' }));
+    } catch (err) {
+      toast.error(t('a2a.errors.revokeFailed', { defaultValue: 'Failed to revoke agent' }), {
+        description: err instanceof Error ? err.message : t('list.errors.unknownError'),
+      });
+    } finally {
+      setA2aProcessingId(null);
+    }
+  }, [revokingAgent, revokeAgentA2A, t]);
+
   return {
     editingAgent,
     viewingAgent,
@@ -215,6 +238,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
     duplicating,
     a2aResult,
     a2aProcessingId,
+    revokingAgent,
     openCreate,
     openEdit,
     openView,
@@ -222,9 +246,11 @@ export function useAgentOperations(): UseAgentOperationsResult {
     setShowCreateEditDialog,
     setViewingAgent,
     setA2aResult,
+    setRevokingAgent,
     handleSave,
     confirmDelete,
     duplicateAgent,
     publishOrRotateA2A,
+    confirmRevokeA2A,
   };
 }
