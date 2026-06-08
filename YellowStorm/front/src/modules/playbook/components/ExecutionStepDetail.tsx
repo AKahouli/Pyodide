@@ -11,6 +11,7 @@ import { PortContentViewer } from './PortContentViewer';
 import { ReplayReportPanel } from './ReplayReportPanel';
 import { ReplayContextMappingCard } from './ReplayContextMappingCard';
 import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
+import { getStepNumberTone } from './ExecutionStepList';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -310,11 +311,11 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+function getExecutionModeLabelKey(mode?: string): string {
+  if (mode === 'replay_strict') return 'execution.modeLabel.exactReference';
+  if (mode === 'replay_flex') return 'execution.modeLabel.flexibleReference';
+  if (mode === 'replay_adaptive') return 'execution.modeLabel.referenceChecked';
+  return 'execution.modeLabel.liveRun';
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -1232,6 +1233,9 @@ export function ExecutionStepDetail({
             </div>
           )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className={cn('flex h-6 min-w-6 shrink-0 items-center justify-center rounded border px-1 text-[11px] font-bold shadow-sm', getStepNumberTone(step.status, true))}>
+              {(currentTask?.executionOrder ?? (step.order - 1)) + 1}
+            </span>
             <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
@@ -1482,7 +1486,7 @@ export function ExecutionStepDetail({
                           data-testid="step-result-markdown"
                           className={cn(
                             'rounded-lg bg-muted/50 p-4',
-                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]',
                           )}
                         >
                           <MessageProvider fileViewerDisplayMode="floating">
@@ -1504,7 +1508,7 @@ export function ExecutionStepDetail({
                   <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                     <div className="font-medium">{t('detail.provenance.title')}</div>
                     <div className="mt-2 space-y-1 text-muted-foreground">
-                      <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
+                      <div>{t('detail.provenance.mode')}: {t(getExecutionModeLabelKey(execution?.executionMode) as any)}</div>
                       {replaySource && (
                         <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                       )}
@@ -1906,7 +1910,7 @@ export function ExecutionStepDetail({
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : execution?.id && step?.taskId ? null : (
               <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">
                 {isEvaluationPending ? (
                   <Loader2 className="h-5 w-5 animate-spin" />

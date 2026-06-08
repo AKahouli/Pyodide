@@ -44,6 +44,8 @@ import type {
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
   PlaybookIntentResponse,
+  PlaybookIntentConstructionEvent,
+  PlaybookIntentConstructionStartResponse,
   RequestPlaybookNodeAdvisorData,
   PlaybookNodeAdvisorResponse,
   Flow,
@@ -1292,6 +1294,72 @@ export async function requestPlaybookIntent(
     API_ENDPOINTS.playbooks.intent(playbookId),
     data,
     { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function startPlaybookIntentConstruction(
+  playbookId: string,
+  data: RequestPlaybookIntentData,
+  options?: { signal?: AbortSignal },
+): Promise<PlaybookIntentConstructionStartResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentConstructionStartResponse>>(
+    API_ENDPOINTS.playbooks.intentConstructions(playbookId),
+    data,
+    options?.signal ? { signal: options.signal } : undefined,
+  );
+  return response.data.data;
+}
+
+export async function streamPlaybookIntentConstruction(
+  playbookId: string,
+  constructionId: string,
+  options: { after?: number; signal?: AbortSignal; onEvent: (event: PlaybookIntentConstructionEvent) => void },
+): Promise<void> {
+  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const params = options.after ? `?after=${encodeURIComponent(String(options.after))}` : '';
+  const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.intentConstructionStream(playbookId, constructionId)}${params}`, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
+    signal: options.signal,
+  });
+  if (!response.ok || !response.body) throw new Error(`Request failed with status ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const flushLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      options.onEvent(JSON.parse(trimmed) as PlaybookIntentConstructionEvent);
+    } catch (error) {
+      throw new Error(error instanceof Error ? `Invalid construction stream event: ${error.message}` : 'Invalid construction stream event');
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      lines.forEach(flushLine);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  buffer += decoder.decode();
+  flushLine(buffer);
+}
+
+export async function cancelPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<{ cancelled: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ cancelled: boolean }>>(
+    API_ENDPOINTS.playbooks.cancelIntentConstruction(playbookId, constructionId),
+    {},
   );
   return response.data.data;
 }

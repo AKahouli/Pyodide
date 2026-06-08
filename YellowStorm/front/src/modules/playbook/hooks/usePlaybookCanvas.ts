@@ -428,6 +428,43 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [captureSnapshot, syncDataBindings, syncEdges],
   );
 
+  const commitConditionalEdge = useCallback(
+    (sourceId: string, sourceHandle: string | null, targetId: string, targetHandle: string | null) => {
+      const sourceHandleId = sourceHandle ?? 'default';
+      const targetHandleId = targetHandle ?? 'default';
+      const edgeId = `e-${sourceId}-${sourceHandleId}-${targetId}-${targetHandleId}`;
+      const isErrorEdge = sourceHandleId === '__error__';
+
+      if (edgesRef.current.some((edge) => edge.id === edgeId)) return;
+
+      const newEdge: Edge = {
+        id: edgeId,
+        source: sourceId,
+        target: targetId,
+        sourceHandle,
+        targetHandle,
+        type: 'conditional',
+        animated: false,
+        data: {
+          sourceOutputPortId: sourceHandleId,
+          targetInputPortId: targetHandleId,
+          routerLabel: sourceHandleId,
+        },
+        style: {
+          strokeDasharray: '6 4',
+          ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
+        },
+      };
+
+      const nextEdges = [...edgesRef.current, newEdge];
+      edgesRef.current = nextEdges;
+      captureSnapshot();
+      setEdges(nextEdges);
+      deferStoreUpdate(() => syncEdges(nextEdges));
+    },
+    [captureSnapshot, syncEdges],
+  );
+
   const connectStartRef = useRef<{ nodeId: string | null; handleId: string | null; handleType: string | null } | null>(null);
 
   const [connectionDragHoveredId, setConnectionDragHoveredId] = useState<string | null>(null);
@@ -450,7 +487,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       if (!sourceData || !targetData) return false;
 
       const sourceType = getEffectiveNodeType(sourceData);
-      if (sourceType === 'router' || start.nodeId === TRIGGER_NODE_ID) return false;
+      if (start.nodeId === TRIGGER_NODE_ID) return false;
 
       const sourceHandleId = start.handleId ?? 'default';
       const sourcePort = sourceData.outputPorts?.find((p) => p.id === sourceHandleId);
@@ -479,10 +516,14 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         return updated;
       });
 
-      commitEdgeAndBinding(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      if (sourceType === 'router') {
+        commitConditionalEdge(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      } else {
+        commitEdgeAndBinding(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      }
       return true;
     },
-    [commitEdgeAndBinding, t, updateTasks],
+    [commitConditionalEdge, commitEdgeAndBinding, t, updateTasks],
   );
 
   const onConnectEndHandler: OnConnectEnd = useCallback(
