@@ -1,4 +1,10 @@
 import { PlaybookFlowDesignService } from './playbook-flow-design.service';
+import { PlaybookDesignRequestBuilderService } from '../design/playbook-design-request-builder.service';
+import { PlaybookDesignResultApplierService } from '../design/playbook-design-result-applier.service';
+
+const designSummaryService = { summarizeStructuralChanges: jest.fn().mockReturnValue('') };
+const designRequestBuilder = new PlaybookDesignRequestBuilderService();
+const designResultApplier = new PlaybookDesignResultApplierService();
 
 describe('PlaybookFlowDesignService', () => {
   it('uses the persisted node description when sending the existing playbook to design gRPC', async () => {
@@ -57,6 +63,9 @@ describe('PlaybookFlowDesignService', () => {
       { getHttpClient: jest.fn() } as any,
       { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
       { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
       logger as any,
     );
 
@@ -108,6 +117,9 @@ describe('PlaybookFlowDesignService', () => {
       { getHttpClient: jest.fn() } as any,
       { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
       { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
       logger as any,
     );
 
@@ -164,6 +176,9 @@ describe('PlaybookFlowDesignService', () => {
       { getHttpClient: jest.fn() } as any,
       { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
       { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
       logger as any,
     );
 
@@ -223,6 +238,9 @@ describe('PlaybookFlowDesignService', () => {
       { getHttpClient: jest.fn() } as any,
       { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
       { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
       logger as any,
     );
 
