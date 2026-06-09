@@ -9,7 +9,7 @@ import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.servi
 function mockExecutionModel(overrides?: Record<string, any>) {
   const base = {
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) })),
+    findById: jest.fn(() => ({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) }) })),
     findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     findByIdAndDelete: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     countDocuments: jest.fn().mockResolvedValue(0),
@@ -115,6 +115,15 @@ async function createE2EService(
     get: jest.fn((key: string, fallback: unknown) => fallback),
     ...overrides?.configService,
   };
+  const runtimeClient = {
+    init: jest.fn(),
+    isAvailable: jest.fn().mockReturnValue(false),
+    run: jest.fn(),
+    runFromCheckpoint: jest.fn(),
+    cancel: jest.fn(),
+    resumeApproval: jest.fn(),
+    resumeFromStep: jest.fn(),
+  };
   const queueService = {
     admit: jest.fn().mockResolvedValue(1),
     release: jest.fn()
@@ -132,6 +141,12 @@ async function createE2EService(
   };
   const flowService = {
     findOne: jest.fn().mockResolvedValue({
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    }),
+    findOneForExecutionStart: jest.fn().mockResolvedValue({
       nodes: [],
       controlEdges: [],
       dataBindings: [],
@@ -178,6 +193,7 @@ async function createE2EService(
     taskResultModel as any,
     routerDecisionModel as any,
     configService as any,
+    runtimeClient as any,
     queueService as any,
     idempotencyService as any,
     flowService as any,
