@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
 import { makePlaybook, makeTask } from '../test-utils';
+import type { RouterConfig } from '../types';
 
 const currentPlaybookState = vi.hoisted(() => ({
   value: null as any,
@@ -19,7 +20,7 @@ describe('PlaybookRouterConfigSection', () => {
     currentPlaybookState.value = makePlaybook();
 
     function Harness() {
-      const [value, setValue] = useState({
+      const [value, setValue] = useState<RouterConfig>({
         outputLabels: ['retry', 'done', '__error__'],
         maxIterations: 3,
         defaultLabel: 'retry',
