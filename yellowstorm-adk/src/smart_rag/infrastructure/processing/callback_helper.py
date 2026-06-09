@@ -74,37 +74,13 @@ except Exception:  # pragma: no cover - optional dependency
 def add_timestamp_to_agent(callback_context: CallbackContext) -> Optional[dict]:
     """
     Adds UTC time in a JSON-serialisable format (ISO 8601 string).
-    Also ensures connector template variables (property_name, property_description)
-    are present in the state to prevent template substitution errors.
     """
     current_state = callback_context.state.to_dict()
 
     if not current_state.get("time", None):
         utc_time = datetime.now(timezone.utc).isoformat()
         callback_context.state["time"] = utc_time
-
-    # Ensure connector template variables are present to fix template substitution errors
-    # These are required by connector tool descriptions (e.g., HubSpot's search_crm_objects)
-    # Update both callback_context.state and the underlying session state
-    if "property_name" not in current_state:
-        callback_context.state["property_name"] = ""
-
-    if "property_description" not in current_state:
-        callback_context.state["property_description"] = ""
-
-    # Also update the session state directly if available for template substitution
-    try:
-        session = callback_context.session
-        if session and hasattr(session, 'state'):
-            session_state = session.state
-            if isinstance(session_state, dict) and "property_name" not in session_state:
-                session_state["property_name"] = ""
-            if isinstance(session_state, dict) and "property_description" not in session_state:
-                session_state["property_description"] = ""
-    except Exception:
-        pass  # Ignore errors accessing session state
-
-    return None
+        return None
 
 
 def append_suggested_agents(callback_context: CallbackContext) -> Optional[types.Content]:
