@@ -1998,9 +1998,11 @@ class AgentRunner:
                 continue
 
             file_name = str(
-                block.get("external_id")
+                block.get("block_id")
+                or block.get("file_name")
+                or block.get("filename")
+                or block.get("external_id")
                 or block.get("doc_id")
-                or block.get("block_id")
                 or block.get("id")
                 or ""
             ).strip()

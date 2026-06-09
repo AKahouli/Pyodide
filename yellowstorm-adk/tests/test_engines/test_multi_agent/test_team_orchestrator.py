@@ -50,7 +50,7 @@ class TestAutoAgentGenerationTeam:
             mock_memory_service.save_manager_conversation = AsyncMock()
 
             # Mock DatabaseSessionService
-            with patch('src.smart_rag.engines.multi_agent.team_orchestrator.DatabaseSessionService') as mock_db_session_class:
+            with patch('google.adk.sessions.DatabaseSessionService') as mock_db_session_class:
                 mock_db_session = MagicMock()
                 mock_db_session.get_session = AsyncMock(return_value=MagicMock())
                 mock_db_session_class.return_value = mock_db_session
@@ -94,7 +94,7 @@ class TestAutoAgentGenerationTeam:
             mock_memory_service.save_manager_conversation = AsyncMock()
 
             # Mock DatabaseSessionService
-            with patch('src.smart_rag.engines.multi_agent.team_orchestrator.DatabaseSessionService') as mock_db_session_class:
+            with patch('google.adk.sessions.DatabaseSessionService') as mock_db_session_class:
                 mock_db_session = MagicMock()
                 mock_db_session.get_session = AsyncMock(return_value=MagicMock())
                 mock_db_session_class.return_value = mock_db_session
@@ -378,7 +378,7 @@ class TestAutoAgentGenerationTeam:
 
         with patch('src.smart_rag.agents.core.runner.AgentRunner', return_value=mock_runner), \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.MessageTransformer', return_value=mock_transformer), \
-             patch('src.smart_rag.engines.multi_agent.team_orchestrator.InMemorySessionService', return_value=mock_session):
+             patch('google.adk.sessions.InMemorySessionService', return_value=mock_session):
 
             result = await orchestrator._run_agent(mock_agent, task, mock_queue)
 

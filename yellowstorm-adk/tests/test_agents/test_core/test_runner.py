@@ -772,7 +772,7 @@ class TestAgentRunner:
                             "workspace_name": "",
                         }
                     },
-                },
+                }
             ]
         }
 

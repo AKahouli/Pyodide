@@ -16,6 +16,7 @@ class TestDelegationTools:
         mock_request.user_id = "test_user_123"
         mock_request.chatbot_name = "test_chatbot"
         mock_request.workspace_names = ["brain1", "brain2"]
+        mock_request.brain_ids = ["brain1", "brain2"]
         mock_request.session_id = "session_123"
         mock_request.brain_documents = [{"id": "doc1", "name": "Document 1"}]
         mock_request.search_web = True
@@ -93,7 +94,7 @@ class TestDelegationTools:
             prompt=operator_prompt,
             chatbot_name=delegation_tools.user_request.chatbot_name,
             user_id=delegation_tools.user_request.user_id,
-            workspace_names=delegation_tools.user_request.workspace_names,
+            brain_ids=delegation_tools.user_request.brain_ids,
             session_id=delegation_tools.user_request.session_id,
             brain_documents=delegation_tools.user_request.brain_documents
         )
@@ -130,7 +131,7 @@ class TestDelegationTools:
             prompt="op",
             chatbot_name=delegation_tools.user_request.chatbot_name,
             user_id=delegation_tools.user_request.user_id,
-            workspace_names=delegation_tools.user_request.workspace_names,
+            brain_ids=delegation_tools.user_request.brain_ids,
             session_id=delegation_tools.user_request.session_id,
             brain_documents=delegation_tools.user_request.brain_documents
         )
