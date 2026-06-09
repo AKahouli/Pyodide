@@ -2,7 +2,10 @@ import asyncio
 
 import pytest
 
-from src.smart_rag.tools.utilities.connector_tools import create_connector_tools
+from src.smart_rag.tools.utilities.connector_tools import (
+    ConnectorToolContext,
+    create_connector_tools,
+)
 
 
 def _connector_binding(parameter_schema, auth_headers=None, fixed_params=None):
@@ -31,13 +34,19 @@ def _first_connector_tool(
     workspace_id=None,
     auth_headers=None,
     fixed_params=None,
+    brain_documents=None,
+    session_id=None,
 ):
     tools = create_connector_tools(
         [_connector_binding(parameter_schema, auth_headers, fixed_params)],
-        workspace_names=workspace_names,
-        workspace_id=workspace_id,
+        ConnectorToolContext(
+            workspace_id=workspace_id,
+            workspace_names=workspace_names,
+            brain_documents=brain_documents,
+            session_id=session_id,
+        ),
     )
-    return tools[0]
+    return tools[-1]
 
 
 def test_connector_tool_injects_bound_workspace_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,3 +269,85 @@ def test_connector_tool_forwards_auth_headers_and_strips_user_id(
         "Authorization": "Bearer token",
         "X-User-Id": "user-1",
     }
+
+
+def test_connector_tool_injects_streamable_http_file_workspace_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool(
+        {},
+        workspace_id="workspace-1",
+        workspace_names=["workspace-alpha"],
+        auth_headers={
+            "Authorization": "Bearer token",
+            "X-User-Id": "user-1",
+        },
+        brain_documents=[
+            {
+                "filename": "report.pdf",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+            },
+            {
+                "file_name": "budget.xlsx",
+                "workspace_id": "workspace-2",
+                "workspace_name": "workspace-beta",
+            },
+        ],
+        session_id="conversation-1",
+    )
+
+    asyncio.run(tool.func(query="revenue"))
+
+    assert captured["params"] == {"query": "revenue", "workspace_id": "workspace-1"}
+    assert captured["auth_headers"] == {
+        "Authorization": "Bearer token",
+        "X-User-Id": "user-1",
+        "workspace_id": '["workspace-1", "workspace-2", "workspace-alpha"]',
+        "x-conversation-id": "conversation-1",
+        "x-workspace-paths": "workspace-alpha,workspace-beta",
+    }
+
+
+def test_connector_tool_injects_single_file_name_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool(
+        {},
+        workspace_id="workspace-1",
+        auth_headers={"Authorization": "Bearer token"},
+        brain_documents=[
+            {
+                "filename": "report.pdf",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+            },
+        ],
+    )
+
+    asyncio.run(tool.func(query="revenue"))
+
+    assert captured["auth_headers"]["file_name"] == "report.pdf"

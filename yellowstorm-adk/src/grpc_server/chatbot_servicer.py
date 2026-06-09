@@ -484,6 +484,167 @@ class ChatbotServicer(
                 user_ctx.reset(user_token)
             except Exception:
                 pass  # Token may already be reset or invalid
+    async def RunSingleAgent(
+        self,
+        request: "chatbot_pb2.RunSingleAgentRequest",
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncGenerator["chatbot_pb2.StreamChunk", None]:
+        """Server streaming RPC for a single agent (no manager / no delegation).
+
+        Runs exactly one specialized agent that owns its real tools directly.
+        Shares the same internal service/orchestrator stack as RunAgentTeam by
+        converting to an internal RunAgentTeamRequest with ``agent_mode='mono'``.
+        """
+        logger.info(
+            "[gRPC IN] RunSingleAgent request received",
+            user_id=request.user_context.user_id,
+            username=request.user_context.username,
+            conversation_id=request.conversation_id,
+            query_length=len(request.query or ""),
+            agent_name=request.agent.name,
+            workspace_count=len(request.workspace_context),
+            attached_file_count=len(request.attached_files),
+            previous_attached_file_count=len(request.previous_attached_files),
+        )
+
+        username = request.user_context.username or "unknown"
+        user_token = user_ctx.set(username)
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        bg_task: Optional[asyncio.Task] = None
+        get_task: Optional[asyncio.Task] = None
+
+        try:
+            internal_request = await self._convert_single_agent_request(request)
+
+            if internal_request.attached_files:
+                asyncio.create_task(
+                    self._index_attached_documents(
+                        internal_request.attached_files,
+                        request.conversation_id,
+                    )
+                )
+
+            bg_task = asyncio.create_task(
+                self.agent_team_service.process_team_request(internal_request, queue)
+            )
+
+            while True:
+                get_task = asyncio.create_task(queue.get())
+                done, pending = await asyncio.wait(
+                    [get_task, bg_task], return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if bg_task in done:
+                    exception = bg_task.exception()
+                    if exception:
+                        logger.error(
+                            f"[gRPC] Background task crashed - conversation_id: {request.conversation_id}, "
+                            f"error: {str(exception)}"
+                        )
+                        get_task.cancel()
+                        error_component = {
+                            "action": "add",
+                            "component": {
+                                "id": str(uuid.uuid4()),
+                                "type": "error",
+                                "data": {
+                                    "title": "Exception",
+                                    "content": "The model couldn't finish your answer due to an unexpected error.",
+                                },
+                            },
+                            "metadata": {"message_id": request.conversation_id},
+                        }
+                        yield self._dict_to_stream_chunk(error_component)
+                        return
+
+                chunk_dict = await get_task
+                get_task = None
+
+                if chunk_dict is None:
+                    logger.info(
+                        f"[gRPC] RunSingleAgent stream ending naturally - conversation_id: {request.conversation_id}"
+                    )
+                    await bg_task
+                    break
+
+                if chunk_dict.get("content_type") == "File":
+                    try:
+                        file_data = json.loads(chunk_dict.get("chunk", "{}"))
+                        chunk_dict = {
+                            "action": "add",
+                            "component": {
+                                "id": str(uuid.uuid4()),
+                                "type": "artifact",
+                                "data": {
+                                    "filename": file_data.get("filename", ""),
+                                    "file_path": file_data.get("azure_path")
+                                    or file_data.get("file_path")
+                                    or file_data.get("object_key")
+                                    or "",
+                                },
+                            },
+                            "metadata": {
+                                "message_id": chunk_dict.get("message_id", ""),
+                                "agent_id": chunk_dict.get("agent_id", ""),
+                            },
+                        }
+                    except Exception as e:
+                        logger.error(
+                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
+                        )
+
+                yield self._dict_to_stream_chunk(chunk_dict)
+
+            logger.info(
+                f"[gRPC] RunSingleAgent stream completed successfully - "
+                f"conversation_id: {request.conversation_id}, user_id: {request.user_context.user_id}"
+            )
+            return
+
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.info(
+                f"[gRPC] Client cancelled single-agent stream - conversation_id: {request.conversation_id}"
+            )
+            if get_task is not None and not get_task.done():
+                get_task.cancel()
+                try:
+                    await get_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as cleanup_error:
+                    logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
+            if bg_task is not None and not bg_task.done():
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as cleanup_error:
+                    logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
+            return
+
+        except Exception as e:
+            logger.error(f"[gRPC] Error in RunSingleAgent: {str(e)}", exc_info=True)
+            error_component = {
+                "action": "add",
+                "component": {
+                    "id": str(uuid.uuid4()),
+                    "type": "error",
+                    "data": {
+                        "title": "Validation Error" if isinstance(e, ValueError) else "Error",
+                        "content": str(e),
+                    },
+                },
+                "metadata": {"message_id": request.conversation_id},
+            }
+            yield self._dict_to_stream_chunk(error_component)
+            return
+        finally:
+            try:
+                user_ctx.reset(user_token)
+            except Exception:
+                pass
+
     # ========== CONVERSION HELPERS ==========
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
@@ -605,6 +766,279 @@ class ChatbotServicer(
             agent_type=pb_agent.agent_type if pb_agent.agent_type else None,
             save_memory=pb_agent.save_memory,
             mcp=None,
+        )
+
+    async def _build_brain_and_file_context(self, pb_request: Any) -> Dict[str, Any]:
+        """Build workspace/document/attachment context shared by V2 converters.
+
+        Both RunAgentTeamRequest and RunSingleAgentRequest expose the same
+        ``workspace_context``, ``attached_files`` and ``previous_attached_files``
+        fields, so this single helper feeds both the multi-agent and mono-agent
+        conversion paths. Returns image inputs, attached/previous documents, and
+        the merged ``brain_documents`` / ``workspace_names`` / ``workspace_ids``.
+        """
+        # Extract workspace names and documents from multiple workspace contexts
+        workspace_names = []
+        workspace_ids = []
+        brain_documents = []
+
+        for workspace_ctx in pb_request.workspace_context:
+            workspace_id = getattr(workspace_ctx, "workspace_id", "") or ""
+            if workspace_id:
+                workspace_ids.append(workspace_id)
+            workspace_name = (
+                getattr(workspace_ctx, "workspace_name", "")
+                or workspace_id
+            )
+            if workspace_name:
+                workspace_names.append(workspace_name)
+
+            for doc in workspace_ctx.workspace_documents:
+                doc_file_name = getattr(doc, "file_name", "") or doc.filename or ""
+                doc_workspace_name = (
+                    getattr(doc, "workspace_name", "")
+                    or workspace_name
+                    or doc.workspace_id
+                    or ""
+                )
+                brain_documents.append(
+                    {
+                        "_id": doc._id,
+                        "filename": doc.filename if doc.filename else "",
+                        "file_name": doc_file_name,
+                        "filepath": doc.filepath if doc.filepath else "",
+                        "in_memory": doc.in_memory if doc.in_memory else False,
+                        "language": doc.language if doc.language else "",
+                        "indexing_token": doc.indexing_token if doc.indexing_token else 0,
+                        "workspace_id": doc.workspace_id if doc.workspace_id else "",
+                        "workspace_name": doc_workspace_name,
+                    }
+                )
+
+        workspace_names = workspace_names if workspace_names else None
+        brain_documents = brain_documents if brain_documents else None
+
+        # ── Process attached_files: separate images from documents ──
+        image_filepaths = []
+        attached_documents = []
+
+        for file in pb_request.attached_files:
+            data_type = file.WhichOneof("data")
+            if data_type == "image":
+                image_filepaths.append(file.image.filepath)
+            elif data_type == "document":
+                doc = file.document
+                attached_documents.append(
+                    {
+                        "filepath": doc.filepath,
+                        "filename": doc.filename,
+                        "workspace_name": doc.workspace_name,
+                        "workspace_id": doc.workspace_id,
+                        "source": doc.source or doc.filepath,
+                        "createdAt": getattr(doc, "createdAt", None) or None,
+                        "brain_type": doc.brain_type,
+                        "lang_code": doc.lang_code,
+                        "chunk_size": doc.chunk_size if doc.chunk_size else 4000,
+                        "chunk_overlap": doc.chunk_overlap if doc.chunk_overlap else 100,
+                        "enable_smart_chunk": doc.enable_smart_chunk,
+                        "enable_extract_images": doc.enable_extract_images,
+                        "sheet_name": doc.sheet_name if doc.sheet_name else None,
+                        "in_memory": doc.in_memory,
+                    }
+                )
+
+        image_input = (
+            await self._download_and_encode_images(image_filepaths)
+            if image_filepaths
+            else []
+        )
+
+        attached_images_metadata = []
+        for filepath in image_filepaths:
+            filename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
+            attached_images_metadata.append({"filename": filename})
+
+        logger.info(
+            f"[gRPC] Processed attached_files: {len(image_input)} images, "
+            f"{len(attached_documents)} documents"
+        )
+
+        # ── Process previous_attached_files (repeated Document) ──
+        previous_attached = []
+        for prev_doc in pb_request.previous_attached_files:
+            prev_file_name = (
+                getattr(prev_doc, "file_name", "") or prev_doc.filename or ""
+            )
+            prev_workspace_name = (
+                getattr(prev_doc, "workspace_name", "") or prev_doc.workspace_id
+            )
+            previous_attached.append(
+                {
+                    "_id": prev_doc._id,
+                    "filename": prev_doc.filename,
+                    "file_name": prev_file_name,
+                    "filepath": prev_doc.filepath,
+                    "in_memory": prev_doc.in_memory,
+                    "language": prev_doc.language if prev_doc.language else None,
+                    "workspace_id": prev_doc.workspace_id,
+                    "workspace_name": prev_workspace_name,
+                    "createdAt": getattr(prev_doc, "createdAt", None) or None,
+                }
+            )
+
+        if previous_attached:
+            logger.info(
+                f"[gRPC] {len(previous_attached)} previous attached files for context"
+            )
+
+        # ── Merge attached + previous attached into brain_documents for document tree ──
+        if brain_documents is None:
+            brain_documents = []
+        existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
+
+        for doc in attached_documents:
+            doc_name = doc.get("workspace_name")
+            if doc_name and doc_name not in existing_ids:
+                brain_documents.append(
+                    {
+                        "_id": doc_name,
+                        "filename": doc.get("filename", ""),
+                        "file_name": doc.get("filename", ""),
+                        "filepath": doc.get("filepath", ""),
+                        "in_memory": doc.get("in_memory", False),
+                        "language": doc.get("lang_code", ""),
+                        "workspace_id": doc.get("workspace_id", ""),
+                        "workspace_name": doc.get("workspace_name", ""),
+                    }
+                )
+                existing_ids.add(doc_name)
+
+        for doc in previous_attached:
+            doc_id = doc.get("_id")
+            if doc_id and doc_id not in existing_ids:
+                brain_documents.append(doc)
+                existing_ids.add(doc_id)
+
+        brain_documents = brain_documents if brain_documents else None
+
+        # Documents are indexed with workspace_name, so the search filter must
+        # include these names or Qdrant won't find them.
+        if workspace_names is None:
+            workspace_names = []
+
+        for doc in attached_documents:
+            workspace_name = doc.get("workspace_name")
+            if workspace_name and workspace_name not in workspace_names:
+                workspace_names.append(workspace_name)
+
+        for doc in previous_attached:
+            workspace_name = doc.get("workspace_name") or doc.get("workspace_id")
+            if workspace_name and workspace_name not in workspace_names:
+                workspace_names.append(workspace_name)
+
+        workspace_names = workspace_names if workspace_names else None
+        workspace_ids = workspace_ids if workspace_ids else workspace_names
+
+        return {
+            "image_input": image_input,
+            "attached_documents": attached_documents,
+            "attached_images_metadata": attached_images_metadata,
+            "previous_attached": previous_attached,
+            "brain_documents": brain_documents,
+            "workspace_names": workspace_names,
+            "workspace_ids": workspace_ids,
+        }
+
+    @staticmethod
+    def _build_connector_repo(pb_request: Any) -> Optional[Dict[str, str]]:
+        """Extract the conversation-level connector repository binding, if any."""
+        if not getattr(pb_request, "connector_repo", None):
+            return None
+        repo_name = str(getattr(pb_request.connector_repo, "repo_name", "") or "").strip()
+        if not repo_name:
+            return None
+        return {
+            "connector_id": str(getattr(pb_request.connector_repo, "connector_id", "") or "").strip(),
+            "connector_name": str(getattr(pb_request.connector_repo, "connector_name", "") or "").strip(),
+            "repo_id": str(getattr(pb_request.connector_repo, "repo_id", "") or "").strip(),
+            "repo_name": repo_name,
+            "repo_url": str(getattr(pb_request.connector_repo, "repo_url", "") or "").strip(),
+        }
+
+    @staticmethod
+    def _build_skills(pb_request: Any) -> Optional[List[Dict[str, Any]]]:
+        """Extract conversation-level skills selected by the user in the composer."""
+        if not getattr(pb_request, "skills", None):
+            return None
+        return [
+            {
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description,
+                "instructions": skill.instructions,
+                "license": skill.license,
+                "compatibility": skill.compatibility,
+                "metadata": dict(skill.metadata) if skill.metadata else {},
+                "allowed_tools": list(skill.allowed_tools) if skill.allowed_tools else [],
+                "files": [
+                    {
+                        "path": file.path,
+                        "kind": file.kind,
+                        "mime_type": file.mime_type,
+                        "content": file.content,
+                    }
+                    for file in skill.files
+                ]
+                if skill.files
+                else [],
+            }
+            for skill in pb_request.skills
+        ]
+
+    async def _convert_single_agent_request(
+        self, pb_request: "chatbot_pb2.RunSingleAgentRequest"
+    ) -> RunAgentTeamRequest:
+        """Convert a RunSingleAgentRequest (mono-agent) to the internal model.
+
+        Reuses the same internal ``RunAgentTeamRequest`` as the team path so the
+        whole service/orchestrator stack is shared. The difference: exactly one
+        agent, ``agent_mode='mono'`` (routes to the no-manager workflow), and the
+        LLM/prompt are taken from the single agent itself instead of a manager.
+        """
+        ctx = await self._build_brain_and_file_context(pb_request)
+
+        # Chatbot config + base prompt come from the single agent (no manager).
+        agent_chatbot_name = None
+        if pb_request.agent.HasField("chatbot"):
+            agent_chatbot_name = {"provider": pb_request.agent.chatbot.model}
+        if not agent_chatbot_name:
+            logger.error(
+                f"No chatbot model provided for single agent in conversation {pb_request.conversation_id}"
+            )
+            raise ValueError("No chatbot model was provided for the single agent")
+
+        return RunAgentTeamRequest(
+            user_id=pb_request.user_context.user_id,
+            session_id=pb_request.conversation_id,
+            message=pb_request.query,
+            image_input=ctx["image_input"] or None,
+            attached_files=ctx["attached_documents"] or None,
+            attached_images=ctx["attached_images_metadata"] or None,
+            previous_attached_files=ctx["previous_attached"] or None,
+            manager_prompt=pb_request.agent.prompt or "You are a helpful assistant.",
+            chatbot_name=agent_chatbot_name,
+            agents=[self._convert_agent(pb_request.agent)],
+            available_agents=[],
+            available_tools=[],
+            vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,
+            workspace_names=ctx["workspace_names"],
+            brain_ids=ctx["workspace_ids"],
+            brain_documents=ctx["brain_documents"],
+            brain_relations=None,
+            search_web=False,
+            agent_mode="mono",
+            connector_repo=self._build_connector_repo(pb_request),
+            skills=self._build_skills(pb_request),
         )
 
     async def _convert_agent_team_request_v2(
@@ -1131,6 +1565,15 @@ class ChatbotServicer(
         }
         return layout_map.get((layout_str or "").lower(), chatbot_pb2.CHART_LAYOUT_UNSPECIFIED)
 
+    @staticmethod
+    def _citation_bbox(value: Any) -> List[float]:
+        if not isinstance(value, list) or len(value) != 4:
+            return []
+        try:
+            return [float(item) for item in value]
+        except (TypeError, ValueError):
+            return []
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -1366,6 +1809,15 @@ class ChatbotServicer(
                         page_content=str(text_source_data.get("page_content", "")),
                         workspace_id=str(text_source_data.get("workspace_id", "")),
                         reference=str(text_source_data.get("reference", "")),
+                        highlight_text=str(
+                            text_source_data.get("highlight_text", "")
+                        ),
+                        highlight_bbox=self._citation_bbox(
+                            text_source_data.get("highlight_bbox")
+                        ),
+                        block_bbox=self._citation_bbox(
+                            text_source_data.get("block_bbox")
+                        ),
                     ),
                 )
 
@@ -1390,6 +1842,15 @@ class ChatbotServicer(
                         height=str(image_source_data.get("height", "")),
                         width=str(image_source_data.get("width", "")),
                         reference=str(image_source_data.get("reference", "")),
+                        highlight_text=str(
+                            image_source_data.get("highlight_text", "")
+                        ),
+                        highlight_bbox=self._citation_bbox(
+                            image_source_data.get("highlight_bbox")
+                        ),
+                        block_bbox=self._citation_bbox(
+                            image_source_data.get("block_bbox")
+                        ),
                     ),
                 )
 

@@ -28,6 +28,7 @@ export function createExecutionServiceForTests(overrides?: {
   executionLeaseService?: Record<string, any>;
   graphSanitizerService?: Record<string, any>;
   executionDispatcherService?: Record<string, any>;
+  workspaceService?: Record<string, any>;
   hitlMemoryModel?: Record<string, any>;
 }) {
   const executionModel = {
@@ -113,6 +114,7 @@ export function createExecutionServiceForTests(overrides?: {
   const replayArtifactService = {
     resolveReplayArtifacts: async () => new Map(),
     resolveReplayArtifactByIdentity: jest.fn().mockResolvedValue(null),
+    resolveActiveReplayArtifact: jest.fn().mockResolvedValue(null),
     ...overrides?.replayArtifactService,
   };
   const replayPromptService = {
@@ -183,6 +185,11 @@ export function createExecutionServiceForTests(overrides?: {
   replayReportService.updateSemanticMatch = replayDriftService.backfillSemanticMatch;
   replayReportService.ensureIterationReportMaterialized = replayDriftService.ensureIterationReportMaterialized;
 
+  const workspaceService = {
+    getStoragePathMapByIds: jest.fn().mockResolvedValue({}),
+    ...overrides?.workspaceService,
+  };
+
   const service = new PlaybookFlowExecutionService(
     executionModel as any,
     taskResultModel as any,
@@ -217,12 +224,14 @@ export function createExecutionServiceForTests(overrides?: {
     undefined as any,
     undefined as any,
     undefined as any,
+    workspaceService as any,
     overrides?.hitlMemoryModel as any,
   );
 
   return {
     service,
     executionModel,
+    workspaceService,
     taskResultModel,
     queueService,
     flowService,

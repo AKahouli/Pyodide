@@ -1447,7 +1447,8 @@ def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
                 yield {}
 
         async def fake_emit_events(execution_id, event_stream):
-            await event_stream.__anext__() if hasattr(event_stream, "__anext__") else None
+            async for _ in event_stream:
+                pass
             if len(calls) == 1:
                 yield _build_event("ApprovalRequested", execution_id, "step-2", {"prompt": "approve?"}, 0)
                 return

@@ -141,7 +141,7 @@ def test_blocker_judge_prompt_includes_custom_blocker_definition() -> None:
 
     assert "population gender missing" in prompt
     assert '"blocker_id"' in prompt
-    assert "Search agro leads" in prompt
+    assert "Search leads in agro sector." in prompt
     assert "prefer block over clear" in prompt
 
 

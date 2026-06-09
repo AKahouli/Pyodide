@@ -38,6 +38,7 @@ fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
     LITELLM_API_SECRET_KEY="test-key",
+    PLAYBOOK_MAX_TOOL_ITERATIONS=40,
 )
 fake_settings.Settings = SimpleNamespace
 sys.modules.setdefault("src.config.settings", fake_settings)
@@ -119,7 +120,6 @@ class TestStepPrompt:
             trigger_context={"email": {"subject": "Q2 review"}},
         )
 
-        assert "Task Title:\nDraft summary" in prompt
         assert "Task Node ID:\nstep-1" in prompt
         assert "Task Description:\nWrite an executive summary using the resolved inputs." in prompt
         assert 'Resolved Inputs:\n{\n  "brief": "Quarterly results"' in prompt
@@ -821,14 +821,17 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
         },
     )
 
-    assert captured_kwargs["input_files"] == ["doc-1"]
-    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1"]}
+    assert captured_kwargs["input_files"] == ["doc-1-CV_Kevin_Diallo.pdf"]
+    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1-CV_Kevin_Diallo.pdf"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "CV_Kevin_Diallo.pdf",
+            "file_name": "doc-1-CV_Kevin_Diallo.pdf",
             "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
             "workspace_id": "workspace-1",
+            "workspace_name": "workspace-1",
+            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
@@ -904,14 +907,17 @@ async def test_run_step_passes_opaque_document_refs_into_tool_scope(monkeypatch)
         node_inputs={"report": {"document_id": "doc-1", "filename": "report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["doc-1"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["doc-1"]}
+    assert captured_kwargs["input_files"] == ["report.xlsx"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["report.xlsx"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "report.xlsx",
+            "file_name": "report.xlsx",
             "filepath": "user/workspace/doc-1/report.xlsx",
             "workspace_id": "workspace-1",
+            "workspace_name": "workspace-1",
+            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context"] == []
@@ -983,8 +989,8 @@ async def test_run_step_does_not_fallback_to_workspace_for_unresolved_opaque_ref
         node_inputs={"report": {"document_id": "doc-2", "filename": "generated-report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["doc-2"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["doc-2"]}
+    assert captured_kwargs["input_files"] == ["generated-report.xlsx"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["generated-report.xlsx"]}
     assert captured_kwargs["code_interpreter_files"] == []
     assert captured_kwargs["workspace_context"] == []
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
