@@ -15,6 +15,7 @@ from typing import Any
 import litellm
 from structlog import get_logger
 from langgraph.config import get_stream_writer
+from langgraph.errors import GraphInterrupt
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
@@ -394,6 +395,8 @@ async def run_step(
                     iteration, label, writer, hitl_policy, hitl_blockers,
                     _merge_human_context(state, new_human_context),
                 )
+        except GraphInterrupt:
+            raise
         except Exception as exc:
             logger.error("[step] Step execution failed", node_id=node_id, error=str(exc))
             writer({

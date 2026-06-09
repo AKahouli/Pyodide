@@ -22,6 +22,7 @@ from typing import Any, Callable, Awaitable
 
 from structlog import get_logger
 
+from langgraph.errors import GraphInterrupt
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
@@ -139,6 +140,8 @@ def wrap_node_for_error_routing(
     async def _wrapped(state: ExecutionState, config=None, *, _fn=fn, _nid=node_id, _rid=router_id) -> dict[str, Any]:
         try:
             return await _fn(state, config)
+        except GraphInterrupt:
+            raise
         except Exception as exc:
             iteration = state["iterations"].get(_nid, 0)
             logger.error("[guards] Node failed — routing to __error__", node_id=_nid, router_id=_rid, error=str(exc))
