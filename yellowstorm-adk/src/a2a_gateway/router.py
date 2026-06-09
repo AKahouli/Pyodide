@@ -28,8 +28,18 @@ def _api_key_header() -> str:
 
 
 def _public_base(request: Request) -> str:
+    """Public https origin the agent card advertises, e.g. ``https://host``.
+
+    The card's ``url`` is what external A2A clients (Copilot Studio) POST to, and
+    the public endpoint is always served over https behind the TLS proxy. We must
+    not echo ``request.base_url`` — behind the proxy that's the internal http hop,
+    whose port 80 isn't served, so clients fail to reach it (connector 500).
+    """
     override = getattr(get_settings(), "A2A_PUBLIC_BASE_URL", None)
-    return (override or str(request.base_url)).rstrip("/")
+    if override:
+        return override.rstrip("/")
+    host = (request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    return f"https://{host}"
 
 
 def _public_url(request: Request, agent_id: str) -> str:
