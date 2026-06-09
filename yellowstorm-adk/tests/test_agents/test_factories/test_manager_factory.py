@@ -103,7 +103,7 @@ class TestManagerAgentFactory:
         mock_delegation_factory = MagicMock()
         manager_prompt = "Test manager prompt"
         tools = [MagicMock(), MagicMock()]
-        temperature = 0.7
+        temperature = 0
 
         result = manager_factory.create_manager_agent(
             manager_prompt=manager_prompt,

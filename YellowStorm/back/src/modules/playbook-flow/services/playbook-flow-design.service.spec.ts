@@ -50,6 +50,16 @@ describe('PlaybookFlowDesignService', () => {
       warn: jest.fn(),
     };
 
+    const designSummaryService = {
+      summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
+    };
+    const designRequestBuilder = {
+      buildDesignRequest: jest.fn().mockResolvedValue({}),
+    };
+    const designResultApplier = {
+      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
+    };
+
     const service = new PlaybookFlowDesignService(
       designMessageModel as any,
       playbookFlowService as any,
@@ -102,6 +112,16 @@ describe('PlaybookFlowDesignService', () => {
     const logger = {
       setContext: jest.fn(),
       warn: jest.fn(),
+    };
+
+    const designSummaryService = {
+      summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
+    };
+    const designRequestBuilder = {
+      buildGenerateRequest: jest.fn().mockResolvedValue({}),
+    };
+    const designResultApplier = {
+      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
     };
 
     const service = new PlaybookFlowDesignService(
@@ -161,6 +181,16 @@ describe('PlaybookFlowDesignService', () => {
     const logger = {
       setContext: jest.fn(),
       warn: jest.fn(),
+    };
+
+    const designSummaryService = {
+      summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
+    };
+    const designRequestBuilder = {
+      buildDesignRequest: jest.fn().mockResolvedValue({}),
+    };
+    const designResultApplier = {
+      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
     };
 
     const service = new PlaybookFlowDesignService(
@@ -223,6 +253,16 @@ describe('PlaybookFlowDesignService', () => {
     const logger = {
       setContext: jest.fn(),
       warn: jest.fn(),
+    };
+
+    const designSummaryService = {
+      summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
+    };
+    const designRequestBuilder = {
+      buildDesignRequest: jest.fn().mockResolvedValue({}),
+    };
+    const designResultApplier = {
+      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
     };
 
     const service = new PlaybookFlowDesignService(

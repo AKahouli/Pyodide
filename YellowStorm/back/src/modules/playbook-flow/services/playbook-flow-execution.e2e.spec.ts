@@ -152,6 +152,12 @@ async function createE2EService(
       dataBindings: [],
       settings: { recursionLimit: 25, maxParallelism: 5 },
     }),
+    findOneForExecutionStart: jest.fn().mockResolvedValue({
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    }),
     ...overrides?.flowService,
   };
   const buildSnapshot = { settings: { recursionLimit: 25, maxParallelism: 5 }, nodes: [], controlEdges: [], dataBindings: [] };

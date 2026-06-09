@@ -7,6 +7,9 @@ from typing import Any
 from .step_json_repair import recover_structured_response
 
 
+PUBLIC_REASONING_TRACE_MARKER = "---PUBLIC_REASONING_TRACE_JSON---"
+
+
 def requires_structured_response(output_contract: dict[str, Any] | None) -> bool:
     output_ports = _get_output_ports(output_contract)
     if len(output_ports) > 1:
@@ -61,7 +64,7 @@ def finalize_step_result(
             result["reasoning_trace"] = parsed["reasoning_trace"]
         return result
 
-    text_output = str(response_text or "")
+    text_output, reasoning_trace = _split_plain_text_response_and_trace(response_text)
     artifacts: list[dict[str, Any]] = []
     text_port = _single_text_output_port(output_ports)
     if text_port and text_output.strip():
@@ -88,6 +91,9 @@ def finalize_step_result(
                 "content": text_output,
             }
         }
+
+    if reasoning_trace:
+        result["reasoning_trace"] = reasoning_trace
 
     return result
 
@@ -170,6 +176,29 @@ def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
     if candidates:
         raise ValueError("Structured final response must include display_text and outputs")
     raise ValueError("Step did not return a JSON object")
+
+
+def _split_plain_text_response_and_trace(response_text: str) -> tuple[str, list[dict[str, Any]]]:
+    normalized = str(response_text or "")
+    marker_index = normalized.rfind(PUBLIC_REASONING_TRACE_MARKER)
+    if marker_index == -1:
+        return normalized, []
+
+    visible_text = normalized[:marker_index].rstrip()
+    trace_text = normalized[marker_index + len(PUBLIC_REASONING_TRACE_MARKER):].strip()
+    if not trace_text:
+        return visible_text, []
+
+    try:
+        parsed_trace = json.loads(trace_text)
+    except json.JSONDecodeError:
+        return visible_text, []
+
+    if not isinstance(parsed_trace, list):
+        return visible_text, []
+
+    reasoning_trace = [item for item in parsed_trace if isinstance(item, dict)]
+    return visible_text, reasoning_trace
 
 
 def _normalize_structured_output_entry(item: dict[str, Any], *, fallback_port_id: str = "") -> dict[str, Any]:

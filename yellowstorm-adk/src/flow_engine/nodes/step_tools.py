@@ -20,7 +20,7 @@ from src.flow_engine.nodes.step_hitl import (
 logger = get_logger(__name__)
 settings = get_settings()
 
-MAX_TOOL_ITERATIONS = settings.PLAYBOOK_MAX_TOOL_ITERATIONS
+MAX_TOOL_ITERATIONS = 50
 MAX_IMAGES_PER_ITERATION = 50
 MAX_IMAGES_TOTAL = 50
 

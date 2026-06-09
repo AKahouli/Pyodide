@@ -1565,6 +1565,15 @@ class ChatbotServicer(
         }
         return layout_map.get((layout_str or "").lower(), chatbot_pb2.CHART_LAYOUT_UNSPECIFIED)
 
+    @staticmethod
+    def _citation_bbox(value: Any) -> List[float]:
+        if not isinstance(value, list) or len(value) != 4:
+            return []
+        try:
+            return [float(item) for item in value]
+        except (TypeError, ValueError):
+            return []
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -1800,6 +1809,15 @@ class ChatbotServicer(
                         page_content=str(text_source_data.get("page_content", "")),
                         workspace_id=str(text_source_data.get("workspace_id", "")),
                         reference=str(text_source_data.get("reference", "")),
+                        highlight_text=str(
+                            text_source_data.get("highlight_text", "")
+                        ),
+                        highlight_bbox=self._citation_bbox(
+                            text_source_data.get("highlight_bbox")
+                        ),
+                        block_bbox=self._citation_bbox(
+                            text_source_data.get("block_bbox")
+                        ),
                     ),
                 )
 
@@ -1824,6 +1842,15 @@ class ChatbotServicer(
                         height=str(image_source_data.get("height", "")),
                         width=str(image_source_data.get("width", "")),
                         reference=str(image_source_data.get("reference", "")),
+                        highlight_text=str(
+                            image_source_data.get("highlight_text", "")
+                        ),
+                        highlight_bbox=self._citation_bbox(
+                            image_source_data.get("highlight_bbox")
+                        ),
+                        block_bbox=self._citation_bbox(
+                            image_source_data.get("block_bbox")
+                        ),
                     ),
                 )
 

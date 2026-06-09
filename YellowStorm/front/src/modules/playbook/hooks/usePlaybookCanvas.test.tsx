@@ -732,6 +732,100 @@ describe('usePlaybookCanvas', () => {
     );
   });
 
+  it('auto-creates a compatible input port when dropping a router output onto a node body', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'router-1',
+          nodeType: 'router',
+          outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'data' }],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          inputPorts: [],
+        }),
+      ],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    const originalElementsFromPoint = (document as Document & { elementsFromPoint?: typeof document.elementsFromPoint }).elementsFromPoint;
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => [
+        {
+          classList: { contains: (value: string) => value === 'react-flow__node' },
+          getAttribute: (name: string) => (name === 'data-id' ? 'task-2' : null),
+          closest: () => null,
+        } as any,
+      ]),
+    });
+
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'router-1',
+          type: 'playbookRouter',
+          position: { x: 20, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'router-1',
+            nodeType: 'router',
+            outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'data' }],
+          }),
+        } as any,
+        {
+          id: 'task-2',
+          type: 'playbookStep',
+          position: { x: 240, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'task-2',
+            executionOrder: 1,
+            inputPorts: [],
+          }),
+        } as any,
+      ]);
+      result.current.onConnectStart(
+        {} as any,
+        { nodeId: 'router-1', handleId: 'approved', handleType: 'source' } as any,
+      );
+      result.current.onConnectEnd({ clientX: 260, clientY: 40 } as any, null as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    const updatedTasks = storeFns.updateTasks.mock.calls.at(-1)?.[0] as Array<any> | undefined;
+    const updatedTargetTask = updatedTasks?.find((task) => task.id === 'task-2');
+    const createdPort = updatedTargetTask?.inputPorts?.[0];
+
+    expect(createdPort).toMatchObject({
+      name: 'Approved',
+      artifactKind: 'data',
+      required: false,
+    });
+    expect(storeFns.updateDataBindings).not.toHaveBeenCalled();
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: `e-router-1-approved-task-2-${createdPort.id}`,
+        sourceId: 'router-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: createdPort.id,
+      },
+    ]);
+
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: originalElementsFromPoint,
+    });
+  });
+
   it('updates node data from canonical tasks instead of malformed canvas nodes', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [makeTask({ id: 'task-1', title: 'Original title' })],

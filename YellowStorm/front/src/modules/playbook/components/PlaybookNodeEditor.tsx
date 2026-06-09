@@ -880,6 +880,10 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                     onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
                     onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
                     canEditPorts={draft.nodeType !== 'iterator'}
+                    showOutputPorts
+                    canEditOutputPortNames={draft.nodeType !== 'router'}
+                    canEditOutputPortKinds
+                    canModifyOutputPorts={draft.nodeType !== 'router'}
                   />
                 </EditorSection>
               )}
