@@ -132,6 +132,37 @@ describe('sanitizePlaybookUpdate', () => {
       }),
     ]);
   });
+
+  it('preserves folderpath in input file metadata through sanitization', () => {
+    const sanitized = sanitizePlaybookUpdate({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          inputFiles: [{
+            type: 'folder',
+            id: 'folder-1',
+            name: 'Contracts',
+            workspaceId: 'ws-1',
+            metadata: {
+              workspaceId: 'ws-1',
+              folderpath: '/legal/contracts',
+            },
+          }],
+        }),
+      ],
+    });
+
+    expect(sanitized.tasks).toEqual([
+      expect.objectContaining({
+        inputFiles: [expect.objectContaining({
+          metadata: expect.objectContaining({
+            workspaceId: 'ws-1',
+            folderpath: '/legal/contracts',
+          }),
+        })],
+      }),
+    ]);
+  });
 });
 
 describe('getPlaybookUpdateTelemetry', () => {

@@ -21,7 +21,8 @@ def add_sequential_edges(
 ) -> None:
     skip_ids = skip_ids or set()
     node_ids = {n["id"] for n in raw_nodes if n["id"] not in skip_ids}
-    added = 0
+    edges_by_target: dict[str, list[str]] = {}
+    seen_edges: set[tuple[str, str]] = set()
 
     for edge in raw_edges:
         if edge.get("kind") != "sequential":
@@ -33,7 +34,20 @@ def add_sequential_edges(
         if source not in node_ids or target not in node_ids:
             logger.warning("[sequential] Edge references unknown node", source=source, target=target)
             continue
-        graph.add_edge(source, target)
-        added += 1
+        edge_key = (source, target)
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        edges_by_target.setdefault(target, []).append(source)
 
-    logger.info("[sequential] Added sequential edges", count=added)
+    added = 0
+    fan_in_count = 0
+    for target, sources in edges_by_target.items():
+        if len(sources) == 1:
+            graph.add_edge(sources[0], target)
+        else:
+            graph.add_edge(sources, target)
+            fan_in_count += 1
+        added += len(sources)
+
+    logger.info("[sequential] Added sequential edges", count=added, fan_in_count=fan_in_count)

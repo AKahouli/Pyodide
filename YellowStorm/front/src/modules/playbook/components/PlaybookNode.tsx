@@ -110,6 +110,16 @@ export interface ConnectorDropPayload {
   actions: Array<{ key: string; label: string }>;
 }
 
+function resolveResourceContent(payload: InputFile): string | undefined {
+  if (payload.type === 'workspace') {
+    return payload.workspaceId || payload.metadata?.workspaceId;
+  }
+  if (payload.type === 'folder') {
+    return payload.metadata?.folderpath;
+  }
+  return payload.metadata?.filepath;
+}
+
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
@@ -572,12 +582,22 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     }
 
     if (workspaceId && portId && isResource) {
+      const content = resolveResourceContent(payload);
+      if (!content) {
+        console.warn('PlaybookNode: dropped resource without resolvable content', {
+          nodeId: id,
+          resourceId: payload.id,
+          resourceType: payload.type,
+        });
+        return;
+      }
       const resource: PlaybookResourceReference = {
         kind: resourceKind,
         id: payload.id,
         name: payload.name,
         workspaceId,
-        path: payload.metadata?.filepath,
+        content,
+        path: payload.metadata?.filepath || payload.metadata?.folderpath,
         mimeType: payload.metadata?.mimeType,
         metadata: payload.metadata as Record<string, unknown>,
       };
