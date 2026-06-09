@@ -2,6 +2,7 @@ import inspect
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,15 @@ _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+
+
+@dataclass(frozen=True)
+class ConnectorToolContext:
+    workspace_id: Optional[str] = None
+    brain_ids: Optional[List[str]] = None
+    workspace_names: Optional[List[str]] = None
+    brain_documents: Optional[List[Dict[str, Any]]] = None
+    session_id: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -665,14 +675,88 @@ def _with_default_workspace_params(
     return merged_params
 
 
+def _unique_strings(values: List[Any]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            normalized.append(text)
+    return normalized
+
+
+def _collect_connector_context(
+    brain_documents: Optional[List[Dict[str, Any]]],
+    workspace_names: Optional[List[str]],
+    workspace_id: Optional[str],
+) -> Dict[str, List[str]]:
+    file_names: List[Any] = []
+    workspace_ids: List[Any] = []
+    workspace_paths: List[Any] = []
+
+    for doc in brain_documents or []:
+        if not isinstance(doc, dict):
+            continue
+        file_names.append(doc.get("file_name") or doc.get("filename"))
+        workspace_ids.append(doc.get("workspace_id"))
+        workspace_paths.append(doc.get("workspace_name") or doc.get("workspace_id"))
+
+    workspace_ids.append(workspace_id)
+    workspace_ids.extend(workspace_names or [])
+    workspace_paths.extend(workspace_names or [])
+
+    return {
+        "file_names": _unique_strings(file_names),
+        "workspace_ids": _unique_strings(workspace_ids),
+        "workspace_paths": _unique_strings(workspace_paths),
+    }
+
+
+def _apply_streamable_http_context_headers(
+    auth_headers: Dict[str, str],
+    context: Dict[str, List[str]],
+    session_id: Optional[str],
+) -> Dict[str, str]:
+    headers = dict(auth_headers)
+    file_names = context.get("file_names") or []
+    workspace_ids = context.get("workspace_ids") or []
+    workspace_paths = context.get("workspace_paths") or []
+
+    if len(file_names) == 1:
+        headers["file_name"] = file_names[0]
+    else:
+        headers.pop("file_name", None)
+
+    if workspace_ids:
+        headers["workspace_id"] = json.dumps(workspace_ids) if len(workspace_ids) > 1 else workspace_ids[0]
+        headers.pop("workspace_name", None)
+
+    if session_id:
+        headers["x-conversation-id"] = session_id
+
+    if workspace_paths:
+        headers["x-workspace-paths"] = ",".join(workspace_paths)
+
+    return headers
+
+
 def create_connector_tools(
     bindings: List[Dict[str, Any]],
-    workspace_id: Optional[str] = None,
-    brain_ids: Optional[List[str]] = None,
-    workspace_names: Optional[List[str]] = None,
+    context: Optional[ConnectorToolContext] = None,
 ) -> List[Any]:
+    context = context or ConnectorToolContext()
     tools: List[Any] = []
-    effective_workspace_names = workspace_names if workspace_names is not None else brain_ids
+    effective_workspace_names = (
+        context.workspace_names
+        if context.workspace_names is not None
+        else context.brain_ids
+    )
+    connector_context = _collect_connector_context(
+        context.brain_documents,
+        effective_workspace_names,
+        context.workspace_id,
+    )
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
 
@@ -690,7 +774,7 @@ def create_connector_tools(
         if not connector_id:
             continue
 
-        if workspace_id and binding_auth_headers.get("Authorization"):
+        if context.workspace_id and binding_auth_headers.get("Authorization"):
             slug = re.sub(r"[^a-z0-9-]", "", connector_slug.lower())[:24] or "connector"
             tool_name = f"{slug}_import_to_workspace".lower()[:64]
             schema = {
@@ -787,7 +871,7 @@ def create_connector_tools(
             async def _import_tool(
                 _connector_id: str = connector_id,
                 _connector_name: str = connector_name,
-                _workspace_id: str = workspace_id,
+                _workspace_id: str = context.workspace_id,
                 _auth_headers: Dict[str, str] = binding_auth_headers,
                 _backend_url: Optional[str] = backend_url,
                 mode: Optional[str] = None,
@@ -844,7 +928,7 @@ def create_connector_tools(
                 "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
             )
             default_workspace_id = _resolve_default_workspace_id(
-                effective_workspace_names, workspace_id
+                effective_workspace_names, context.workspace_id
             )
             parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
@@ -868,6 +952,8 @@ def create_connector_tools(
                 _auth_env: Dict[str, str] = binding_auth_env,
                 _parameter_schema: Dict[str, Any] = parameter_schema,
                 _tool_name: str = tool_name,
+                _connector_context: Dict[str, List[str]] = connector_context,
+                _session_id: Optional[str] = context.session_id,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -889,14 +975,23 @@ def create_connector_tools(
                     merged_params,
                     _parameter_schema,
                     effective_workspace_names,
-                    workspace_id,
+                    context.workspace_id,
+                )
+                effective_auth_headers = (
+                    _apply_streamable_http_context_headers(
+                        _auth_headers,
+                        _connector_context,
+                        _session_id,
+                    )
+                    if _transport_type == "streamable_http"
+                    else dict(_auth_headers)
                 )
                 logger.info(
                     "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s auth_header_names=%s request_payload=%s",
                     _connector_id,
                     _action_key,
                     _tool_name,
-                    sorted(_auth_headers.keys()),
+                    sorted(effective_auth_headers.keys()),
                     _log_payload(merged_params),
                 )
                 response = await call_mcp_tool(
@@ -905,7 +1000,7 @@ def create_connector_tools(
                     _server_config,
                     _action_key,
                     merged_params,
-                    auth_headers=_auth_headers,
+                    auth_headers=effective_auth_headers,
                     auth_env=_auth_env,
                 )
                 logged_response = _loggable_payload(_action_key, response)

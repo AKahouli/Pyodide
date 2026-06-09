@@ -533,7 +533,18 @@ Do not render charts for single values or non-numeric content.
 
             get_session_start = time.time()
             logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=Agent_mode_{self.config.user_id}")
-            exsiting_session=await data_base_session.get_session(app_name=f"Agent_mode_{self.config.user_id}",user_id=self.config.user_id,session_id=session_id)
+            using_database_session = True
+            try:
+                exsiting_session=await data_base_session.get_session(app_name=f"Agent_mode_{self.config.user_id}",user_id=self.config.user_id,session_id=session_id)
+            except OSError as e:
+                using_database_session = False
+                exsiting_session = None
+                data_base_session = get_in_memory_session_service()()
+                logger.warning(
+                    "[FREEZE DEBUG] Database session lookup failed, using in-memory session for this run - session_id=%s error=%s",
+                    session_id,
+                    str(e),
+                )
             get_session_duration = time.time() - get_session_start
 
             if exsiting_session:
@@ -592,8 +603,21 @@ Do not render charts for single values or non-numeric content.
 
                 create_session_start = time.time()
                 logger.info(f"[FREEZE DEBUG] Calling create_session() for session {session_id}")
-                await data_base_session.create_session(app_name=f"Agent_mode_{self.config.user_id}", user_id=self.config.user_id,
-                                                       session_id=session_id,state=state)
+                try:
+                    await data_base_session.create_session(app_name=f"Agent_mode_{self.config.user_id}", user_id=self.config.user_id,
+                                                           session_id=session_id,state=state)
+                except OSError as e:
+                    if using_database_session:
+                        data_base_session = get_in_memory_session_service()()
+                        await data_base_session.create_session(app_name=f"Agent_mode_{self.config.user_id}", user_id=self.config.user_id,
+                                                               session_id=session_id,state=state)
+                        logger.warning(
+                            "[FREEZE DEBUG] Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
+                            session_id,
+                            str(e),
+                        )
+                    else:
+                        raise
                 create_session_duration = time.time() - create_session_start
                 logger.info(f"[FREEZE DEBUG] create_session() COMPLETED in {create_session_duration:.3f}s")
 

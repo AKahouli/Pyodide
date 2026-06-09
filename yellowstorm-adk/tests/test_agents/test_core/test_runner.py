@@ -605,6 +605,7 @@ class TestAgentRunner:
         )
 
         function_response = MagicMock()
+        function_response.name = "searchv2test_locate_answer_citations"
         function_response.response = {
             "text": "Connector result",
             "sources": [{"title": "Q1 report", "url": "https://contoso.example/q1"}],
@@ -642,7 +643,7 @@ class TestAgentRunner:
         )
 
         function_response = MagicMock()
-        function_response.name = "searchv2_search"
+        function_response.name = "searchv2test_locate_answer_citations"
         function_response.response = {
             "text": "Connector result [1]",
             "citation_sources": [
@@ -689,7 +690,7 @@ class TestAgentRunner:
         )
 
         function_response = MagicMock()
-        function_response.name = "searchv2_search_document_blocks"
+        function_response.name = "searchv2test_locate_answer_citations"
         function_response.response = {
             "result": """
             [
@@ -733,7 +734,7 @@ class TestAgentRunner:
         )
         assert (
             session_state["_connector_text_sources"][0]["object"]["content"]["file_name"]
-            == "69e643d725a48c9410bff182"
+            == "p0_b0"
         )
         assert (
             session_state["_connector_text_sources"][0]["object"]["content"]["page"]
@@ -763,30 +764,15 @@ class TestAgentRunner:
                 {
                     "reference": "1",
                     "object": {
-                    "content": {
-                        "source": "Q1-report.txt",
-                        "file_name": "item-123",
-                        "page": "",
-                        "page_content": "Quarterly revenue increased by 18%.",
-                        "workspace_name": "",
-                    }
-                },
-            }
-        ]
-
-        source = runner._find_source_by_reference("1", toolkit, session_state)
-
-        assert source == {
-            "source_object": {
-                "content": {
-                    "source": "Q1-report.txt",
-                    "file_name": "item-123",
-                    "page": "",
-                    "page_content": "Quarterly revenue increased by 18%.",
-                    "workspace_name": "",
+                        "content": {
+                            "source": "Q1-report.txt",
+                            "file_name": "item-123",
+                            "page": "",
+                            "page_content": "Quarterly revenue increased by 18%.",
+                            "workspace_name": "",
                         }
                     },
-                }
+                },
             ]
         }
 
@@ -853,6 +839,92 @@ class TestAgentRunner:
             },
             "type": "text",
         }
+
+    def test_extracts_connector_citations_response_with_highlight_metadata(self):
+        runner = AgentRunner(
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        )
+
+        sources = runner._extract_connector_citation_sources_from_response(
+            {
+                "citations": [
+                    {
+                        "source": "s3://vectorstore/user-1/workspace/Sodexo-DEU-2024-FR.pdf",
+                        "page_number": 286,
+                        "highlight_text": "dividende en croissance reguliere",
+                        "highlight_bbox": [42.52, 123.16, 246.73, 52.5],
+                    }
+                ]
+            },
+            "searchv2test_locate_answer_citations",
+        )
+
+        assert sources == [
+            {
+                "type": "text",
+                "source": "user-1/workspace/Sodexo-DEU-2024-FR.pdf",
+                "file_name": "Sodexo-DEU-2024-FR.pdf",
+                "page": "286",
+                "page_content": "dividende en croissance reguliere",
+                "workspace_id": "",
+                "reference": "1",
+                "reference_aliases": [],
+                "highlight_text": "dividende en croissance reguliere",
+                "highlight_bbox": [42.52, 123.16, 246.73, 52.5],
+                "block_bbox": [42.52, 123.16, 246.73, 52.5],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_send_citation_component_includes_highlight_metadata(self):
+        formatter = MagicMock()
+        formatter.format_component_event.return_value = {"component": "citation"}
+        runner = AgentRunner(
+            MagicMock(),
+            MagicMock(),
+            formatter,
+            MagicMock(),
+        )
+        queue = asyncio.Queue()
+
+        await runner._send_citation_component(
+            {
+                "type": "text",
+                "source_object": {
+                    "content": {
+                        "source": "user-1/workspace/Sodexo-DEU-2024-FR.pdf",
+                        "file_name": "Sodexo-DEU-2024-FR.pdf",
+                        "page": "286",
+                        "page_content": "dividende en croissance reguliere",
+                        "brain_id": "workspace",
+                        "highlight_text": "dividende en croissance reguliere",
+                        "highlight_bbox": [42.52, 123.16, 246.73, 52.5],
+                        "block_bbox": [42.52, 123.16, 246.73, 52.5],
+                    }
+                },
+            },
+            "agent-id",
+            "session-id",
+            queue,
+            "text-component-id",
+            "[1]",
+        )
+
+        component_data = formatter.format_component_event.call_args.kwargs[
+            "component_data"
+        ]
+        assert component_data["text_source"]["highlight_text"] == (
+            "dividende en croissance reguliere"
+        )
+        assert component_data["text_source"]["highlight_bbox"] == [
+            42.52,
+            123.16,
+            246.73,
+            52.5,
+        ]
 
     @pytest.mark.asyncio
     async def test_run_standard_agent_exception(self):
