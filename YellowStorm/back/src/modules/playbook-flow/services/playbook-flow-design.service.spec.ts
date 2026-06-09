@@ -53,12 +53,8 @@ describe('PlaybookFlowDesignService', () => {
     const designSummaryService = {
       summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
     };
-    const designRequestBuilder = {
-      buildDesignRequest: jest.fn().mockResolvedValue({}),
-    };
-    const designResultApplier = {
-      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
-    };
+    const designRequestBuilder = new PlaybookDesignRequestBuilderService();
+    const designResultApplier = new PlaybookDesignResultApplierService();
 
     const service = new PlaybookFlowDesignService(
       designMessageModel as any,
@@ -186,12 +182,8 @@ describe('PlaybookFlowDesignService', () => {
     const designSummaryService = {
       summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
     };
-    const designRequestBuilder = {
-      buildDesignRequest: jest.fn().mockResolvedValue({}),
-    };
-    const designResultApplier = {
-      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
-    };
+    const designRequestBuilder = new PlaybookDesignRequestBuilderService();
+    const designResultApplier = new PlaybookDesignResultApplierService();
 
     const service = new PlaybookFlowDesignService(
       { create: jest.fn().mockResolvedValue({ id: '507f1f77bcf86cd799439013', flowId: '507f1f77bcf86cd799439011', createdBy: '507f1f77bcf86cd799439012', userQuery: 'Improve it', aiSummary: '', snapshotBefore: { nodes: [], controlEdges: [], dataBindings: [] }, status: 'completed', revertedFromMessageId: null, error: null, createdAt: new Date(), updatedAt: new Date() }) } as any,
@@ -258,12 +250,8 @@ describe('PlaybookFlowDesignService', () => {
     const designSummaryService = {
       summarizeStructuralChanges: jest.fn().mockReturnValue('No structural changes'),
     };
-    const designRequestBuilder = {
-      buildDesignRequest: jest.fn().mockResolvedValue({}),
-    };
-    const designResultApplier = {
-      applyToSnapshot: jest.fn().mockReturnValue({ nodes: [], controlEdges: [], dataBindings: [] }),
-    };
+    const designRequestBuilder = new PlaybookDesignRequestBuilderService();
+    const designResultApplier = new PlaybookDesignResultApplierService();
 
     const service = new PlaybookFlowDesignService(
       { create: jest.fn().mockResolvedValue({ id: '507f1f77bcf86cd799439013', flowId: '507f1f77bcf86cd799439011', createdBy: '507f1f77bcf86cd799439012', userQuery: 'Improve it', aiSummary: '', snapshotBefore: { nodes: [], controlEdges: [], dataBindings: [] }, status: 'completed', revertedFromMessageId: null, error: null, createdAt: new Date(), updatedAt: new Date() }) } as any,
