@@ -179,6 +179,9 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     const skills = req.skillIds?.length
       ? await this.skillService.findByIdsForGrpc(req.skillIds)
       : [];
+    // Persist the current selection on the session so it survives a reload
+    // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
+    await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     this.runGrpc(userId, sessionId, aiSessionId, systemWorkspaceId, req, skills);
   }
 

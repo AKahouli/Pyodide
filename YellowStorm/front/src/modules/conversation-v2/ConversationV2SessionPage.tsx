@@ -22,6 +22,8 @@ interface LocationState {
    * we can fire off the first message.
    */
   model?: string;
+  /** Skill selection carried from the new-conversation page for the initial send. */
+  skillIds?: string[];
 }
 
 export default function ConversationV2SessionPage() {
@@ -29,11 +31,13 @@ export default function ConversationV2SessionPage() {
   const location = useLocation();
   const initialMessage = (location.state as LocationState | null)?.initialMessage;
   const initialModel = (location.state as LocationState | null)?.model;
+  const initialSkillIds = (location.state as LocationState | null)?.skillIds;
 
   const {
     switchToSession,
     setSystemWorkspaceId,
     setWorkspaceIds,
+    setSelectedSkillIds,
     replayEvents,
     setStreaming,
     streamError,
@@ -45,6 +49,7 @@ export default function ConversationV2SessionPage() {
       switchToSession: s.switchToSession,
       setSystemWorkspaceId: s.setSystemWorkspaceId,
       setWorkspaceIds: s.setWorkspaceIds,
+      setSelectedSkillIds: s.setSelectedSkillIds,
       replayEvents: s.replayEvents,
       setStreaming: s.setStreaming,
       streamError: s.streamError,
@@ -94,6 +99,7 @@ export default function ConversationV2SessionPage() {
           if (cancelled) return;
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
+          setSelectedSkillIds(pointer.selectedSkillIds ?? []);
         } catch {
           /* keep the cached view */
         }
@@ -111,6 +117,7 @@ export default function ConversationV2SessionPage() {
 
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
+        setSelectedSkillIds(pointer.selectedSkillIds ?? []);
 
         const collected: AgentEvent[] = [];
         let since = 0;
@@ -141,7 +148,7 @@ export default function ConversationV2SessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setSelectedSkillIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
 
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send
@@ -151,12 +158,16 @@ export default function ConversationV2SessionPage() {
     if (!sessionId || !initialMessage) return;
     if (sentInitialForSession.current === sessionId) return;
     sentInitialForSession.current = sessionId;
+    // Re-apply the skill selection carried from the landing page. The loader
+    // ran first and reset selectedSkillIds from the (empty) new-session pointer;
+    // restore it here so sendMessage (which reads it from the store) ships it.
+    if (initialSkillIds?.length) setSelectedSkillIds(initialSkillIds);
     void sendMessage(initialMessage, initialModel);
     // Wipe the location state so a refresh doesn't replay the same prompt.
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, sessionId, initialMessage, initialModel, sendMessage]);
+  }, [loading, notFound, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, sendMessage]);
 
   if (loading) {
     return (

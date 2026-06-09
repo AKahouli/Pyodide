@@ -9,6 +9,7 @@ export interface SessionPointer {
   status: string;
   isShared: boolean;
   workspaceIds: string[];
+  selectedSkillIds: string[];
   lastEventAt: string;
   eventCount: number;
   systemWorkspaceId: string | null;

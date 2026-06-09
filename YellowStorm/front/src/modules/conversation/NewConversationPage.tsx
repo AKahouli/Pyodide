@@ -50,7 +50,7 @@ import { useConversationV2PointersStore, useConversationV2Store } from '@/module
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
 import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
-import { RecentSkillsMenu, ManageSkillsDialog } from '@/modules/skill';
+import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/modules/skill';
 import { getActiveSkills } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
 
@@ -166,7 +166,15 @@ export function NewConversationPage() {
       }
 
       navigate(`/conversation-v2/${sessionId}`, {
-        state: { initialMessage: text, model: litellmModel },
+        state: {
+          initialMessage: text,
+          model: litellmModel,
+          // Carry the skill selection to the session page so the initial send
+          // ships it. Needed because the session loader hydrates (and would
+          // otherwise overwrite) selectedSkillIds from the brand-new — empty —
+          // pointer before the first message is sent.
+          skillIds: useConversationV2Store.getState().selectedSkillIds,
+        },
       });
     } catch {
       toast.error(t('toasts.conversation.createError'));
@@ -410,18 +418,6 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
               />
             </PromptInputActionMenuContent>
           </PromptInputActionMenu>
-          {skills
-            .filter((s) => selectedSkillIds.includes(s.id))
-            .map((s) => (
-              <button
-                key={s.id}
-                type='button'
-                onClick={() => toggleSelectedSkill(s.id)}
-                className='inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground'
-              >
-                {s.name}
-              </button>
-            ))}
           <WorkspaceSelect
             selectedIds={selectedWorkspaceIds}
             onChange={setSelectedWorkspaceIds}
@@ -468,6 +464,11 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
         </PromptInputFooter>
       </PromptInput>
+      <SelectedSkillsPills
+        skills={skills}
+        selectedIds={selectedSkillIds}
+        onRemove={toggleSelectedSkill}
+      />
       <ManageSkillsDialog
         open={manageSkillsOpen}
         onOpenChange={setManageSkillsOpen}

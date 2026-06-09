@@ -40,6 +40,7 @@ import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/mo
 import type { SkillOption } from '@/modules/agent/types';
 import { RecentSkillsMenu } from '@/modules/skill/components/RecentSkillsMenu';
 import { ManageSkillsDialog } from '@/modules/skill/components/ManageSkillsDialog';
+import { SelectedSkillsPills } from '@/modules/skill/components/SelectedSkillsPills';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void;
@@ -222,18 +223,6 @@ export function Composer({ onSend }: ComposerProps) {
                     {selectedConnectorRepo.repoName}
                   </span>
                 )}
-                {skills
-                  .filter((s) => selectedSkillIds.includes(s.id))
-                  .map((s) => (
-                    <button
-                      key={s.id}
-                      type='button'
-                      onClick={() => toggleSelectedSkill(s.id)}
-                      className='inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground'
-                    >
-                      {s.name}
-                    </button>
-                  ))}
                 {streaming && (
                   <PromptInputButton type='button' onClick={() => void pause()}>
                     <PauseIcon className='size-4' />
@@ -256,6 +245,11 @@ export function Composer({ onSend }: ComposerProps) {
               <PromptInputSubmit status={status} onStop={() => void stop()} />
             </PromptInputFooter>
           </PromptInput>
+          <SelectedSkillsPills
+            skills={skills}
+            selectedIds={selectedSkillIds}
+            onRemove={toggleSelectedSkill}
+          />
         </PromptInputProvider>
         <ConnectorReposDialog
           open={connectorDialogOpen}
