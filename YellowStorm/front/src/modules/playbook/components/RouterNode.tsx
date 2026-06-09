@@ -40,7 +40,7 @@ const DEFAULT_ROUTER_CONFIG: RouterConfig = {
   maxIterations: 3,
 };
 
-function getSummaryCountKey(count: number, singularKey: string, pluralKey: string): string {
+function getSummaryCountKey<T extends string>(count: number, singularKey: T, pluralKey: T): T {
   return count === 1 ? singularKey : pluralKey;
 }
 
