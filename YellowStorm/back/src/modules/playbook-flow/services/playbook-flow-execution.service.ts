@@ -574,21 +574,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     dispatcher.schedule(ownerId, (queuedOwnerId) => this.drainQueue(queuedOwnerId));
   }
 
-  async start(
+  private async prepareExecutionStartFlow(
     flowId: string,
     ownerId: string,
-    inputContext?: Record<string, unknown>,
-    idempotencyKey?: string,
-    singleStepTaskId?: string,
-    advisorAutopilotEnabled?: boolean,
-    advisorAutopilotTargetScore?: number,
-    advisorAutopilotMaxTurns?: number,
-    reflectionEnabled?: boolean,
-    advisorScoringMode?: AdvisorScoringMode,
-    executionMode?: string,
-    stepExecutionModes?: Record<string, string>,
-    modelIdOverride?: string,
-  ): Promise<IFlowExecutionResponse> {
+  ): Promise<IFlowResponse> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
@@ -620,6 +609,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+
+    return flow;
+  }
+
+  async start(
+    flowId: string,
+    ownerId: string,
+    inputContext?: Record<string, unknown>,
+    idempotencyKey?: string,
+    singleStepTaskId?: string,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
+    reflectionEnabled?: boolean,
+    advisorScoringMode?: AdvisorScoringMode,
+    executionMode?: string,
+    stepExecutionModes?: Record<string, string>,
+    modelIdOverride?: string,
+  ): Promise<IFlowExecutionResponse> {
+    const flow = await this.prepareExecutionStartFlow(flowId, ownerId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
@@ -2366,7 +2375,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const snapshot = sourceExecution.snapshot as Record<string, unknown>;
+    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
+    const executableSnapshot = this.buildExecutableSnapshot(
+      this.builderService.buildSnapshot(latestFlow as any),
+      String(sourceExecution.flowId),
+    );
+    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -2377,15 +2391,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const iteration = payload.iteration ?? 0;
+    const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
+      ? snapshot.settings as Record<string, unknown>
+      : {};
+    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
+    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
-      recursionLimit: sourceExecution.recursionLimit,
-      maxParallelism: sourceExecution.maxParallelism,
+      recursionLimit,
+      maxParallelism,
       inputContext: sourceExecution.inputContext,
-      snapshot: sourceExecution.snapshot,
+      snapshot,
       replaySource: {
         executionId: sourceExecution.id,
         taskId: payload.taskId,

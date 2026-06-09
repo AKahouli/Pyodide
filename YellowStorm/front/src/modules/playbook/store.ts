@@ -217,6 +217,19 @@ function appendEvaluationHistory(
   return [...existing, entry].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+function buildResourceBindingValue(resource: PlaybookResourceReference): Record<string, unknown> {
+  return {
+    text: resource.content,
+    kind: resource.kind,
+    id: resource.id,
+    name: resource.name,
+    workspaceId: resource.workspaceId,
+    path: resource.path,
+    mimeType: resource.mimeType,
+    metadata: resource.metadata,
+  };
+}
+
 // ===== Initial State =====
 
 const initialState: PlaybookState = {
@@ -4607,6 +4620,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const existing = existingBindings.find(
           (b) => b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant',
         );
+        const bindingValue = buildResourceBindingValue(resource);
 
         let updatedBindings: DataBinding[];
         if (existing) {
@@ -4620,13 +4634,13 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               ? existingBindings
               : existingBindings.map((b) =>
                   b.id === existing.id
-                    ? { ...b, constantValue: [...prev, resource] }
+                    ? { ...b, constantValue: [...prev, bindingValue] }
                     : b,
                 );
           } else {
             updatedBindings = existingBindings.map((b) =>
               b.id === existing.id
-                ? { ...b, constantValue: resource }
+                ? { ...b, constantValue: bindingValue }
                 : b,
             );
           }
@@ -4638,7 +4652,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               targetNode: taskId,
               targetPort: portId,
               sourceKind: 'constant' as const,
-              constantValue: resource,
+              constantValue: bindingValue,
             },
           ];
         }
@@ -4652,6 +4666,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           metadata: {
             workspaceId: resource.workspaceId,
             documentId: resource.kind === 'document' ? resource.id : undefined,
+            filepath: resource.kind === 'document' ? resource.path : undefined,
+            folderpath: resource.kind === 'folder' ? resource.path : undefined,
             mimeType: resource.mimeType,
           },
         };

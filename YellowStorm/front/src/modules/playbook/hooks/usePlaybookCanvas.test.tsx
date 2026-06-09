@@ -732,6 +732,67 @@ describe('usePlaybookCanvas', () => {
     );
   });
 
+  it('assigns a dragged task to an iterator when dropped inside the container', () => {
+    const iteratorTask = makeTask({
+      id: 'iterator-1',
+      taskType: 'iterator',
+      positionX: 100,
+      positionY: 100,
+      iteratorLayout: { width: 600, height: 360 },
+    });
+    const childTask = makeTask({
+      id: 'child-1',
+      positionX: -200,
+      positionY: 220,
+      containerConfig: { parentIteratorId: null },
+    });
+    currentPlaybookState.value = makePlaybook({ tasks: [iteratorTask, childTask], edges: [] });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'iterator-1',
+          type: 'playbookIteratorContainer',
+          position: { x: 100, y: 100 },
+          style: { width: 600, height: 360 },
+          data: iteratorTask,
+        } as any,
+        {
+          id: 'child-1',
+          type: 'playbookStep',
+          position: { x: -200, y: 220 },
+          width: 384,
+          height: 240,
+          data: childTask,
+        } as any,
+      ]);
+    });
+
+    act(() => {
+      result.current.onNodeDragStop({ clientX: 240, clientY: 220 } as any, {
+        id: 'child-1',
+        type: 'playbookStep',
+        position: { x: -200, y: 220 },
+        width: 384,
+        height: 240,
+        data: childTask,
+      } as any, []);
+    });
+
+    expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'child-1',
+          positionX: -200,
+          positionY: 220,
+          containerConfig: { parentIteratorId: 'iterator-1' },
+        }),
+      ]),
+    );
+  });
+
   it('auto-creates a compatible input port when dropping a router output onto a node body', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [

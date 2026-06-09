@@ -340,6 +340,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const hasInitializedDraftRef = useRef(hasInitializedDraft);
   hasInitializedDraftRef.current = hasInitializedDraft;
   const replayDialogRef = useRef<ReplayBaselineSettingsDialogHandle | null>(null);
+  const deferredCloseSaveRef = useRef<number | null>(null);
   const originalDraftRef = useRef<EditorDraft | null>(null);
   const originalCapturedRef = useRef(false);
   const [replayStaleDialogOpen, setReplayStaleDialogOpen] = useState(false);
@@ -609,11 +610,21 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
   const flushAndClose = useCallback(() => {
     const currentTask = taskRef.current;
-    if (currentTask && hasInitializedDraftRef.current) {
-      onSave(currentTask.id, draftToSavePayload(draftRef.current));
+    const savePayload = currentTask && hasInitializedDraftRef.current
+      ? draftToSavePayload(draftRef.current)
+      : null;
+    onOpenChange(false);
+    if (savePayload && currentTask) {
+      // Let the dialog close paint before rebuilding large playbooks.
+      if (deferredCloseSaveRef.current !== null) {
+        window.clearTimeout(deferredCloseSaveRef.current);
+      }
+      deferredCloseSaveRef.current = window.setTimeout(() => {
+        deferredCloseSaveRef.current = null;
+        onSave(currentTask.id, savePayload);
+      }, 0);
     }
     void replayDialogRef.current?.flushSave();
-    onOpenChange(false);
   }, [onSave, onOpenChange]);
 
   const handleRemoveStaleReplay = useCallback(async () => {
