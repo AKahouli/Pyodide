@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package a2a_admin;
+
+import "chatbot.proto";
+
+// Management API for publishing agents over the A2A protocol.
+// Internal, unary RPCs called by the backend/frontend. The A2A serving surface
+// (agent card + message endpoint) stays HTTP/JSON-RPC for external A2A clients
+// (e.g. Microsoft Copilot Studio).
+
+message PublishAgentRequest {
+    chatbot.Agent agent = 1;   // Full agent definition; agent.id is the URL segment
+    string user_id = 2;        // Owner (optional)
+}
+
+message PublishAgentResponse {
+    string agent_id = 1;
+    string agent_card_url = 2;  // {base}/a2a/{agent_id}/.well-known/agent-card.json
+    string api_key = 3;         // Returned once
+    string api_key_header = 4;
+}
+
+message RotateKeyRequest {
+    string agent_id = 1;
+}
+
+message RotateKeyResponse {
+    string agent_id = 1;
+    string agent_card_url = 2;
+    string api_key = 3;         // New key; the old one stops working
+    string api_key_header = 4;
+}
+
+// Revoke removes the agent from the A2A surface: its card and message endpoint
+// return 404. Re-exposing is done by publishing the agent again.
+message RevokeAgentRequest {
+    string agent_id = 1;
+}
+
+message RevokeAgentResponse {
+    string agent_id = 1;
+    bool revoked = 2;
+}
+
+message GetAgentRequest {
+    string agent_id = 1;
+}
+
+message GetAgentResponse {
+    bool found = 1;
+    string agent_id = 2;
+    string name = 3;
+    bool enabled = 4;
+    string api_key_prefix = 5;
+    string created_at = 6;
+    string updated_at = 7;
+}
+
+service A2AAdminService {
+    rpc PublishAgent(PublishAgentRequest) returns (PublishAgentResponse);
+    rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+    rpc RevokeAgent(RevokeAgentRequest) returns (RevokeAgentResponse);
+    rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+}

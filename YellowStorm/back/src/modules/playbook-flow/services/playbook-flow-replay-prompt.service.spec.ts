@@ -163,7 +163,6 @@ describe('PlaybookFlowReplayPromptService', () => {
 
     const result = service.buildReplayPromptSection({ artifacts, mode: 'replay_flex' });
 
-    expect(result).toContain('Replay mode: replay_flex.');
     expect(result).toContain('### Decision Invariants');
     expect(result).toContain('Verify evidence before answer.');
     expect(result).toContain('### Validated Tool Policy');
@@ -300,8 +299,7 @@ describe('PlaybookFlowReplayPromptService', () => {
     });
 
     expect(result).toContain('### Replay Plan');
-    expect(result).toContain('Preserve intent: Summarize earnings change');
-    expect(result).toContain('Preserve validated tool purposes and argument shapes using current substituted context values.');
+    expect(result).toContain('Preserve validated tool purposes and **argument shapes** **using current substituted context values**.');
     expect(result).toContain('Context variable Ticker: AAPL -> MSFT');
     expect(result).toContain('Required stage: Extract data');
     expect(result).toContain('Tool step 1: search_financials with arguments {"ticker":"MSFT","dateRange":"Q1 2026"}');

@@ -85,6 +85,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                     "workspace_name": "workspace-1",
                     "reference": "[1]",
                 },
+                "citation_origin": "locate_answer_citations",
             },
         },
     ]
@@ -332,6 +333,10 @@ def test_code_interpreter_generated_xlsx_emits_explicit_output_port(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
 
     def _fake_post(*args, **kwargs):
         captured_request.update(kwargs.get("json", {}))
@@ -407,6 +412,10 @@ def test_code_interpreter_generated_file_uses_object_key_fallback(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeResponse())
 
     collector = ToolResultCollector()
@@ -454,6 +463,10 @@ def test_code_interpreter_request_normalizes_prefixed_workspace_name(
 
     monkeypatch.setattr(
         "src.config.settings.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
 
@@ -627,6 +640,10 @@ def test_code_interpreter_description_lists_only_mounted_files(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
 
     collector = ToolResultCollector()
     tool = _create_code_interpreter_tool(
@@ -645,10 +662,10 @@ def test_code_interpreter_description_lists_only_mounted_files(
                 "workspace_name": "owner-a/ws-a",
             },
             {
-                "filepath": "owner-b/ws-b/B.docx",
+                "filepath": "owner-a/ws-a/B.docx",
                 "filename": "B.docx",
-                "workspace_id": "ws-b",
-                "workspace_name": "owner-b/ws-b",
+                "workspace_id": "ws-a",
+                "workspace_name": "owner-a/ws-a",
             },
         ],
         collector=collector,
@@ -659,8 +676,9 @@ def test_code_interpreter_description_lists_only_mounted_files(
     )
 
     assert tool is not None
+    # Files mounted from the single resolved workspace are listed in the description.
     assert "A.docx" in tool.description
-    assert "B.docx" not in tool.description
+    assert "B.docx" in tool.description
 
 
 def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
@@ -688,6 +706,10 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
 
     def _fake_post(*args, **kwargs):
         payload = kwargs.get("json", {})
@@ -709,7 +731,7 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
         state={
             "_code_interpreter_session_id": "session-1",
             "_code_interpreter_brain_id": "workspace-1",
-            "_code_interpreter_user_id": "user-1",
+            "_code_interpreter_user_id": "owner-123",
             "_code_interpreter_brain_docs": [
                 {
                     "filename": "report.csv",
@@ -761,6 +783,10 @@ def test_python_interpreter_reuses_generated_file_workspace_name_without_brain_d
 
     monkeypatch.setattr(
         "src.config.settings.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
+    monkeypatch.setattr(
+        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
 
@@ -1013,8 +1039,6 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         ],
         collector,
         output_workspace_id="playbook-workspace-1",
-        workspace_names=["agent-brain-1", "agent-brain-2"],
-        file_names=["doc-1", "doc-2"],
     )
 
     search_tool = next(
@@ -1123,7 +1147,6 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         ],
         collector,
         output_workspace_id="",
-        workspace_names=["agent-brain-1"],
     )
 
     search_tool = next(

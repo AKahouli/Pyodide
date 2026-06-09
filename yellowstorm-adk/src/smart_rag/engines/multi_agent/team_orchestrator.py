@@ -706,6 +706,137 @@ Do not render charts for single values or non-numeric content.
                 logger.info(f"[AUTO MODE] Sending stream end (None) to backend after error - session_id: {session_id}")
                 await q.put(None)
 
+    async def run_single_agent(self, user_prompt: str, session_id: str,
+                               q: Optional[asyncio.Queue[dict]] = None,
+                               parent_trace=None, image_input: Optional[List[Dict]] = None) -> Optional[str]:
+        """Run a single specialized agent directly, with no manager/delegation.
+
+        The one agent registered in the repository is built with its real tools
+        attached (reusing the delegation factory's agent-creation path) and
+        executed via the worker AgentRunner, so document-search citations, web
+        sources, charts, sandbox output and generated files all stream exactly as
+        they do for a delegated worker agent — just without a manager on top.
+
+        Args:
+            user_prompt (str): The user query to answer.
+            session_id (str): Unique identifier for the current session.
+            q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
+            parent_trace: Langfuse span/trace for observability.
+            image_input (Optional[List[Dict]]): Images to pass to the agent.
+
+        Returns:
+            Optional[str]: The agent's final response text, if any.
+        """
+        single_agent_span = langfuse_client.span(
+            trace_id=session_id,
+            parent_observation_id=parent_trace.id if parent_trace else None,
+            name="SingleAgent",
+            input={
+                "user_prompt": user_prompt,
+                "image_input": bool(image_input),
+                "agent_count": len(self.agent_repository.get_all_agents()),
+            },
+        )
+
+        try:
+            # Citation manager must exist before tools are created (mirrors run_agent_team)
+            from src.smart_rag.infrastructure.session.citation_manager import get_citation_manager
+            self.citation_manager = await get_citation_manager(session_id)
+            self.delegation_factory.citation_manager = self.citation_manager
+
+            # Component tracker for plan/chart/sandbox component add/update semantics
+            component_tracker = ComponentTracker(session_id)
+            if hasattr(self.streaming_processor, 'streaming_formatter'):
+                self.streaming_processor.streaming_formatter.component_tracker = component_tracker
+            if hasattr(self.agent_runner, 'streaming_formatter'):
+                self.agent_runner.streaming_formatter.component_tracker = component_tracker
+            if hasattr(self, 'streaming_formatter') and self.streaming_formatter:
+                self.streaming_formatter.component_tracker = component_tracker
+
+            self.delegation_factory.set_image_input(image_input)
+            self.current_queue = q
+
+            agents = self.agent_repository.get_all_agents()
+            if not agents:
+                raise ValueError("No agent registered for single-agent execution")
+            agent_config = agents[0]
+            agent_name = agent_config.get('name', 'agent')
+            normalized_name = self.agent_helper.normalize_agent_name(agent_name)
+
+            # Reuse the delegation factory's full agent-creation path (prompt
+            # enrichment, memory, attached images, MCP, connectors, all tools).
+            agent, toolkit = await self.delegation_factory._create_agent_with_error_handling(
+                agent_config, agent_name, normalized_name, "", single_agent_span, False, self.citation_manager
+            )
+            if agent is None:
+                raise RuntimeError(f"Failed to create single agent: {agent_name}")
+
+            session_helper = get_in_memory_session_service()()
+            agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
+
+            result, mcp_used, execution_summary, generated_files = await self.agent_runner.run_agent_tool(
+                agent=agent,
+                message=user_prompt,
+                session_helper=session_helper,
+                user_id=self.config.user_id,
+                q=q,
+                task_order="",
+                expected_output="",
+                agent_id=agent_id,
+                toolkit=toolkit,
+                agent_config=agent_config,
+                image_input=image_input,
+            )
+
+            # Stream any files produced by the python_interpreter tool
+            if mcp_used and 'python_interpreter' in mcp_used:
+                await self.delegation_factory._handle_python_interpreter_files(
+                    agent_name, mcp_used, q, generated_files
+                )
+
+            try:
+                langfuse_client.flush()
+            except Exception as e:
+                logger.exception(f"Failed to flush Langfuse client: {str(e)}")
+
+            # Persist citation state after the final response
+            try:
+                if self.citation_manager:
+                    await self.citation_manager.global_manager._save_state()
+                    logger.info(f"[SINGLE_AGENT] Citation manager state saved for session {session_id}")
+            except Exception as e:
+                logger.error(f"[SINGLE_AGENT] Failed to save citation manager state: {str(e)}")
+
+            single_agent_span.update(output={"execution_completed": True})
+            logger.info(f"Single-agent execution completed successfully - session_id: {session_id}")
+
+            if q:
+                logger.info(f"[MONO MODE] Sending stream end (None) to backend - session_id: {session_id}")
+                await q.put(None)
+
+            return result
+
+        except Exception as e:
+            logger.exception(f"Error running single agent: {str(e)}")
+            single_agent_span.update(output={"execution_completed": False, "error": str(e)})
+            if q:
+                import uuid
+                error_component = {
+                    "action": "add",
+                    "component": {
+                        "id": str(uuid.uuid4()),
+                        "type": "error",
+                        "data": {
+                            "title": "Exception",
+                            "content": "The model couldn't finish your answer due to an unexpected error."
+                        }
+                    },
+                    "metadata": {"message_id": session_id}
+                }
+                await q.put(error_component)
+                await q.put(None)
+            return None
+
     async def _create_agent_team(self, team_config, session_id):
         """Create an agent team from configuration."""
         from src.smart_rag.agents.factories.base_factory import AgentFactory

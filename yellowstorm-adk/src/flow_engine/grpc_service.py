@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
 
 import grpc
@@ -215,12 +215,11 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_approval = True
                             active.pending_interrupt = None
                         elif event.event_type == EVENT_NODE_SUSPENDED:
-                            active.waiting_for_step_resume = True
-                            active.pending_interrupt = {
-                                "node_id": event.node_id,
-                                "iteration": event.iteration,
-                                "interrupt_id": struct_to_dict(event.payload).get("interrupt_id", ""),
-                            }
+                            active.arm_step_resume(
+                                event.node_id,
+                                event.iteration,
+                                struct_to_dict(event.payload).get("interrupt_id", ""),
+                            )
                         elif event.event_type == EVENT_APPROVAL_RESOLVED:
                             active.waiting_for_approval = False
                         elif active.should_clear_step_resume(event.node_id, event.iteration):
@@ -412,12 +411,11 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_approval = True
                             active.pending_interrupt = None
                         elif event.event_type == EVENT_NODE_SUSPENDED:
-                            active.waiting_for_step_resume = True
-                            active.pending_interrupt = {
-                                "node_id": event.node_id,
-                                "iteration": event.iteration,
-                                "interrupt_id": struct_to_dict(event.payload).get("interrupt_id", ""),
-                            }
+                            active.arm_step_resume(
+                                event.node_id,
+                                event.iteration,
+                                struct_to_dict(event.payload).get("interrupt_id", ""),
+                            )
                         elif event.event_type == EVENT_APPROVAL_RESOLVED:
                             active.waiting_for_approval = False
                         elif active.should_clear_step_resume(event.node_id, event.iteration):
@@ -770,6 +768,24 @@ class _ActiveExecution:
     resume_future: Optional[asyncio.Future[Any]] = None
     pending_resume_input: Any = None
     pending_interrupt: Optional[dict[str, Any]] = None
+    resolved_step_interrupts: set[str] = field(default_factory=set)
+
+    def arm_step_resume(self, node_id: str, iteration: int, interrupt_id: str) -> None:
+        """Arm a step-resume wait for a NodeSuspended event.
+
+        When the graph is resumed it replays the suspend event for an
+        interrupt that was already resolved. Re-arming on that replay would
+        deadlock the run loop waiting for a resume that never comes, so
+        already-resolved interrupts are ignored.
+        """
+        if interrupt_id and interrupt_id in self.resolved_step_interrupts:
+            return
+        self.waiting_for_step_resume = True
+        self.pending_interrupt = {
+            "node_id": node_id,
+            "iteration": iteration,
+            "interrupt_id": interrupt_id,
+        }
 
     def should_clear_step_resume(self, node_id: str, iteration: int) -> bool:
         if not self.waiting_for_step_resume or not isinstance(self.pending_interrupt, dict):
@@ -831,6 +847,10 @@ class _ActiveExecution:
             self.resume_future.set_result(graph_input)
         else:
             self.pending_resume_input = graph_input
+        if expected_interrupt_id:
+            self.resolved_step_interrupts.add(expected_interrupt_id)
+        if interrupt_id:
+            self.resolved_step_interrupts.add(interrupt_id)
         self.waiting_for_step_resume = False
         self.pending_interrupt = None
         return True
