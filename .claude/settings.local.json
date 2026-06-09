@@ -153,7 +153,8 @@
       "Bash(grep -nB2 -A30 \"sendMessage: async\" modules/conversation-v2/store.ts)",
       "Bash(grep -nA8 \"createSession\" front/src/modules/conversation-v2/api.ts)",
       "Bash(grep -nB2 -A12 \"createSession\\\\|@Post\\(\\)\" back/src/modules/conversation-v2/conversation-v2.controller.ts)",
-      "Bash(python3 -m py_compile app/domain/services/agent_task_runner.py)"
+      "Bash(python3 -m py_compile app/domain/services/agent_task_runner.py)",
+      "Bash(git rm *)"
     ]
   },
   "disabledMcpjsonServers": [
