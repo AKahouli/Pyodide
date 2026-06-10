@@ -233,6 +233,7 @@ def _resolve_hitl_blockers(metadata: dict[str, Any], state: ExecutionState, node
     return [
         blocker for blocker in blockers
         if blocker.get("enabled", True)
+        and str(blocker.get("createdBy") or blocker.get("created_by") or "") == "user"
         and (
             blocker.get("scope") == "workflow"
             or str(blocker.get("nodeId") or blocker.get("node_id") or "") == node_id

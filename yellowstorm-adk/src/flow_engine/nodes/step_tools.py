@@ -341,6 +341,8 @@ def _matching_tool_blocker(
     for blocker in hitl_blockers:
         if blocker.get("enabled") is False:
             continue
+        if str(blocker.get("createdBy") or blocker.get("created_by") or "") != "user":
+            continue
         if str(blocker.get("kind") or "") not in {"destructive_action", "external_send", "workspace_write"}:
             continue
         if _matches_any(tool_text, blocker.get("appliesToConnectorActions")):

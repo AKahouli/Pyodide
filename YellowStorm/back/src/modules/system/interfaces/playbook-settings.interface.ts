@@ -19,7 +19,7 @@ export interface AdminPlaybookSettings {
 }
 
 export const DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS: PlaybookIntentNormalizationLimits = {
-  maxWorkflowPlanChanges: 100,
+  maxWorkflowPlanChanges: 500,
   maxInputPorts: 4,
   maxOutputPorts: 4,
   maxIteratorBodySteps: 12,

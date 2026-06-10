@@ -14,11 +14,12 @@ def test_tool_hitl_approval_allows_approved_risky_action(monkeypatch) -> None:
         tool_arguments={"to": "customer@example.com"},
         context=step_tools.ToolHitlApprovalContext(
             hitl_policy={"mode": "auto", "approvalEnabled": True},
-            hitl_blockers=[{
-                "id": "external-send",
-                "kind": "external_send",
-                "appliesToConnectorActions": ["send_email"],
-            }],
+                hitl_blockers=[{
+                    "id": "external-send",
+                    "kind": "external_send",
+                    "createdBy": "user",
+                    "appliesToConnectorActions": ["send_email"],
+                }],
             node_id="step-1",
             label="Notify customer",
             iteration=0,
@@ -39,11 +40,12 @@ def test_tool_hitl_approval_returns_skip_result_for_skipped_action(monkeypatch) 
         tool_arguments={"document_id": "doc-1"},
         context=step_tools.ToolHitlApprovalContext(
             hitl_policy={"mode": "auto", "approvalsEnabled": True},
-            hitl_blockers=[{
-                "id": "destructive",
-                "kind": "destructive_action",
-                "matcherConfig": {"verbs": ["delete"]},
-            }],
+                hitl_blockers=[{
+                    "id": "destructive",
+                    "kind": "destructive_action",
+                    "createdBy": "user",
+                    "matcherConfig": {"verbs": ["delete"]},
+                }],
             node_id="step-1",
             label="Clean workspace",
             iteration=0,
@@ -73,6 +75,7 @@ def test_tool_hitl_approval_rejects_risky_action(monkeypatch) -> None:
                 hitl_blockers=[{
                     "id": "webhook",
                     "kind": "external_send",
+                    "createdBy": "user",
                     "matcherConfig": {"verbs": ["webhook"]},
                 }],
                 node_id="step-1",
@@ -94,9 +97,37 @@ def test_tool_hitl_approval_ignores_non_matching_action(monkeypatch) -> None:
         tool_arguments={"query": "leads"},
         context=step_tools.ToolHitlApprovalContext(
             hitl_policy={"mode": "auto", "approvalEnabled": True},
+                hitl_blockers=[{
+                    "id": "destructive",
+                    "kind": "destructive_action",
+                    "createdBy": "user",
+                    "matcherConfig": {"verbs": ["delete"]},
+                }],
+            node_id="step-1",
+            label="Search",
+            iteration=0,
+            writer=lambda _event: None,
+        ),
+    )
+
+    assert result is None
+
+
+def test_tool_hitl_approval_ignores_system_blockers(monkeypatch) -> None:
+    def fail_interrupt(_payload):
+        raise AssertionError("interrupt should not be called")
+
+    monkeypatch.setattr(step_tools, "interrupt", fail_interrupt)
+
+    result = step_tools._resolve_tool_hitl_approval(
+        tool_name="workspace_delete_document",
+        tool_arguments={"document_id": "doc-1"},
+        context=step_tools.ToolHitlApprovalContext(
+            hitl_policy={"mode": "auto", "approvalEnabled": True},
             hitl_blockers=[{
-                "id": "destructive",
+                "id": "system-destructive",
                 "kind": "destructive_action",
+                "createdBy": "system",
                 "matcherConfig": {"verbs": ["delete"]},
             }],
             node_id="step-1",

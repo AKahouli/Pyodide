@@ -48,14 +48,16 @@ def evaluate_hitl_blocker(
 
     if hitl_policy.get("mode") != "auto":
         return None
+    rule = _matching_missing_input_rule(hitl_blockers)
     missing_input = _missing_required_input(node_config, input_context)
-    if missing_input and _policy_allows(hitl_policy, "clarificationsEnabled"):
+    if rule and missing_input and _policy_allows(hitl_policy, "clarificationsEnabled"):
         return HitlBlockerDecision(
             interrupt_type="clarification",
-            message=f"Required input '{missing_input}' is missing. Please provide it before this step runs.",
-            reason_code="missing_required_input",
-            risk_level="medium",
+            message=str(rule.get("message") or rule.get("promptTemplate") or f"Required input '{missing_input}' is missing. Please provide it before this step runs."),
+            reason_code=str(rule.get("reasonCode") or rule.get("reason_code") or "missing_required_input"),
+            risk_level=str(rule.get("riskLevel") or rule.get("risk_level") or "medium"),
             blocker_kind="missing_required_input",
+            blocker_rule_id=str(rule.get("id") or "") or None,
         )
     rule = _matching_action_rule(node_config, hitl_blockers)
     if rule and _policy_allows(hitl_policy, "approvalsEnabled"):
@@ -76,14 +78,6 @@ def evaluate_hitl_blocker(
             risk_level=str(rule.get("riskLevel") or rule.get("risk_level") or "medium"),
             blocker_kind=str(rule.get("kind") or "explicit_human_request"),
             blocker_rule_id=str(rule.get("id") or "") or None,
-        )
-    if _description_requests_approval(node_config) and _policy_allows(hitl_policy, "approvalsEnabled"):
-        return HitlBlockerDecision(
-            interrupt_type="approval_request",
-            message=f"Task '{node_config.get('label') or 'step'}' asks for human approval before execution.",
-            reason_code="explicit_approval_required",
-            risk_level="medium",
-            blocker_kind="explicit_human_request",
         )
     return None
 
@@ -456,6 +450,8 @@ def _matching_instruction_rule(
 ) -> dict[str, Any] | None:
     description = _node_text(node_config)
     for rule in hitl_blockers:
+        if str(rule.get("createdBy") or rule.get("created_by") or "") != "user":
+            continue
         kind = str(rule.get("kind") or "")
         if kind not in {"explicit_human_request", "explicit_user_instruction"}:
             continue
@@ -470,12 +466,25 @@ def _matching_instruction_rule(
     return None
 
 
+def _matching_missing_input_rule(hitl_blockers: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for rule in hitl_blockers:
+        if rule.get("enabled") is False:
+            continue
+        if str(rule.get("createdBy") or rule.get("created_by") or "") != "user":
+            continue
+        if str(rule.get("kind") or "") == "missing_required_input":
+            return rule
+    return None
+
+
 def _matching_action_rule(
     node_config: dict[str, Any],
     hitl_blockers: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     action_text = _node_action_text(node_config)
     for rule in hitl_blockers:
+        if str(rule.get("createdBy") or rule.get("created_by") or "") != "user":
+            continue
         if rule.get("enabled") is False:
             continue
         if str(rule.get("kind") or "") not in {"destructive_action", "external_send", "workspace_write"}:
@@ -502,6 +511,7 @@ def _any_pattern_matches(text: str, patterns: Any) -> bool:
 def _is_llm_judge_rule(rule: dict[str, Any]) -> bool:
     return (
         rule.get("enabled", True) is not False
+        and str(rule.get("createdBy") or rule.get("created_by") or "") == "user"
         and str(rule.get("kind") or "") == "custom"
         and str(rule.get("matcherType") or rule.get("matcher_type") or "") == "llm_judge"
     )
@@ -530,12 +540,6 @@ def _node_action_text(node_config: dict[str, Any]) -> str:
         return unique_action_keys[0].lower()
 
     return ""
-
-
-def _description_requests_approval(node_config: dict[str, Any]) -> bool:
-    text = _node_text(node_config)
-    phrases = ("ask before", "confirm with me", "require approval", "approval before", "review before")
-    return any(phrase in text for phrase in phrases)
 
 
 def _node_text(node_config: dict[str, Any]) -> str:
