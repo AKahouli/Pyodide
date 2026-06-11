@@ -1,1 +1,0 @@
-# Vectorstores API source package

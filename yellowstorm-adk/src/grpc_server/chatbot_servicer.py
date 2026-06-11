@@ -46,6 +46,22 @@ logger = get_logger(__name__)
 app_settings = get_settings()
 
 
+def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
+    summaries = []
+    for skill in skills or []:
+        summaries.append(
+            {
+                "id": getattr(skill, "id", ""),
+                "name": getattr(skill, "name", ""),
+                "has_description": bool(getattr(skill, "description", "")),
+                "has_instructions": bool(getattr(skill, "instructions", "")),
+                "allowed_tool_count": len(getattr(skill, "allowed_tools", []) or []),
+                "file_count": len(getattr(skill, "files", []) or []),
+            }
+        )
+    return summaries
+
+
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -664,6 +680,15 @@ class ChatbotServicer(
         Returns:
             AgentSuggestion: Internal V1 Pydantic model (for backward compatibility)
         """
+        skill_summaries = _grpc_skill_summaries(getattr(pb_agent, "skills", []))
+        logger.info(
+            "gRPC agent skills received",
+            agent_id=pb_agent.id if pb_agent.id else "no_id",
+            agent_name=pb_agent.name,
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+
         # Extract workspace_names and brain_documents from repeated WorkspaceContext
         workspace_names = []
         workspace_ids = []
@@ -968,7 +993,15 @@ class ChatbotServicer(
     @staticmethod
     def _build_skills(pb_request: Any) -> Optional[List[Dict[str, Any]]]:
         """Extract conversation-level skills selected by the user in the composer."""
-        if not getattr(pb_request, "skills", None):
+        skill_summaries = _grpc_skill_summaries(getattr(pb_request, "skills", []))
+        logger.info(
+            "gRPC conversation skills received",
+            request_type=type(pb_request).__name__,
+            conversation_id=getattr(pb_request, "conversation_id", ""),
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+        if not skill_summaries:
             return None
         return [
             {

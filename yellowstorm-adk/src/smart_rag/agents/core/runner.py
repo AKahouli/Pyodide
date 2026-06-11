@@ -35,8 +35,12 @@ def _is_locate_answer_citations_tool(tool_name: str) -> bool:
     return "locate_answer_citations" in str(tool_name or "")
 
 
+def _registers_connector_citations(tool_name: str) -> bool:
+    return _is_locate_answer_citations_tool(tool_name)
+
+
 def _loggable_structured_response(tool_name: str, response: Any) -> Any:
-    if _is_locate_answer_citations_tool(tool_name):
+    if _registers_connector_citations(tool_name):
         return response
     return "[non-locator structured response omitted]"
 
@@ -187,6 +191,19 @@ def _apply_read_content_page(
             updated["source_object"]["content"]["page"] = page_num
         if page_text:
             updated["source_object"]["content"]["page_content"] = page_text
+            updated["source_object"]["content"]["highlight_text"] = str(
+                page_entry.get("highlight_text")
+                or page_entry.get("highlightText")
+                or page_text
+            )
+        highlight_bbox = (
+            page_entry.get("highlight_bbox")
+            or page_entry.get("highlightBBox")
+            or page_entry.get("bbox")
+        )
+        if isinstance(highlight_bbox, list):
+            updated["source_object"]["content"]["highlight_bbox"] = highlight_bbox
+            updated["source_object"]["content"]["block_bbox"] = highlight_bbox
         return updated
 
     # Strategy 1 — explicit page mention in text
@@ -1377,7 +1394,7 @@ class AgentRunner:
             if not isinstance(response_data, dict):
                 return
 
-            if _is_locate_answer_citations_tool(tool_name):
+            if _registers_connector_citations(tool_name):
                 self._register_connector_citation_sources_from_response(
                     response_data,
                     session_state if session_state is not None else {},
@@ -1633,9 +1650,11 @@ class AgentRunner:
         if source_type == "image":
             parts = [
                 source_type,
-                str(source.get("path") or ""),
-                str(source.get("workspace_name") or ""),
+                str(source.get("source") or source.get("path") or ""),
+                str(source.get("file_name") or ""),
                 str(source.get("page") or ""),
+                str(source.get("highlight_text") or ""),
+                str(source.get("highlight_bbox") or source.get("block_bbox") or ""),
             ]
         else:
             parts = [
@@ -1703,17 +1722,18 @@ class AgentRunner:
                             ),
                             "object": {
                                 "content": {
-                                    "path": str(normalized_source.get("path") or ""),
+                                    "path": str(
+                                        normalized_source.get("source")
+                                        or normalized_source.get("path")
+                                        or ""
+                                    ),
                                     "page": str(normalized_source.get("page") or ""),
                                     "file_name": str(
                                         normalized_source.get("file_name") or ""
                                     ),
-                                    "workspace_name": str(
-                                        normalized_source.get("workspace_name") or ""
-                                    ),
-                                    "brain_id": str(
-                                        normalized_source.get("workspace_id") or ""
-                                    ),
+                                    "workspace_name": "",
+                                    "workspace_id": "",
+                                    "brain_id": "",
                                     "height": str(normalized_source.get("height") or ""),
                                     "width": str(normalized_source.get("width") or ""),
                                     "highlight_text": str(

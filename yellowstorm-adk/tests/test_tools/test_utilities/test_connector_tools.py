@@ -1,4 +1,7 @@
 import asyncio
+import inspect
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,7 +11,12 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 
-def _connector_binding(parameter_schema, auth_headers=None, fixed_params=None):
+def _connector_binding(
+    parameter_schema,
+    auth_headers=None,
+    fixed_params=None,
+    action_key="search",
+):
     return {
         "connector_id": "connector-1",
         "connector_name": "Workspace MCP",
@@ -19,7 +27,7 @@ def _connector_binding(parameter_schema, auth_headers=None, fixed_params=None):
         "fixed_params": fixed_params or {},
         "actions": [
             {
-                "action_key": "search",
+                "action_key": action_key,
                 "label": "Search",
                 "description": "Search workspace content",
                 "parameter_schema": parameter_schema,
@@ -36,9 +44,10 @@ def _first_connector_tool(
     fixed_params=None,
     brain_documents=None,
     session_id=None,
+    action_key="search",
 ):
     tools = create_connector_tools(
-        [_connector_binding(parameter_schema, auth_headers, fixed_params)],
+        [_connector_binding(parameter_schema, auth_headers, fixed_params, action_key)],
         ConnectorToolContext(
             workspace_id=workspace_id,
             workspace_names=workspace_names,
@@ -351,3 +360,45 @@ def test_connector_tool_injects_single_file_name_header(
     asyncio.run(tool.func(query="revenue"))
 
     assert captured["auth_headers"]["file_name"] == "report.pdf"
+
+
+def test_read_section_tool_buffers_images_with_runtime_tool_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "section_id": "sec_2",
+        "text": "",
+        "images": [
+            {
+                "image_id": "img-1",
+                "mime": "image/png",
+                "image_base64": "abc123",
+            }
+        ],
+    }
+    payload["text"] = json.dumps(payload)
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        return dict(payload)
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool({}, action_key="read_section")
+    signature = inspect.signature(tool.func)
+    tool_context = SimpleNamespace(state={})
+
+    response = asyncio.run(tool.func(query="recipe", tool_context=tool_context))
+
+    assert "tool_context" in signature.parameters
+    assert "image_base64" not in str(response)
+    assert response["images"][0]["image_attached"] is True
+    image_keys = [
+        key for key in tool_context.state if key.startswith("_pending_tool_images_")
+    ]
+    assert len(image_keys) == 1
+    assert tool_context.state[image_keys[0]] == [
+        {"mime": "image/png", "data": "abc123"}
+    ]
