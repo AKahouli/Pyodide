@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -22,6 +23,7 @@ import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
+import { updateAdminAgent } from '@/modules/admin/api';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
 import type { Agent } from '@/modules/agent/types';
@@ -489,18 +491,22 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       };
 
       if (agent.isDefault) {
-        const cloned = await createAgent(payload);
-        nodeDataActions?.updateNodeData(id, { assignedAgentId: cloned.id });
+        const updated = await updateAdminAgent(agent.id, payload);
+        useAgentStore.setState((state) => ({
+          agents: state.agents.map((item) => (item.id === updated.id ? updated : item)),
+        }));
       } else {
         await updateAgent(agent.id, payload);
       }
       setAgentDialogOpen(false);
-    } catch {
-      // handled by store toast
+    } catch (error) {
+      if (agent.isDefault) {
+        toast.error(error instanceof Error ? error.message : t('node.agentBadge.editFailed'));
+      }
     } finally {
       setAgentDialogSaving(false);
     }
-  }, [agent, id, createAgent, updateAgent, nodeDataActions]);
+  }, [agent, t, updateAgent]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
