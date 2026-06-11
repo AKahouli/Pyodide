@@ -6,6 +6,10 @@ import asyncio
 from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
+from src.smart_rag.tools.utilities.connector_tools import (
+    _buffer_connector_images,
+    _register_connector_response_sources,
+)
 
 
 class TestAgentRunner:
@@ -742,6 +746,123 @@ class TestAgentRunner:
         )
         assert session_state["_connector_text_sources"][0]["reference_aliases"] == ["68"]
         queue.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_ignores_read_section_citations(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        function_response = MagicMock()
+        function_response.name = "sharepoint_read_section"
+        function_response.response = {
+            "content": "Section text",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "contract.pdf",
+                    "file_name": "contract.pdf",
+                    "page": "2",
+                    "page_content": "Section text",
+                    "workspace_id": "workspace-1",
+                }
+            ],
+        }
+        session_state = {}
+
+        await runner._handle_structured_tool_response(
+            function_response=function_response,
+            agent_id="agent_123",
+            session_id="session_123",
+            q=AsyncMock(),
+            session_state=session_state,
+        )
+
+        assert "_connector_text_sources" not in session_state
+
+    def test_register_connector_response_sources_ignores_read_content_citations(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        response = _register_connector_response_sources(
+            {
+                "text": "Full document",
+                "source": "contract.pdf",
+                "file_name": "contract.pdf",
+                "total_pages": 2,
+                "citation_sources": [
+                    {"page": "1", "content": "First page"},
+                    {"page": "2", "content": "Second page"},
+                ],
+            },
+            tool_context,
+            action_key="sharepoint_read_content",
+        )
+
+        assert response["text"] == "Full document"
+        assert "citation_sources" not in response
+        assert "_connector_text_sources" not in tool_context.state
+
+    def test_register_connector_response_sources_ignores_read_section_images(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        response = _register_connector_response_sources(
+            {
+                "section_id": "sec_2",
+                "title": "Preparation",
+                "source": "recipe.pdf",
+                "file_name": "recipe.pdf",
+                "page_range": "1",
+                "content": "Preparation steps.",
+                "highlight_text": "Preparation steps.",
+                "images": [
+                    {
+                        "image_id": "p1_b8_img",
+                        "bbox": [114.0, 1242.0, 454.0, 1585.0],
+                        "image_attached": True,
+                    }
+                ],
+                "text": "Preparation steps.",
+            },
+            tool_context,
+            action_key="sharepoint_read_section",
+        )
+
+        assert response["text"] == "Preparation steps."
+        assert "citation_sources" not in response
+        assert "_connector_image_sources" not in tool_context.state
+
+    def test_buffer_connector_images_strips_base64_and_buffers_for_model_injection(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        response = _buffer_connector_images(
+            {
+                "citation_sources": [
+                    {
+                        "file_name": "contract.pdf",
+                        "images": [
+                            {
+                                "image_id": "img-1",
+                                "mime": "image/png",
+                                "image_base64": "abc123",
+                            }
+                        ],
+                    }
+                ]
+            },
+            tool_context,
+        )
+
+        assert "image_base64" not in str(response)
+        assert response["citation_sources"][0]["images"][0]["image_attached"] is True
+        assert response["citation_sources"][0]["images"][0]["image_id"] == "img-1"
+        assert response["citation_sources"][0]["images"][0]["mime"] == "image/png"
+        image_keys = [
+            key for key in tool_context.state if key.startswith("_pending_tool_images_")
+        ]
+        assert len(image_keys) == 1
+        assert tool_context.state[image_keys[0]] == [
+            {"mime": "image/png", "data": "abc123"}
+        ]
 
     def test_find_source_by_reference_reads_connector_sources_from_session_state(self):
         mock_event_extractor = MagicMock()
