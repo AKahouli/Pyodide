@@ -2,9 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS } from '@modules/system/interfaces/playbook-settings.interface';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartResult, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
-import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
+import { PlaybookFlowIntentService, type IntentNormalizationLimits, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -134,7 +135,7 @@ export class PlaybookFlowIntentConstructionService {
       raw,
       dto,
       selectedNodeId: context.selectedNodeId,
-      limits: context.limits,
+      limits: this.getConstructionLimits(context.limits),
       validationContext: context.validationContext,
       includeFallback: false,
     });
@@ -155,6 +156,16 @@ export class PlaybookFlowIntentConstructionService {
     }), dto, context);
   }
 
+  private getConstructionLimits(limits: IntentNormalizationLimits): IntentNormalizationLimits {
+    return {
+      ...limits,
+      maxWorkflowPlanChanges: Math.max(
+        limits.maxWorkflowPlanChanges,
+        DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
+      ),
+    };
+  }
+
   private async *readChatCompletionStream(stream: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
     let buffer = '';
     for await (const chunk of stream) {
@@ -162,14 +173,21 @@ export class PlaybookFlowIntentConstructionService {
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
-        const content = this.extractStreamContent(data);
+        const content = this.extractStreamLineContent(line);
         if (content) yield content;
       }
     }
+
+    const content = this.extractStreamLineContent(buffer);
+    if (content) yield content;
+  }
+
+  private extractStreamLineContent(line: string): string {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return '';
+    const data = trimmed.slice(5).trim();
+    if (!data || data === '[DONE]') return '';
+    return this.extractStreamContent(data);
   }
 
   private extractStreamContent(data: string): string {

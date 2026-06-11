@@ -5437,7 +5437,19 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
       // ===== Port Inspection =====
 
-      openPortInspection: (inspection) => set({ portInspection: inspection }),
+      openPortInspection: (inspection) => {
+        usePlaybookUiStore.getState().openExecutionDetailTab('results', inspection.nodeId);
+        set({
+          portInspection: inspection,
+          executionDetailTab: 'results',
+          executionPanelOpen: true,
+          workspaceExplorerOpen: false,
+          connectorSidebarOpen: false,
+          nodeEditorOpen: false,
+          selectedStepId: inspection.nodeId,
+          pageMode: 'run',
+        });
+      },
       closePortInspection: () => set({ portInspection: null }),
 
       importPlaybookDefinition: (definition: PlaybookDefinitionExport) => {

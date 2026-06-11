@@ -547,6 +547,7 @@
   "node.replayNeedsUpdate": "Replay à mettre à jour",
   "node.noAgent": "Aucun agent assigné",
   "node.agentBadge.editAgent": "Modifier l'agent",
+  "node.agentBadge.editFailed": "Impossible de mettre a jour l'agent",
   "node.noDescription": "Aucune description",
   "node.interrupt": "Interruption",
   "node.clarification": "Clarification",

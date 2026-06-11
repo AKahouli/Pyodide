@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { PlaybookNode } from './PlaybookNode';
+import { NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
@@ -29,14 +29,72 @@ const storeState = vi.hoisted(() => ({
   executionCache: {},
 } as any));
 
+const createAgentMock = vi.hoisted(() => vi.fn());
+const updateAgentMock = vi.hoisted(() => vi.fn());
+const updateAdminAgentMock = vi.hoisted(() => vi.fn());
+
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
 vi.mock('@/modules/agent/store', () => ({
-  useAgentStore: (selector: any) => selector({ getAgentById: () => ({ name: 'Agent' }), createAgent: vi.fn(), updateAgent: vi.fn() }),
+  useAgentStore: (selector: any) => selector({
+    getAgentById: () => ({
+      id: 'agent-1',
+      name: 'Agent',
+      slug: 'agent',
+      agentType: { id: 'type-1', name: 'Manager' },
+      role: 'role',
+      description: '',
+      temperature: 0.5,
+      instruction: '',
+      ignorePrePrompt: false,
+      knowledgeBases: [],
+      tools: [],
+      isDefault: true,
+      isDefaultForType: false,
+      isActive: true,
+      createdBy: '',
+      createdAt: '',
+      updatedAt: '',
+    }),
+    createAgent: createAgentMock,
+    updateAgent: updateAgentMock,
+  }),
   useAgentTypes: () => [],
   useModels: () => [],
+}));
+
+vi.mock('@/modules/admin/api', () => ({
+  updateAdminAgent: updateAdminAgentMock,
+}));
+
+vi.mock('@/modules/agent/components/CreateEditAgentDialog', () => ({
+  CreateEditAgentDialog: ({ open, onSave }: { open: boolean; onSave: (data: any) => void }) => open ? (
+    <button
+      type="button"
+      onClick={() => onSave({
+        name: 'Agent',
+        slug: 'agent',
+        agentType: 'type-1',
+        role: 'role',
+        description: '',
+        temperature: 0.5,
+        model: '',
+        instruction: '',
+        ignorePrePrompt: false,
+        knowledgeBases: [],
+        tools: [],
+        skills: [],
+        disabledSkills: [],
+        connectors: [],
+        isActive: true,
+        isDefaultForType: true,
+      })}
+    >
+      save-agent-dialog
+    </button>
+  ) : null,
 }));
 
 vi.mock('../store', () => ({
@@ -94,6 +152,7 @@ vi.mock('./PortLabel', () => ({
 
 describe('PlaybookNode', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     storeState.currentPlaybook = {
       id: 'playbook-1',
       tasks: [],
@@ -346,5 +405,54 @@ describe('PlaybookNode', () => {
     );
 
     expect(screen.getByText('completed')).toBeInTheDocument();
+  });
+
+  it('updates default agents from the badge dialog without cloning', async () => {
+    render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Summarize',
+            description: 'Summarize the document',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Agent'));
+    fireEvent.click(screen.getByText('save-agent-dialog'));
+
+    await waitFor(() => {
+      expect(updateAdminAgentMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(createAgentMock).not.toHaveBeenCalled();
+    expect(updateAgentMock).not.toHaveBeenCalled();
+    expect(updateAdminAgentMock).toHaveBeenCalledWith('agent-1', expect.objectContaining({
+      name: 'Agent',
+      slug: 'agent',
+      isDefaultForType: true,
+    }));
   });
 });

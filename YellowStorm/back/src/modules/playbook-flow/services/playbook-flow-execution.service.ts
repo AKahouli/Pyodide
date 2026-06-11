@@ -106,13 +106,24 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
+function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(blockers)) return [];
+  return blockers.filter((blocker): blocker is Record<string, unknown> => (
+    !!blocker
+    && typeof blocker === 'object'
+    && !Array.isArray(blocker)
+    && blocker.enabled !== false
+    && blocker.createdBy === 'user'
+  ));
+}
+
 export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> {
   const metadata = node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
     ? node.metadata as Record<string, unknown>
     : {};
   const flowHitlPolicy = snapshot.hitlPolicy;
   const nodeHitlPolicy = node.hitlPolicy ?? metadata.hitlPolicy ?? metadata.hitl_policy;
-  const hitlBlockers = snapshot.hitlBlockers;
+  const hitlBlockers = filterRuntimeHitlBlockers(snapshot.hitlBlockers);
 
   // Keep HITL contract data inside metadata until the runtime proto carries first-class flow-node fields.
   return {
@@ -133,7 +144,7 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       ? { max_clarifications: Number(node.maxClarifications ?? metadata.maxClarifications) || 0 }
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
-    ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
+    ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
   };
 }
 

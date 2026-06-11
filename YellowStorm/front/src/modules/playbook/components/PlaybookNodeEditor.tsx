@@ -343,6 +343,8 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const deferredCloseSaveRef = useRef<number | null>(null);
   const originalDraftRef = useRef<EditorDraft | null>(null);
   const originalCapturedRef = useRef(false);
+  const hydratedTaskIdRef = useRef<string | null>(null);
+  const wasOpenRef = useRef(false);
   const [replayStaleDialogOpen, setReplayStaleDialogOpen] = useState(false);
   const [removingStaleReplay, setRemovingStaleReplay] = useState(false);
   const [stepHitlDialogOpen, setStepHitlDialogOpen] = useState(false);
@@ -369,17 +371,25 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   );
 
   useEffect(() => {
-    if (task) {
+    const reopened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+
+    if (task && (task.id !== hydratedTaskIdRef.current || reopened)) {
       const built = buildDraftFromTask(task, t);
       setDraft(built);
       originalDraftRef.current = built;
+      hydratedTaskIdRef.current = task.id;
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
       setAdvancedEvaluationOpen(false);
       lastSuggestionSignatureRef.current = '';
     }
-  }, [task, t]);
+
+    if (!task) {
+      hydratedTaskIdRef.current = null;
+    }
+  }, [open, task, t]);
 
   useEffect(() => {
     if (!open || !task || !hasInitializedDraft) return;
