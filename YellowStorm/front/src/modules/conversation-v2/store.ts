@@ -47,6 +47,8 @@ interface State {
   } | null;
   /** Skill IDs selected for the conversation; sent with every message. */
   selectedSkillIds: string[];
+  /** Connector IDs selected for the conversation; sent with every message. */
+  selectedConnectorIds: string[];
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -122,6 +124,10 @@ interface Actions {
   setSelectedSkillIds: (ids: string[]) => void;
   /** Toggle one skill on/off for the conversation. */
   toggleSelectedSkill: (id: string) => void;
+  /** Replace the full set of selected connectors for the conversation. */
+  setSelectedConnectorIds: (ids: string[]) => void;
+  /** Toggle one connector on/off for the conversation. */
+  toggleSelectedConnector: (id: string) => void;
   /** Optimistic rename of the current session. Updates title and pointer list. */
   renameCurrent: (title: string) => Promise<void>;
   /** Delete the current session. Resolves once removed from pointer list. */
@@ -147,6 +153,7 @@ const initial: State = {
       typewriterName: null,
       selectedConnectorRepo: null,
       selectedSkillIds: [],
+      selectedConnectorIds: [],
       streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -353,6 +360,7 @@ export const useConversationV2Store = create<State & Actions>()(
 
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
+        const connectorIds = get().selectedConnectorIds;
         try {
           await conversationV2Api.sendMessage(sessionId, {
             message,
@@ -368,6 +376,7 @@ export const useConversationV2Store = create<State & Actions>()(
                 }
               : {}),
             ...(skillIds.length ? { skillIds } : {}),
+            ...(connectorIds.length ? { connectorIds } : {}),
           });
         } catch (err) {
           set(
@@ -471,6 +480,18 @@ export const useConversationV2Store = create<State & Actions>()(
           }),
           false,
           'toggleSelectedSkill',
+        ),
+      setSelectedConnectorIds: (ids) =>
+        set({ selectedConnectorIds: ids }, false, 'setSelectedConnectorIds'),
+      toggleSelectedConnector: (id) =>
+        set(
+          (s) => ({
+            selectedConnectorIds: s.selectedConnectorIds.includes(id)
+              ? s.selectedConnectorIds.filter((x) => x !== id)
+              : [...s.selectedConnectorIds, id],
+          }),
+          false,
+          'toggleSelectedConnector',
         ),
       renameCurrent: async (title) => {
         const id = get().sessionId;

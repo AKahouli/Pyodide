@@ -92,6 +92,7 @@ export const conversationV2Api = {
       connectorRepoName?: string;
       connectorRepoUrl?: string;
       skillIds?: string[];
+      connectorIds?: string[];
     },
   ): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/message`, body);
