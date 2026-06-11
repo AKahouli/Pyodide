@@ -52,3 +52,5 @@ langgraph-checkpoint-sqlite==3.0.3
 langchain-mcp-adapters==0.2.0
 mcp>=1.9.0,<2.0.0
 rouge-score==0.1.2
+a2a-sdk[http-server]==0.3.26
+sse-starlette==3.0.3

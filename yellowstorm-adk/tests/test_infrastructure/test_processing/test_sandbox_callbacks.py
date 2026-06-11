@@ -256,7 +256,7 @@ class TestSandboxCallbackManager:
             params={
                 'brain_docs': 'encoded_docs',
                 'session_id': 'session123',
-                'workspace_name': 'brain_123'
+                'brain_id': 'brain_123'
             },
             timeout=30
         )

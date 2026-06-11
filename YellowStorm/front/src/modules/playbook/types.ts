@@ -70,6 +70,7 @@ export interface PlaybookResourceReference {
   id: string;
   name: string;
   workspaceId: string;
+  content: string;
   path?: string;
   mimeType?: string;
   metadata?: Record<string, unknown>;
@@ -87,6 +88,7 @@ export interface InputFile {
     documentId?: string;
     filename?: string;
     filepath?: string;
+    folderpath?: string;
     language?: string;
     mimeType?: string;
   };
@@ -619,6 +621,24 @@ export interface PlaybookIntentResponse {
   settings: EffectivePlaybookDesignSettings;
 }
 
+export interface PlaybookIntentConstructionStartResponse {
+  constructionId: string;
+  playbookId: string;
+  baseDefinitionRevision: number;
+}
+
+export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
+
+export type PlaybookIntentConstructionEvent =
+  | { type: 'started'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; baseDefinitionRevision: number }
+  | { type: 'progress'; constructionId: string; playbookId: string; sequence: number; createdAt: string; phase: 'planning' | 'generating_node' | 'generating_edges' | 'generating_bindings' | 'completed'; message: string; current?: number; total?: number }
+  | { type: 'node_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion; nodeRef?: string; nodeIndex?: number; totalNodes?: number }
+  | { type: 'edge_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
+  | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
+  | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
+  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
+  | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
+
 export interface ToolBindingAction {
   actionKey: string;
   isEnabled?: boolean;
@@ -814,6 +834,7 @@ export interface PlaybookSummary {
   id: string;
   name: string;
   description: string;
+  definitionRevision?: number;
   taskCount: number;
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
@@ -846,6 +867,7 @@ export interface Playbook {
   id: string;
   name: string;
   description: string;
+  definitionRevision: number;
   designSettings: PlaybookDesignSettings;
   effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTask[];
@@ -1022,6 +1044,7 @@ export interface StepExecutionHistoryEntry {
   totalTokens?: number | null;
   modelName?: string | null;
   artifacts?: TaskArtifact[];
+  hitlHistory?: HitlHistoryEntry[];
 }
 
 export interface IteratorChildResult {
@@ -1079,6 +1102,24 @@ export interface TaskResult {
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    relevanceScore?: number;
+    specificityScore?: number;
+    formatComplianceScore?: number;
+    evidenceGroundingScore?: number;
+    handoffReadinessScore?: number;
+    hitlAppropriatenessScore?: number;
+    determinismScore?: number;
+    costEfficiencyScore?: number;
+    stepOptimizationPriority?: number;
+    playbookOptimizationPriority?: number;
+    costOptimizationPriority?: number;
+    estimatedTokenReductionPct?: number | null;
+    estimatedLatencyReductionPct?: number | null;
+    riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
+    blockingIssueCount?: number;
+    downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
+    recommendedAction?: AdvisorRecommendedAction;
+    availableActions?: { optimizeStep: true; optimizePlaybook: true };
     expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
     expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
     expectedResultMatched: boolean;
@@ -1095,6 +1136,9 @@ export interface TaskResult {
     toolSequencingIssues: string[];
     toolUsageStrengths: string[];
     toolUsageRecommendation: string;
+    costOptimizationHints?: string[];
+    scriptReplacementHints?: string[];
+    llmStillRequiredReasons?: string[];
     safeAutoFixType: 'optimize_step' | 'none';
     recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
@@ -1120,6 +1164,24 @@ export interface TaskResult {
       overallScore: number;
       confidence: number;
       toolUsageScore: number;
+      relevanceScore?: number;
+      specificityScore?: number;
+      formatComplianceScore?: number;
+      evidenceGroundingScore?: number;
+      handoffReadinessScore?: number;
+      hitlAppropriatenessScore?: number;
+      determinismScore?: number;
+      costEfficiencyScore?: number;
+      stepOptimizationPriority?: number;
+      playbookOptimizationPriority?: number;
+      costOptimizationPriority?: number;
+      estimatedTokenReductionPct?: number | null;
+      estimatedLatencyReductionPct?: number | null;
+      riskSeverity?: 'low' | 'medium' | 'high' | 'critical';
+      blockingIssueCount?: number;
+      downstreamImpactLevel?: 'none' | 'low' | 'medium' | 'high';
+      recommendedAction?: AdvisorRecommendedAction;
+      availableActions?: { optimizeStep: true; optimizePlaybook: true };
       expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
       expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
       expectedResultMatched: boolean;
@@ -1136,6 +1198,9 @@ export interface TaskResult {
       toolSequencingIssues: string[];
       toolUsageStrengths: string[];
       toolUsageRecommendation: string;
+      costOptimizationHints?: string[];
+      scriptReplacementHints?: string[];
+      llmStillRequiredReasons?: string[];
       safeAutoFixType: 'optimize_step' | 'none';
       recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
       reason: string;
@@ -1169,6 +1234,7 @@ export interface TaskResult {
   invalidatedByTaskId?: string | null;
   iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
+  hitlHistory?: HitlHistoryEntry[];
 }
 
 export interface PlaybookExecution {
@@ -1228,6 +1294,7 @@ export interface PlaybookExecution {
   currentInterruptId?: string | null;
   currentInterruptTaskId?: string | null;
   hitlHistory?: HitlHistoryEntry[];
+  hitlEvents?: HitlEventLog[];
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -1903,6 +1970,7 @@ export interface UpdatePlaybookData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
 }
@@ -1998,7 +2066,9 @@ export interface ResumeFromStepData {
   payload?: Record<string, unknown>;
 }
 
-export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat';
+export type AdvisorRecommendedAction = 'optimize_step' | 'optimize_playbook' | 'review_only' | 'add_hitl_guard' | 'improve_tooling' | 'improve_output_contract' | 'optimize_prompt_cost' | 'switch_to_cheaper_model' | 'add_result_cache' | 'replace_with_deterministic_script';
+export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat' | 'format' | 'hitl' | 'determinism' | 'expected_result' | 'cost_efficiency';
+export type AdvisorRemediationSuggestedAction = Exclude<AdvisorRecommendedAction, 'review_only'>;
 
 export interface AdvisorRemediationItem {
   id: string;
@@ -2008,6 +2078,10 @@ export interface AdvisorRemediationItem {
   title: string;
   description: string;
   rationale?: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  confidence: number;
+  suggestedAction: AdvisorRemediationSuggestedAction;
+  blocking: boolean;
   editable: boolean;
   defaultSelected: boolean;
   source: {
@@ -2020,8 +2094,68 @@ export interface AdvisorRemediationItem {
 export type AdvisorRemediationMode = 'optimize-step' | 'update-current' | 'generate-new';
 
 export interface AdvisorIntentApplyRequest {
-  intent: string;
+  mode: AdvisorRemediationMode;
+  executionId: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
   selectedTaskId?: string;
+}
+
+export interface AdvisorRemediationPreviewRequest {
+  executionId: string;
+  mode: AdvisorRemediationMode;
+  targetTaskId?: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
+}
+
+export interface AdvisorRemediationPreviewResponse {
+  suggestion: PlaybookIntentSuggestion;
+  suggestions: PlaybookIntentSuggestion[];
+  expectedDefinitionRevision: number;
+  intent: string;
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  };
+}
+
+export interface AdvisorScriptReplacementRequest {
+  executionId: string;
+  targetTaskId: string;
+  items: Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>>;
+  validationIterationIds?: number[];
+}
+
+export interface AdvisorScriptReplacementApplyRequest extends AdvisorScriptReplacementRequest {
+  script: string;
+}
+
+export interface AdvisorScriptReplacementPreviewResponse {
+  targetTaskId: string;
+  candidate: {
+    language: 'python';
+    runtime: 'python3.11';
+    script: string;
+    entrypoint: 'run';
+    inputContract: Record<string, unknown>;
+    outputContract: Record<string, unknown>;
+    dependencies: string[];
+    deterministic: boolean;
+  };
+  validation: {
+    status: 'passed' | 'failed' | 'needs_review';
+    sampleCount: number;
+    passedCount: number;
+    failedCount: number;
+    failures: Array<{
+      iteration: number;
+      reason: string;
+      expectedSummary: string;
+      actualSummary: string;
+    }>;
+  };
+  estimatedTokenReductionPct: number | null;
+  warnings: string[];
 }
 
 // ===== Store =====
@@ -2225,6 +2359,9 @@ export interface PlaybookActions {
   deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
+  previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
+  previewAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementRequest) => Promise<AdvisorScriptReplacementPreviewResponse>;
+  applyAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementApplyRequest) => Promise<{ targetTaskId: string; scriptHash: string; definitionRevision: number }>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
   pendingRerunTaskId: string | null;
   setPendingRerunTaskId: (taskId: string | null) => void;
@@ -2513,6 +2650,7 @@ export interface Flow {
   id: string;
   ownerId: string;
   schemaVersion: number;
+  definitionRevision: number;
   name: string;
   description?: string;
   triggerConfig?: FlowTriggerConfig;
@@ -2537,6 +2675,7 @@ export interface FlowSummary {
   id: string;
   name: string;
   description: string;
+  definitionRevision?: number;
   nodeCount: number;
   scheduleEnabled: boolean;
   executionStatus?: ExecutionStatus | null;
@@ -2574,6 +2713,7 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
 }
@@ -2604,7 +2744,8 @@ export interface PlaybookDeltaPatchFields {
 }
 
 export interface PatchPlaybookFlowDeltaData {
-  expectedUpdatedAt: string;
+  expectedDefinitionRevision: number;
+  expectedUpdatedAt?: string;
   payloadHash?: string;
   basePayloadHash?: string;
   clientMutationId?: string;
@@ -2619,6 +2760,7 @@ export interface PatchPlaybookFlowDeltaData {
 export interface PatchPlaybookFlowDeltaResult {
   id: string;
   updatedAt: string;
+  definitionRevision: number;
   payloadHash?: string;
   applied: true;
   patchSummary: {
@@ -2632,6 +2774,7 @@ export interface PatchPlaybookFlowDeltaResult {
 }
 
 export interface SavePlaybookOptions {
+  expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
   reason?: 'autosave' | 'manual' | 'route-leave';

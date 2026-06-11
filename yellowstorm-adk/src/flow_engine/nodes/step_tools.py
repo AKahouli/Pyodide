@@ -20,7 +20,7 @@ from src.flow_engine.nodes.step_hitl import (
 logger = get_logger(__name__)
 settings = get_settings()
 
-MAX_TOOL_ITERATIONS = settings.PLAYBOOK_MAX_TOOL_ITERATIONS
+MAX_TOOL_ITERATIONS = 50
 MAX_IMAGES_PER_ITERATION = 50
 MAX_IMAGES_TOTAL = 50
 
@@ -81,6 +81,13 @@ def _build_tool_text_content(result: Any) -> str:
     parsed = _parse_tool_result(result)
     cleaned = _compress_tool_json(_strip_images_from_tool_result(parsed))
     return cleaned if isinstance(cleaned, str) else json.dumps(cleaned, default=str)
+
+
+def _image_url_from_base64(image_base64: str) -> str:
+    value = image_base64.strip()
+    if value.startswith("data:image/"):
+        return value
+    return f"data:image/jpeg;base64,{value}"
 
 
 def _cap_images_in_messages(messages: list[dict[str, Any]], max_images: int = MAX_IMAGES_TOTAL) -> list[dict[str, Any]]:
@@ -279,7 +286,7 @@ async def run_step_with_tools(
                 {"type": "text", "text": f"Images from tool results ({len(capped)} image(s)):"}
             ]
             for b64 in capped:
-                vision_blocks.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                vision_blocks.append({"type": "image_url", "image_url": {"url": _image_url_from_base64(b64)}})
             messages.append({"role": "user", "content": vision_blocks})
             logger.info("Vision images injected", image_count=len(capped))
 
@@ -340,6 +347,8 @@ def _matching_tool_blocker(
     tool_text = " ".join([tool_name, json.dumps(tool_arguments, default=str)]).lower()
     for blocker in hitl_blockers:
         if blocker.get("enabled") is False:
+            continue
+        if str(blocker.get("createdBy") or blocker.get("created_by") or "") != "user":
             continue
         if str(blocker.get("kind") or "") not in {"destructive_action", "external_send", "workspace_write"}:
             continue

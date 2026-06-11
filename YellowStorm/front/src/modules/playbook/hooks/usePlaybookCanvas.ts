@@ -52,6 +52,53 @@ function deferStoreUpdate(fn: () => void) {
   setTimeout(fn, 0);
 }
 
+function getNodeSize(node: Node): { width: number; height: number } {
+  const style = node.style as { width?: number; height?: number } | undefined;
+  const styleWidth = Number(style?.width);
+  const styleHeight = Number(style?.height);
+  return {
+    width: node.measured?.width ?? node.width ?? (Number.isFinite(styleWidth) ? styleWidth : 0),
+    height: node.measured?.height ?? node.height ?? (Number.isFinite(styleHeight) ? styleHeight : 0),
+  };
+}
+
+function isNodeInsideIterator(node: Node, iteratorNode: Node): boolean {
+  const nodeSize = getNodeSize(node);
+  const iteratorSize = getNodeSize(iteratorNode);
+  if (nodeSize.width === 0 || nodeSize.height === 0 || iteratorSize.width === 0 || iteratorSize.height === 0) {
+    return false;
+  }
+
+  const centerX = node.position.x + nodeSize.width / 2;
+  const centerY = node.position.y + nodeSize.height / 2;
+  return centerX >= iteratorNode.position.x
+    && centerX <= iteratorNode.position.x + iteratorSize.width
+    && centerY >= iteratorNode.position.y
+    && centerY <= iteratorNode.position.y + iteratorSize.height;
+}
+
+function isPointInsideIterator(point: { x: number; y: number }, iteratorNode: Node): boolean {
+  const iteratorSize = getNodeSize(iteratorNode);
+  if (iteratorSize.width === 0 || iteratorSize.height === 0) return false;
+  return point.x >= iteratorNode.position.x
+    && point.x <= iteratorNode.position.x + iteratorSize.width
+    && point.y >= iteratorNode.position.y
+    && point.y <= iteratorNode.position.y + iteratorSize.height;
+}
+
+function findDropTargetIterator(
+  nodes: Node[],
+  draggedNode: Node,
+  dropPoint: { x: number; y: number } | null,
+): string | null {
+  const target = nodes.find(
+    (node) => node.id !== draggedNode.id
+      && node.type === 'playbookIteratorContainer'
+      && (dropPoint ? isPointInsideIterator(dropPoint, node) : isNodeInsideIterator(draggedNode, node)),
+  );
+  return target?.id ?? null;
+}
+
 export interface TriggerNodeActions {
   onDelete: (playbookId: string) => Promise<void>;
   onToggleEnabled: (playbookId: string, enabled: boolean) => Promise<void>;
@@ -207,15 +254,26 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   );
 
   const onNodeDragStop: OnNodeDrag = useCallback(
-    (_event, node) => {
+    (event, node) => {
       if (node.id === TRIGGER_NODE_ID) {
         triggerPosRef.current = { ...node.position };
         return;
       }
+      const draggedNode = nodesRef.current.find((n) => n.id === node.id) ?? node;
+      const dropPoint = 'clientX' in event && 'clientY' in event
+        ? screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        : null;
+      const targetIteratorId = draggedNode.parentId
+        ? null
+        : findDropTargetIterator(nodesRef.current, draggedNode, dropPoint);
+      const tasks = nodesToTasks(nodesRef.current).map((task) => {
+        if (task.id !== node.id || !targetIteratorId) return task;
+        return { ...task, containerConfig: { parentIteratorId: targetIteratorId } };
+      });
       captureSnapshot();
-      updateTasks(nodesToTasks(nodesRef.current));
+      updateTasks(tasks);
     },
-    [updateTasks, captureSnapshot],
+    [updateTasks, captureSnapshot, screenToFlowPosition],
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(
@@ -428,6 +486,43 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [captureSnapshot, syncDataBindings, syncEdges],
   );
 
+  const commitConditionalEdge = useCallback(
+    (sourceId: string, sourceHandle: string | null, targetId: string, targetHandle: string | null) => {
+      const sourceHandleId = sourceHandle ?? 'default';
+      const targetHandleId = targetHandle ?? 'default';
+      const edgeId = `e-${sourceId}-${sourceHandleId}-${targetId}-${targetHandleId}`;
+      const isErrorEdge = sourceHandleId === '__error__';
+
+      if (edgesRef.current.some((edge) => edge.id === edgeId)) return;
+
+      const newEdge: Edge = {
+        id: edgeId,
+        source: sourceId,
+        target: targetId,
+        sourceHandle,
+        targetHandle,
+        type: 'conditional',
+        animated: false,
+        data: {
+          sourceOutputPortId: sourceHandleId,
+          targetInputPortId: targetHandleId,
+          routerLabel: sourceHandleId,
+        },
+        style: {
+          strokeDasharray: '6 4',
+          ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
+        },
+      };
+
+      const nextEdges = [...edgesRef.current, newEdge];
+      edgesRef.current = nextEdges;
+      captureSnapshot();
+      setEdges(nextEdges);
+      deferStoreUpdate(() => syncEdges(nextEdges));
+    },
+    [captureSnapshot, syncEdges],
+  );
+
   const connectStartRef = useRef<{ nodeId: string | null; handleId: string | null; handleType: string | null } | null>(null);
 
   const [connectionDragHoveredId, setConnectionDragHoveredId] = useState<string | null>(null);
@@ -450,7 +545,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       if (!sourceData || !targetData) return false;
 
       const sourceType = getEffectiveNodeType(sourceData);
-      if (sourceType === 'router' || start.nodeId === TRIGGER_NODE_ID) return false;
+      if (start.nodeId === TRIGGER_NODE_ID) return false;
 
       const sourceHandleId = start.handleId ?? 'default';
       const sourcePort = sourceData.outputPorts?.find((p) => p.id === sourceHandleId);
@@ -479,10 +574,14 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         return updated;
       });
 
-      commitEdgeAndBinding(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      if (sourceType === 'router') {
+        commitConditionalEdge(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      } else {
+        commitEdgeAndBinding(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      }
       return true;
     },
-    [commitEdgeAndBinding, t, updateTasks],
+    [commitConditionalEdge, commitEdgeAndBinding, t, updateTasks],
   );
 
   const onConnectEndHandler: OnConnectEnd = useCallback(
@@ -872,7 +971,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
           tasks: cleaned.tasks,
           edges: cleaned.edges,
           dataBindings: cleaned.dataBindings,
-          expectedUpdatedAt: sourcePlaybook.updatedAt,
+          expectedDefinitionRevision: sourcePlaybook.definitionRevision,
         });
       } catch {
         showWarning(t('clipboard.crossPlaybookCleanupFailed', { name: payload.sourcePlaybookName ?? payload.sourcePlaybookId }));

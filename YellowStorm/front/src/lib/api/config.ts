@@ -267,6 +267,9 @@ export const API_ENDPOINTS = {
       `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
     whatsappSession: (id: string, sessionId: string) =>
       `/agents/${id}/whatsapp-integration/${sessionId}`,
+    a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
+    a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
+    a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
   },
   tools: {
     active: '/tools/active',
@@ -310,6 +313,12 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
+    intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
+    cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,
+    advisorRemediationPreview: (id: string) => `/playbooks/${id}/advisor-remediations/preview`,
+    advisorScriptPreview: (id: string) => `/playbooks/${id}/advisor-remediations/script-preview`,
+    advisorScriptApply: (id: string) => `/playbooks/${id}/advisor-remediations/script-apply`,
     nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,

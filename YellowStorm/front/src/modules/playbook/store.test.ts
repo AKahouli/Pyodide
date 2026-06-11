@@ -110,6 +110,7 @@ describe('playbook store', () => {
     apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
       id: 'p1',
       name: 'Queued save',
+      definitionRevision: 1,
       updatedAt: '2026-05-29T20:30:00.000Z',
     }));
 
@@ -134,7 +135,7 @@ describe('playbook store', () => {
     await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
 
     expect(usePlaybookStore.getState().pendingAutosaveAfterCurrent).toBe(true);
-    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', updatedAt: '2026-05-29T20:29:00.000Z' }));
+    resolveSave?.(makePlaybook({ id: 'p1', name: 'Queued save', definitionRevision: 1, updatedAt: '2026-05-29T20:29:00.000Z' }));
     await firstSave;
     await Promise.resolve();
 
@@ -175,6 +176,7 @@ describe('playbook store', () => {
     }) as any);
     apiMock.updatePlaybook.mockResolvedValueOnce({
       ...playbook,
+      definitionRevision: 1,
       updatedAt: '2026-05-30T00:30:00.000Z',
     });
 
@@ -222,7 +224,7 @@ describe('playbook store', () => {
       ],
     };
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
-    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z' });
+    apiMock.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:40:00.000Z', definitionRevision: 1, applied: true, patchSummary: { scalarFields: 0, nodesUpserted: 0, nodesDeleted: 0, edgeChanges: 1, dataBindingChanges: 0, positionUpdates: 0 } });
 
     await usePlaybookStore.getState().fetchPlaybook('p1');
     usePlaybookStore.setState({
@@ -235,6 +237,7 @@ describe('playbook store', () => {
     await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
 
     expect(apiMock.patchFlowDelta).toHaveBeenCalledWith('p1', expect.objectContaining({
+      expectedDefinitionRevision: 0,
       patch: expect.objectContaining({
         controlEdges: [
           expect.objectContaining({
@@ -246,6 +249,7 @@ describe('playbook store', () => {
       }),
     }));
     expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().currentPlaybook?.definitionRevision).toBe(1);
   });
 
   it('keeps autosave dirty when the backend rejects an invalid delta', async () => {
@@ -298,6 +302,98 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().currentPlaybook?.updatedAt).toBe(playbook.updatedAt);
     expect(usePlaybookStore.getState().isDirty).toBe(true);
     expect(usePlaybookStore.getState().autosaveBackoffUntil).toEqual(expect.any(Number));
+  });
+
+  it('rebases autosave conflicts once when server changes do not overlap local edits', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Original', description: 'Original', definitionRevision: 0 });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.updatePlaybook
+      .mockRejectedValueOnce({ isAxiosError: true })
+      .mockResolvedValueOnce(makePlaybook({
+        id: 'p1',
+        name: 'Server renamed',
+        description: 'Locally changed',
+        definitionRevision: 2,
+        updatedAt: '2026-05-30T00:31:00.000Z',
+      }));
+    apiMock.getFlow.mockResolvedValueOnce({
+      ...makePlaybook({
+        id: 'p1',
+        name: 'Server renamed',
+        description: 'Original',
+        definitionRevision: 1,
+        updatedAt: '2026-05-30T00:30:00.000Z',
+      }),
+      activeReplays: {},
+    } as any);
+    parseApiErrorMock.mockImplementationOnce(() => ({
+      code: 'ERR_1005',
+      message: 'Conflict',
+      statusCode: 409,
+      requiresReAuth: false,
+      raw: null,
+    }));
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: { ...playbook, description: 'Locally changed' },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook).toHaveBeenLastCalledWith('p1', expect.objectContaining({
+      name: 'Server renamed',
+      description: 'Locally changed',
+      expectedDefinitionRevision: 1,
+    }));
+    expect(usePlaybookStore.getState().lastSavedRequestBodyByPlaybookId.p1).toMatchObject({
+      name: 'Server renamed',
+      description: 'Locally changed',
+    });
+    expect(usePlaybookStore.getState().currentPlaybook?.definitionRevision).toBe(2);
+    expect(usePlaybookStore.getState().currentPlaybook?.name).toBe('Server renamed');
+    expect(usePlaybookStore.getState().currentPlaybook?.description).toBe('Locally changed');
+    expect(usePlaybookStore.getState().isDirty).toBe(false);
+  });
+
+  it('does not retry autosave conflicts when server and local edits overlap', async () => {
+    const playbook = makePlaybook({ id: 'p1', description: 'Original', definitionRevision: 0 });
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.updatePlaybook.mockRejectedValueOnce({ isAxiosError: true });
+    apiMock.getFlow.mockResolvedValueOnce({
+      ...makePlaybook({
+        id: 'p1',
+        description: 'Server changed',
+        definitionRevision: 1,
+        updatedAt: '2026-05-30T00:30:00.000Z',
+      }),
+      activeReplays: {},
+    } as any);
+    parseApiErrorMock.mockImplementationOnce(() => ({
+      code: 'ERR_1005',
+      message: 'Conflict',
+      statusCode: 409,
+      requiresReAuth: false,
+      raw: null,
+    }));
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: { ...playbook, description: 'Local changed' },
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(apiMock.getFlow).toHaveBeenCalledWith('p1', { view: 'base' });
+    expect(usePlaybookStore.getState().isDirty).toBe(true);
   });
 
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {
@@ -488,6 +584,114 @@ describe('playbook store', () => {
       status: 'completed',
       judgeStatus: 'evaluated',
       judgeResult: { overallScore: 95 },
+    });
+  });
+
+  it('normalizes automatic judge SSE metrics before updating execution state', async () => {
+    usePlaybookStore.setState({
+      executionCache: {
+        'e-auto': {
+          ...makeExecution({ id: 'e-auto' }),
+          taskResults: [{
+            ...makeExecution().taskResults[0],
+            taskId: 't1',
+            iteration: 0,
+            status: 'completed',
+            judgeStatus: 'evaluating',
+            judgeResult: null,
+          } as any],
+        },
+      },
+      currentExecution: {
+        ...makeExecution({ id: 'e-auto' }),
+        taskResults: [{
+          ...makeExecution().taskResults[0],
+          taskId: 't1',
+          iteration: 0,
+          status: 'completed',
+          judgeStatus: 'evaluating',
+          judgeResult: null,
+        } as any],
+      },
+    });
+
+    usePlaybookStore.getState().onStepJudgeUpdated({
+      executionId: 'e-auto',
+      taskId: 't1',
+      iteration: 0,
+      judgeStatus: 'evaluated',
+      judgeError: null,
+      judgeResult: {
+        accuracy_score: 96,
+        completeness_score: 92,
+        result_matching_score: 98,
+        overall_score: 95,
+        confidence: 94,
+        tool_usage_score: 90,
+        relevance_score: 99,
+        specificity_score: 93,
+        format_compliance_score: 88,
+        evidence_grounding_score: 97,
+        handoff_readiness_score: 94,
+        hitl_appropriateness_score: 98,
+        determinism_score: 96,
+        cost_efficiency_score: 84,
+        step_optimization_priority: 28,
+        playbook_optimization_priority: 41,
+        cost_optimization_priority: 22,
+      } as any,
+      judgeHistoryEntry: {
+        id: 'judge-1',
+        created_at: '2026-06-04T20:00:00.000Z',
+        attempt_number: 1,
+        scoring_mode: 'llm',
+        judge_result: {
+          accuracy_score: 96,
+          completeness_score: 92,
+          result_matching_score: 98,
+          overall_score: 95,
+          confidence: 94,
+          tool_usage_score: 90,
+          relevance_score: 99,
+          specificity_score: 93,
+          format_compliance_score: 88,
+          evidence_grounding_score: 97,
+          handoff_readiness_score: 94,
+          hitl_appropriateness_score: 98,
+          determinism_score: 96,
+          cost_efficiency_score: 84,
+          step_optimization_priority: 28,
+          playbook_optimization_priority: 41,
+          cost_optimization_priority: 22,
+        },
+      } as any,
+    });
+
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+    });
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].judgeHistory?.[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      costEfficiencyScore: 84,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
     });
   });
 
@@ -1141,6 +1345,125 @@ describe('playbook store', () => {
       advisorAutopilotMaxTurns: 5,
     });
     expect(state.currentPlaybook?.updatedAt).toBe('2025-01-01T00:00:20.000Z');
+  });
+
+  it('binds a workspace resource to a port using the workspace id as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'workspace',
+      id: 'ws-1',
+      name: 'Workspace',
+      workspaceId: 'ws-1',
+      content: 'ws-1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        targetNode: 't1',
+        targetPort: 'port-1',
+        sourceKind: 'constant',
+        constantValue: expect.objectContaining({
+          text: 'ws-1',
+          workspaceId: 'ws-1',
+          kind: 'workspace',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'workspace',
+        id: 'ws-1',
+        workspaceId: 'ws-1',
+        portId: 'port-1',
+      }),
+    ]);
+  });
+
+  it('binds a folder resource to a port using the folder path as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'folder',
+      id: 'folder-1',
+      name: 'Contracts',
+      workspaceId: 'ws-1',
+      content: '/legal/contracts',
+      path: '/legal/contracts',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        constantValue: expect.objectContaining({
+          text: '/legal/contracts',
+          workspaceId: 'ws-1',
+          path: '/legal/contracts',
+          kind: 'folder',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'folder',
+        metadata: expect.objectContaining({ folderpath: '/legal/contracts' }),
+      }),
+    ]);
+  });
+
+  it('binds a document resource to a port using the file path as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'document',
+      id: 'doc-1',
+      name: 'Spec',
+      workspaceId: 'ws-1',
+      content: '/docs/spec.md',
+      path: '/docs/spec.md',
+      mimeType: 'text/markdown',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        constantValue: expect.objectContaining({
+          text: '/docs/spec.md',
+          workspaceId: 'ws-1',
+          path: '/docs/spec.md',
+          kind: 'document',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'document',
+        metadata: expect.objectContaining({
+          documentId: 'doc-1',
+          filepath: '/docs/spec.md',
+          mimeType: 'text/markdown',
+        }),
+      }),
+    ]);
   });
 
   it('merges step completion and preserves existing pending human feedback', () => {
@@ -2059,6 +2382,35 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     usePlaybookStore.getState().setExecutionPanelOpen(false);
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
+  });
+
+  it('openPortInspection opens the execution detail results tab for the inspected node', () => {
+    usePlaybookStore.setState({ executionDetailTab: 'judge' });
+    usePlaybookUiStore.setState({ executionDetailTab: 'judge' });
+
+    usePlaybookStore.getState().openPortInspection({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.portInspection).toEqual({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.executionDetailTab).toBe('results');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(state.pageMode).toBe('run');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionDetailTab).toBe('results');
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('updates page mode directly', () => {

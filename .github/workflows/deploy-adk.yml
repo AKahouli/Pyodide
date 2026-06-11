@@ -18,7 +18,7 @@ on:
         required: true
 
 env:
-  IMAGE_NAME: yscrmetachatbot002.azurecr.io/yellowstorm-adk-poc
+  IMAGE_NAME: yscrmetachatbot001.azurecr.io/yellowstorm-adk-poc
   ENV_NAME: ${{ github.event.inputs.environment || 'poc'}}
 
 jobs:
@@ -43,7 +43,7 @@ jobs:
       - name: Log in to ACR
         uses: azure/docker-login@v1
         with:
-          login-server: yscrmetachatbot002.azurecr.io
+          login-server: yscrmetachatbot001.azurecr.io
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 

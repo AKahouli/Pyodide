@@ -21,9 +21,36 @@ export interface Agent {
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
+  /** Whether this agent has been published over the A2A protocol. */
+  a2aPublished?: boolean;
+  /** A2A agent-card URL, absolute (only present once published). */
+  a2aAgentCardUrl?: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Credentials returned (once) when publishing an agent over A2A or rotating its
+ * key. The `apiKey` is shown to the user a single time and is never persisted.
+ */
+export interface A2APublishResult {
+  agentId: string;
+  agentCardUrl: string;
+  apiKey: string;
+  apiKeyHeader: string;
+}
+
+export interface A2ARotateKeyResult {
+  agentId: string;
+  agentCardUrl: string;
+  apiKey: string;
+  apiKeyHeader: string;
+}
+
+export interface A2ARevokeResult {
+  agentId: string;
+  revoked: boolean;
 }
 
 /**
@@ -210,6 +237,9 @@ export interface AgentActions {
   getDefaultAgents: () => Agent[];
   getAgentById: (id: string) => Agent | undefined;
   refreshAgents: () => Promise<void>;
+  publishAgentToA2A: (id: string) => Promise<A2APublishResult>;
+  rotateAgentA2AKey: (id: string) => Promise<A2ARotateKeyResult>;
+  revokeAgentA2A: (id: string) => Promise<A2ARevokeResult>;
   
   // Evaluation Actions
   fetchDatasets: () => Promise<void>;

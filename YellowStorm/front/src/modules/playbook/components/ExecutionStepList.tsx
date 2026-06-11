@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Circle, Loader2, CheckCircle2, XCircle, CornerDownRight, PauseCircle, Clock, GitBranch, Hand, ChevronDown, ChevronRight } from 'lucide-react';
+import { GitBranch, ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
@@ -11,17 +11,13 @@ interface RouterDecision {
   iteration: number;
 }
 
-const statusIcons: Record<StepStatus, { icon: React.ElementType; className: string }> = {
-  pending: { icon: Circle, className: 'text-muted-foreground' },
-  running: { icon: Loader2, className: 'text-primary animate-spin' },
-  completed: { icon: CheckCircle2, className: 'text-green-600' },
-  cancelled: { icon: XCircle, className: 'text-muted-foreground' },
-  failed: { icon: XCircle, className: 'text-destructive' },
-  skipped: { icon: CornerDownRight, className: 'text-muted-foreground' },
-  interrupted: { icon: PauseCircle, className: 'text-yellow-600' },
-  queued: { icon: Clock, className: 'text-muted-foreground' },
-  pending_approval: { icon: Hand, className: 'text-yellow-600' },
-};
+export function getStepNumberTone(status: StepStatus, isSelected: boolean): string {
+  if (status === 'completed') return 'border-emerald-500 bg-emerald-500 text-white';
+  if (status === 'failed') return 'border-orange-500 bg-orange-500 text-white';
+  if (status === 'running' || status === 'interrupted' || status === 'pending_approval') return 'border-[#ffcd03] bg-[#ffcd03] text-black';
+  if (isSelected) return 'border-[#ffcd03] bg-[#ffcd03] text-black';
+  return 'border-muted-foreground/30 bg-muted text-muted-foreground';
+}
 
 interface TaskGroup {
   taskId: string;
@@ -36,6 +32,7 @@ interface Props {
   onSelectStep: (taskId: string, iterationIndex?: number) => void;
   pageMode?: 'design' | 'run';
   routerDecisions?: RouterDecision[];
+  taskOrderById?: Map<string, number>;
 }
 
 function groupByTaskId(results: TaskResult[]): TaskGroup[] {
@@ -68,34 +65,24 @@ function StepRow({
   showOrder: number | string;
   onClick: () => void;
 }) {
-  const config = statusIcons[result.status] || statusIcons.pending;
-  const Icon = config.icon;
-
   return (
     <button
       type="button"
-      aria-label={`Step ${result.order}`}
+      aria-label={`Step ${showOrder}`}
       className={cn(
-        'flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors',
+        'flex w-full items-center justify-center rounded-lg border px-1.5 py-2 text-left transition-colors',
         isSelected
           ? 'border-primary/30 bg-primary/10 shadow-sm'
           : 'border-transparent hover:border-border hover:bg-muted/40',
       )}
       onClick={onClick}
     >
-      <div
-        className={cn(
-          'h-10 w-1 shrink-0 rounded-full bg-transparent transition-colors',
-          isSelected && 'bg-primary/70',
-        )}
-      />
-      <Icon className={`h-4 w-4 shrink-0 ${config.className}`} />
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <div className="flex min-w-0 items-center justify-center">
         <Badge
           variant="outline"
           className={cn(
-            'h-5 min-w-5 shrink-0 justify-center px-1 text-[11px] font-bold',
-            isSelected ? 'bg-[#ffcd03] text-black border-[#ffcd03]' : 'bg-primary/10 text-primary border-primary/20',
+            'h-6 min-w-6 shrink-0 justify-center px-1 text-[11px] font-bold shadow-sm',
+            getStepNumberTone(result.status, isSelected),
           )}
         >
           {showOrder}
@@ -105,7 +92,7 @@ function StepRow({
   );
 }
 
-export function ExecutionStepList({ taskResults, selectedStepId, selectedIterationIndex, onSelectStep, pageMode = 'run', routerDecisions }: Props) {
+export function ExecutionStepList({ taskResults, selectedStepId, selectedIterationIndex, onSelectStep, pageMode = 'run', routerDecisions, taskOrderById }: Props) {
   const { t } = useModuleTranslation('playbook');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const groups = groupByTaskId(taskResults);
@@ -134,8 +121,8 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
   };
 
   return (
-    <div className="w-28 border-r overflow-y-auto bg-background">
-      <div className="p-3">
+    <div className="w-[72px] border-r overflow-y-auto bg-background">
+      <div className="p-2">
         <h3 className="mb-2 text-sm font-medium text-muted-foreground">{t('execution.steps')}</h3>
         <div className="space-y-1">
           {groups.map((group) => {
@@ -146,7 +133,7 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
                   key={result.taskId}
                   result={result}
                   isSelected={result.taskId === selectedStepId}
-                  showOrder={result.order}
+                  showOrder={taskOrderById?.get(result.taskId) ?? result.order}
                   onClick={() => onSelectStep(result.taskId)}
                 />
               );
@@ -162,7 +149,7 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
                 <button
                   type="button"
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors',
+                    'flex w-full items-center justify-center gap-1 rounded-lg border px-1.5 py-2 text-left transition-colors',
                     isGroupSelected
                       ? 'border-primary/30 bg-primary/10 shadow-sm'
                       : 'border-transparent hover:border-border hover:bg-muted/40',
@@ -170,28 +157,19 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
                   onClick={() => toggleExpand(group.taskId)}
                 >
                   <Chevron className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <div
-                    className={cn(
-                      'h-10 w-1 shrink-0 rounded-full bg-transparent transition-colors',
-                      isGroupSelected && 'bg-primary/70',
-                    )}
-                  />
                   <Badge
                     variant="outline"
                     className={cn(
-                      'h-5 min-w-5 shrink-0 justify-center px-1 text-[11px] font-bold',
-                      isGroupSelected ? 'bg-[#ffcd03] text-black border-[#ffcd03]' : 'bg-primary/10 text-primary border-primary/20',
+                      'h-6 min-w-6 shrink-0 justify-center px-1 text-[11px] font-bold shadow-sm',
+                      getStepNumberTone(firstResult.status, isGroupSelected),
                     )}
                   >
-                    {firstResult.order}
+                    {taskOrderById?.get(firstResult.taskId) ?? firstResult.order}
                   </Badge>
-                  <span className="text-[10px] text-muted-foreground ml-auto">
-                    {group.iterations.length} {t('execution.iterations').toLowerCase()}
-                  </span>
                 </button>
 
                 {isOpen && (
-                  <div className="ml-4 space-y-0.5 mt-0.5 border-l-2 border-muted pl-2">
+                  <div className="space-y-0.5 mt-0.5 pl-1">
                     {group.iterations.map((result, idx) => {
                       const isIterSelected = isGroupSelected && idx === selectedIterationIndex;
                       const taskDecisions = decisionsByTask.get(group.taskId) || [];

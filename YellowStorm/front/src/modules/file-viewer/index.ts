@@ -4,12 +4,12 @@
  */
 
 import { useFileViewerStore } from './store';
-import type { DisplayMode, SpreadsheetNavigationOptions } from './types';
+import type { DisplayMode, HighlightBBox, SpreadsheetNavigationOptions } from './types';
 
 export { FileFloatingWindow, FileViewerSidebar } from './components';
 export { useFileViewerStore, useFileViewerMode, useFileViewerDisplayMode } from './store';
 export { isViewableFile, isViewableFilename, getMimeTypeFromFilename, PptxRenderer } from './renderers';
-export type { FileTab, FileOpenOptions, ViewerMode, DisplayMode } from './types';
+export type { FileTab, FileOpenOptions, ViewerMode, DisplayMode, HighlightBBox } from './types';
 
 /**
  * Open a workspace document in the file viewer. `path` is the document's
@@ -26,6 +26,7 @@ export function openFileViewer(
   options?: {
     page?: number;
     highlightText?: string;
+    highlightBBox?: HighlightBBox;
     displayMode?: DisplayMode;
     spreadsheet?: SpreadsheetNavigationOptions;
   },
@@ -45,6 +46,7 @@ export function openFileViewerFromUrl(
     displayMode?: DisplayMode;
     page?: number;
     highlightText?: string;
+    highlightBBox?: HighlightBBox;
     spreadsheet?: SpreadsheetNavigationOptions;
   },
 ) {

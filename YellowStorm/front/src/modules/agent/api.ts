@@ -15,6 +15,9 @@ import type {
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
+  A2APublishResult,
+  A2ARotateKeyResult,
+  A2ARevokeResult,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -49,6 +52,38 @@ export async function updateAgent(id: string, data: UpdateAgentData): Promise<Ag
 
 export async function deleteAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.agents.byId(id));
+}
+
+/**
+ * Publish an agent over the A2A protocol. Returns the message endpoint, agent
+ * card URL, and the API key — the key is only returned once.
+ */
+export async function publishAgentToA2A(id: string): Promise<A2APublishResult> {
+  const response = await apiClient.post<ApiResponse<A2APublishResult>>(
+    API_ENDPOINTS.agents.a2aPublish(id),
+  );
+  return response.data.data;
+}
+
+/**
+ * Rotate the A2A API key for an already-published agent. Returns the new key once.
+ */
+export async function rotateAgentA2AKey(id: string): Promise<A2ARotateKeyResult> {
+  const response = await apiClient.post<ApiResponse<A2ARotateKeyResult>>(
+    API_ENDPOINTS.agents.a2aRotateKey(id),
+  );
+  return response.data.data;
+}
+
+/**
+ * Revoke a published A2A agent. Its card and message endpoint stop serving and
+ * the agent returns to the unpublished state.
+ */
+export async function revokeAgentA2A(id: string): Promise<A2ARevokeResult> {
+  const response = await apiClient.post<ApiResponse<A2ARevokeResult>>(
+    API_ENDPOINTS.agents.a2aRevoke(id),
+  );
+  return response.data.data;
 }
 
 export interface ToolOption {
