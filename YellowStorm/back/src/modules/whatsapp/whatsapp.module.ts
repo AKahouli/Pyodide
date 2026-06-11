@@ -6,6 +6,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { AuthModule } from '@modules/auth/auth.module';
 import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
+import { ModelsModule } from '@modules/models/models.module';
 import { LoggerModule } from '@modules/logger';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { BaileysClientFactory } from './baileys/baileys-client.factory';
@@ -22,8 +23,13 @@ import { WhatsAppConnectivityService } from './services/whatsapp-connectivity.se
 import { WhatsAppConnectionService } from './services/whatsapp-connection.service';
 import { WhatsAppIntegrationService } from './services/whatsapp-integration.service';
 import { WhatsAppMessageService } from './services/whatsapp-message.service';
+import { WhatsAppSingleAgentStreamService } from './services/whatsapp-single-agent-stream.service';
 import { WhatsAppPairingCacheService } from './services/whatsapp-pairing-cache.service';
 import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
+import { WhatsAppRateLimiterService } from './services/whatsapp-rate-limiter.service';
+import { WhatsAppMetricsService } from './services/whatsapp-metrics.service';
+import { WhatsAppCircuitBreakerService } from './services/whatsapp-circuit-breaker.service';
+import { WhatsAppHealthService } from './services/whatsapp-health.service';
 
 @Module({
   imports: [
@@ -38,6 +44,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     LoggerModule,
     AgentModule,
     ConversationModule,
+    ModelsModule,
   ],
   controllers: [WhatsAppIntegrationController],
   providers: [
@@ -48,9 +55,15 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     WhatsAppIntegrationService,
     WhatsAppConnectionService,
     WhatsAppSessionManager,
+    WhatsAppSingleAgentStreamService,
     WhatsAppMessageService,
     WhatsAppPairingCacheService,
+    WhatsAppRateLimiterService,
+    WhatsAppMetricsService,
+    WhatsAppCircuitBreakerService,
     WhatsAppGateway,
+    WhatsAppHealthService,
   ],
+  exports: [WhatsAppHealthService, WhatsAppMetricsService],
 })
 export class WhatsAppModule {}

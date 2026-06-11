@@ -226,6 +226,11 @@ export const configValidationSchema = Joi.object({
   WHATSAPP_RECONNECT_MAX_DELAY_MS: Joi.number().min(1000).max(600000).default(120000),
   WHATSAPP_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).max(50).default(10),
   WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
+  WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
+  WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
+  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
+  WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
+  WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
 
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),

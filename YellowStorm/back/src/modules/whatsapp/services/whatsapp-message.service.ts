@@ -5,15 +5,19 @@ import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserStatus } from '@modules/user/schemas/user.schema';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
-import { StreamService } from '@modules/conversation/services/stream.service';
 import { AgentService } from '@modules/agent/agent.service';
 import { LoggerService } from '@modules/logger';
+import { WhatsAppSingleAgentStreamService } from './whatsapp-single-agent-stream.service';
 import {
   AgentWhatsAppIntegrationDocument,
   WhatsAppIntegrationStatus,
 } from '../schemas/agent-whatsapp-integration.schema';
 import { WhatsAppChatBinding, WhatsAppChatBindingDocument } from '../schemas/whatsapp-chat-binding.schema';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
+import { WhatsAppRateLimiterService } from './whatsapp-rate-limiter.service';
+import { WhatsAppMetricsService } from './whatsapp-metrics.service';
+import { WhatsAppCircuitBreakerService } from './whatsapp-circuit-breaker.service';
+import { extractWhatsAppReplyText } from '../utils/whatsapp-reply-text.util';
 
 @Injectable()
 export class WhatsAppMessageService {
@@ -27,8 +31,11 @@ export class WhatsAppMessageService {
     private readonly agentService: AgentService,
     private readonly conversationService: ConversationService,
     private readonly messageService: MessageService,
-    private readonly streamService: StreamService,
+    private readonly singleAgentStreamService: WhatsAppSingleAgentStreamService,
     private readonly integrationService: WhatsAppIntegrationService,
+    private readonly rateLimiter: WhatsAppRateLimiterService,
+    private readonly metrics: WhatsAppMetricsService,
+    private readonly circuitBreaker: WhatsAppCircuitBreakerService,
   ) {
     this.logger.setContext(WhatsAppMessageService.name);
   }
@@ -68,6 +75,27 @@ export class WhatsAppMessageService {
       const text = this.extractText(message);
       if (!text) continue;
 
+      const integrationIdStr = integration._id.toString();
+      this.metrics.incrementCounter('messages.inbound', {
+        integrationId: integrationIdStr,
+        agentId: integration.agentId.toString(),
+      });
+
+      if (!this.rateLimiter.tryAcquire(integrationIdStr)) {
+        this.logger.warn('WhatsApp message dropped: rate limit exceeded', {
+          integrationId: integrationIdStr,
+          remoteJid,
+        });
+        void sendReply(
+          remoteJid,
+          this.configService.get<string>(
+            'whatsapp.fallbackReply',
+            'I could not generate a response for this message.',
+          ),
+        ).catch(() => {});
+        continue;
+      }
+
       void this.routeMessage({
         integration,
         userId: integration.userId.toString(),
@@ -101,7 +129,17 @@ export class WhatsAppMessageService {
     messageText: string;
     sendReply: (remoteJid: string, text: string) => Promise<void>;
   }): Promise<void> {
-    const { integration, userId, userEmail, remoteJid, messageText, sendReply } = params;
+    const { integration, userId, remoteJid, messageText, sendReply } = params;
+    const integrationIdStr = integration._id.toString();
+    const adkKey = `adk:${this.configService.get<string>('whatsapp.adkUrl', 'unknown')}`;
+
+    if (!this.circuitBreaker.canExecute(adkKey)) {
+      this.metrics.incrementCounter('messages.dropped', { reason: 'circuit_breaker_open' });
+      const fallback = this.configService.get<string>('whatsapp.fallbackReply', 'I could not generate a response for this message.');
+      await sendReply(remoteJid, fallback).catch(() => {});
+      return;
+    }
+
     const binding = await this.ensureBinding(integration, remoteJid);
     const conversationId = await this.ensureConversation(binding, userId);
 
@@ -113,31 +151,73 @@ export class WhatsAppMessageService {
       agentIds: [integration.agentId.toString()],
     });
 
+    const requestId = `whatsapp-${integration._id.toString()}-${Date.now()}`;
+    const linkedAgentId = integration.agentId.toString();
     const aiMessage = await this.messageService.createAIPlaceholder({
       conversationId,
       questionMessageId: userMessage.id,
       requestId: `whatsapp-ai-${Date.now()}`,
     });
 
-    await this.streamService.startStream(
+    this.logger.log('Routing WhatsApp message to ADK single-agent stream', {
+      integrationId: integration._id.toString(),
+      linkedAgentId,
+      conversationId,
+      messageId: aiMessage.id,
+      remoteJid,
+      adkEndpoint: '/agentic/run_single_agent',
+      managerOrchestration: false,
+      requestId,
+    });
+
+    const processingTimeoutMs = this.configService.get<number>(
+      'whatsapp.processingTimeoutMs',
+      180000,
+    );
+    const streamPromise = this.singleAgentStreamService.runSingleAgentStream({
       userId,
       conversationId,
-      aiMessage.id,
-      {
-        content: messageText,
-        agentIds: [integration.agentId.toString()],
-      },
-      undefined,
-      userEmail,
+      messageId: aiMessage.id,
+      linkedAgentId,
+      integrationId: integration._id.toString(),
       remoteJid,
-    );
+      query: messageText,
+      requestId,
+    });
+    try {
+      await Promise.race([
+        streamPromise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Processing timed out after ${processingTimeoutMs}ms`)), processingTimeoutMs),
+        ),
+      ]);
+      this.circuitBreaker.recordSuccess(adkKey);
+    } catch (streamError) {
+      this.circuitBreaker.recordFailure(adkKey);
+      throw streamError;
+    }
 
     const completedMessage = await this.messageService.findById(aiMessage.id);
-    const reply = this.truncateReply(this.extractReplyText(completedMessage.components));
+    const reply = this.truncateReply(extractWhatsAppReplyText(completedMessage.components));
+    if (!reply) {
+      this.logger.warn('WhatsApp reply empty after ADK stream', {
+        integrationId: integration._id.toString(),
+        conversationId,
+        messageId: aiMessage.id,
+        linkedAgentId,
+        componentCount: completedMessage.components?.length ?? 0,
+        requestId,
+      });
+    }
     await sendReply(
       remoteJid,
-      reply || 'I could not generate a response for this message.',
+      reply || this.configService.get<string>('whatsapp.fallbackReply', 'I could not generate a response for this message.'),
     );
+
+    this.metrics.incrementCounter('messages.outbound', {
+      integrationId: integration._id.toString(),
+      agentId: integration.agentId.toString(),
+    });
 
     const now = new Date();
     await this.bindingModel.updateOne({ _id: binding._id }, { $set: { lastMessageAt: now } }).exec();
@@ -189,24 +269,6 @@ export class WhatsAppMessageService {
     binding.conversationId = new Types.ObjectId(created.id);
     await binding.save();
     return created.id;
-  }
-
-  private extractReplyText(
-    components?: Array<{ type?: string; data?: Record<string, unknown> }>,
-  ): string {
-    if (!components?.length) return '';
-    const textBlocks = components
-      .filter((component) => component.type === 'text')
-      .map((component) => String(component.data?.content || ''))
-      .filter(Boolean);
-    if (textBlocks.length) {
-      return textBlocks.join('\n').trim();
-    }
-    const reasoningBlocks = components
-      .filter((component) => component.type === 'reasoning')
-      .map((component) => String(component.data?.content || ''))
-      .filter(Boolean);
-    return reasoningBlocks.join('\n').trim();
   }
 
   private truncateReply(text: string): string {

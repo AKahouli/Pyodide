@@ -20,6 +20,7 @@ import { WhatsAppConnectivityService } from './whatsapp-connectivity.service';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
 import { WhatsAppMessageService } from './whatsapp-message.service';
 import { WhatsAppPairingCacheService } from './whatsapp-pairing-cache.service';
+import { WhatsAppMetricsService } from './whatsapp-metrics.service';
 
 interface ActiveWhatsAppSession {
   sessionId: string;
@@ -46,6 +47,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     private readonly integrationService: WhatsAppIntegrationService,
     private readonly messageService: WhatsAppMessageService,
     private readonly gateway: WhatsAppGateway,
+    private readonly metrics: WhatsAppMetricsService,
   ) {
     this.logger.setContext(WhatsAppSessionManager.name);
   }
@@ -86,6 +88,10 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     return this.pairingCache.get(sessionId);
   }
 
+  getActiveSessionCount(): number {
+    return this.sessions.size;
+  }
+
   async startPairing(
     integration: AgentWhatsAppIntegrationDocument,
     sessionId: string,
@@ -115,6 +121,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.sessions.delete(sessionId);
+    this.metrics.setGauge('sessions.active', this.sessions.size);
     try {
       if (logout) {
         await active.socket.logout();
@@ -160,6 +167,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
       pairingMode,
     };
     this.sessions.set(sessionId, active);
+    this.metrics.setGauge('sessions.active', this.sessions.size);
 
     socket.ev.on('creds.update', () => {
       void saveCreds().catch((error) => {
@@ -182,7 +190,17 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;
       const sendReply = async (remoteJid: string, text: string): Promise<void> => {
-        await socket.sendMessage(remoteJid, { text });
+        try {
+          await socket.sendMessage(remoteJid, { text });
+        } catch (sendError: unknown) {
+          const msg = sendError instanceof Error ? sendError.message : String(sendError);
+          this.logger.error('WhatsApp sendMessage failed', {
+            integrationId: integration._id.toString(),
+            remoteJid,
+            error: msg,
+          });
+          throw sendError;
+        }
       };
       void this.messageService
         .handleIncomingMessages(integration._id, messages, sendReply)
@@ -245,6 +263,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     const loggedOut = statusCode === baileys.DisconnectReason.loggedOut;
 
     this.sessions.delete(sessionId);
+    this.metrics.setGauge('sessions.active', this.sessions.size);
 
     if (loggedOut) {
       this.pairingCache.clear(sessionId);
