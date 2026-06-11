@@ -58,6 +58,11 @@ export class SendMessageQueryDto {
   @IsArray()
   @IsString({ each: true })
   skillIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  connectorIds?: string[];
 }
 
 /**
@@ -107,4 +112,9 @@ export class SendMessageBodyDto {
   @IsArray()
   @IsString({ each: true })
   skillIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  connectorIds?: string[];
 }

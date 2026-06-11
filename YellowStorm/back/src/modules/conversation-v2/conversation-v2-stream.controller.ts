@@ -157,6 +157,7 @@ export class ConversationV2StreamController {
           }
         : undefined,
       skillIds: body.skillIds,
+      connectorIds: body.connectorIds,
     });
     return { accepted: true };
   }

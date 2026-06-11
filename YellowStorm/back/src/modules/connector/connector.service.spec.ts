@@ -45,6 +45,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -138,6 +142,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     await service.update(connectorId, {
@@ -221,6 +229,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -276,6 +288,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -328,6 +344,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -360,6 +380,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({
@@ -388,6 +412,10 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({
@@ -403,5 +431,96 @@ describe('ConnectorService importFromMcp', () => {
         'X-Test': '1',
       },
     });
+  });
+});
+
+describe('ConnectorService findByIdsForGrpc', () => {
+  const buildService = (connectorDoc: any, auth: any) => {
+    const find = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(connectorDoc ? [connectorDoc] : []),
+        }),
+      }),
+    });
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    return new ConnectorService(
+      { find } as any,
+      { find: jest.fn() } as any,
+      logger as any,
+      null as any,
+      auth as any,
+    );
+  };
+
+  it('maps a connector to the gRPC wire shape with resolved auth + JSON-string schema', async () => {
+    const doc = {
+      _id: new Types.ObjectId(),
+      name: 'SharePoint',
+      authType: 'oauth2',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://mcp-m365.example/',
+      dynamicHeaders: [{ headerName: 'X-User-Email', source: 'user_email', enabled: true }],
+      actions: [
+        {
+          key: 'search_files',
+          label: 'Search Files',
+          description: 'Search SharePoint',
+          parameterSchema: { type: 'object', properties: { query: { type: 'string' } } },
+          isEnabled: true,
+        },
+        { key: 'disabled_action', label: 'Nope', isEnabled: false },
+      ],
+      isActive: true,
+    };
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({
+        headers: { Authorization: 'Bearer TOKEN' },
+        env: {},
+      }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-User-Email': 'a@b.c' }),
+    };
+    const service = buildService(doc, auth);
+
+    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+
+    expect(auth.resolveRuntimeAuth).toHaveBeenCalledWith('user-1', expect.objectContaining({ connectedAppKey: 'microsoft' }));
+    expect(binding).toEqual({
+      connector_id: doc._id.toString(),
+      connector_name: 'SharePoint',
+      mcp_transport_type: 'streamable_http',
+      mcp_server_url: 'https://mcp-m365.example/',
+      auth_headers: { Authorization: 'Bearer TOKEN', 'X-User-Email': 'a@b.c' },
+      auth_env: {},
+      actions: [
+        {
+          action_key: 'search_files',
+          label: 'Search Files',
+          description: 'Search SharePoint',
+          parameter_schema_json: '{"type":"object","properties":{"query":{"type":"string"}}}',
+        },
+      ],
+    });
+  });
+
+  it('drops connectors that have no enabled action', async () => {
+    const doc = {
+      _id: new Types.ObjectId(),
+      name: 'Empty',
+      authSourceType: 'none',
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://x/',
+      actions: [{ key: 'a', label: 'a', isEnabled: false }],
+      isActive: true,
+    };
+    const auth = { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
+    const service = buildService(doc, auth);
+
+    const bindings = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+    expect(bindings).toEqual([]);
+    expect(auth.resolveRuntimeAuth).not.toHaveBeenCalled();
   });
 });

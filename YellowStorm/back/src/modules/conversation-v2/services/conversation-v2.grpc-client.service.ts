@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { Observable } from 'rxjs';
 import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
+import type { IGrpcConnector } from '@modules/connector/interfaces/connector.interface';
 import {
   ConversationV2Event,
   SessionWithEvents,
@@ -298,6 +299,7 @@ export class ConversationV2GrpcClientService
       repoUrl?: string;
     },
     skills?: IGrpcSkill[],
+    connectors?: IGrpcConnector[],
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
       const request: Record<string, unknown> = {
@@ -316,6 +318,7 @@ export class ConversationV2GrpcClientService
         };
       }
       if (skills?.length) request.skills = skills;
+      if (connectors?.length) request.connectors = connectors;
       const call = this.client.Chat(request);
       call.on('data', (raw: RawProtoEvent) => {
         try {

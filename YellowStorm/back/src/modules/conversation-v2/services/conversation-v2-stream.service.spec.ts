@@ -10,6 +10,7 @@ import { ConversationV2SessionService } from './conversation-v2-session.service'
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SkillService } from '@modules/skill/skill.service';
+import { ConnectorService } from '@modules/connector/connector.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 const config = new Map<string, unknown>([
@@ -59,6 +60,7 @@ describe('ConversationV2StreamService', () => {
         { provide: ConversationV2StreamGatewayService, useValue: gateway },
         { provide: WorkspaceDocumentService, useValue: { createFromAiArtifact: jest.fn() } },
         { provide: SkillService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
+        { provide: ConnectorService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
       ],
     }).compile();
 
