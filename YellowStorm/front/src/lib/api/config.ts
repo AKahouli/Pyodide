@@ -86,7 +86,7 @@ export const API_ENDPOINTS = {
     reindex: (workspaceId: string, docId: string) =>
       `/workspaces/${workspaceId}/documents/${docId}/reindex`,
     graphData: (workspaceId: string) =>
-      `/workspaces/${workspaceId}/documents/graph`,
+      `/workspaces/${workspaceId}/graph`,
     bulkDelete: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,
     deleteAll: (workspaceId: string) => `/workspaces/${workspaceId}/documents/all`,
     // Upload endpoints

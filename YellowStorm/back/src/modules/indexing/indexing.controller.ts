@@ -25,16 +25,6 @@ import { WorkspaceOwnerGuard } from '../workspace/guards/workspace-owner.guard';
 export class IndexingController {
   constructor(private readonly indexingService: IndexingService) {}
 
-  @Get('graph')
-  @ApiOperation({ summary: 'Get community graph visualization data for a workspace' })
-  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
-  @ApiResponse({ status: 200, description: 'Graph data retrieved' })
-  async getGraphData(
-    @Param('workspaceId') workspaceId: string,
-  ) {
-    return this.indexingService.getCommunityGraphData(workspaceId);
-  }
-
   @Post(':docId/reindex')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger re-indexing of a document' })
