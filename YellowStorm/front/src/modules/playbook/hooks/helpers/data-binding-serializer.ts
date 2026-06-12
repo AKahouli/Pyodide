@@ -22,6 +22,17 @@ export interface DataLayerEdge {
   status: 'ok' | 'warning';
 }
 
+interface ComparableEdge {
+  source: string;
+  sourceHandle?: string | null;
+  target: string;
+  targetHandle?: string | null;
+}
+
+function getEdgeSignature(edge: ComparableEdge): string {
+  return `${edge.source}:${edge.sourceHandle ?? 'default'}->${edge.target}:${edge.targetHandle ?? 'default'}`;
+}
+
 function getTaskPort(task: PlaybookTask | undefined, portId: string, direction: 'input' | 'output') {
   return direction === 'input'
     ? task?.inputPorts?.find((port) => port.id === portId)
@@ -109,4 +120,11 @@ export function dataBindingsToLayerEdges(bindings: DataBinding[], tasks: Playboo
   });
 }
 
+export function filterMirroredDataLayerEdges(
+  dataLayerEdges: DataLayerEdge[],
+  controlEdges: ComparableEdge[],
+): DataLayerEdge[] {
+  const controlEdgeSignatures = new Set(controlEdges.map(getEdgeSignature));
+  return dataLayerEdges.filter((edge) => !controlEdgeSignatures.has(getEdgeSignature(edge)));
+}
 
