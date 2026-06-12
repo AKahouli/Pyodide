@@ -116,7 +116,7 @@ import type {
   TaskInputPort,
   TaskOutputPort,
 } from '../types';
-import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
+import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, playbookEdgesToFlowEdges, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -1267,7 +1267,12 @@ function PlaybookCanvasInner() {
     const shouldFocus = options?.focus ?? true;
     const focusMode = options?.focusMode ?? 'changed-area';
     const suggestionApplicationKey = options?.applicationKey ?? createIntentSuggestionApplicationKey(playbook.id, suggestion);
-    const suggestionBaseDefinitionRevision = options?.expectedDefinitionRevision ?? playbook.definitionRevision;
+    const latestPlaybook = usePlaybookStore.getState().currentPlaybook;
+    const graphPlaybook = latestPlaybook?.id === playbook.id ? latestPlaybook : playbook;
+    const suggestionBaseDefinitionRevision = options?.expectedDefinitionRevision ?? graphPlaybook.definitionRevision;
+    const graphEdges = latestPlaybook?.id === playbook.id
+      ? playbookEdgesToFlowEdges(graphPlaybook.edges, graphPlaybook.tasks)
+      : edges;
 
     const resolveAssignedAgentId = (agentSlug?: string | null): string | null => {
       if (!agentSlug) {
@@ -1483,7 +1488,7 @@ function PlaybookCanvasInner() {
     };
 
     const selectedTask = selectedStepId
-      ? playbook.tasks.find((task) => task.id === selectedStepId) || null
+      ? graphPlaybook.tasks.find((task) => task.id === selectedStepId) || null
       : null;
 
     if (selectedStepId && !selectedTask) {
@@ -1503,9 +1508,9 @@ function PlaybookCanvasInner() {
       return;
     }
 
-    let nextTasks = options?.replaceAll ? [] : [...playbook.tasks];
-    let nextEdges = options?.replaceAll ? [] : [...edges];
-    let nextDataBindings = options?.replaceAll ? [] : [...(playbook.dataBindings ?? [])];
+    let nextTasks = options?.replaceAll ? [] : [...graphPlaybook.tasks];
+    let nextEdges = options?.replaceAll ? [] : [...graphEdges];
+    let nextDataBindings = options?.replaceAll ? [] : [...(graphPlaybook.dataBindings ?? [])];
     const createdNodeRefs = new Map<string, string>();
     let deletedBounds: { x: number; y: number; width: number; height: number } | null = null;
     const applicationWarnings: string[] = [];
@@ -2200,9 +2205,11 @@ function PlaybookCanvasInner() {
     reconcileRequiredNodeOutputBindings();
 
     const tasksChanged = changedNodeIds.size > 0 || changedEdgeIds.size > 0;
-    const graphChanged = nextTasks.length !== (options?.replaceAll ? 0 : playbook.tasks.length) || nextEdges.length !== (options?.replaceAll ? 0 : edges.length) || nextDataBindings.length !== (options?.replaceAll ? 0 : (playbook.dataBindings ?? []).length);
+    const graphChanged = nextTasks.length !== (options?.replaceAll ? 0 : graphPlaybook.tasks.length) || nextEdges.length !== (options?.replaceAll ? 0 : graphEdges.length) || nextDataBindings.length !== (options?.replaceAll ? 0 : (graphPlaybook.dataBindings ?? []).length);
     if (!tasksChanged && !graphChanged) {
-      showError('No valid changes to apply from this suggestion');
+      if (shouldSave) {
+        showError('No valid changes to apply from this suggestion');
+      }
       if (shouldClearSuggestions) setIntentSuggestions([]);
       return;
     }

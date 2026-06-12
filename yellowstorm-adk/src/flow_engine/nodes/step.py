@@ -15,6 +15,7 @@ from typing import Any
 import litellm
 from structlog import get_logger
 from langgraph.config import get_stream_writer
+from langgraph.errors import GraphInterrupt
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
@@ -232,6 +233,7 @@ def _resolve_hitl_blockers(metadata: dict[str, Any], state: ExecutionState, node
     return [
         blocker for blocker in blockers
         if blocker.get("enabled", True)
+        and str(blocker.get("createdBy") or blocker.get("created_by") or "") == "user"
         and (
             blocker.get("scope") == "workflow"
             or str(blocker.get("nodeId") or blocker.get("node_id") or "") == node_id
@@ -415,6 +417,8 @@ async def run_step(
                     _merge_human_context(state, new_human_context),
                     deep_search=deep_search,
                 )
+        except GraphInterrupt:
+            raise
         except Exception as exc:
             logger.error("[step] Step execution failed", node_id=node_id, error=str(exc))
             writer({

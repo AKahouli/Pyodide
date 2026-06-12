@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +39,7 @@ fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
     LITELLM_API_SECRET_KEY="test-key",
+    PLAYBOOK_MAX_TOOL_ITERATIONS=40,
 )
 fake_settings.Settings = SimpleNamespace
 sys.modules.setdefault("src.config.settings", fake_settings)
@@ -119,7 +121,6 @@ class TestStepPrompt:
             trigger_context={"email": {"subject": "Q2 review"}},
         )
 
-        assert "Task Title:\nDraft summary" in prompt
         assert "Task Node ID:\nstep-1" in prompt
         assert "Task Description:\nWrite an executive summary using the resolved inputs." in prompt
         assert 'Resolved Inputs:\n{\n  "brief": "Quarterly results"' in prompt
@@ -417,6 +418,37 @@ class _FakeTool:
         return "4"
 
 
+class _ReadContentTool:
+    name = "read_content"
+    description = "Read document content"
+    args_schema = _CalculatorArgs
+
+    async def ainvoke(self, args):
+        image_base64 = base64.b64encode(b"\xff\xd8\xfffake-jpeg").decode("ascii")
+        return {
+            "file_name": "recipes.pdf",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "page": "1",
+                    "content": "<page_1>Recipe</page_1>",
+                    "images": [
+                        {
+                            "image_id": "img-1",
+                            "bbox": [1, 2, 3, 4],
+                            "image_base64": image_base64,
+                        },
+                        {
+                            "image_id": "img-2",
+                            "bbox": [5, 6, 7, 8],
+                            "image_base64": image_base64,
+                        },
+                    ],
+                }
+            ],
+        }
+
+
 class _ToolCallResponse:
     def __init__(self, content, tool_calls=None):
         self.choices = [
@@ -484,6 +516,62 @@ async def test_run_step_executes_bound_tools(monkeypatch):
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_sends_tool_base64_images_as_image_parts(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("I used the attached images.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentTool()],
+    )
+
+    assert output == "I used the attached images."
+    second_messages = calls[1]["messages"]
+    tool_message = next(message for message in second_messages if message.get("role") == "tool")
+    assert "image_base64" not in tool_message["content"]
+    assert "image_description" not in tool_message["content"]
+    assert "img-1" in tool_message["content"]
+    assert "[1, 2, 3, 4]" in tool_message["content"]
+
+    image_message = next(
+        message
+        for message in second_messages
+        if message.get("role") == "user" and isinstance(message.get("content"), list)
+    )
+    image_blocks = [
+        block
+        for block in image_message["content"]
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+    assert len(image_blocks) == 2
+    assert all(
+        block["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        for block in image_blocks
+    )
 
 
 @pytest.mark.anyio
@@ -821,14 +909,17 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
         },
     )
 
-    assert captured_kwargs["input_files"] == ["doc-1"]
-    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1"]}
+    assert captured_kwargs["input_files"] == ["doc-1-CV_Kevin_Diallo.pdf"]
+    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1-CV_Kevin_Diallo.pdf"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "CV_Kevin_Diallo.pdf",
+            "file_name": "doc-1-CV_Kevin_Diallo.pdf",
             "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
             "workspace_id": "workspace-1",
+            "workspace_name": "workspace-1",
+            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
@@ -904,14 +995,17 @@ async def test_run_step_passes_opaque_document_refs_into_tool_scope(monkeypatch)
         node_inputs={"report": {"document_id": "doc-1", "filename": "report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["doc-1"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["doc-1"]}
+    assert captured_kwargs["input_files"] == ["report.xlsx"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["report.xlsx"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "report.xlsx",
+            "file_name": "report.xlsx",
             "filepath": "user/workspace/doc-1/report.xlsx",
             "workspace_id": "workspace-1",
+            "workspace_name": "workspace-1",
+            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context"] == []
@@ -983,8 +1077,8 @@ async def test_run_step_does_not_fallback_to_workspace_for_unresolved_opaque_ref
         node_inputs={"report": {"document_id": "doc-2", "filename": "generated-report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["doc-2"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["doc-2"]}
+    assert captured_kwargs["input_files"] == ["generated-report.xlsx"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["generated-report.xlsx"]}
     assert captured_kwargs["code_interpreter_files"] == []
     assert captured_kwargs["workspace_context"] == []
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"

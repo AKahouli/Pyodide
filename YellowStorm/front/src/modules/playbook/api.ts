@@ -158,6 +158,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
           documentId: f.metadata.documentId,
           filename: f.metadata.filename,
           filepath: f.metadata.filepath,
+          folderpath: f.metadata.folderpath,
           language: f.metadata.language,
           mimeType: f.metadata.mimeType,
         } : undefined,

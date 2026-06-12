@@ -35,8 +35,12 @@ def _is_locate_answer_citations_tool(tool_name: str) -> bool:
     return "locate_answer_citations" in str(tool_name or "")
 
 
+def _registers_connector_citations(tool_name: str) -> bool:
+    return _is_locate_answer_citations_tool(tool_name)
+
+
 def _loggable_structured_response(tool_name: str, response: Any) -> Any:
-    if _is_locate_answer_citations_tool(tool_name):
+    if _registers_connector_citations(tool_name):
         return response
     return "[non-locator structured response omitted]"
 
@@ -61,6 +65,14 @@ def _display_source_name(value: Any) -> str:
         if candidate:
             return candidate
 
+    return text
+
+
+def _normalize_vectorstore_source(value: Any) -> str:
+    text = str(value or "").strip()
+    prefix = "s3://vectorstore/"
+    if text.startswith(prefix):
+        return text[len(prefix):]
     return text
 
 
@@ -179,6 +191,19 @@ def _apply_read_content_page(
             updated["source_object"]["content"]["page"] = page_num
         if page_text:
             updated["source_object"]["content"]["page_content"] = page_text
+            updated["source_object"]["content"]["highlight_text"] = str(
+                page_entry.get("highlight_text")
+                or page_entry.get("highlightText")
+                or page_text
+            )
+        highlight_bbox = (
+            page_entry.get("highlight_bbox")
+            or page_entry.get("highlightBBox")
+            or page_entry.get("bbox")
+        )
+        if isinstance(highlight_bbox, list):
+            updated["source_object"]["content"]["highlight_bbox"] = highlight_bbox
+            updated["source_object"]["content"]["block_bbox"] = highlight_bbox
         return updated
 
     # Strategy 1 — explicit page mention in text
@@ -1369,7 +1394,7 @@ class AgentRunner:
             if not isinstance(response_data, dict):
                 return
 
-            if _is_locate_answer_citations_tool(tool_name):
+            if _registers_connector_citations(tool_name):
                 self._register_connector_citation_sources_from_response(
                     response_data,
                     session_state if session_state is not None else {},
@@ -1625,9 +1650,11 @@ class AgentRunner:
         if source_type == "image":
             parts = [
                 source_type,
-                str(source.get("path") or ""),
-                str(source.get("workspace_name") or ""),
+                str(source.get("source") or source.get("path") or ""),
+                str(source.get("file_name") or ""),
                 str(source.get("page") or ""),
+                str(source.get("highlight_text") or ""),
+                str(source.get("highlight_bbox") or source.get("block_bbox") or ""),
             ]
         else:
             parts = [
@@ -1673,6 +1700,9 @@ class AgentRunner:
                 continue
 
             normalized_source = dict(source)
+            source_reference = _normalize_reference_token(
+                normalized_source.get("reference")
+            )
             signature = self._build_connector_source_signature(normalized_source)
             reference = signatures.get(signature)
 
@@ -1692,19 +1722,28 @@ class AgentRunner:
                             ),
                             "object": {
                                 "content": {
-                                    "path": str(normalized_source.get("path") or ""),
+                                    "path": str(
+                                        normalized_source.get("source")
+                                        or normalized_source.get("path")
+                                        or ""
+                                    ),
                                     "page": str(normalized_source.get("page") or ""),
                                     "file_name": str(
                                         normalized_source.get("file_name") or ""
                                     ),
-                                    "workspace_name": str(
-                                        normalized_source.get("workspace_name") or ""
-                                    ),
-                                    "brain_id": str(
-                                        normalized_source.get("workspace_id") or ""
-                                    ),
+                                    "workspace_name": "",
+                                    "workspace_id": "",
+                                    "brain_id": "",
                                     "height": str(normalized_source.get("height") or ""),
                                     "width": str(normalized_source.get("width") or ""),
+                                    "highlight_text": str(
+                                        normalized_source.get("highlight_text") or ""
+                                    ),
+                                    "highlight_bbox": normalized_source.get(
+                                        "highlight_bbox"
+                                    ) or [],
+                                    "block_bbox": normalized_source.get("block_bbox")
+                                    or [],
                                 }
                             },
                         }
@@ -1733,10 +1772,21 @@ class AgentRunner:
                                     "brain_id": str(
                                         normalized_source.get("workspace_id") or ""
                                     ),
+                                    "highlight_text": str(
+                                        normalized_source.get("highlight_text") or ""
+                                    ),
+                                    "highlight_bbox": normalized_source.get(
+                                        "highlight_bbox"
+                                    ) or [],
+                                    "block_bbox": normalized_source.get("block_bbox")
+                                    or [],
                                 }
                             },
                         }
                     )
+                target_sources = image_sources if source_type == "image" else text_sources
+                if source_reference and source_reference != reference:
+                    target_sources[-1]["reference_aliases"].append(source_reference)
                 source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
                 logger.info(
                     "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s id_value=%s",
@@ -1776,6 +1826,70 @@ class AgentRunner:
         `result` field containing document blocks.
         """
         result_payload = response_data.get("result")
+        raw_citations = response_data.get("citations")
+        if isinstance(raw_citations, list):
+            citation_sources: List[Dict[str, Any]] = []
+            seen = set()
+            for index, citation in enumerate(raw_citations):
+                if not isinstance(citation, dict):
+                    continue
+
+                raw_source = citation.get("source") or citation.get("path") or ""
+                source = _normalize_vectorstore_source(raw_source)
+                file_name = _display_source_name(raw_source)
+                page = str(
+                    citation.get("page")
+                    or citation.get("page_number")
+                    or ""
+                ).strip()
+                highlight_text = str(
+                    citation.get("highlight_text")
+                    or citation.get("highlightText")
+                    or citation.get("page_content")
+                    or ""
+                )
+                highlight_bbox = (
+                    citation.get("highlight_bbox")
+                    or citation.get("highlightBBox")
+                    or []
+                )
+                reference = str(
+                    citation.get("reference")
+                    or citation.get("citation")
+                    or index + 1
+                )
+                signature = (source, page, highlight_text)
+                if signature in seen:
+                    continue
+                seen.add(signature)
+
+                citation_sources.append(
+                    {
+                        "type": "text",
+                        "source": source,
+                        "file_name": file_name,
+                        "page": page,
+                        "page_content": highlight_text,
+                        "workspace_id": str(
+                            citation.get("workspace_id")
+                            or citation.get("workspace_name")
+                            or ""
+                        ),
+                        "reference": reference,
+                        "reference_aliases": [],
+                        "highlight_text": highlight_text,
+                        "highlight_bbox": highlight_bbox,
+                        "block_bbox": highlight_bbox,
+                    }
+                )
+            if citation_sources:
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s extracted_citation_sources_from_citations count=%s",
+                    tool_name,
+                    len(citation_sources),
+                )
+            return citation_sources
+
         if isinstance(result_payload, str):
             try:
                 result_payload = json.loads(result_payload)
@@ -1904,9 +2018,11 @@ class AgentRunner:
                 continue
 
             file_name = str(
-                block.get("external_id")
+                block.get("block_id")
+                or block.get("file_name")
+                or block.get("filename")
+                or block.get("external_id")
                 or block.get("doc_id")
-                or block.get("block_id")
                 or block.get("id")
                 or ""
             ).strip()
@@ -2026,6 +2142,9 @@ class AgentRunner:
                         "brain_id", ""
                     ),
                     "reference": citation_ref,
+                    "highlight_text": content.get("highlight_text", ""),
+                    "highlight_bbox": content.get("highlight_bbox", []),
+                    "block_bbox": content.get("block_bbox", []),
                 },
             }
         else:
@@ -2043,6 +2162,9 @@ class AgentRunner:
                     "height": str(content.get("height", "")),
                     "width": str(content.get("width", "")),
                     "reference": citation_ref,
+                    "highlight_text": content.get("highlight_text", ""),
+                    "highlight_bbox": content.get("highlight_bbox", []),
+                    "block_bbox": content.get("block_bbox", []),
                 },
             }
 

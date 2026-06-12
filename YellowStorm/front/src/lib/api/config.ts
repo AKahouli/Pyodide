@@ -245,6 +245,9 @@ export const API_ENDPOINTS = {
     all: '/agents/all',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
+    a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
+    a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
+    a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
   },
   tools: {
     active: '/tools/active',

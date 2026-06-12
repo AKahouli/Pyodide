@@ -83,6 +83,13 @@ def _build_tool_text_content(result: Any) -> str:
     return cleaned if isinstance(cleaned, str) else json.dumps(cleaned, default=str)
 
 
+def _image_url_from_base64(image_base64: str) -> str:
+    value = image_base64.strip()
+    if value.startswith("data:image/"):
+        return value
+    return f"data:image/jpeg;base64,{value}"
+
+
 def _cap_images_in_messages(messages: list[dict[str, Any]], max_images: int = MAX_IMAGES_TOTAL) -> list[dict[str, Any]]:
     """Keep the most recent images, replace older ones with a text note when over the limit."""
     def _count_images(msg: dict) -> int:
@@ -279,7 +286,7 @@ async def run_step_with_tools(
                 {"type": "text", "text": f"Images from tool results ({len(capped)} image(s)):"}
             ]
             for b64 in capped:
-                vision_blocks.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                vision_blocks.append({"type": "image_url", "image_url": {"url": _image_url_from_base64(b64)}})
             messages.append({"role": "user", "content": vision_blocks})
             logger.info("Vision images injected", image_count=len(capped))
 
@@ -340,6 +347,8 @@ def _matching_tool_blocker(
     tool_text = " ".join([tool_name, json.dumps(tool_arguments, default=str)]).lower()
     for blocker in hitl_blockers:
         if blocker.get("enabled") is False:
+            continue
+        if str(blocker.get("createdBy") or blocker.get("created_by") or "") != "user":
             continue
         if str(blocker.get("kind") or "") not in {"destructive_action", "external_send", "workspace_write"}:
             continue

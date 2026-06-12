@@ -190,6 +190,43 @@ export const useAgentStore = create<AgentStore>()(
         await get().fetchAgents();
       },
 
+      publishAgentToA2A: async (id) => {
+        const result = await api.publishAgentToA2A(id);
+        // Reflect the new published state in the list so the card switches from
+        // "publish" to "rotate key". The API key itself is not persisted.
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === id
+              ? { ...a, a2aPublished: true, a2aAgentCardUrl: result.agentCardUrl }
+              : a,
+          ),
+        }));
+        return result;
+      },
+
+      rotateAgentA2AKey: async (id) => {
+        const result = await api.rotateAgentA2AKey(id);
+        // The card URL can change on rotation; keep the cached agent in sync.
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === id ? { ...a, a2aAgentCardUrl: result.agentCardUrl } : a,
+          ),
+        }));
+        return result;
+      },
+
+      revokeAgentA2A: async (id) => {
+        const result = await api.revokeAgentA2A(id);
+        set((state) => ({
+          agents: state.agents.map((a) =>
+            a.id === id
+              ? { ...a, a2aPublished: false, a2aAgentCardUrl: undefined }
+              : a,
+          ),
+        }));
+        return result;
+      },
+
       // ===== Evaluation Implementation =====
       fetchDatasets: async () => {
         set({ isEvaluationLoading: true });

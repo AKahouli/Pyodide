@@ -41,6 +41,11 @@ class ChatbotServiceStub(object):
                 request_serializer=chatbot__pb2.RunAgentTeamRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.StreamChunk.FromString,
                 _registered_method=True)
+        self.RunSingleAgent = channel.unary_stream(
+                '/chatbot.ChatbotService/RunSingleAgent',
+                request_serializer=chatbot__pb2.RunSingleAgentRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.StreamChunk.FromString,
+                _registered_method=True)
         self.GenerateConversationName = channel.unary_unary(
                 '/chatbot.ChatbotService/GenerateConversationName',
                 request_serializer=chatbot__pb2.GenerateConversationNameRequest.SerializeToString,
@@ -74,6 +79,12 @@ class ChatbotServiceServicer(object):
     """
 
     def RunAgentTeam(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunSingleAgent(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -115,6 +126,11 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
             'RunAgentTeam': grpc.unary_stream_rpc_method_handler(
                     servicer.RunAgentTeam,
                     request_deserializer=chatbot__pb2.RunAgentTeamRequest.FromString,
+                    response_serializer=chatbot__pb2.StreamChunk.SerializeToString,
+            ),
+            'RunSingleAgent': grpc.unary_stream_rpc_method_handler(
+                    servicer.RunSingleAgent,
+                    request_deserializer=chatbot__pb2.RunSingleAgentRequest.FromString,
                     response_serializer=chatbot__pb2.StreamChunk.SerializeToString,
             ),
             'GenerateConversationName': grpc.unary_unary_rpc_method_handler(
@@ -171,6 +187,33 @@ class ChatbotService(object):
             target,
             '/chatbot.ChatbotService/RunAgentTeam',
             chatbot__pb2.RunAgentTeamRequest.SerializeToString,
+            chatbot__pb2.StreamChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunSingleAgent(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/chatbot.ChatbotService/RunSingleAgent',
+            chatbot__pb2.RunSingleAgentRequest.SerializeToString,
             chatbot__pb2.StreamChunk.FromString,
             options,
             channel_credentials,

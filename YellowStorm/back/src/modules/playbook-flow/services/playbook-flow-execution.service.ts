@@ -106,13 +106,24 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
+function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(blockers)) return [];
+  return blockers.filter((blocker): blocker is Record<string, unknown> => (
+    !!blocker
+    && typeof blocker === 'object'
+    && !Array.isArray(blocker)
+    && blocker.enabled !== false
+    && blocker.createdBy === 'user'
+  ));
+}
+
 export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> {
   const metadata = node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
     ? node.metadata as Record<string, unknown>
     : {};
   const flowHitlPolicy = snapshot.hitlPolicy;
   const nodeHitlPolicy = node.hitlPolicy ?? metadata.hitlPolicy ?? metadata.hitl_policy;
-  const hitlBlockers = snapshot.hitlBlockers;
+  const hitlBlockers = filterRuntimeHitlBlockers(snapshot.hitlBlockers);
 
   // Keep HITL contract data inside metadata until the runtime proto carries first-class flow-node fields.
   return {
@@ -133,7 +144,7 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       ? { max_clarifications: Number(node.maxClarifications ?? metadata.maxClarifications) || 0 }
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
-    ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
+    ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
     ...(node.deepSearch === true || metadata.deep_search === true
       ? { deep_search: true }
       : {}),
@@ -577,21 +588,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     dispatcher.schedule(ownerId, (queuedOwnerId) => this.drainQueue(queuedOwnerId));
   }
 
-  async start(
+  private async prepareExecutionStartFlow(
     flowId: string,
     ownerId: string,
-    inputContext?: Record<string, unknown>,
-    idempotencyKey?: string,
-    singleStepTaskId?: string,
-    advisorAutopilotEnabled?: boolean,
-    advisorAutopilotTargetScore?: number,
-    advisorAutopilotMaxTurns?: number,
-    reflectionEnabled?: boolean,
-    advisorScoringMode?: AdvisorScoringMode,
-    executionMode?: string,
-    stepExecutionModes?: Record<string, string>,
-    modelIdOverride?: string,
-  ): Promise<IFlowExecutionResponse> {
+  ): Promise<IFlowResponse> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
@@ -623,6 +623,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+
+    return flow;
+  }
+
+  async start(
+    flowId: string,
+    ownerId: string,
+    inputContext?: Record<string, unknown>,
+    idempotencyKey?: string,
+    singleStepTaskId?: string,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
+    reflectionEnabled?: boolean,
+    advisorScoringMode?: AdvisorScoringMode,
+    executionMode?: string,
+    stepExecutionModes?: Record<string, string>,
+    modelIdOverride?: string,
+  ): Promise<IFlowExecutionResponse> {
+    const flow = await this.prepareExecutionStartFlow(flowId, ownerId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
@@ -2372,7 +2392,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const snapshot = sourceExecution.snapshot as Record<string, unknown>;
+    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
+    const executableSnapshot = this.buildExecutableSnapshot(
+      this.builderService.buildSnapshot(latestFlow as any),
+      String(sourceExecution.flowId),
+    );
+    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -2383,15 +2408,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const iteration = payload.iteration ?? 0;
+    const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
+      ? snapshot.settings as Record<string, unknown>
+      : {};
+    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
+    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
-      recursionLimit: sourceExecution.recursionLimit,
-      maxParallelism: sourceExecution.maxParallelism,
+      recursionLimit,
+      maxParallelism,
       inputContext: sourceExecution.inputContext,
-      snapshot: sourceExecution.snapshot,
+      snapshot,
       replaySource: {
         executionId: sourceExecution.id,
         taskId: payload.taskId,

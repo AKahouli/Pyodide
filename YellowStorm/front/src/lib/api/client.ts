@@ -36,6 +36,7 @@ const MAINTENANCE_STORAGE_KEY = 'maintenance_info';
 
 // Token refresh state to prevent multiple simultaneous refresh calls
 let isRefreshing = false;
+let isRedirecting = false;
 type RefreshSubscriber = {
   onToken: (token: string) => void;
   onError: (error: unknown) => void;
@@ -114,6 +115,10 @@ apiClient.interceptors.response.use(
           message: 'An unexpected error occurred. Please try again.',
           statusCode: error.response?.status || 500,
         };
+        // If refresh fails with session invalidated, clear auth and redirect immediately
+        if (apiError.code === 'ERR_1107' || apiError.code === 'ERR_1003') {
+          safeRedirectToLogin();
+        }
         return Promise.reject(apiError);
       }
 
@@ -126,7 +131,11 @@ apiClient.interceptors.response.use(
               }
               resolve(apiClient(originalRequest));
             },
-            onError: (err: unknown) => reject(err),
+            onError: (err: unknown) => {
+              // If refresh fails, clear auth and redirect
+              safeRedirectToLogin();
+              reject(err);
+            },
           });
         });
       }
@@ -156,8 +165,7 @@ apiClient.interceptors.response.use(
       } catch (refreshError) {
         isRefreshing = false;
         onRefreshFailed(refreshError);
-        clearAuthData();
-        window.location.href = '/#/';
+        safeRedirectToLogin();
         return Promise.reject(refreshError);
       }
     }
@@ -177,6 +185,15 @@ apiClient.interceptors.response.use(
 function clearAuthData() {
   localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
   localStorage.removeItem(AUTH_STORAGE_KEYS.user);
+}
+
+// Helper function to safely redirect to login (prevents multiple redirects)
+function safeRedirectToLogin() {
+  if (!isRedirecting) {
+    isRedirecting = true;
+    clearAuthData();
+    window.location.href = '/#/';
+  }
 }
 
 // Helper functions for maintenance mode

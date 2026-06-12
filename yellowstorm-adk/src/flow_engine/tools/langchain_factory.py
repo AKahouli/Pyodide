@@ -136,11 +136,6 @@ def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
     return stripped
 
 
-def _loggable_connector_payload(tool_name: str, payload: Any) -> Any:
-    if _is_locate_answer_citations_tool(tool_name):
-        return payload
-    return "[non-locator MCP response omitted]"
-
 # --- ToolResultCollector ---
 
 
@@ -368,17 +363,6 @@ def _collect_connector_response_components(
         if is_located_answer_citations
         else _strip_legacy_citation_fields(response)
     )
-    logger.info(
-        "playbook_connector_component_collection_start response_keys=%s source_count=%s citation_source_count=%s response=%s",
-        sorted(normalized_response.keys()),
-        len(normalized_response.get("sources", []))
-        if isinstance(normalized_response.get("sources"), list)
-        else 0,
-        len(normalized_response.get("citation_sources", []))
-        if isinstance(normalized_response.get("citation_sources"), list)
-        else 0,
-        _log_payload(_loggable_connector_payload(tool_name, normalized_response)),
-    )
 
     sources = normalized_response.get("sources") if is_located_answer_citations else None
     if isinstance(sources, list):
@@ -443,27 +427,6 @@ def _collect_connector_response_components(
             else:
                 reference = _format_reference_marker(collector.next_connector_reference())
             collector._connector_source_signatures[signature] = reference
-            ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
-            logger.warning(
-                "PLAYBOOK_MCP_CITATION_REGISTERED reference=%s source_type=%s source=%s ref_val=%s page=%s raw_source=%s",
-                reference,
-                source.get("type", "text"),
-                source.get("source") or source.get("path") or "",
-                ref_val,
-                source.get("page") or "",
-                _log_payload(source),
-            )
-        else:
-            ref_val = source.get("file_name") if source.get("type") == "text" else source.get("workspace_name") or ""
-            logger.warning(
-                "PLAYBOOK_MCP_CITATION_REUSED reference=%s source_type=%s source=%s ref_val=%s page=%s raw_source=%s",
-                reference,
-                source.get("type", "text"),
-                source.get("source") or source.get("path") or "",
-                ref_val,
-                source.get("page") or "",
-                _log_payload(source),
-            )
         source["reference"] = reference
         normalized_citation_sources.append(_compact_citation_source(source))
         assigned_references.append(reference)
@@ -523,12 +486,6 @@ def _collect_connector_response_components(
                 "citation",
                 component_payload,
             )
-        logger.warning(
-            "PLAYBOOK_MCP_CITATION_COMPONENT_EMITTED reference=%s source_type=%s component=%s",
-            reference,
-            source_type,
-            _log_payload(component_payload),
-        )
 
     if normalized_citation_sources:
         normalized_response["citation_sources"] = normalized_citation_sources
@@ -1958,13 +1915,6 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers.get("workspace_id"),
                             )
 
-                        logger.info(
-                            "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
-                            cid,
-                            ak,
-                            tn,
-                            _log_payload(merged_params),
-                        )
                         _last_mcp_actual_args.set(dict(merged_params))
                         response = await call_mcp_tool(
                             tt,
@@ -1975,33 +1925,7 @@ def _create_connector_mcp_tools(
                             auth_headers=effective_auth_headers,
                             auth_env=ae,
                         )
-                        is_located_citation_tool = _is_locate_answer_citations_tool(ak)
-                        logged_response = _loggable_connector_payload(ak, response)
-                        logger.info(
-                            "playbook_connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
-                            cid,
-                            ak,
-                            tn,
-                            type(response).__name__,
-                            _log_payload(logged_response),
-                        )
                         if isinstance(response, dict):
-                            logger.info(
-                                "playbook_connector_tool_normalized_response connector_id=%s action_key=%s tool_name=%s keys=%s source_count=%s citation_source_count=%s normalized_response=%s",
-                                cid,
-                                ak,
-                                tn,
-                                sorted(response.keys()) if is_located_citation_tool else [],
-                                len(response.get("sources", []))
-                                if is_located_citation_tool
-                                and isinstance(response.get("sources"), list)
-                                else 0,
-                                len(response.get("citation_sources", []))
-                                if is_located_citation_tool
-                                and isinstance(response.get("citation_sources"), list)
-                                else 0,
-                                _log_payload(logged_response),
-                            )
                             if response.get("ceph_path"):
                                 ceph_path = response.get("ceph_path", "")
                                 filename = (response.get("path") or ceph_path).rstrip("/").split("/")[-1]

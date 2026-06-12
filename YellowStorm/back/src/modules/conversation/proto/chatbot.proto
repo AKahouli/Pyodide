@@ -308,6 +308,9 @@ message TextSourceData {
     string page_content = 5;     // The actual text content
     string workspace_id = 6;     // Workspace ID
     string reference = 7;        // Citation reference (e.g., "[1]", "[2]")
+    string highlight_text = 8;   // Exact text to highlight in the source document
+    repeated double highlight_bbox = 9; // Highlight bounding box [x, y, width, height]
+    repeated double block_bbox = 10;    // Fallback block bounding box [x, y, width, height]
 }
 
 message ImageSourceData {
@@ -320,6 +323,9 @@ message ImageSourceData {
     string height = 7;           // Image height
     string width = 8;            // Image width
     string reference = 9;        // Citation reference (e.g., "[1]", "[2]")
+    string highlight_text = 10;  // Exact text to highlight in the source document
+    repeated double highlight_bbox = 11; // Highlight bounding box [x, y, width, height]
+    repeated double block_bbox = 12;     // Fallback block bounding box [x, y, width, height]
 }
 
 message CitationComponent {

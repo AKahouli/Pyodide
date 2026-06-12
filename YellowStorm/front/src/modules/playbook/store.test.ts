@@ -1347,6 +1347,125 @@ describe('playbook store', () => {
     expect(state.currentPlaybook?.updatedAt).toBe('2025-01-01T00:00:20.000Z');
   });
 
+  it('binds a workspace resource to a port using the workspace id as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'workspace',
+      id: 'ws-1',
+      name: 'Workspace',
+      workspaceId: 'ws-1',
+      content: 'ws-1',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        targetNode: 't1',
+        targetPort: 'port-1',
+        sourceKind: 'constant',
+        constantValue: expect.objectContaining({
+          text: 'ws-1',
+          workspaceId: 'ws-1',
+          kind: 'workspace',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'workspace',
+        id: 'ws-1',
+        workspaceId: 'ws-1',
+        portId: 'port-1',
+      }),
+    ]);
+  });
+
+  it('binds a folder resource to a port using the folder path as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'folder',
+      id: 'folder-1',
+      name: 'Contracts',
+      workspaceId: 'ws-1',
+      content: '/legal/contracts',
+      path: '/legal/contracts',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        constantValue: expect.objectContaining({
+          text: '/legal/contracts',
+          workspaceId: 'ws-1',
+          path: '/legal/contracts',
+          kind: 'folder',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'folder',
+        metadata: expect.objectContaining({ folderpath: '/legal/contracts' }),
+      }),
+    ]);
+  });
+
+  it('binds a document resource to a port using the file path as content', () => {
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', inputFiles: [] })],
+        dataBindings: [],
+      }),
+    });
+
+    usePlaybookStore.getState().bindResourceToInputPort('t1', 'port-1', {
+      kind: 'document',
+      id: 'doc-1',
+      name: 'Spec',
+      workspaceId: 'ws-1',
+      content: '/docs/spec.md',
+      path: '/docs/spec.md',
+      mimeType: 'text/markdown',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentPlaybook?.dataBindings).toEqual([
+      expect.objectContaining({
+        constantValue: expect.objectContaining({
+          text: '/docs/spec.md',
+          workspaceId: 'ws-1',
+          path: '/docs/spec.md',
+          kind: 'document',
+        }),
+      }),
+    ]);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      expect.objectContaining({
+        type: 'document',
+        metadata: expect.objectContaining({
+          documentId: 'doc-1',
+          filepath: '/docs/spec.md',
+          mimeType: 'text/markdown',
+        }),
+      }),
+    ]);
+  });
+
   it('merges step completion and preserves existing pending human feedback', () => {
     const execution = makeExecution({
       id: 'e1',
@@ -2263,6 +2382,35 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     usePlaybookStore.getState().setExecutionPanelOpen(false);
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
+  });
+
+  it('openPortInspection opens the execution detail results tab for the inspected node', () => {
+    usePlaybookStore.setState({ executionDetailTab: 'judge' });
+    usePlaybookUiStore.setState({ executionDetailTab: 'judge' });
+
+    usePlaybookStore.getState().openPortInspection({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.portInspection).toEqual({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.executionDetailTab).toBe('results');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(state.pageMode).toBe('run');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionDetailTab).toBe('results');
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('updates page mode directly', () => {

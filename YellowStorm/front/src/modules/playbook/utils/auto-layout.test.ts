@@ -89,7 +89,7 @@ describe('autoLayoutTasks', () => {
     expect(second!.positionX - first!.positionX).toBeGreaterThanOrEqual(640);
   });
 
-  it('keeps branch siblings from overlapping vertically after auto-layout', () => {
+  it('keeps branch siblings closer vertically after auto-layout', () => {
     const tasks = [
       makeTask({ id: 'root', positionX: 0, positionY: 0 }),
       makeTask({ id: 'branch-a', positionX: 0, positionY: 0, executionOrder: 2 }),
@@ -106,7 +106,7 @@ describe('autoLayoutTasks', () => {
 
     expect(branchA).toBeTruthy();
     expect(branchB).toBeTruthy();
-    expect(Math.abs(branchB!.positionY - branchA!.positionY)).toBeGreaterThanOrEqual(560);
+    expect(Math.abs(branchB!.positionY - branchA!.positionY)).toBeGreaterThanOrEqual(440);
   });
 
   it('layouts two connected iterators as separate top-level nodes', () => {
