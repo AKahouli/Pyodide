@@ -17,7 +17,10 @@ from google.adk.tools import AgentTool
 from google.adk.tools.mcp_tool import MCPToolset
 
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
-from src.smart_rag.tools.utilities.connector_tools import create_connector_tools
+from src.smart_rag.tools.utilities.connector_tools import (
+    ConnectorToolContext,
+    create_connector_tools,
+)
 from src.smart_rag.agents.factories.tool_factory import ToolFactory
 from src.smart_rag.infrastructure.diagram.reference_tracker import (
     DiagramReferenceTracker,
@@ -259,8 +262,12 @@ class AgentFactory:
                 tools.extend(
                     create_connector_tools(
                         connector_bindings,
-                        workspace_id=connector_workspace_id,
-                        brain_ids=brain_ids,
+                        ConnectorToolContext(
+                            workspace_id=connector_workspace_id,
+                            brain_ids=brain_ids,
+                            brain_documents=brain_documents,
+                            session_id=session_id,
+                        ),
                     )
                 )
             except Exception as e:
@@ -355,6 +362,10 @@ class AgentFactory:
             agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
             # Add after_tool_callback to catch and store diagram HTML
             after_tool_callbacks.append(catch_diagram_after_tool)
+
+        if connector_bindings:
+            after_tool_callbacks.append(catch_images_after_tool)
+            agent_kwargs["before_model_callback"] = inject_images_before_model
 
         if after_tool_callbacks:
             agent_kwargs["after_tool_callback"] = after_tool_callbacks

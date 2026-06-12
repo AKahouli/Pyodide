@@ -37,9 +37,8 @@ def build_step_prompt(
     hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
-        "Task Title:",
-        label,
-        "",
+#        "Task Title:",
+#        label,
         "Task Node ID:",
         node_id,
     ]
@@ -63,14 +62,8 @@ def build_step_prompt(
             "Below are the Output Contract:",
             json.dumps(output_contract, indent=2, default=str),
         ])
-    if hitl_policy or hitl_blockers or human_context or hitl_memory:
+    if human_context or hitl_memory:
         lines.extend([
-            "",
-            "Smart HITL policy:",
-            json.dumps(hitl_policy or {}, indent=2, default=str),
-            "",
-            "Active blocker rules:",
-            json.dumps(hitl_blockers or [], indent=2, default=str),
             "",
             "Human guidance from earlier workflow steps:",
             json.dumps(human_context or [], indent=2, default=str),
@@ -78,14 +71,8 @@ def build_step_prompt(
             "Reusable HITL memory:",
             json.dumps(hitl_memory or [], indent=2, default=str),
             "",
-            "Smart HITL instruction:",
-            (
-                "If a blocker applies, do not guess and do not continue blindly. "
-                "Request the appropriate HITL action using the runtime HITL mechanism. "
-                "If the blocker is missing data or ambiguity, ask one concise clarification. "
-                "If the blocker is a destructive or external side effect, request approval before executing it. "
-                "Apply earlier human guidance when relevant; if it conflicts with current instructions, pause for clarification."
-            ),
+            "Human guidance instruction:",
+            "Apply earlier human guidance when relevant; if it conflicts with current instructions, pause for clarification.",
         ])
     lines.extend([
         "",
@@ -108,9 +95,10 @@ def build_step_prompt(
         lines.extend([
             "",
             "Response Format:",
-            "Return JSON only using the exact shape below.",
+            "Return JSON only using the **EXACT** shape below.",
             json.dumps(response_schema, indent=2, default=str),
-            "`display_text` is the final human-readable answer.",
+            "All string values must always use \" for any double quote inside the value.",
+            "`display_text` is the final human-readable answer and must always be plain markdown. Never embed a JSON object inside it.",  
             "Each item in `outputs` must target one declared output port.",
             "Do not put reasoning steps inside `outputs`; reasoning steps belong only in top-level `reasoning_trace`.",
             "For document outputs, use `filename` and `filepath` (not `content`).",
@@ -121,15 +109,24 @@ def build_step_prompt(
             'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'
         ])
     else:
-        lines.extend([
-        "",
-        "Reasoning Trace:",
-        "After your final answer, **MUST ALWAYS append** a separate reasoning trace JSON block on a new line using this exact format:",
-        "Example:",
-        "---PUBLIC_REASONING_TRACE_JSON---",
-        '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',
-        "where keys: id (string), type (string), label (string), description (string), confidence (number 0-1, optional). Each item represents one step of your reasoning process."  
-        
+      lines.extend([
+        """Reasoning Trace:
+After your final answer, you MUST ALWAYS append a separate reasoning trace JSON block on a new line using the exact format below.
+CRITICAL CONSTRAINTS FOR TRACE CONTENT:
+To prevent bias injection, your trace must be strictly abstract and process-oriented. 
+1. DO NOT include specific facts, entity names, numbers, data values, or search results in the `label` or `description` fields.
+2. Describe the *cognitive steps* you took (e.g., "extracted metrics", "identified entities"), NOT the *data* you found (e.g., "extracted $10M", "identified Agrial").
 
+Format Requirements: 
+Keys must be: id (string), type (string), label (string), description (string), confidence (number 0-1, optional).
+
+Good Example (Abstract Process - DO THIS):
+---PUBLIC_REASONING_TRACE_JSON---
+[{"id":"step_1","type":"observation","label":"Identified candidate entities","description":"Selected entities from search results matching the geographical and sector criteria.","confidence":0.96}]
+
+Bad Example (Contains Facts - DO NOT DO THIS):
+---PUBLIC_REASONING_TRACE_JSON---
+[{"id":"step_1","type":"observation","label":"Identified InVivo and Agrial","description":"Selected company A, company B, and  company C from French agro-sector cooperatives.","confidence":0.96}]
+"""
     ])
     return "\n".join(lines)

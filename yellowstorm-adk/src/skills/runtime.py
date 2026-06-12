@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from src.logger.logging import get_logger
+
+
+logger = get_logger("api.skills.runtime")
+
+
+def _skill_name(skill: Dict[str, Any]) -> str:
+    return str(skill.get("name") or "").strip()
+
 
 def _skill_to_dict(skill: Any) -> Optional[Dict[str, Any]]:
     """Normalize a skill object or mapping to a plain dictionary."""
@@ -30,6 +39,11 @@ def normalize_skills(skills: Optional[List[Any]]) -> List[Dict[str, Any]]:
         skill_dict = _skill_to_dict(skill)
         if skill_dict:
             normalized.append(skill_dict)
+    logger.info(
+        "Normalized runtime skills: count=%s names=%s",
+        len(normalized),
+        [_skill_name(skill) or "<missing-name>" for skill in normalized],
+    )
     return normalized
 
 
@@ -37,16 +51,25 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
     """Append a compact skill catalog to an agent prompt."""
     normalized_skills = normalize_skills(skills)
     if not normalized_skills:
+        logger.info("No runtime skills available for prompt catalog injection")
         return prompt
 
     lines = [
         "<available_skills>",
     ]
+    catalog_skill_names = []
     for skill in normalized_skills:
-        name = str(skill.get("name") or "").strip()
+        name = _skill_name(skill)
         description = str(skill.get("description") or "").strip()
         if not name or not description:
+            logger.warning(
+                "Skipping runtime skill in catalog: id=%s name=%s reason=%s",
+                skill.get("id"),
+                name or "<missing-name>",
+                "missing_name" if not name else "missing_description",
+            )
             continue
+        catalog_skill_names.append(name)
         lines.extend([
             "  <skill>",
             f"    <name>{name}</name>",
@@ -61,26 +84,43 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
     catalog = "\n".join(lines)
     if not catalog.strip():
         return prompt
+    logger.info(
+        "Injected runtime skill catalog: count=%s names=%s",
+        len(catalog_skill_names),
+        catalog_skill_names,
+    )
     return f"{prompt}\n\n{catalog}" if prompt else catalog
 
 
 def make_activate_skill_tool(skills: Optional[List[Any]]):
     """Create a lightweight skill activation tool for ADK agents."""
     skill_map = {
-        str(skill.get("name") or "").strip(): skill
+        _skill_name(skill): skill
         for skill in normalize_skills(skills)
-        if str(skill.get("name") or "").strip()
+        if _skill_name(skill)
     }
 
     if not skill_map:
+        logger.info("No runtime skills available for activate_skill tool")
         return None
+    logger.info(
+        "Created activate_skill tool: count=%s names=%s",
+        len(skill_map),
+        sorted(skill_map.keys()),
+    )
 
     def activate_skill(name: str) -> str:
         """Load a skill's full instructions by name."""
         skill = skill_map.get((name or "").strip())
         if not skill:
             available = ", ".join(sorted(skill_map.keys()))
+            logger.warning(
+                "Runtime skill activation failed: requested=%s available=%s",
+                name,
+                sorted(skill_map.keys()),
+            )
             return f"Skill '{name}' is not available. Available skills: {available}"
+        logger.info("Runtime skill activated: name=%s id=%s", skill.get("name"), skill.get("id"))
 
         instructions = str(skill.get("instructions") or "").strip()
         compatibility = str(skill.get("compatibility") or "").strip()

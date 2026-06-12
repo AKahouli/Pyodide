@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from src.flow_engine.nodes.router import run_router
-from src.flow_engine.nodes.router_conditions import choose_deterministic_label
+from src.flow_engine.nodes.router_conditions import (
+    RouterConditionSourceUnavailableError,
+    choose_deterministic_label,
+)
 
 
 def make_state(task_outputs):
@@ -88,6 +91,27 @@ def test_choose_deterministic_label_uses_default_when_no_condition_matches():
         "used_default": True,
         "mode": "deterministic",
     }
+
+
+def test_choose_deterministic_label_fails_when_source_output_is_unavailable():
+    with pytest.raises(RouterConditionSourceUnavailableError, match="step-1"):
+        choose_deterministic_label(
+            {
+                "router_config": {
+                    "output_labels": ["invalid", "valid"],
+                    "default_label": "invalid",
+                    "conditions": [{
+                        "label": "valid",
+                        "source_node": "step-1",
+                        "source_port": "result",
+                        "path": "verdict",
+                        "operator": "equals",
+                        "value": "valid",
+                    }],
+                },
+            },
+            make_state({}),
+        )
 
 
 def test_choose_deterministic_label_supports_legacy_output_fallback():
@@ -190,3 +214,40 @@ async def test_run_router_skips_llm_when_deterministic_conditions_exist(monkeypa
 
     assert result['router_decisions'] == {'router-1': 'valid'}
     assert any(event['type'] == 'RouterDecision' and event['payload']['mode'] == 'deterministic' for event in emitted)
+
+
+@pytest.mark.asyncio
+async def test_run_router_fails_when_deterministic_source_output_is_unavailable(monkeypatch):
+    emitted = []
+
+    monkeypatch.setattr('src.flow_engine.nodes.router.get_stream_writer', lambda: emitted.append)
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError('LLM should not be called for deterministic routers')
+
+    monkeypatch.setattr('src.flow_engine.nodes.router.litellm.acompletion', fail_if_called)
+
+    with pytest.raises(RouterConditionSourceUnavailableError, match='step-1'):
+        await run_router(
+            'router-1',
+            {
+                'router_config': {
+                    'output_labels': ['invalid', 'valid'],
+                    'default_label': 'invalid',
+                    'conditions': [{
+                        'label': 'valid',
+                        'source_node': 'step-1',
+                        'source_port': 'result',
+                        'path': 'verdict',
+                        'operator': 'equals',
+                        'value': 'valid',
+                    }],
+                },
+            },
+            make_state({}),
+        )
+
+    assert any(event['type'] == 'NodeStarted' for event in emitted)
+    assert any(event['type'] == 'NodeFailed' for event in emitted)
+    assert not any(event['type'] == 'NodeCompleted' for event in emitted)
+    assert not any(event['type'] == 'RouterDecision' for event in emitted)

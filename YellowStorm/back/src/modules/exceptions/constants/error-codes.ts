@@ -182,6 +182,8 @@ export enum ErrorCode {
   CUSTOM_AGENT_FORBIDDEN = 'ERR_2402',
   CUSTOM_AGENT_INVALID_NAME = 'ERR_2404',
   CUSTOM_AGENT_DEFAULT_READONLY = 'ERR_2405',
+  CUSTOM_AGENT_A2A_NOT_PUBLISHED = 'ERR_2406',
+  CUSTOM_AGENT_A2A_PUBLISH_FAILED = 'ERR_2407',
 
   // Playbook errors (2500-2599)
   PLAYBOOK_NOT_FOUND = 'ERR_2500',
@@ -442,6 +444,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CUSTOM_AGENT_FORBIDDEN]: 'You do not have access to this agent.',
   [ErrorCode.CUSTOM_AGENT_INVALID_NAME]: 'Agent name must contain only letters, numbers, and spaces.',
   [ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY]: 'Default agents cannot be modified by users.',
+  [ErrorCode.CUSTOM_AGENT_A2A_NOT_PUBLISHED]: 'This agent has not been published over A2A yet.',
+  [ErrorCode.CUSTOM_AGENT_A2A_PUBLISH_FAILED]: 'Failed to publish the agent over A2A.',
 
   [ErrorCode.PLAYBOOK_NOT_FOUND]: 'Playbook not found.',
   [ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND]: 'Playbook execution not found.',

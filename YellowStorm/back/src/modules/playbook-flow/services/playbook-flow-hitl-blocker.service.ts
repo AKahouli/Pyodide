@@ -1,10 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
-import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
 import { CreateHitlBlockerDto, NormalizeHitlBlockerDto, UpdateHitlBlockerDto } from '../dto/playbook-flow-hitl.dto';
 import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { HitlBlockerRule } from '../schemas/playbook-flow-hitl.schema';
@@ -12,14 +10,10 @@ import { HitlBlockerRule } from '../schemas/playbook-flow-hitl.schema';
 /** Owns workflow and node HITL blocker catalog persistence and deterministic normalization defaults. */
 @Injectable()
 export class PlaybookFlowHitlBlockerService {
-  constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(@InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>) {}
 
   async listBlockers(flowId: string, ownerId: string): Promise<HitlBlockerRule[]> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
-    await this.ensureDefaultBlockers(flow);
     return (flow.hitlBlockers ?? []) as HitlBlockerRule[];
   }
 
@@ -118,21 +112,6 @@ export class PlaybookFlowHitlBlockerService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Workflow scope cannot include a nodeId.');
     }
   }
-
-  private async ensureDefaultBlockers(flow: FlowDocument): Promise<void> {
-    if (!this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) return;
-    const existingIds = new Set((flow.hitlBlockers ?? []).map((blocker) => blocker.id));
-    const missingDefaults = DEFAULT_HITL_BLOCKERS.filter((blocker) => !existingIds.has(blocker.id));
-    if (!missingDefaults.length) return;
-
-    const now = new Date();
-    flow.hitlBlockers = [
-      ...(flow.hitlBlockers ?? []),
-      ...missingDefaults.map((blocker) => ({ ...blocker, createdAt: now, updatedAt: now }) as HitlBlockerRule),
-    ];
-    await flow.save();
-  }
-
   private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowDocument> {
     const flow = await this.flowModel.findOne({ _id: flowId, ownerId });
     if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');

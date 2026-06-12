@@ -255,6 +255,7 @@ export class PlaybookFlowValidatorService {
   private checkRouterConditionConfiguration(nodes: FlowNode[], edges: ControlEdge[]): ValidationError[] {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const adjacency = buildAdjacency(edges);
+    const sequentialAdjacency = buildAdjacency(edges.filter((edge) => edge.kind === 'sequential'));
 
     const errors: ValidationError[] = [];
 
@@ -316,6 +317,14 @@ export class PlaybookFlowValidatorService {
           errors.push({
             rule: 5,
             message: `Router ${node.id} condition ${index} source ${condition.sourceNode} cannot reach router`,
+          });
+          return;
+        }
+
+        if (!canReachTarget(sequentialAdjacency, condition.sourceNode, node.id)) {
+          errors.push({
+            rule: 5,
+            message: `Router ${node.id} condition ${index} source ${condition.sourceNode} is not guaranteed to run before the router`,
           });
         }
       });

@@ -95,11 +95,9 @@ Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibil
 
 ## Comments
 
-The default is **no comment**. Code names things, comments explain things code cannot.
-
 - **Comment the WHY**, never the WHAT. `// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
 - **Public API documentation** (exported services, exported types, controllers, router functions): JSDoc / docstring with purpose, params semantics, return semantics, and any non-obvious invariant. One paragraph max.
-- **Inline comments** only for: non-obvious invariants, intentional workarounds, performance-critical decisions, references to external specs/issues.
+- **Inline comments** 
 - **No banner comments** (`// ===== HELPERS =====`). If a file needs sections, it's two files.
 - **No commit-log comments** (`// added for feature X`, `// fixes bug Y`). That belongs in git.
 - **No restating the signature** in the doc (`@param id The id`).

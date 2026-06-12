@@ -175,5 +175,7 @@ describe('CreateEditAgentDialog', () => {
     await waitFor(() => {
       expect(screen.getByText('createEdit.titleEdit')).toBeInTheDocument();
     });
+
+    expect(screen.getByTestId('telegram-section')).toHaveTextContent('telegram-section-a1');
   });
 });

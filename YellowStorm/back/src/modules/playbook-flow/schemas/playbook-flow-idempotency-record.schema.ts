@@ -17,6 +17,15 @@ export class FlowIdempotencyRecord {
   @Prop({ required: false, type: String })
   executionId?: string;
 
+  @Prop({ required: false, type: Object })
+  responseBody?: Record<string, unknown>;
+
+  @Prop({ required: false, type: String })
+  expectedStateHash?: string;
+
+  @Prop({ required: false, type: Number })
+  expectedDefinitionRevision?: number;
+
   @Prop({ required: true, type: Date })
   expiresAt!: Date;
 }

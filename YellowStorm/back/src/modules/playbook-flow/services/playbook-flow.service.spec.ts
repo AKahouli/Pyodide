@@ -13,8 +13,20 @@ import { FlowResponseAssemblerService } from '../domain/flow-response-assembler.
 import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.service';
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
+import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 
 describe('PlaybookFlowService', () => {
+  const idempotencyService = {
+    reserveSave: jest.fn().mockResolvedValue({ type: 'reserved' }),
+    confirmSaveResult: jest.fn().mockResolvedValue(undefined),
+    release: jest.fn().mockResolvedValue(undefined),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    idempotencyService.reserveSave.mockResolvedValue({ type: 'reserved' });
+  });
+
   it('findOneBase returns the flow without replay enrichment', async () => {
     const flowDocument = {
       ownerId: 'user-1',
@@ -41,6 +53,7 @@ describe('PlaybookFlowService', () => {
         FlowWorkspacePolicyService,
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -96,6 +109,7 @@ describe('PlaybookFlowService', () => {
         FlowWorkspacePolicyService,
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -167,6 +181,7 @@ describe('PlaybookFlowService', () => {
         FlowWorkspacePolicyService,
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -228,6 +243,7 @@ describe('PlaybookFlowService', () => {
         FlowWorkspacePolicyService,
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -248,13 +264,10 @@ describe('PlaybookFlowService', () => {
   });
 
   it('applies structural delta patches for nodes, edges, and bindings', async () => {
-    const save = jest.fn().mockImplementation(function save(this: any) {
-      this.updatedAt = new Date('2026-05-30T06:10:00.000Z');
-      return Promise.resolve(this);
-    });
     const flowDocument = {
-      _id: 'flow-1',
+      _id: '507f1f77bcf86cd799439011',
       ownerId: 'user-1',
+      definitionRevision: 4,
       updatedAt: new Date('2026-05-30T06:00:00.000Z'),
       name: 'Alpha',
       description: '',
@@ -291,10 +304,15 @@ describe('PlaybookFlowService', () => {
         },
       ],
       workspaces: ['workspace-1'],
-      save,
     };
     const flowModel = {
       findById: jest.fn().mockResolvedValue(flowDocument),
+      findOneAndUpdate: jest.fn().mockImplementation(async (_filter, update) => ({
+        ...flowDocument,
+        ...update.$set,
+        definitionRevision: 5,
+        updatedAt: new Date('2026-05-30T06:10:00.000Z'),
+      })),
     };
     const validatorService = { validate: jest.fn() };
 
@@ -306,6 +324,7 @@ describe('PlaybookFlowService', () => {
         FlowWorkspacePolicyService,
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: validatorService },
@@ -317,7 +336,7 @@ describe('PlaybookFlowService', () => {
 
     const service = moduleRef.get(PlaybookFlowService);
     const result = await service.applyDeltaPatch('507f1f77bcf86cd799439011', 'user-1', {
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 4,
       patch: {
         nodes: {
           deleteIds: ['task-2'],
@@ -397,6 +416,463 @@ describe('PlaybookFlowService', () => {
       dataBindingChanges: 1,
       positionUpdates: 0,
     });
+    expect(flowModel.findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        _id: '507f1f77bcf86cd799439011',
+        ownerId: 'user-1',
+        $or: [{ definitionRevision: 4 }],
+      },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          nodes: [
+            expect.objectContaining({ id: 'task-1', label: 'Draft revised' }),
+            expect.objectContaining({ id: 'task-3', label: 'Added' }),
+          ],
+          controlEdges: [
+            { id: 'edge-2', kind: 'sequential', source: 'task-1', target: 'task-3' },
+          ],
+          dataBindings: [
+            expect.objectContaining({ id: 'binding-2', targetNode: 'task-3' }),
+          ],
+        }),
+        $inc: { definitionRevision: 1 },
+      }),
+      { new: true, runValidators: true },
+    );
+    expect(result.definitionRevision).toBe(5);
+  });
+
+  it('throws conflict when a delta save loses the compare-and-swap race', async () => {
+    const flowDocument = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      definitionRevision: 4,
+      updatedAt: new Date('2026-05-30T06:00:00.000Z'),
+      name: 'Alpha',
+      description: '',
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(flowDocument),
+      findOneAndUpdate: jest.fn().mockResolvedValue(null),
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+
+    await expect(service.applyDeltaPatch('507f1f77bcf86cd799439011', 'user-1', {
+      expectedDefinitionRevision: 4,
+      patch: {
+        fields: { description: 'revised' },
+      },
+    } as any)).rejects.toMatchObject({ message: 'Playbook changed since this autosave started.' });
+  });
+
+  it('uses compare-and-swap persistence for full editor updates', async () => {
+    const flowDocument = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      definitionRevision: 2,
+      updatedAt: new Date('2026-05-30T06:00:00.000Z'),
+      name: 'Alpha',
+      description: '',
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: { mode: 'auto' },
+      hitlBlockers: [],
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+      toJSON: jest.fn().mockReturnValue({
+        id: '507f1f77bcf86cd799439011',
+        name: 'Alpha revised',
+        description: 'updated',
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+      }),
+    };
+    const savedDocument = {
+      ...flowDocument,
+      name: 'Alpha revised',
+      description: 'updated',
+      definitionRevision: 3,
+      updatedAt: new Date('2026-05-30T06:10:00.000Z'),
+      toJSON: jest.fn().mockReturnValue({
+        id: 'flow-1',
+        name: 'Alpha revised',
+        description: 'updated',
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+      }),
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(flowDocument),
+      findOneAndUpdate: jest.fn().mockResolvedValue(savedDocument),
+    };
+    const validatorService = { validate: jest.fn() };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: validatorService },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    await service.update('507f1f77bcf86cd799439011', 'user-1', {
+      name: 'Alpha revised',
+      description: 'updated',
+      expectedDefinitionRevision: 2,
+    } as any);
+
+    expect(flowModel.findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        _id: '507f1f77bcf86cd799439011',
+        ownerId: 'user-1',
+        $or: [{ definitionRevision: 2 }],
+      },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          name: 'Alpha revised',
+          description: 'updated',
+        }),
+        $inc: { definitionRevision: 1 },
+      }),
+      { new: true, runValidators: true },
+    );
+  });
+
+  it('throws conflict when a full editor update loses the compare-and-swap race', async () => {
+    const flowDocument = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      definitionRevision: 2,
+      updatedAt: new Date('2026-05-30T06:00:00.000Z'),
+      name: 'Alpha',
+      description: '',
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: { mode: 'auto' },
+      hitlBlockers: [],
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(flowDocument),
+      findOneAndUpdate: jest.fn().mockResolvedValue(null),
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+
+    await expect(service.update('507f1f77bcf86cd799439011', 'user-1', {
+      name: 'Alpha revised',
+      expectedDefinitionRevision: 2,
+    } as any)).rejects.toMatchObject({
+      message: 'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+    });
+  });
+
+  it('returns stored full-save result for duplicate client mutation ids', async () => {
+    idempotencyService.reserveSave.mockResolvedValueOnce({
+      type: 'duplicate',
+      responseBody: {
+        id: 'flow-1',
+        name: 'Saved',
+        description: 'done',
+        definitionRevision: 4,
+        activeReplays: {},
+      },
+    });
+    const flowModel = { findById: jest.fn() };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    const result = await service.update('507f1f77bcf86cd799439011', 'user-1', {
+      name: 'Saved',
+      clientMutationId: 'mutation-1',
+      expectedDefinitionRevision: 3,
+    } as any);
+
+    expect(result).toMatchObject({ id: 'flow-1', definitionRevision: 4 });
+    expect(flowModel.findById).not.toHaveBeenCalled();
+  });
+
+  it('returns stored delta-save result for duplicate client mutation ids', async () => {
+    idempotencyService.reserveSave.mockResolvedValueOnce({
+      type: 'duplicate',
+      responseBody: {
+        id: 'flow-1',
+        updatedAt: '2026-05-30T06:10:00.000Z',
+        definitionRevision: 5,
+        applied: true,
+        patchSummary: {
+          scalarFields: 1,
+          nodesUpserted: 0,
+          nodesDeleted: 0,
+          edgeChanges: 0,
+          dataBindingChanges: 0,
+          positionUpdates: 0,
+        },
+      },
+    });
+    const flowModel = { findById: jest.fn() };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    const result = await service.applyDeltaPatch('flow-1', 'user-1', {
+      expectedDefinitionRevision: 4,
+      clientMutationId: 'mutation-1',
+      patch: { fields: { description: 'saved' } },
+    } as any);
+
+    expect(result).toMatchObject({ id: 'flow-1', definitionRevision: 5, applied: true });
+    expect(flowModel.findById).not.toHaveBeenCalled();
+  });
+
+  it('reconstructs a full-save response when a duplicate retry arrives after commit but before response recording', async () => {
+    idempotencyService.reserveSave.mockResolvedValueOnce({
+      type: 'duplicate-pending',
+      expectedDefinitionRevision: 4,
+      expectedStateHash: '{"advisorAutopilotEnabled":undefined,"advisorAutopilotMaxTurns":undefined,"advisorAutopilotTargetScore":undefined,"advisorScoringMode":undefined,"controlEdges":[],"dataBindings":[],"description":"done","designSettings":undefined,"hitlBlockers":undefined,"hitlPolicy":undefined,"name":"Saved","nodes":[],"reflectionEnabled":undefined,"settings":{"maxParallelism":5,"recursionLimit":25},"triggerConfig":undefined,"workspaces":[]}',
+    });
+    const flowDocument = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      definitionRevision: 4,
+      name: 'Saved',
+      description: 'done',
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      toJSON: jest.fn().mockReturnValue({
+        id: 'flow-1',
+        definitionRevision: 4,
+        name: 'Saved',
+        description: 'done',
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+        workspaces: [],
+        settings: { recursionLimit: 25, maxParallelism: 5 },
+      }),
+    };
+    const flowModel = { findById: jest.fn().mockResolvedValue(flowDocument) };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    const result = await service.update('507f1f77bcf86cd799439011', 'user-1', {
+      name: 'Saved',
+      expectedDefinitionRevision: 3,
+      clientMutationId: 'mutation-2',
+    } as any);
+
+    expect(result).toMatchObject({ id: 'flow-1', definitionRevision: 4, name: 'Saved' });
+    expect(idempotencyService.confirmSaveResult).toHaveBeenCalled();
+  });
+
+  it('buildEditorStateHash handles circular flow graphs without recursion errors', async () => {
+    const flowId = '507f1f77bcf86cd799439011';
+    const sharedNode: Record<string, unknown> = { id: 'node-1' };
+    const circularFlow: Record<string, unknown> = {
+      _id: flowId,
+      ownerId: 'user-1',
+      definitionRevision: 1,
+      name: 'Saved',
+      description: 'Circular',
+      nodes: [sharedNode],
+      controlEdges: [],
+      dataBindings: [sharedNode],
+      workspaces: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+    sharedNode.parent = circularFlow;
+
+    const flowModel = { findById: jest.fn().mockResolvedValue(circularFlow) };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+
+    const hash = (service as any).buildEditorStateHash(circularFlow);
+
+    expect(hash).toContain('"nodes":[{');
+    expect(hash).toContain('"dataBindings":[{');
+    expect(hash).toContain('[Circular]');
+  });
+
+  it('does not treat an unrelated revision bump as a successful duplicate full save', async () => {
+    idempotencyService.reserveSave.mockResolvedValueOnce({
+      type: 'duplicate-pending',
+      expectedDefinitionRevision: 4,
+      expectedStateHash: '{"advisorAutopilotEnabled":undefined,"advisorAutopilotMaxTurns":undefined,"advisorAutopilotTargetScore":undefined,"advisorScoringMode":undefined,"controlEdges":[],"dataBindings":[],"description":"done","designSettings":undefined,"hitlBlockers":undefined,"hitlPolicy":undefined,"name":"Saved","nodes":[],"reflectionEnabled":undefined,"settings":{"maxParallelism":5,"recursionLimit":25},"triggerConfig":undefined,"workspaces":[]}',
+    });
+    const flowDocument = {
+      _id: '507f1f77bcf86cd799439011',
+      ownerId: 'user-1',
+      definitionRevision: 4,
+      name: 'Different',
+      description: 'other change',
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      toJSON: jest.fn().mockReturnValue({
+        id: 'flow-1',
+        definitionRevision: 4,
+        name: 'Different',
+        description: 'other change',
+      }),
+    };
+    const flowModel = { findById: jest.fn().mockResolvedValue(flowDocument) };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: getModelToken(Flow.name), useValue: flowModel },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const service = moduleRef.get(PlaybookFlowService);
+    await expect(service.update('507f1f77bcf86cd799439011', 'user-1', {
+      name: 'Saved',
+      expectedDefinitionRevision: 3,
+      clientMutationId: 'mutation-3',
+    } as any)).rejects.toMatchObject({
+      message: 'Idempotency key reservation exists but save result was not recorded yet. Retry shortly with the same payload.',
+    });
   });
 
   it('createWithNodesAndEdges seeds smart HITL defaults by default', async () => {
@@ -425,6 +901,7 @@ describe('PlaybookFlowService', () => {
       { normalizeWorkspaces: (workspaces: string[]) => workspaces, ensureWorkspaceSelection: () => undefined } as any,
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,
+      idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
     );
 
@@ -433,7 +910,7 @@ describe('PlaybookFlowService', () => {
     const created = (flowModel as jest.Mock).mock.calls[0][0];
     expect(created.hitlPolicy).toMatchObject({ mode: 'auto', sensitivity: 'balanced' });
     expect(Array.isArray(created.hitlBlockers)).toBe(true);
-    expect(created.hitlBlockers.length).toBeGreaterThan(0);
+    expect(created.hitlBlockers).toEqual([]);
   });
 
   it('clone copies existing HITL policy and blockers for compatibility', async () => {
@@ -489,6 +966,7 @@ describe('PlaybookFlowService', () => {
       } as any,
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,
+      idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
     );
 

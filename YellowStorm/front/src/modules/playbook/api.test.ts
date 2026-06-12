@@ -109,6 +109,60 @@ describe('sanitizePlaybookUpdate', () => {
       }),
     ]);
   });
+
+  it('preserves node-level hitlPolicy through sanitization', () => {
+    const sanitized = sanitizePlaybookUpdate({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+        }),
+        makeTask({ id: 'task-2' }),
+      ],
+    });
+
+    expect(sanitized.tasks).toEqual([
+      expect.objectContaining({
+        id: 'task-1',
+        hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+      }),
+      expect.objectContaining({
+        id: 'task-2',
+        hitlPolicy: null,
+      }),
+    ]);
+  });
+
+  it('preserves folderpath in input file metadata through sanitization', () => {
+    const sanitized = sanitizePlaybookUpdate({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          inputFiles: [{
+            type: 'folder',
+            id: 'folder-1',
+            name: 'Contracts',
+            workspaceId: 'ws-1',
+            metadata: {
+              workspaceId: 'ws-1',
+              folderpath: '/legal/contracts',
+            },
+          }],
+        }),
+      ],
+    });
+
+    expect(sanitized.tasks).toEqual([
+      expect.objectContaining({
+        inputFiles: [expect.objectContaining({
+          metadata: expect.objectContaining({
+            workspaceId: 'ws-1',
+            folderpath: '/legal/contracts',
+          }),
+        })],
+      }),
+    ]);
+  });
 });
 
 describe('getPlaybookUpdateTelemetry', () => {
@@ -138,12 +192,37 @@ describe('buildPlaybookUpdateRequestBody', () => {
     const body = buildPlaybookUpdateRequestBody({
       nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
       controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+      expectedDefinitionRevision: 3,
     });
 
     expect(body).toMatchObject({
       nodes: [{ id: 'node-1', kind: 'step', label: 'Node' }],
       controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'node-1', target: 'node-2' }],
+      expectedDefinitionRevision: 3,
     });
+  });
+
+  it('round-trips node-level hitlPolicy from tasks through compat mapping', () => {
+    const body = buildPlaybookUpdateRequestBody({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+        hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+        }),
+        makeTask({ id: 'task-2' }),
+      ],
+      expectedDefinitionRevision: 5,
+    });
+
+    const nodes = body.nodes as Record<string, unknown>[];
+    expect(nodes).toBeDefined();
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toMatchObject({
+      id: 'task-1',
+      hitlPolicy: { mode: 'off', sensitivity: 'minimal', clarificationEnabled: false, approvalEnabled: false, reviewEnabled: false, propagateFeedbackDefault: false, defaultFeedbackScope: 'downstream_run' },
+    });
+    expect(nodes[1]).toMatchObject({ id: 'task-2' });
+    expect((nodes[1] as Record<string, unknown>).hitlPolicy).toBeUndefined();
   });
 });
 
@@ -159,11 +238,11 @@ describe('buildPlaybookDeltaPatch', () => {
       {
         name: 'New name',
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         fields: { name: 'New name' },
       },
@@ -223,11 +302,11 @@ describe('buildPlaybookDeltaPatch', () => {
           constantValue: 'hello',
         }],
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         nodes: {
           upserts: [
@@ -266,11 +345,11 @@ describe('buildPlaybookDeltaPatch', () => {
       {
         nodes: [{ id: 'task-1', kind: 'step', metadata: { positionX: 15, positionY: 25, description: 'same' } }],
       },
-      { expectedUpdatedAt: '2026-05-30T06:00:00.000Z' },
+      { expectedDefinitionRevision: 7 },
     );
 
     expect(patch).toEqual({
-      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      expectedDefinitionRevision: 7,
       patch: {
         nodes: {
           positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
@@ -804,12 +883,12 @@ describe('updatePlaybook', () => {
     await updatePlaybook('playbook-1', {
       name: 'Playbook',
       description: 'Description',
-      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      expectedDefinitionRevision: 5,
       clientMutationId: 'intent-abc123',
     });
 
     expect(apiClientMock.patch).toHaveBeenCalledWith('/playbooks/playbook-1', expect.objectContaining({
-      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      expectedDefinitionRevision: 5,
       clientMutationId: 'intent-abc123',
     }));
   });
@@ -1148,6 +1227,60 @@ describe('clonePlaybook', () => {
 });
 
 describe('getExecution', () => {
+  it('normalizes persisted HITL events into execution and task feedback history', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-hitl',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            iteration: 0,
+          }],
+          hitlEvents: [{
+            id: 'event-1',
+            nodeId: 'task-1',
+            iteration: 0,
+            interruptId: 'interrupt-1',
+            type: 'clarification',
+            reasonCode: 'missing_required_input',
+            riskLevel: 'medium',
+            prompt: 'Which region should I search?',
+            payload: { taskTitle: 'Lead search' },
+            status: 'answered',
+            response: { action: 'reply', message: 'France', scope: 'downstream_run', remember: false },
+            downstreamNodeIds: [],
+            createdAt: '2026-06-02T08:46:00.000Z',
+            respondedAt: '2026-06-02T08:47:00.000Z',
+          }],
+          routerDecisions: [],
+          createdAt: '2026-06-02T08:45:00.000Z',
+          updatedAt: '2026-06-02T08:48:00.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-hitl');
+
+    expect(execution.hitlHistory).toEqual([
+      expect.objectContaining({
+        interruptId: 'interrupt-1',
+        taskId: 'task-1',
+        message: 'Which region should I search?',
+        responseMessage: 'France',
+      }),
+    ]);
+    expect(execution.taskResults[0].hitlHistory).toEqual(execution.hitlHistory);
+  });
+
   it('normalizes displayText and snake_case artifacts from flow execution details', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({
@@ -1191,6 +1324,138 @@ describe('getExecution', () => {
         url: 'https://example.com/report.pdf',
         mimeType: 'application/pdf',
       }],
+    });
+  });
+
+  it('normalizes judge result metrics from execution task results', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-judge',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            judge_result: {
+              accuracy_score: 96,
+              completeness_score: 92,
+              result_matching_score: 98,
+              overall_score: 95,
+              confidence: 94,
+              tool_usage_score: 90,
+              relevance_score: 99,
+              specificity_score: 93,
+              format_compliance_score: 88,
+              evidence_grounding_score: 97,
+              handoff_readiness_score: 94,
+              hitl_appropriateness_score: 98,
+              determinism_score: 96,
+              cost_efficiency_score: 84,
+              step_optimization_priority: 28,
+              playbook_optimization_priority: 41,
+              cost_optimization_priority: 22,
+            },
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-judge');
+
+    expect(execution.taskResults[0].judgeResult).toMatchObject({
+      relevanceScore: 99,
+      specificityScore: 93,
+      formatComplianceScore: 88,
+      evidenceGroundingScore: 97,
+      handoffReadinessScore: 94,
+      hitlAppropriatenessScore: 98,
+      determinismScore: 96,
+      stepOptimizationPriority: 28,
+      playbookOptimizationPriority: 41,
+      costOptimizationPriority: 22,
+      costEfficiencyScore: 84,
+    });
+  });
+
+  it('normalizes snake_case judge history result metrics from execution task results', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-judge-history',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'Result',
+            judge_history: [{
+              id: 'judge-1',
+              created_at: '2025-01-01T00:00:01.000Z',
+              attempt_number: 1,
+              scoring_mode: 'llm',
+              judge_result: {
+                accuracy_score: 96,
+                completeness_score: 92,
+                result_matching_score: 90,
+                overall_score: 93,
+                confidence: 95,
+                tool_usage_score: 98,
+                relevance_score: 99,
+                specificity_score: 93,
+                format_compliance_score: 88,
+                evidence_grounding_score: 97,
+                handoff_readiness_score: 94,
+                hitl_appropriateness_score: 98,
+                determinism_score: 96,
+                cost_efficiency_score: 91,
+                step_optimization_priority: 28,
+                playbook_optimization_priority: 41,
+                cost_optimization_priority: 24,
+              },
+            }],
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-judge-history');
+
+    expect(execution.taskResults[0].judgeHistory?.[0]).toMatchObject({
+      createdAt: '2025-01-01T00:00:01.000Z',
+      attemptNumber: 1,
+      scoringMode: 'llm',
+      judgeResult: {
+        overallScore: 93,
+        relevanceScore: 99,
+        specificityScore: 93,
+        formatComplianceScore: 88,
+        evidenceGroundingScore: 97,
+        handoffReadinessScore: 94,
+        hitlAppropriatenessScore: 98,
+        determinismScore: 96,
+        costEfficiencyScore: 91,
+        stepOptimizationPriority: 28,
+        playbookOptimizationPriority: 41,
+        costOptimizationPriority: 24,
+      },
     });
   });
 

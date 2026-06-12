@@ -7,7 +7,7 @@ const usageState = vi.hoisted(() => ({
   status: null as any,
 }));
 
-vi.mock('@/modules/usage', () => ({
+vi.mock('@/modules/usage/UsageContext', () => ({
   useUsage: () => usageState,
 }));
 
