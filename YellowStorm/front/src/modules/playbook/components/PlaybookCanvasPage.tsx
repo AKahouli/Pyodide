@@ -57,6 +57,7 @@ import {
 import { usePlaybookUiStore } from '../uiStore';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
+import { CommunityGraphPanel } from './CommunityGraphPanel';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
@@ -172,6 +173,8 @@ function PlaybookCanvasInner() {
   const hasActiveExecution = useHasActiveExecution(id);
   const executionPanelOpen = useExecutionPanelOpen();
   const workspaceExplorerOpen = useWorkspaceExplorerOpen();
+  const graphPanelOpen = usePlaybookStore((s) => s.graphPanelOpen);
+  const setGraphPanelOpen = usePlaybookStore((s) => s.setGraphPanelOpen);
   const pageMode = usePageMode();
   const selectedStepId = useSelectedStep();
   const canUndo = useCanUndo();
@@ -2735,6 +2738,11 @@ function PlaybookCanvasInner() {
       <div className="flex flex-1 overflow-hidden">
         {/* Workspace Explorer Sidebar */}
         <WorkspaceExplorerSidebar />
+        <CommunityGraphPanel
+          open={graphPanelOpen}
+          onOpenChange={setGraphPanelOpen}
+          workspaceId={playbook?.workspaces?.[0] ?? null}
+        />
 
         {/* Connector Sidebar */}
         <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />

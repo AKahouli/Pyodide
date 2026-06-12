@@ -32,6 +32,7 @@ export interface PlaybookUiState {
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
   nodeEditorOpen: boolean;
+  graphPanelOpen: boolean;
   pageMode: PlaybookPageMode;
 }
 
@@ -46,6 +47,7 @@ export interface PlaybookUiActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   setConnectorSidebarOpen: (open: boolean) => void;
   setNodeEditorOpen: (open: boolean) => void;
+  setGraphPanelOpen: (open: boolean) => void;
   reset: () => void;
 }
 
@@ -61,6 +63,7 @@ export const initialPlaybookUiState: PlaybookUiState = {
   workspaceExplorerOpen: readBooleanPreference(WORKSPACE_EXPLORER_KEY),
   connectorSidebarOpen: false,
   nodeEditorOpen: false,
+  graphPanelOpen: false,
   pageMode: 'design',
 };
 
@@ -101,8 +104,9 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
         ? { connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
         : { connectorSidebarOpen: false }),
       setNodeEditorOpen: (open) => set(open
-        ? { nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false }
+        ? { nodeEditorOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, connectorSidebarOpen: false }
         : { nodeEditorOpen: false }),
+      setGraphPanelOpen: (open) => set({ graphPanelOpen: open }),
       reset: () => set({
         ...initialPlaybookUiState,
         executionPanelOpen: readBooleanPreference(EXEC_PANEL_KEY),
@@ -122,3 +126,4 @@ export const usePageMode = () => usePlaybookUiStore((s) => s.pageMode);
 export const useWorkspaceExplorerOpen = () => usePlaybookUiStore((s) => s.workspaceExplorerOpen);
 export const useNodeEditorOpen = () => usePlaybookUiStore((s) => s.nodeEditorOpen);
 export const useConnectorSidebarOpen = () => usePlaybookUiStore((s) => s.connectorSidebarOpen);
+export const useGraphPanelOpen = () => usePlaybookUiStore((s) => s.graphPanelOpen);

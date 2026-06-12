@@ -891,6 +891,7 @@ export interface Playbook {
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
   settings?: FlowSettings;
+  deepSearch?: boolean;
 }
 
 export interface CloneShareResult {
@@ -1976,6 +1977,7 @@ export interface UpdatePlaybookData {
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  deepSearch?: boolean;
 }
 
 export interface ExecutePlaybookData {
@@ -2220,6 +2222,7 @@ export interface PlaybookState {
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
   nodeEditorOpen: boolean;
+  graphPanelOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
@@ -2411,6 +2414,10 @@ export interface PlaybookActions {
   // Node Editor
   nodeEditorOpen: boolean;
   setNodeEditorOpen: (open: boolean) => void;
+
+  // Community Graph Panel
+  graphPanelOpen: boolean;
+  setGraphPanelOpen: (open: boolean) => void;
 
   // Workspace Explorer
   setWorkspaceExplorerOpen: (open: boolean) => void;

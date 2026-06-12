@@ -206,6 +206,67 @@ export async function reindexDocument(
 
 // ===== Folder APIs =====
 
+export interface CommunityGraphData {
+  documents: Array<{
+    id: string;
+    description: string;
+    toc_text: string;
+    hl_concepts: string[];
+    ll_concepts: string[];
+    community_id: string | null;
+    file_name: string;
+  }>;
+  edges: Array<{
+    source: string;
+    target: string;
+    weight: number;
+    hl_jaccard: number;
+    ll_jaccard: number;
+    semantic_cosine: number;
+    shared_hl: string[];
+    shared_ll: string[];
+    relationship_type: string;
+    citation_raw_text?: string;
+    citation_type?: string;
+    citation_confidence?: number;
+  }>;
+  communities: Array<{
+    id: string;
+    level: number;
+    status: string;
+    member_count: number;
+    dominant_hl: string[];
+    dominant_ll: string[];
+  }>;
+  concepts: Array<{
+    id: string;
+    label: string;
+    level: string;
+    doc_freq: number;
+  }>;
+  concept_document_links: Array<{
+    concept_id: string;
+    document_id: string;
+    level: string;
+    weight: number;
+  }>;
+  shared_concept_edges: Array<{
+    source: string;
+    target: string;
+    shared_count: number;
+    shared_levels: string[];
+  }>;
+}
+
+export async function fetchCommunityGraph(workspaceId: string): Promise<CommunityGraphData> {
+  const response = await apiClient.get<CommunityGraphData>(
+    API_ENDPOINTS.workspaceDocuments.graphData(workspaceId),
+  );
+  return response.data;
+}
+
+// ===== Folder APIs =====
+
 /**
  * Create a folder in a workspace
  */

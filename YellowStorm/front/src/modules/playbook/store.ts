@@ -157,6 +157,7 @@ function syncUiStoreForRun(taskId?: string | null) {
     workspaceExplorerOpen: false,
     connectorSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
     ...(taskId !== undefined ? { selectedStepId: taskId } : {}),
   }));
@@ -173,6 +174,7 @@ function syncUiStoreForInterrupt(taskId: string) {
     workspaceExplorerOpen: false,
     connectorSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
   }));
   persistPanelOpen(true);
@@ -274,6 +276,7 @@ const initialState: PlaybookState = {
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
   nodeEditorOpen: false,
+  graphPanelOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -4767,6 +4770,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
+      setGraphPanelOpen: (open) => {
+        usePlaybookUiStore.getState().setGraphPanelOpen(open);
+        set({ graphPanelOpen: open });
+      },
+
       // ===== Undo/Redo =====
 
       captureSnapshot: () => {
@@ -5446,6 +5454,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           workspaceExplorerOpen: false,
           connectorSidebarOpen: false,
           nodeEditorOpen: false,
+          graphPanelOpen: false,
           selectedStepId: inspection.nodeId,
           pageMode: 'run',
         });

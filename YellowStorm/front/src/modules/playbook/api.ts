@@ -260,6 +260,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
+    deepSearch: data.deepSearch,
   };
 }
 

@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
+import axios from 'axios';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
@@ -544,6 +545,15 @@ export class IndexingService {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
+  }
+
+  async getCommunityGraphData(workspaceId: string): Promise<unknown> {
+    const url = this.configService.get<string>('indexing.communityGraphUrl', 'http://localhost:8000');
+    const response = await axios.get(`${url}/api/graph-data`, {
+      params: { workspace_id: workspaceId },
+      timeout: 30000,
+    });
+    return response.data;
   }
 
   /**

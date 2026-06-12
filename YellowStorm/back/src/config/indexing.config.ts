@@ -4,6 +4,7 @@ export default registerAs('indexing', () => ({
   apiUrl: process.env.INDEXING_API_URL || 'http://localhost:4000',
   apiKey: process.env.INDEXING_API_KEY || '',
   apiAdk: process.env.API_ADK_URL || '',
+  communityGraphUrl: process.env.COMMUNITY_GRAPH_URL || 'http://localhost:8000',
   username: process.env.INDEXING_API_USERNAME || '',
   password: process.env.INDEXING_API_PASSWORD || '',
   batchSize: parseInt(process.env.INDEXING_BATCH_SIZE || '10', 10),
