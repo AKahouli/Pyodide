@@ -234,7 +234,9 @@ function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
       return { ...base, events: [...filtered, event] };
     }
     case 'wait':
-      return base;
+      // The agent is paused waiting for the user's reply — re-enable the input
+      // (same as 'done'), otherwise the composer stays stuck in streaming.
+      return { ...base, streaming: false, liveToolCallId: null };
     case 'message': {
       const liveAssistantIds =
         event.role === 'assistant'
@@ -665,7 +667,8 @@ export const useConversationV2Store = create<State & Actions>()(
                 return withSeq({ events: [...filtered, event] });
               }
               case 'wait':
-                return withSeq({});
+                // Agent paused for the user's reply — re-enable the composer.
+                return withSeq({ streaming: false, liveToolCallId: null });
               case 'message': {
                 const nextLiveAssistantIds =
                   event.role === 'assistant'
