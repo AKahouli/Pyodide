@@ -186,6 +186,7 @@ async def run_step_with_tools(
             max_tokens=32000,
             tools=tool_definitions,
             tool_choice="auto",
+            parallel_tool_calls=False,
         )
         if trace_collector is not None:
             from src.flow_engine.observability.usage_extractor import extract_usage
@@ -202,6 +203,7 @@ async def run_step_with_tools(
         if not tool_calls:
             return str(message.get("content") or "")
 
+        vision_messages: list[dict[str, Any]] = []
         for tool_call in tool_calls:
             function_payload = tool_call.get("function") or {}
             tool_name = str(function_payload.get("name") or "")
@@ -268,7 +270,8 @@ async def run_step_with_tools(
                 mcp_parts,
             )
             if vision_message is not None:
-                messages.append(vision_message)
+                vision_messages.append(vision_message)
+        messages.extend(vision_messages)
 
     raise RuntimeError("Max tool iterations reached without a final response")
 

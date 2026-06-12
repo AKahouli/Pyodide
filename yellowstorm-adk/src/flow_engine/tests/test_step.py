@@ -29,11 +29,14 @@ sys.modules.setdefault("structlog.types", fake_structlog_types)
 fake_langgraph = types.ModuleType("langgraph")
 fake_langgraph_config = types.ModuleType("langgraph.config")
 fake_langgraph_types = types.ModuleType("langgraph.types")
+fake_langgraph_errors = types.ModuleType("langgraph.errors")
 fake_langgraph_config.get_stream_writer = lambda: (lambda event: None)
 fake_langgraph_types.interrupt = lambda *args, **kwargs: None
+fake_langgraph_errors.GraphInterrupt = type("GraphInterrupt", (Exception,), {})
 sys.modules.setdefault("langgraph", fake_langgraph)
 sys.modules.setdefault("langgraph.config", fake_langgraph_config)
 sys.modules.setdefault("langgraph.types", fake_langgraph_types)
+sys.modules.setdefault("langgraph.errors", fake_langgraph_errors)
 
 fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
@@ -641,6 +644,62 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
     assert image_message["content"][0]["text"] == tool_message["content"]
     assert len(image_blocks) == 1
     assert image_blocks[0]["image_url"]["url"] == "data:image/png;base64,YWJjMTIz"
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [
+                    {
+                        "id": "call-image",
+                        "type": "function",
+                        "function": {
+                            "name": "read_content",
+                            "arguments": '{"expression":"ignored"}',
+                        },
+                    },
+                    {
+                        "id": "call-calc",
+                        "type": "function",
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                        },
+                    },
+                ],
+            )
+        return _ToolCallResponse("Done.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read and calculate",
+        tools=[_ReadContentMcpImageTool(), _FakeTool()],
+    )
+
+    assert output == "Done."
+    assert calls[0]["parallel_tool_calls"] is False
+
+    second_messages = calls[1]["messages"]
+    assistant_index = next(
+        index
+        for index, message in enumerate(second_messages)
+        if message.get("role") == "assistant"
+    )
+    follow_up_messages = second_messages[assistant_index + 1:]
+    assert [message.get("role") for message in follow_up_messages[:2]] == ["tool", "tool"]
+    assert [message.get("tool_call_id") for message in follow_up_messages[:2]] == ["call-image", "call-calc"]
+    assert follow_up_messages[2].get("role") == "user"
 
 
 @pytest.mark.anyio
