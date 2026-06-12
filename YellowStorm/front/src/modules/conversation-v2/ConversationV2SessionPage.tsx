@@ -24,6 +24,8 @@ interface LocationState {
   model?: string;
   /** Skill selection carried from the new-conversation page for the initial send. */
   skillIds?: string[];
+  /** Connector selection carried from the new-conversation page for the initial send. */
+  connectorIds?: string[];
 }
 
 export default function ConversationV2SessionPage() {
@@ -32,12 +34,14 @@ export default function ConversationV2SessionPage() {
   const initialMessage = (location.state as LocationState | null)?.initialMessage;
   const initialModel = (location.state as LocationState | null)?.model;
   const initialSkillIds = (location.state as LocationState | null)?.skillIds;
+  const initialConnectorIds = (location.state as LocationState | null)?.connectorIds;
 
   const {
     switchToSession,
     setSystemWorkspaceId,
     setWorkspaceIds,
     setSelectedSkillIds,
+    setSelectedConnectorIds,
     replayEvents,
     setStreaming,
     streamError,
@@ -50,6 +54,7 @@ export default function ConversationV2SessionPage() {
       setSystemWorkspaceId: s.setSystemWorkspaceId,
       setWorkspaceIds: s.setWorkspaceIds,
       setSelectedSkillIds: s.setSelectedSkillIds,
+      setSelectedConnectorIds: s.setSelectedConnectorIds,
       replayEvents: s.replayEvents,
       setStreaming: s.setStreaming,
       streamError: s.streamError,
@@ -100,6 +105,10 @@ export default function ConversationV2SessionPage() {
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
           setSelectedSkillIds(pointer.selectedSkillIds ?? []);
+          // Connector selection isn't persisted on the pointer; clear it so a
+          // selection from another session doesn't leak in (re-applied below for
+          // a fresh agent conversation from its nav state).
+          setSelectedConnectorIds([]);
         } catch {
           /* keep the cached view */
         }
@@ -118,6 +127,7 @@ export default function ConversationV2SessionPage() {
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
         setSelectedSkillIds(pointer.selectedSkillIds ?? []);
+        setSelectedConnectorIds([]);
 
         const collected: AgentEvent[] = [];
         let since = 0;
@@ -162,12 +172,13 @@ export default function ConversationV2SessionPage() {
     // ran first and reset selectedSkillIds from the (empty) new-session pointer;
     // restore it here so sendMessage (which reads it from the store) ships it.
     if (initialSkillIds?.length) setSelectedSkillIds(initialSkillIds);
+    if (initialConnectorIds?.length) setSelectedConnectorIds(initialConnectorIds);
     void sendMessage(initialMessage, initialModel);
     // Wipe the location state so a refresh doesn't replay the same prompt.
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, sendMessage]);
+  }, [loading, notFound, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
 
   if (loading) {
     return (
