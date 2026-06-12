@@ -3,14 +3,16 @@ import * as grpc from '@grpc/grpc-js';
 import { ConfigService } from '@nestjs/config';
 
 /**
- * Shared gRPC channel security for every client that dials the AI service.
+ * Shared gRPC channel security for every client that dials an AI service.
  *
  * - TLS encrypts the channel and verifies the server cert.
  * - The API key (`x-api-key` metadata) authenticates the caller.
  *
- * All settings come from the `grpcSecurity` config namespace, so the whole
- * backend shares one cert + one key for the one server. See
- * `config/grpc-security.config.ts`.
+ * Settings come from a config namespace (default `grpcSecurity`, used by every
+ * client that shares the one AI service). Pass a different `namespace` for a
+ * client that dials a *different* server with its own cert/key — e.g.
+ * conversation-v2 uses `grpcSecurityV2`. See `config/grpc-security.config.ts`
+ * and `config/grpc-security-v2.config.ts`.
  */
 
 export interface GrpcChannelSecurity {
@@ -19,6 +21,9 @@ export interface GrpcChannelSecurity {
 }
 
 type WarnFn = (message: string) => void;
+
+/** Default config namespace — the shared AI service every other client dials. */
+export const DEFAULT_GRPC_SECURITY_NAMESPACE = 'grpcSecurity';
 
 /**
  * Build channel credentials + options from config. Fails closed at startup so
@@ -30,25 +35,26 @@ type WarnFn = (message: string) => void;
 export function buildGrpcChannelCredentials(
   config: ConfigService,
   warn: WarnFn = () => {},
+  namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
 ): GrpcChannelSecurity {
-  const tlsMode = config.get<string>('grpcSecurity.tlsMode', 'insecure');
-  const requireTls = config.get<boolean>('grpcSecurity.requireTls', false);
-  const caCertPath = config.get<string>('grpcSecurity.tlsCaCertPath');
+  const tlsMode = config.get<string>(`${namespace}.tlsMode`, 'insecure');
+  const requireTls = config.get<boolean>(`${namespace}.requireTls`, false);
+  const caCertPath = config.get<string>(`${namespace}.tlsCaCertPath`);
   const serverNameOverride = config.get<string>(
-    'grpcSecurity.tlsServerNameOverride',
+    `${namespace}.tlsServerNameOverride`,
   );
   const isProd = process.env.NODE_ENV === 'production';
 
   if (requireTls && tlsMode !== 'tls') {
     throw new Error(
-      `CONVERSATION_GRPC_REQUIRE_TLS=true but CONVERSATION_GRPC_TLS_MODE='${tlsMode}'. Refusing to start with an insecure gRPC channel.`,
+      `gRPC channel [${namespace}] requires TLS but tlsMode='${tlsMode}'. Refusing to start with an insecure gRPC channel.`,
     );
   }
 
   if (tlsMode !== 'tls') {
     if (isProd) {
       warn(
-        'gRPC channel to the AI service is INSECURE (plaintext). Traffic is sent in cleartext. Set CONVERSATION_GRPC_TLS_MODE=tls.',
+        `gRPC channel [${namespace}] is INSECURE (plaintext). Traffic is sent in cleartext. Set its TLS mode to 'tls'.`,
       );
     }
     return { credentials: grpc.credentials.createInsecure(), options: {} };
@@ -62,7 +68,7 @@ export function buildGrpcChannelCredentials(
       rootCert = fs.readFileSync(caCertPath);
     } catch (error) {
       throw new Error(
-        `CONVERSATION_GRPC_TLS_CA_CERT_PATH='${caCertPath}' is unreadable: ${(error as Error).message}`,
+        `gRPC channel [${namespace}] CA cert '${caCertPath}' is unreadable: ${(error as Error).message}`,
       );
     }
   }
@@ -78,9 +84,12 @@ export function buildGrpcChannelCredentials(
   return { credentials, options };
 }
 
-/** The shared API key, or undefined when auth isn't configured yet. */
-export function getGrpcApiKey(config: ConfigService): string | undefined {
-  return config.get<string>('grpcSecurity.apiKey');
+/** The API key for a namespace, or undefined when auth isn't configured yet. */
+export function getGrpcApiKey(
+  config: ConfigService,
+  namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
+): string | undefined {
+  return config.get<string>(`${namespace}.apiKey`);
 }
 
 /**
@@ -90,8 +99,9 @@ export function getGrpcApiKey(config: ConfigService): string | undefined {
 export function attachGrpcApiKey(
   config: ConfigService,
   metadata: grpc.Metadata,
+  namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
 ): grpc.Metadata {
-  const apiKey = getGrpcApiKey(config);
+  const apiKey = getGrpcApiKey(config, namespace);
   if (apiKey) {
     metadata.set('x-api-key', apiKey);
   }
@@ -99,12 +109,16 @@ export function attachGrpcApiKey(
 }
 
 /**
- * Create a fresh Metadata pre-loaded with the API key. Pass an existing
- * Metadata as `base` to add the key to it instead of allocating a new one.
+ * Create a fresh Metadata pre-loaded with the API key for `namespace`.
+ *
+ * IMPORTANT: pass the returned Metadata to a gRPC call as the *positional*
+ * metadata argument — `client.Method(request, createGrpcMetadata(cfg), ...)`.
+ * Do NOT wrap it as `{ metadata }`; grpc-js then treats it as call options and
+ * silently drops the headers (this was a real bug in conversation v1).
  */
 export function createGrpcMetadata(
   config: ConfigService,
-  base?: grpc.Metadata,
+  namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
 ): grpc.Metadata {
-  return attachGrpcApiKey(config, base ?? new grpc.Metadata());
+  return attachGrpcApiKey(config, new grpc.Metadata(), namespace);
 }
