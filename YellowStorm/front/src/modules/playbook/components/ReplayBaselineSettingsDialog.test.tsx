@@ -183,26 +183,6 @@ const replay: ValidatedTaskReplay = {
 };
 
 describe('ReplayBaselineSettingsDialog', () => {
-  it('uses the provided replay snapshot while refreshing by replay id', async () => {
-    fetchTaskReplays.mockResolvedValue([replay]);
-
-    render(
-      <ReplayBaselineSettingsDialog
-        open
-        onOpenChange={vi.fn()}
-        playbookId="playbook-1"
-        task={task}
-        replay={replay}
-        replayId={replay.id}
-        defaultTab="overview"
-      />,
-    );
-
-    expect(screen.queryByText('baselineBadge.loading')).not.toBeInTheDocument();
-    expect(screen.getByText('baselineBadge.overview.ready')).toBeInTheDocument();
-    await waitFor(() => expect(fetchTaskReplays).toHaveBeenCalledWith('playbook-1', 'task-1'));
-  });
-
   it('shows captured replay validation data by default when requested', async () => {
     fetchTaskReplays.mockResolvedValue([replay]);
 
@@ -214,11 +194,11 @@ describe('ReplayBaselineSettingsDialog', () => {
         task={task}
         replay={replay}
         replayId={replay.id}
-        defaultTab="technical"
+        defaultTab="capture"
       />,
     );
 
-    expect(await screen.findByText('baselineBadge.technicalWarning')).toBeInTheDocument();
+    expect(await screen.findByText('baselineBadge.captureTitle')).toBeInTheDocument();
     expect(screen.queryByLabelText('baselineBadge.nameLabel')).not.toBeInTheDocument();
     expect(screen.getByText('baselineBadge.sections.replayTemplate')).toBeInTheDocument();
     expect(screen.getByText('baselineBadge.template.intentKey')).toBeInTheDocument();
@@ -232,9 +212,9 @@ describe('ReplayBaselineSettingsDialog', () => {
     expect(screen.getByText(/inputContextHash/)).toBeInTheDocument();
     expect(screen.getByText(/nodeSnapshotHash/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.tabs.rules' }));
+    fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.tabs.settings' }));
     expect(screen.getByLabelText('baselineBadge.nameLabel')).toBeInTheDocument();
-    expect(screen.queryByText('baselineBadge.technicalWarning')).not.toBeInTheDocument();
+    expect(screen.queryByText('baselineBadge.captureTitle')).not.toBeInTheDocument();
   });
 
   it('shows explicit empty capture states when no replay artifacts were captured', async () => {
@@ -266,7 +246,7 @@ describe('ReplayBaselineSettingsDialog', () => {
         task={task}
         replay={emptyReplay}
         replayId={emptyReplay.id}
-        defaultTab="technical"
+        defaultTab="capture"
       />,
     );
 

@@ -7,7 +7,7 @@ from google.adk.tools.mcp_tool import MCPToolset
 from src.smart_rag.agents.factories.base_factory import AgentFactory
 from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.infrastructure.processing import PromptProcessor
-from src.smart_rag.tools import SearchToolkit, render_chart
+from src.smart_rag.tools import SearchToolkit
 from src.smart_rag.tools.utilities import calculator
 
 
@@ -52,13 +52,12 @@ class TestAgentFactory:
         # Assert
         # The method should not call extract_chatbot_name_and_clean_prompt for basic create_agent
         mock_prompt_processor.extract_chatbot_name_and_clean_prompt.assert_not_called()
-        # render_chart is always added, so the agent always uses the parallel-tool LLM
-        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with("test-chatbot", 0.0, max_completion_tokens=20000)
+        mock_llm_factory.create_no_tool_calls_llm.assert_called_once_with("test-chatbot", 0.0, max_completion_tokens=20000)
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
-        assert agent.model == "parallel_llm"
+        assert agent.model == "no_tool_llm"
         assert "Test prompt" in agent.instruction
-        assert agent.tools == [render_chart]
+        assert agent.tools == []
 
     def test_create_agent_with_calculator(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating an agent with calculator tool."""
@@ -75,8 +74,7 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # calculator + always-added render_chart
-        assert len(agent.tools) == 2
+        assert len(agent.tools) == 1
         assert agent.tools[0] == calculator
 
     def test_create_agent_with_search_tools(self, agent_factory, mock_prompt_processor, mock_llm_factory):
@@ -93,7 +91,7 @@ class TestAgentFactory:
                 chatbot_name="test-chatbot",
                 search_tool=True,
                 doc_tree=["doc1", "doc2"],
-                brain_ids=["brain1", "brain2"]
+                workspace_names=["brain1", "brain2"]
             )
 
         # Assert
@@ -102,8 +100,7 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # render_chart is prepended before the search tools
-        assert agent.tools == [render_chart] + mock_tools
+        assert agent.tools == mock_tools
 
     def test_create_agent_with_mcp_toolset(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating an agent with MCP toolset."""
@@ -122,43 +119,7 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # render_chart is always added before the MCP toolset
-        assert agent.tools == [render_chart, mock_mcp_toolset]
-
-    def test_create_agent_with_connectors_wires_image_callbacks(
-        self, agent_factory, mock_llm_factory
-    ):
-        """Test connector-enabled agents inject buffered tool images."""
-        connector_bindings = [
-            {
-                "connector_id": "connector-1",
-                "connector_name": "Workspace MCP",
-                "connector_slug": "workspace",
-                "mcp_transport_type": "streamable_http",
-                "mcp_server_url": "https://example.com/mcp",
-                "auth_headers": {},
-                "actions": [
-                    {
-                        "action_key": "read_section",
-                        "description": "Read a section",
-                        "parameter_schema": {},
-                    }
-                ],
-            }
-        ]
-
-        agent = agent_factory.create_agent(
-            name="TestAgent",
-            prompt="Test prompt",
-            chatbot_name="test-chatbot",
-            connector_bindings=connector_bindings,
-        )
-
-        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with(
-            "test-chatbot", 0.0, max_completion_tokens=20000
-        )
-        assert agent.before_model_callback is not None
-        assert agent.after_tool_callback
+        assert agent.tools == [mock_mcp_toolset]
 
     def test_create_agent_validation_error(self, agent_factory):
         """Test creating an agent with invalid parameters raises error."""
@@ -254,7 +215,7 @@ class TestAgentFactory:
                 prompt="Operator prompt",
                 chatbot_name="operator-chatbot",
                 user_id="test_user",
-                brain_ids=["brain1"],
+                workspace_names=["brain1"],
                 session_id="test_session",
                 brain_documents=[{"id": "doc1"}]
             )
@@ -311,7 +272,7 @@ class TestAgentFactory:
                         agent, toolkit, instruction = agent_factory.create_search_agent(
                             doc_tree=["doc1"],
                             brain_tree=["brain1"],
-                            brain_ids=["id1"],
+                            workspace_names=["id1"],
                             vectorstore_name="test_store",
                             prompt="Search prompt",
                             chatbot_name="search-chatbot"
@@ -359,7 +320,7 @@ class TestAgentFactory:
             result = agent_factory.create_tools_for_agent(
                 doc_tree=["doc1"],
                 brain_tree=["brain1"],
-                brain_ids=["id1"],
+                workspace_names=["id1"],
                 top_k=5,
                 vectorstore_name="test_store",
                 calculator_tool=True,

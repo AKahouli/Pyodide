@@ -69,18 +69,11 @@ describe('callGrpcRun replay context and contracts', () => {
     expect(replayBaselineService.buildCurrentReplayFingerprints).toHaveBeenCalledWith(expect.objectContaining({
       inputContext: { brief: 'same' },
     }));
-    const expectedFields = (toGrpcStruct({
-      brief: 'same',
-      __playbook_workspace_ids: ['workspace-1'],
-      __playbook_default_workspace_id: 'workspace-1',
-    }) as { fields: Record<string, unknown> }).fields;
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      input_context: expect.objectContaining({
-        fields: expect.objectContaining({
-          brief: expectedFields.brief,
-          __playbook_workspace_ids: expectedFields.__playbook_workspace_ids,
-          __playbook_default_workspace_id: expectedFields.__playbook_default_workspace_id,
-        }),
+      input_context: toGrpcStruct({
+        brief: 'same',
+        __playbook_workspace_ids: ['workspace-1'],
+        __playbook_default_workspace_id: 'workspace-1',
       }),
     }));
   });

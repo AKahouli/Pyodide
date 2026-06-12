@@ -3,12 +3,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 class UpdatePlaybookIntentNormalizationLimitsDto {
-  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @ApiPropertyOptional({ minimum: 1, maximum: 50 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(500)
+  @Max(50)
   maxWorkflowPlanChanges?: number;
 
   @ApiPropertyOptional({ minimum: 1, maximum: 20 })

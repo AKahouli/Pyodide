@@ -20,7 +20,7 @@ import {
 /** Timeout for chat completion requests (60s) */
 const COMPLETION_TIMEOUT_MS = 360_000;
 
-const DEFAULT_TEMPERATURE = 0;
+const DEFAULT_TEMPERATURE = 0.7;
 
 @Injectable()
 export class ChatCompletionService {

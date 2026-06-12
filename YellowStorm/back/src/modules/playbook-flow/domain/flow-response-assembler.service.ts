@@ -20,7 +20,6 @@ export class FlowResponseAssemblerService {
 
   toBaseFlowResponse(flow: FlowDocument): IFlowResponse {
     const raw = flow.toJSON() as unknown as IFlowResponse;
-    raw.definitionRevision = raw.definitionRevision ?? 0;
     raw.activeReplays = {};
     return raw;
   }

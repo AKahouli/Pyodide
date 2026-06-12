@@ -1,23 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionPanel } from './ExecutionPanel';
 import { usePlaybookStore } from '../store';
-import { usePlaybookUiStore } from '../uiStore';
 import { makeExecution, makeExecutionSummary, makePlaybook } from '../test-utils';
 
 vi.mock('./PlaybookStatusBadge', () => ({
   PlaybookStatusBadge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
 }));
-
-function selectStepInBothStores(taskId: string | null) {
-  usePlaybookStore.getState().selectStep(taskId);
-}
-
-function setStepIdDirectly(taskId: string | null) {
-  usePlaybookStore.setState({ selectedStepId: taskId });
-  usePlaybookUiStore.setState({ selectedStepId: taskId });
-}
 
 describe('ExecutionPanel', () => {
   beforeEach(() => {
@@ -34,7 +24,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.noExecution')).toBeInTheDocument();
   });
 
-  it('auto-loads latest execution when history exists and playbook matches', async () => {
+  it('auto-loads latest execution when history exists and playbook matches', () => {
     const summary = makeExecutionSummary({ id: 'e1', playbookId: 'p1' });
     const playbook = makePlaybook({ id: 'p1' });
     const execution = makeExecution({ id: 'e1', playbookId: 'p1' });
@@ -44,10 +34,10 @@ describe('ExecutionPanel', () => {
       currentPlaybook: playbook,
       executionCache: { e1: execution },
     });
-    render(<ExecutionPanel playbookId="p1" />);
-    await waitFor(() => {
-      expect(screen.getAllByTestId('badge').length).toBeGreaterThan(0);
-    });
+    render(<ExecutionPanel />);
+    // Auto-load kicks in — should show the execution with badge(s)
+    expect(screen.getAllByTestId('badge').length).toBeGreaterThan(0);
+    expect(usePlaybookStore.getState().currentExecution?.id).toBe('e1');
   });
 
   it('does not render another playbook execution when scoped to a different playbook', () => {
@@ -140,8 +130,8 @@ describe('ExecutionPanel', () => {
       currentExecution: execution,
       currentPlaybook: playbook,
       executionHistory: [makeExecutionSummary({ id: execution.id, playbookId: execution.playbookId, status: 'completed' })],
+      selectedStepId: 't1',
     });
-    setStepIdDirectly('t1');
 
     const user = userEvent.setup();
     render(<ExecutionPanel />);
@@ -160,9 +150,9 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
+      selectedStepId: 't1',
       runAdvisorEvaluation,
     });
-    setStepIdDirectly('t1');
 
     render(<ExecutionPanel />);
 
@@ -182,10 +172,10 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
+      selectedStepId: 't1',
       runAdvisorEvaluation,
       executingPlaybookIds: ['p1'],
     });
-    setStepIdDirectly('t1');
 
     render(<ExecutionPanel />);
 
@@ -275,8 +265,8 @@ describe('ExecutionPanel', () => {
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
+      selectedStepId: 't1',
     });
-    setStepIdDirectly('t1');
     render(<ExecutionPanel />);
     expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
   });
@@ -296,74 +286,6 @@ describe('ExecutionPanel', () => {
     render(<ExecutionPanel pageMode="run" />);
     await userEvent.click(screen.getByLabelText('Step 1'));
     expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
-  });
-
-  it('shows node-card order in the execution list and detail pane', () => {
-    const execution = makeExecution({
-      status: 'completed',
-      taskResults: [
-        { taskId: 't1', nodeTitle: 'Marketing', agentName: '', order: 1, status: 'completed', output: 'done', error: null, durationMs: 100, startedAt: '', completedAt: '' },
-      ],
-    });
-    const playbook = makePlaybook({
-      tasks: [{ ...makePlaybook().tasks[0], id: 't1', title: 'Marketing', executionOrder: 4 }],
-    });
-    usePlaybookStore.setState({
-      executionPanelOpen: true,
-      currentExecution: execution,
-      currentPlaybook: playbook,
-    });
-    setStepIdDirectly('t1');
-
-    render(<ExecutionPanel pageMode="run" />);
-
-    expect(screen.getAllByText('5').length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('prompts for a replay mode after creating a reference and applies the selected mode', async () => {
-    const execution = makeExecution({
-      id: 'exec-ref',
-      playbookId: 'playbook-1',
-      status: 'completed',
-      taskResults: [
-        {
-          ...makeExecution().taskResults[0],
-          taskId: 't1',
-          nodeTitle: 'Marketing',
-          status: 'completed',
-          toolTrace: [{ toolName: 'search', arguments: {}, result: {} } as any],
-        },
-      ],
-    });
-    const playbook = makePlaybook({
-      id: 'playbook-1',
-      tasks: [{ ...makePlaybook().tasks[0], id: 't1', title: 'Marketing', stepReplayMode: 'live' }],
-    });
-    const validateTaskReplay = vi.fn().mockResolvedValue(undefined);
-    const fetchExecution = vi.fn().mockResolvedValue(undefined);
-    const updateTasks = vi.fn();
-    usePlaybookStore.setState({
-      executionPanelOpen: true,
-      currentExecution: execution,
-      currentPlaybook: playbook,
-      selectedStepId: 't1',
-      validateTaskReplay,
-      fetchExecution,
-      updateTasks,
-    });
-    setStepIdDirectly('t1');
-
-    render(<ExecutionPanel pageMode="run" />);
-    await userEvent.click(screen.getByTitle('detail.actions'));
-    await userEvent.click(screen.getByText('detail.actions.saveReplay'));
-
-    expect(await screen.findByText('referenceModePrompt.title')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('referenceModePrompt.action.replayStrict'));
-
-    expect(validateTaskReplay).toHaveBeenCalledWith('playbook-1', 't1', 'exec-ref', { preserveOutputFormat: false });
-    expect(updateTasks).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 't1', stepReplayMode: 'replay_strict' }),
-    ]);
   });
 
   it('does not auto-follow for completed executions', () => {

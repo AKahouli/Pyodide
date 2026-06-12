@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
@@ -11,7 +11,7 @@ import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-render
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 
-export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
+type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -25,7 +25,7 @@ type PlaybookIntentOperationType =
   | 'delete_blocker_rule'
   | 'create_hitl_memory';
 
-export interface IntentWorkflowValidationContext {
+interface IntentWorkflowValidationContext {
   existingTaskIds: Set<string>;
   existingTaskTitles: Map<string, string>;
   existingTaskAgents: Map<string, string | null>;
@@ -167,19 +167,7 @@ interface PlaybookIntentWorkflowPlanSuggestion {
   isDirectIntentFallback: false;
 }
 
-export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
-
-export interface PlaybookIntentAnalysisContext {
-  httpClient: NonNullable<ReturnType<LiteLLMConnectionService['getHttpClient']>>;
-  flow: any;
-  selectedNodeId: string | null;
-  effectiveSettings: EffectiveFlowDesignSettings;
-  model: string;
-  systemPrompt: string;
-  userPrompt: string;
-  validationContext: IntentWorkflowValidationContext;
-  limits: IntentNormalizationLimits;
-}
+type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
 
 export interface PlaybookFlowIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
@@ -190,7 +178,6 @@ export interface PlaybookFlowIntentResponse {
 @Injectable()
 export class PlaybookFlowIntentService {
   constructor(
-    @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
     private readonly settingsService: PlaybookFlowSettingsService,
     private readonly promptService: PlaybookFlowPromptTemplateService,
@@ -201,32 +188,6 @@ export class PlaybookFlowIntentService {
   ) {}
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
-    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
-    const response = await context.httpClient.post('/v1/chat/completions', {
-      model: context.model,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: context.systemPrompt },
-        { role: 'user', content: context.userPrompt },
-      ],
-    }, { timeout: 180000 });
-
-    return {
-      suggestions: this.normalizeConstructionSuggestions({
-        raw: this.extractChatCompletionText(response.data),
-        dto,
-        selectedNodeId: context.selectedNodeId,
-        limits: context.limits,
-        validationContext: context.validationContext,
-        includeFallback: true,
-      }),
-      model: context.model,
-      settings: context.effectiveSettings,
-    };
-  }
-
-  async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
@@ -285,36 +246,29 @@ export class PlaybookFlowIntentService {
       selected_task_context: JSON.stringify(this.buildSelectedNodeContext(flow, selectedNode?.id || null), null, 2),
     });
 
-    const validationContext = this.buildValidationContext(flow);
-    return {
-      httpClient,
-      flow,
-      selectedNodeId: selectedNode?.id || null,
-      effectiveSettings,
+    const response = await httpClient.post('/v1/chat/completions', {
       model,
-      systemPrompt,
-      userPrompt,
-      validationContext,
-      limits: effectiveSettings.intentNormalizationLimits,
-    };
-  }
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    }, { timeout: 180000 });
 
-  normalizeConstructionSuggestions(args: {
-    raw: string;
-    dto: RequestPlaybookFlowIntentDto;
-    selectedNodeId: string | null;
-    limits: IntentNormalizationLimits;
-    validationContext: IntentWorkflowValidationContext;
-    includeFallback: boolean;
-  }): PlaybookIntentSuggestion[] {
-    return this.normalizeSuggestions(
-      args.raw,
-      args.dto,
-      args.selectedNodeId,
-      args.limits,
-      args.validationContext,
-      args.includeFallback,
-    );
+    const validationContext = this.buildValidationContext(flow);
+
+    return {
+      suggestions: this.normalizeSuggestions(
+        this.extractChatCompletionText(response.data),
+        dto,
+        selectedNode?.id || null,
+        effectiveSettings.intentNormalizationLimits,
+        validationContext,
+      ),
+      model,
+      settings: effectiveSettings,
+    };
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {
@@ -407,7 +361,7 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  extractChatCompletionText(responseData: unknown): string {
+  private extractChatCompletionText(responseData: unknown): string {
     const content = (responseData as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
     if (typeof content === 'string') {
       return content.trim();
@@ -427,7 +381,6 @@ export class PlaybookFlowIntentService {
     selectedNodeId: string | null,
     limits: IntentNormalizationLimits,
     validationContext: IntentWorkflowValidationContext,
-    includeFallback = true,
   ): PlaybookIntentSuggestion[] {
     try {
       const parsed = JSON.parse(raw || '{}') as { suggestions?: Array<Record<string, unknown>> };
@@ -437,9 +390,9 @@ export class PlaybookFlowIntentService {
         .map((item, index) => this.normalizeSuggestion(item, index, selectedNodeId, limits, validationContext))
         .filter((item): item is PlaybookIntentSuggestion => item !== null);
 
-      return includeFallback ? [this.createFallbackSuggestion(dto, selectedNodeId), ...normalized] : normalized;
+      return [this.createFallbackSuggestion(dto, selectedNodeId), ...normalized];
     } catch {
-      return includeFallback ? [this.createFallbackSuggestion(dto, selectedNodeId)] : [];
+      return [this.createFallbackSuggestion(dto, selectedNodeId)];
     }
   }
 

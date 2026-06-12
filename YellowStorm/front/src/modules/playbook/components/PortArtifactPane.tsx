@@ -72,9 +72,8 @@ function ArtifactRow({
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {onInspect && (
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
-            <Search className="mr-1 h-3 w-3" />
-            {t('artifacts.view' as any)}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onInspect}>
+            <Search className="h-3 w-3" />
           </Button>
         )}
         {hasDownload && (

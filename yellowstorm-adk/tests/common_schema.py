@@ -22,7 +22,6 @@ class MockSettings(BaseModel):
     lINKUP_API_KEY: str = "mock_lookup_api_key"
     WEB_SEARCH_PROMPT: str = "mock_web_search_prompt"
     API_URL: str = "https://mock_api_url"
-    API_ADK_URL: str = "https://mock_api_adk_url"
     LITELLM_API_BASE_URL: str = "https://mock_litellm_api_base_url"
     LITELLM_API_SECRET_KEY: str = "mock_litellm_api_secret_key"
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-4.1"

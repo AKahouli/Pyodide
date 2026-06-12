@@ -128,7 +128,7 @@ describe('ChatCompletionService', () => {
       expect(mockHttpClient.post).toHaveBeenCalledWith(
         '/v1/chat/completions',
         expect.objectContaining({
-          temperature: 0,
+          temperature: 0.7,
         }),
         expect.anything(),
       );

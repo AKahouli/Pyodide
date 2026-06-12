@@ -48,13 +48,4 @@ export class FlowAccessService {
       throw new ConflictException(ErrorCode.CONFLICT, message);
     }
   }
-
-  ensureExpectedDefinitionRevision(existingDefinitionRevision: number | undefined, expectedDefinitionRevision: number, message: string): void {
-    if (!Number.isInteger(expectedDefinitionRevision) || expectedDefinitionRevision < 0) {
-      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid expectedDefinitionRevision');
-    }
-    if ((existingDefinitionRevision ?? 0) !== expectedDefinitionRevision) {
-      throw new ConflictException(ErrorCode.CONFLICT, message);
-    }
-  }
 }

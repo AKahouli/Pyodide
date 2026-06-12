@@ -49,11 +49,7 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
         ],
     }
 
-    updated = _collect_connector_response_components(
-        collector,
-        response,
-        tool_name="logicalsearchtest_locate_answer_citations",
-    )
+    updated = _collect_connector_response_components(collector, response)
     components = collector.get_and_clear()
 
     assert "Use citation [1]" in updated["text"]
@@ -85,62 +81,9 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
                     "workspace_name": "workspace-1",
                     "reference": "[1]",
                 },
-                "citation_origin": "locate_answer_citations",
             },
         },
     ]
-
-
-def test_collect_connector_response_components_maps_located_citations() -> None:
-    collector = ToolResultCollector()
-    response = {
-        "text": "Penalty applies after five business days.",
-        "citations": [
-            {
-                "document_id": 30,
-                "section_id": "sec_3",
-                "block_id": "14579",
-                "source": "s3://vectorstore/user-1/workspace/contract.pdf",
-                "page_number": 2,
-                "highlight_text": "En cas de retard de livraison supérieur à 5 jours ouvrés",
-                "highlight_bbox": [10, 20, 30, 40],
-                "block_bbox": [5, 15, 35, 45],
-                "match_confidence": 0.976,
-                "match_method": "fuzzy",
-                "reference": "[1]",
-            }
-        ],
-    }
-
-    updated = _collect_connector_response_components(
-        collector,
-        response,
-        tool_name="logicalsearchtest_locate_answer_citations",
-    )
-    components = collector.get_and_clear()
-
-    assert updated["citation_sources"][0]["page"] == "2"
-    assert updated["citation_sources"][0]["page_content"] == (
-        "En cas de retard de livraison supérieur à 5 jours ouvrés"
-    )
-    assert "document_id" not in updated["citation_sources"][0]
-    assert "section_id" not in updated["citation_sources"][0]
-    assert "block_id" not in updated["citation_sources"][0]
-    assert "file_name" not in updated["citation_sources"][0]
-    assert "workspace_name" not in updated["citation_sources"][0]
-    text_source = components[0]["data"]["text_source"]
-    assert text_source["source"] == "s3://vectorstore/user-1/workspace/contract.pdf"
-    assert text_source["page"] == "2"
-    assert text_source["page_content"] == (
-        "En cas de retard de livraison supérieur à 5 jours ouvrés"
-    )
-    assert text_source["highlight_text"] == (
-        "En cas de retard de livraison supérieur à 5 jours ouvrés"
-    )
-    assert text_source["highlight_bbox"] == [10, 20, 30, 40]
-    assert "file_name" not in text_source
-    assert "workspace_name" not in text_source
-    assert components[0]["data"]["citation_origin"] == "locate_answer_citations"
 
 
 def test_playbook_filtered_search_uses_qdrant_metadata_filters(monkeypatch) -> None:
@@ -183,58 +126,6 @@ def test_playbook_filtered_search_uses_qdrant_metadata_filters(monkeypatch) -> N
     assert all("workspace_name" not in item for item in captured_filters)
     assert all("brain_id" not in item for item in captured_filters)
     assert all("external_id" not in item for item in captured_filters)
-
-
-def test_playbook_search_suppresses_legacy_citation_components(monkeypatch) -> None:
-    class FakeSearchToolkit:
-        def __init__(self, *args, **kwargs):
-            self.sources_text = []
-            self.sources_image = []
-
-        async def perform_filtered_search(self, query, file_names):
-            self.sources_text.append({
-                "object": {
-                    "content": {
-                        "source": "contract.pdf",
-                        "file_name": "contract.pdf",
-                        "page": "2",
-                        "page_content": "Retrieved chunk",
-                        "workspace_id": "workspace-1",
-                    }
-                },
-                "reference": "1",
-            })
-            return {
-                "sources_text": [
-                    {
-                        "page_content": "Retrieved chunk",
-                        "filename": "contract.pdf",
-                        "source_reference": "[1]",
-                    }
-                ],
-                "sources_image": [],
-            }
-
-    monkeypatch.setattr("src.smart_rag.tools.SearchToolkit", FakeSearchToolkit)
-    monkeypatch.setattr("src.config.settings.get_settings", lambda: SimpleNamespace(QDRANT_COLLECTION_NAME="vectorstore"))
-
-    collector = ToolResultCollector()
-    tools = _create_search_tools(
-        tool_configs=[{"name": "search"}],
-        doc_tree=[],
-        brain_tree=[],
-        workspace_names=["workspace-1"],
-        top_k=4,
-        collector=collector,
-        file_names=["contract.pdf"],
-        user_id="user-1",
-    )
-
-    search_tool = next(tool for tool in tools if tool.name == "perform_filtered_search")
-    result = asyncio.run(search_tool.ainvoke({"query": "penalties"}))
-
-    assert "Citation: [1]" in result
-    assert collector.get_and_clear() == []
 
 
 def test_format_search_result_includes_search_tool_citation_reference() -> None:
@@ -333,10 +224,6 @@ def test_code_interpreter_generated_xlsx_emits_explicit_output_port(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
 
     def _fake_post(*args, **kwargs):
         captured_request.update(kwargs.get("json", {}))
@@ -412,10 +299,6 @@ def test_code_interpreter_generated_file_uses_object_key_fallback(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeResponse())
 
     collector = ToolResultCollector()
@@ -463,10 +346,6 @@ def test_code_interpreter_request_normalizes_prefixed_workspace_name(
 
     monkeypatch.setattr(
         "src.config.settings.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
 
@@ -640,10 +519,6 @@ def test_code_interpreter_description_lists_only_mounted_files(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
 
     collector = ToolResultCollector()
     tool = _create_code_interpreter_tool(
@@ -662,10 +537,10 @@ def test_code_interpreter_description_lists_only_mounted_files(
                 "workspace_name": "owner-a/ws-a",
             },
             {
-                "filepath": "owner-a/ws-a/B.docx",
+                "filepath": "owner-b/ws-b/B.docx",
                 "filename": "B.docx",
-                "workspace_id": "ws-a",
-                "workspace_name": "owner-a/ws-a",
+                "workspace_id": "ws-b",
+                "workspace_name": "owner-b/ws-b",
             },
         ],
         collector=collector,
@@ -676,9 +551,8 @@ def test_code_interpreter_description_lists_only_mounted_files(
     )
 
     assert tool is not None
-    # Files mounted from the single resolved workspace are listed in the description.
     assert "A.docx" in tool.description
-    assert "B.docx" in tool.description
+    assert "B.docx" not in tool.description
 
 
 def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
@@ -706,10 +580,6 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
         "src.config.settings.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
 
     def _fake_post(*args, **kwargs):
         payload = kwargs.get("json", {})
@@ -731,7 +601,7 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
         state={
             "_code_interpreter_session_id": "session-1",
             "_code_interpreter_brain_id": "workspace-1",
-            "_code_interpreter_user_id": "owner-123",
+            "_code_interpreter_user_id": "user-1",
             "_code_interpreter_brain_docs": [
                 {
                     "filename": "report.csv",
@@ -783,10 +653,6 @@ def test_python_interpreter_reuses_generated_file_workspace_name_without_brain_d
 
     monkeypatch.setattr(
         "src.config.settings.get_settings",
-        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
-    )
-    monkeypatch.setattr(
-        "src.smart_rag.tools.utilities.code_interpreter.get_settings",
         lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
     )
 
@@ -861,17 +727,9 @@ def test_collect_connector_response_components_reuses_connector_references() -> 
         ],
     }
 
-    first = _collect_connector_response_components(
-        collector,
-        response,
-        tool_name="logicalsearchtest_locate_answer_citations",
-    )
+    first = _collect_connector_response_components(collector, response)
     first_components = collector.get_and_clear()
-    second = _collect_connector_response_components(
-        collector,
-        response,
-        tool_name="logicalsearchtest_locate_answer_citations",
-    )
+    second = _collect_connector_response_components(collector, response)
     second_components = collector.get_and_clear()
 
     assert first["citation_sources"][0]["reference"] == "[1]"
@@ -917,7 +775,6 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
                 }
             ],
         },
-        tool_name="logicalsearchtest_locate_answer_citations",
     )
     reused_components = collector.get_and_clear()
 
@@ -937,7 +794,6 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
                 }
             ],
         },
-        tool_name="logicalsearchtest_locate_answer_citations",
     )
 
     assert reused["citation_sources"][0]["reference"] == "[5]"
@@ -945,7 +801,7 @@ def test_collector_seed_continues_references_and_reuses_prior_citations() -> Non
     assert fresh["citation_sources"][0]["reference"] == "[6]"
 
 
-def test_connector_mcp_tools_suppress_non_locator_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_call_mcp_tool(*args, **kwargs):
         return {
             "text": "Quarterly revenue increased by 18%.",
@@ -996,8 +852,25 @@ def test_connector_mcp_tools_suppress_non_locator_citation_components(monkeypatc
     result = asyncio.run(search_tool.ainvoke({"params": {"query": "revenue"}}))
     components = collector.get_and_clear()
 
-    assert "citation_sources" not in result
-    assert components == []
+    assert "Use citation [1]" in result["text"]
+    assert components == [
+        {
+            "type": "citation",
+            "data": {
+                "parent_id": "",
+                "text_source": {
+                    "type": "text",
+                    "source": "Q1-report.txt",
+                    "file_name": "item-123",
+                    "page": "2",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "workspace_id": "workspace-1",
+                    "workspace_name": "workspace-1",
+                    "reference": "[1]",
+                },
+            },
+        }
+    ]
 
 
 def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
@@ -1039,6 +912,8 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         ],
         collector,
         output_workspace_id="playbook-workspace-1",
+        workspace_names=["agent-brain-1", "agent-brain-2"],
+        file_names=["doc-1", "doc-2"],
     )
 
     search_tool = next(
@@ -1147,6 +1022,7 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         ],
         collector,
         output_workspace_id="",
+        workspace_names=["agent-brain-1"],
     )
 
     search_tool = next(

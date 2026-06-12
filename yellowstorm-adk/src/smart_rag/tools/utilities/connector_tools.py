@@ -2,8 +2,6 @@ import inspect
 import json
 import re
 import time
-import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -25,66 +23,11 @@ _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
 
 
-@dataclass(frozen=True)
-class ConnectorToolContext:
-    workspace_id: Optional[str] = None
-    brain_ids: Optional[List[str]] = None
-    workspace_names: Optional[List[str]] = None
-    brain_documents: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
-
-
 def _log_payload(value: Any) -> str:
     try:
-        return json.dumps(_redact_log_payload(value), ensure_ascii=False, default=str, indent=2)
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
     except (TypeError, ValueError):
         return str(value)
-
-
-def _redact_log_payload(value: Any) -> Any:
-    if isinstance(value, dict):
-        redacted: Dict[str, Any] = {}
-        for key, nested in value.items():
-            if key == "image_base64" and isinstance(nested, str):
-                redacted[key] = f"[redacted base64 length={len(nested)}]"
-            else:
-                redacted[key] = _redact_log_payload(nested)
-        return redacted
-    if isinstance(value, list):
-        return [_redact_log_payload(item) for item in value]
-    if isinstance(value, str) and "image_base64" in value:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return "[redacted text containing image_base64]"
-        if isinstance(parsed, (dict, list)):
-            return json.dumps(
-                _redact_log_payload(parsed),
-                ensure_ascii=False,
-                default=str,
-            )
-    return value
-
-
-def _is_locate_answer_citations_action(action_key: str) -> bool:
-    return "locate_answer_citations" in str(action_key or "")
-
-
-def _is_read_source_action(action_key: str) -> bool:
-    normalized = str(action_key or "").lower()
-    return "read_content" in normalized or "read_section" in normalized
-
-
-def _keeps_citation_fields(action_key: str) -> bool:
-    return _is_locate_answer_citations_action(action_key)
-
-
-def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
-    stripped = dict(response)
-    stripped.pop("citation_sources", None)
-    stripped.pop("citations", None)
-    stripped.pop("sources", None)
-    return stripped
 
 
 def _normalize_connector_action_description(description: str) -> str:
@@ -100,11 +43,9 @@ def _build_connector_source_signature(source: Dict[str, Any]) -> str:
     if source_type == "image":
         parts = [
             source_type,
-            str(source.get("source") or source.get("path") or ""),
-            str(source.get("file_name") or ""),
+            str(source.get("path") or ""),
+            str(source.get("workspace_name") or ""),
             str(source.get("page") or ""),
-            str(source.get("highlight_text") or ""),
-            str(source.get("highlight_bbox") or source.get("block_bbox") or ""),
         ]
     else:
         parts = [
@@ -124,98 +65,6 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
     return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
 
 
-def _collect_result_images(value: Any, fallback_name: str = "") -> List[Dict[str, str]]:
-    images: List[Dict[str, str]] = []
-    if isinstance(value, dict):
-        image_base64 = value.get("image_base64")
-        if isinstance(image_base64, str) and image_base64:
-            images.append(
-                {
-                    "data": image_base64,
-                    "mime": str(value.get("mime") or value.get("mime_type") or "image/jpeg"),
-                    "filename": str(
-                        value.get("image_id")
-                        or value.get("file_name")
-                        or value.get("filename")
-                        or fallback_name
-                        or "connector-image"
-                    ),
-                }
-            )
-        next_name = str(value.get("file_name") or value.get("filename") or fallback_name)
-        for nested in value.values():
-            images.extend(_collect_result_images(nested, next_name))
-    elif isinstance(value, list):
-        for item in value:
-            images.extend(_collect_result_images(item, fallback_name))
-    elif isinstance(value, str) and "image_base64" in value:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, (dict, list)):
-            images.extend(_collect_result_images(parsed, fallback_name))
-    return images
-
-
-def _strip_result_images(value: Any) -> Any:
-    if isinstance(value, dict):
-        cleaned = {
-            key: _strip_result_images(nested)
-            for key, nested in value.items()
-            if key != "image_base64"
-        }
-        if isinstance(value.get("image_base64"), str) and value.get("image_base64"):
-            cleaned.setdefault("image_attached", True)
-        return cleaned
-    if isinstance(value, list):
-        return [_strip_result_images(item) for item in value]
-    if isinstance(value, str) and "image_base64" in value:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-        if isinstance(parsed, (dict, list)):
-            return json.dumps(
-                _strip_result_images(parsed),
-                ensure_ascii=False,
-                default=str,
-            )
-    return value
-
-
-def _buffer_connector_images(response: Any, tool_context: Optional[ToolContext]) -> Any:
-    if not tool_context:
-        return response
-    images = _collect_result_images(response)
-    if not images:
-        return response
-    deduped_images: List[Dict[str, str]] = []
-    seen_images = set()
-    for image in images:
-        signature = (image["mime"], image["filename"], image["data"])
-        if signature in seen_images:
-            continue
-        seen_images.add(signature)
-        deduped_images.append(image)
-    images = deduped_images
-
-    response_id = str(uuid.uuid4())
-    tool_context.state[f"_pending_tool_images_{response_id}"] = [
-        {"mime": image["mime"], "data": image["data"]} for image in images
-    ]
-    tool_context.state[f"_list_of_filenames_{response_id}"] = [
-        image["filename"] for image in images
-    ]
-    logger.info(
-        "CONVERSATION_MCP_IMAGES_BUFFERED response_id=%s image_count=%s filenames=%s",
-        response_id,
-        len(images),
-        [image["filename"] for image in images],
-    )
-    return _strip_result_images(response)
-
-
 def _register_connector_text_source(
     source: Dict[str, Any],
     tool_context: ToolContext,
@@ -229,6 +78,14 @@ def _register_connector_text_source(
     existing_reference = signatures.get(signature)
     if existing_reference:
         source["reference"] = existing_reference
+        logger.info(
+            "connector_citation_reused reference=%s source_type=%s source=%s file_name=%s page=%s",
+            existing_reference,
+            source.get("type", "text"),
+            source.get("source") or source.get("path") or "",
+            source.get("file_name") or "",
+            source.get("page") or "",
+        )
         return source
 
     next_ref = int(state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1
@@ -244,17 +101,14 @@ def _register_connector_text_source(
                 "reference": reference,
                 "object": {
                     "content": {
-                        "path": str(source.get("source") or source.get("path") or ""),
+                        "path": str(source.get("path") or ""),
                         "page": str(source.get("page") or ""),
                         "file_name": str(source.get("file_name") or ""),
-                        "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
+                        "workspace_name": str(
+                            source.get("workspace_name") or source.get("workspace_id") or ""
+                        ),
                         "height": str(source.get("height") or ""),
                         "width": str(source.get("width") or ""),
-                        "highlight_text": str(source.get("highlight_text") or ""),
-                        "highlight_bbox": source.get("highlight_bbox") or [],
-                        "block_bbox": source.get("block_bbox") or [],
                     }
                 },
             }
@@ -269,18 +123,24 @@ def _register_connector_text_source(
                         "file_name": str(source.get("file_name") or ""),
                         "page": str(source.get("page") or ""),
                         "page_content": str(source.get("page_content") or ""),
-                        "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
-                        "_read_content_doc": bool(source.get("_read_content_doc")),
-                        "_pages_cache": source.get("_pages_cache") or [],
-                        "highlight_text": str(source.get("highlight_text") or ""),
-                        "highlight_bbox": source.get("highlight_bbox") or [],
-                        "block_bbox": source.get("block_bbox") or [],
+                        "workspace_name": str(
+                            source.get("workspace_name") or source.get("workspace_id") or ""
+                        ),
                     }
                 },
             }
         )
+
+    logger.info(
+        "connector_citation_registered reference=%s source_type=%s source=%s file_name=%s page=%s text_source_total=%s image_source_total=%s",
+        reference,
+        source_type,
+        source.get("source") or source.get("path") or "",
+        source.get("file_name") or "",
+        source.get("page") or "",
+        len(text_sources),
+        len(image_sources),
+    )
 
     return source
 
@@ -288,15 +148,20 @@ def _register_connector_text_source(
 def _register_connector_response_sources(
     response: Any,
     tool_context: Optional[ToolContext],
-    action_key: str = "",
 ) -> Any:
     if not tool_context or not isinstance(response, dict):
         return response
-    if not _keeps_citation_fields(action_key):
-        return _strip_legacy_citation_fields(response)
 
     citation_sources = response.get("citation_sources")
-    if not isinstance(citation_sources, list) or not citation_sources:
+    logger.info(
+        "connector_response_source_registration response_keys=%s citation_source_count=%s source_count=%s",
+        sorted(response.keys()),
+        len(citation_sources) if isinstance(citation_sources, list) else 0,
+        len(response.get("sources", []))
+        if isinstance(response.get("sources"), list)
+        else 0,
+    )
+    if not isinstance(citation_sources, list):
         return response
 
     assigned_references: List[str] = []
@@ -317,11 +182,10 @@ def _register_connector_response_sources(
         if isinstance(text_value, str):
             response["text"] = _append_citation_guidance(text_value, assigned_references)
         logger.info(
-            "CONVERSATION_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s text_source_total=%s image_source_total=%s citation_sources=%s",
+            "connector_response_source_registration_complete assigned_references=%s text_source_total=%s image_source_total=%s",
             assigned_references,
             len(tool_context.state.get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, [])),
             len(tool_context.state.get(_STATE_KEY_CONNECTOR_IMAGE_SOURCES, [])),
-            _log_payload(normalized_sources),
         )
 
     return response
@@ -638,20 +502,6 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
     return inspect.Signature(parameters)
 
 
-def _with_tool_context_signature(signature: inspect.Signature) -> inspect.Signature:
-    parameters = list(signature.parameters.values())
-    if "tool_context" not in signature.parameters:
-        parameters.append(
-            inspect.Parameter(
-                name="tool_context",
-                kind=inspect.Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=ToolContext,
-            )
-        )
-    return inspect.Signature(parameters)
-
-
 _SINGULAR_WORKSPACE_NAME_PARAMS = ("workspace_name", "workspaceName")
 _PLURAL_WORKSPACE_NAME_PARAMS = ("workspace_names", "workspaceNames")
 _SINGULAR_LEGACY_WORKSPACE_PARAMS = (
@@ -794,88 +644,14 @@ def _with_default_workspace_params(
     return merged_params
 
 
-def _unique_strings(values: List[Any]) -> List[str]:
-    normalized: List[str] = []
-    seen = set()
-    for value in values:
-        text = str(value or "").strip()
-        if text and text not in seen:
-            seen.add(text)
-            normalized.append(text)
-    return normalized
-
-
-def _collect_connector_context(
-    brain_documents: Optional[List[Dict[str, Any]]],
-    workspace_names: Optional[List[str]],
-    workspace_id: Optional[str],
-) -> Dict[str, List[str]]:
-    file_names: List[Any] = []
-    workspace_ids: List[Any] = []
-    workspace_paths: List[Any] = []
-
-    for doc in brain_documents or []:
-        if not isinstance(doc, dict):
-            continue
-        file_names.append(doc.get("file_name") or doc.get("filename"))
-        workspace_ids.append(doc.get("workspace_id"))
-        workspace_paths.append(doc.get("workspace_name") or doc.get("workspace_id"))
-
-    workspace_ids.append(workspace_id)
-    workspace_ids.extend(workspace_names or [])
-    workspace_paths.extend(workspace_names or [])
-
-    return {
-        "file_names": _unique_strings(file_names),
-        "workspace_ids": _unique_strings(workspace_ids),
-        "workspace_paths": _unique_strings(workspace_paths),
-    }
-
-
-def _apply_streamable_http_context_headers(
-    auth_headers: Dict[str, str],
-    context: Dict[str, List[str]],
-    session_id: Optional[str],
-) -> Dict[str, str]:
-    headers = dict(auth_headers)
-    file_names = context.get("file_names") or []
-    workspace_ids = context.get("workspace_ids") or []
-    workspace_paths = context.get("workspace_paths") or []
-
-    if len(file_names) == 1:
-        headers["file_name"] = file_names[0]
-    else:
-        headers.pop("file_name", None)
-
-    if workspace_ids:
-        headers["workspace_id"] = json.dumps(workspace_ids) if len(workspace_ids) > 1 else workspace_ids[0]
-        headers.pop("workspace_name", None)
-
-    if session_id:
-        headers["x-conversation-id"] = session_id
-
-    if workspace_paths:
-        headers["x-workspace-paths"] = ",".join(workspace_paths)
-
-    return headers
-
-
 def create_connector_tools(
     bindings: List[Dict[str, Any]],
-    context: Optional[ConnectorToolContext] = None,
+    workspace_id: Optional[str] = None,
+    brain_ids: Optional[List[str]] = None,
+    workspace_names: Optional[List[str]] = None,
 ) -> List[Any]:
-    context = context or ConnectorToolContext()
     tools: List[Any] = []
-    effective_workspace_names = (
-        context.workspace_names
-        if context.workspace_names is not None
-        else context.brain_ids
-    )
-    connector_context = _collect_connector_context(
-        context.brain_documents,
-        effective_workspace_names,
-        context.workspace_id,
-    )
+    effective_workspace_names = workspace_names if workspace_names is not None else brain_ids
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
 
@@ -893,7 +669,7 @@ def create_connector_tools(
         if not connector_id:
             continue
 
-        if context.workspace_id and binding_auth_headers.get("Authorization"):
+        if workspace_id and binding_auth_headers.get("Authorization"):
             slug = re.sub(r"[^a-z0-9-]", "", connector_slug.lower())[:24] or "connector"
             tool_name = f"{slug}_import_to_workspace".lower()[:64]
             schema = {
@@ -990,7 +766,7 @@ def create_connector_tools(
             async def _import_tool(
                 _connector_id: str = connector_id,
                 _connector_name: str = connector_name,
-                _workspace_id: str = context.workspace_id,
+                _workspace_id: str = workspace_id,
                 _auth_headers: Dict[str, str] = binding_auth_headers,
                 _backend_url: Optional[str] = backend_url,
                 mode: Optional[str] = None,
@@ -1047,7 +823,7 @@ def create_connector_tools(
                 "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
             )
             default_workspace_id = _resolve_default_workspace_id(
-                effective_workspace_names, context.workspace_id
+                effective_workspace_names, workspace_id
             )
             parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
@@ -1071,8 +847,6 @@ def create_connector_tools(
                 _auth_env: Dict[str, str] = binding_auth_env,
                 _parameter_schema: Dict[str, Any] = parameter_schema,
                 _tool_name: str = tool_name,
-                _connector_context: Dict[str, List[str]] = connector_context,
-                _session_id: Optional[str] = context.session_id,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -1094,16 +868,15 @@ def create_connector_tools(
                     merged_params,
                     _parameter_schema,
                     effective_workspace_names,
-                    context.workspace_id,
+                    workspace_id,
                 )
-                effective_auth_headers = (
-                    _apply_streamable_http_context_headers(
-                        _auth_headers,
-                        _connector_context,
-                        _session_id,
-                    )
-                    if _transport_type == "streamable_http"
-                    else dict(_auth_headers)
+                logger.info(
+                    "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s auth_header_names=%s request_payload=%s",
+                    _connector_id,
+                    _action_key,
+                    _tool_name,
+                    sorted(_auth_headers.keys()),
+                    _log_payload(merged_params),
                 )
                 response = await call_mcp_tool(
                     _transport_type,
@@ -1111,20 +884,34 @@ def create_connector_tools(
                     _server_config,
                     _action_key,
                     merged_params,
-                    auth_headers=effective_auth_headers,
+                    auth_headers=_auth_headers,
                     auth_env=_auth_env,
                 )
-                if _is_read_source_action(_action_key):
-                    response = _buffer_connector_images(response, tool_context)
-                registered_response = _register_connector_response_sources(
-                    response,
-                    tool_context,
-                    action_key=_action_key,
+                logger.info(
+                    "connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
+                    _connector_id,
+                    _action_key,
+                    _tool_name,
+                    type(response).__name__,
+                    _log_payload(response),
                 )
-                if _is_read_source_action(_action_key):
+                registered_response = _register_connector_response_sources(
+                    response, tool_context
+                )
+                if isinstance(registered_response, dict):
                     logger.info(
-                        "conversation_connector_tool_response_for_model action=%s response_payload=%s",
+                        "connector_tool_registered_response connector_id=%s action_key=%s tool_name=%s source_count=%s citation_source_count=%s registered_response=%s",
+                        _connector_id,
                         _action_key,
+                        _tool_name,
+                        len(registered_response.get("sources", []))
+                        if isinstance(registered_response.get("sources"), list)
+                        else 0,
+                        len(registered_response.get("citation_sources", []))
+                        if isinstance(
+                            registered_response.get("citation_sources"), list
+                        )
+                        else 0,
                         _log_payload(registered_response),
                     )
                 return registered_response
@@ -1137,10 +924,9 @@ def create_connector_tools(
             )
 
             _connector_tool.__name__ = tool_name
-            runtime_signature = _with_tool_context_signature(signature)
-            _connector_tool.__signature__ = runtime_signature
+            _connector_tool.__signature__ = signature
             _connector_tool.__annotations__ = {
-                p.name: p.annotation for p in runtime_signature.parameters.values()
+                p.name: p.annotation for p in signature.parameters.values()
             }
             tools.append(SearchToolADK(_connector_tool, schema))
 

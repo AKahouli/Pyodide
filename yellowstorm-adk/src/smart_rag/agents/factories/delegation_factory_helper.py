@@ -4,7 +4,6 @@ from typing import Dict, Any, Optional, List
 from src.smart_rag.tools import build_tree
 from src.smart_rag.tools.utilities import calculator, python_interpreter
 from src.smart_rag.tools.utilities.connector_tools import (
-    ConnectorToolContext,
     create_connector_tools,
     create_platform_tools,
 )
@@ -448,12 +447,8 @@ def create_search_agent_with_tools(
             agent.tools.extend(
                 create_connector_tools(
                     connector_bindings,
-                    ConnectorToolContext(
-                        workspace_id=connector_workspace_id,
-                        brain_ids=final_workspace_names,
-                        brain_documents=agent_config.get("brain_documents", []),
-                        session_id=config.session_id,
-                    ),
+                    workspace_id=connector_workspace_id,
+                    brain_ids=final_workspace_names,
                 )
             )
         except Exception as e:

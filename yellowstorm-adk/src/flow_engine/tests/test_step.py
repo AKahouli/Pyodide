@@ -1,7 +1,6 @@
 import sys
 import types
 import json
-import base64
 from types import SimpleNamespace
 
 import pytest
@@ -20,11 +19,7 @@ fake_structlog.get_logger = lambda *args, **kwargs: SimpleNamespace(
     warning=lambda *a, **k: None,
     error=lambda *a, **k: None,
 )
-fake_structlog_types = types.ModuleType("structlog.types")
-fake_structlog_types.EventDict = dict
-fake_structlog_types.Processor = object
 sys.modules.setdefault("structlog", fake_structlog)
-sys.modules.setdefault("structlog.types", fake_structlog_types)
 
 fake_langgraph = types.ModuleType("langgraph")
 fake_langgraph_config = types.ModuleType("langgraph.config")
@@ -39,7 +34,6 @@ fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
     LITELLM_API_SECRET_KEY="test-key",
-    PLAYBOOK_MAX_TOOL_ITERATIONS=40,
 )
 fake_settings.Settings = SimpleNamespace
 sys.modules.setdefault("src.config.settings", fake_settings)
@@ -76,7 +70,6 @@ fake_step_hitl.extract_feedback_scope = lambda response, default_scope="step_onl
     response.get("scope") if isinstance(response, dict) and response.get("scope") else default_scope
 )
 fake_step_hitl.build_human_context_entry = lambda *args, **kwargs: None
-fake_step_hitl.append_hitl_transcript_block = lambda base_text, transcript: base_text
 fake_step_hitl.build_blocker_judge_prompt = lambda *args, **kwargs: "judge prompt"
 fake_step_hitl.parse_blocker_judge_response = lambda _text: None
 fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
@@ -121,6 +114,7 @@ class TestStepPrompt:
             trigger_context={"email": {"subject": "Q2 review"}},
         )
 
+        assert "Task Title:\nDraft summary" in prompt
         assert "Task Node ID:\nstep-1" in prompt
         assert "Task Description:\nWrite an executive summary using the resolved inputs." in prompt
         assert 'Resolved Inputs:\n{\n  "brief": "Quarterly results"' in prompt
@@ -164,25 +158,6 @@ class TestStepPrompt:
         assert "Do not put reasoning steps inside `outputs`" in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" not in prompt
 
-    def test_build_prompt_keeps_human_guidance_without_raw_hitl_rules(self):
-        prompt = build_step_prompt(
-            label="Search leads",
-            node_id="step-1",
-            input_context={},
-            hitl_policy={"mode": "auto"},
-            hitl_blockers=[{"id": "custom-rule", "description": "population gender missing"}],
-            human_context=[{"message": "Target female founders in France."}],
-            hitl_memory=[{"message": "Prefer verified company websites."}],
-        )
-
-        assert "Human guidance from earlier workflow steps:" in prompt
-        assert "Target female founders in France." in prompt
-        assert "Reusable HITL memory:" in prompt
-        assert "Prefer verified company websites." in prompt
-        assert "Smart HITL policy:" not in prompt
-        assert "Active blocker rules:" not in prompt
-        assert "custom-rule" not in prompt
-
 
 def test_build_prompt_sandbox_note_can_be_appended() -> None:
     prompt = build_step_prompt(
@@ -202,71 +177,6 @@ def test_build_prompt_sandbox_note_can_be_appended() -> None:
 
 
 class TestStepResultReasoningTrace:
-    def test_plain_text_response_extracts_public_reasoning_trace(self):
-        response = (
-            "invoice\n"
-            "---PUBLIC_REASONING_TRACE_JSON---\n"
-            '[{"id":"step_1","type":"observation","label":"Inspected document metadata",'
-            '"description":"Used source cues.","confidence":0.99}]'
-        )
-
-        result = finalize_step_result(
-            {"ports": [{"id": "default", "type": "text"}]},
-            response,
-        )
-
-        assert result["output"] == "invoice"
-        assert result["display_text"] == "invoice"
-        assert result["outputs"]["default"]["content"] == "invoice"
-        assert result["reasoning_trace"] == [
-            {
-                "id": "step_1",
-                "type": "observation",
-                "label": "Inspected document metadata",
-                "description": "Used source cues.",
-                "confidence": 0.99,
-            }
-        ]
-
-    def test_plain_text_response_ignores_malformed_public_reasoning_trace(self):
-        response = "invoice\n---PUBLIC_REASONING_TRACE_JSON---\nnot-json"
-
-        result = finalize_step_result(
-            {"ports": [{"id": "default", "type": "text"}]},
-            response,
-        )
-
-        assert result["output"] == "invoice"
-        assert result["outputs"]["default"]["content"] == "invoice"
-        assert "reasoning_trace" not in result
-
-    def test_plain_text_response_uses_last_public_reasoning_trace_marker(self):
-        response = (
-            "Some echoed instructions\n"
-            "---PUBLIC_REASONING_TRACE_JSON---\n"
-            "[{\"id\":\"example\",\"type\":\"observation\",\"label\":\"Example\",\"description\":\"Example only.\"}]\n"
-            "invoice\n"
-            "---PUBLIC_REASONING_TRACE_JSON---\n"
-            '[{"id":"step_1","type":"observation","label":"Inspected document metadata",'
-            '"description":"Used source cues."}]'
-        )
-
-        result = finalize_step_result(
-            {"ports": [{"id": "default", "type": "text"}]},
-            response,
-        )
-
-        assert result["output"] == "Some echoed instructions\n---PUBLIC_REASONING_TRACE_JSON---\n[{\"id\":\"example\",\"type\":\"observation\",\"label\":\"Example\",\"description\":\"Example only.\"}]\ninvoice"
-        assert result["outputs"]["default"]["content"] == result["output"]
-        assert result["reasoning_trace"] == [
-            {
-                "id": "step_1",
-                "type": "observation",
-                "label": "Inspected document metadata",
-                "description": "Used source cues.",
-            }
-        ]
-
     def test_structured_response_extracts_reasoning_trace(self):
         response = json.dumps({
             "display_text": "Summary",
@@ -418,37 +328,6 @@ class _FakeTool:
         return "4"
 
 
-class _ReadContentTool:
-    name = "read_content"
-    description = "Read document content"
-    args_schema = _CalculatorArgs
-
-    async def ainvoke(self, args):
-        image_base64 = base64.b64encode(b"\xff\xd8\xfffake-jpeg").decode("ascii")
-        return {
-            "file_name": "recipes.pdf",
-            "citation_sources": [
-                {
-                    "type": "text",
-                    "page": "1",
-                    "content": "<page_1>Recipe</page_1>",
-                    "images": [
-                        {
-                            "image_id": "img-1",
-                            "bbox": [1, 2, 3, 4],
-                            "image_base64": image_base64,
-                        },
-                        {
-                            "image_id": "img-2",
-                            "bbox": [5, 6, 7, 8],
-                            "image_base64": image_base64,
-                        },
-                    ],
-                }
-            ],
-        }
-
-
 class _ToolCallResponse:
     def __init__(self, content, tool_calls=None):
         self.choices = [
@@ -516,62 +395,6 @@ async def test_run_step_executes_bound_tools(monkeypatch):
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
-
-
-@pytest.mark.anyio
-async def test_run_step_with_tools_sends_tool_base64_images_as_image_parts(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
-
-    calls = []
-
-    async def _fake_acompletion(*args, **kwargs):
-        calls.append(kwargs)
-        if len(calls) == 1:
-            return _ToolCallResponse(
-                "",
-                [{
-                    "id": "call-1",
-                    "type": "function",
-                    "function": {
-                        "name": "read_content",
-                        "arguments": '{"expression":"ignored"}',
-                    },
-                }],
-            )
-        return _ToolCallResponse("I used the attached images.")
-
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
-
-    output = await run_step_with_tools(
-        model_id="gpt-test",
-        system_prompt="system",
-        user_msg="read the document",
-        tools=[_ReadContentTool()],
-    )
-
-    assert output == "I used the attached images."
-    second_messages = calls[1]["messages"]
-    tool_message = next(message for message in second_messages if message.get("role") == "tool")
-    assert "image_base64" not in tool_message["content"]
-    assert "image_description" not in tool_message["content"]
-    assert "img-1" in tool_message["content"]
-    assert "[1, 2, 3, 4]" in tool_message["content"]
-
-    image_message = next(
-        message
-        for message in second_messages
-        if message.get("role") == "user" and isinstance(message.get("content"), list)
-    )
-    image_blocks = [
-        block
-        for block in image_message["content"]
-        if isinstance(block, dict) and block.get("type") == "image_url"
-    ]
-    assert len(image_blocks) == 2
-    assert all(
-        block["image_url"]["url"].startswith("data:image/jpeg;base64,")
-        for block in image_blocks
-    )
 
 
 @pytest.mark.anyio
@@ -777,15 +600,7 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         captured_execute["human_context"] = human_context
         return "done", [], None
 
-    hitl_result = _FakeStepHitlResult(
-        updated_description=(
-            "Search leads.\n\n"
-            "<HITL_Transcript>\n"
-            "Assistant question 1: Which country?\n"
-            "User answer 1: Use Germany.\n"
-            "</HITL_Transcript>"
-        )
-    )
+    hitl_result = _FakeStepHitlResult(updated_description="Search leads.\n\nClarification from user: Use Germany.")
     hitl_result.human_context = [{
         "node_id": "step-1",
         "task_title": "Collect country",
@@ -804,9 +619,9 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
     monkeypatch.setattr("src.flow_engine.nodes.step.handle_smart_hitl_blocker", _fake_handle_smart_hitl_blocker)
 
     async def _no_llm_judge(*args, **kwargs):
-        return _FakeStepHitlResult()
+        return None
 
-    monkeypatch.setattr("src.flow_engine.nodes.step.handle_llm_judge_blocker", _no_llm_judge)
+    monkeypatch.setattr("src.flow_engine.nodes.step.evaluate_llm_judge_blocker", _no_llm_judge)
     monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fake_execute_step)
 
     result = await run_step(
@@ -831,9 +646,7 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         },
     )
 
-    assert "<HITL_Transcript>" in captured_execute["node_description"]
-    assert "Assistant question 1: Which country?" in captured_execute["node_description"]
-    assert "User answer 1: Use Germany." in captured_execute["node_description"]
+    assert captured_execute["node_description"] == "Search leads.\n\nClarification from user: Use Germany."
     assert captured_execute["human_context"] == hitl_result.human_context
     assert result["task_outputs"][("step-1", 0)]["output"] == "done"
 
@@ -909,17 +722,14 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
         },
     )
 
-    assert captured_kwargs["input_files"] == ["doc-1-CV_Kevin_Diallo.pdf"]
-    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1-CV_Kevin_Diallo.pdf"]}
+    assert captured_kwargs["input_files"] == ["doc-1"]
+    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "CV_Kevin_Diallo.pdf",
-            "file_name": "doc-1-CV_Kevin_Diallo.pdf",
             "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
-            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
@@ -995,17 +805,14 @@ async def test_run_step_passes_opaque_document_refs_into_tool_scope(monkeypatch)
         node_inputs={"report": {"document_id": "doc-1", "filename": "report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["report.xlsx"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["report.xlsx"]}
+    assert captured_kwargs["input_files"] == ["doc-1"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["doc-1"]}
     assert captured_kwargs["code_interpreter_files"] == [
         {
             "document_id": "doc-1",
             "filename": "report.xlsx",
-            "file_name": "report.xlsx",
             "filepath": "user/workspace/doc-1/report.xlsx",
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
-            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert captured_kwargs["workspace_context"] == []
@@ -1077,8 +884,8 @@ async def test_run_step_does_not_fallback_to_workspace_for_unresolved_opaque_ref
         node_inputs={"report": {"document_id": "doc-2", "filename": "generated-report.xlsx"}},
     )
 
-    assert captured_kwargs["input_files"] == ["generated-report.xlsx"]
-    assert captured_kwargs["documents_by_port"] == {"report": ["generated-report.xlsx"]}
+    assert captured_kwargs["input_files"] == ["doc-2"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["doc-2"]}
     assert captured_kwargs["code_interpreter_files"] == []
     assert captured_kwargs["workspace_context"] == []
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"

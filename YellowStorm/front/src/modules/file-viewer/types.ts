@@ -26,15 +26,11 @@ export interface FileTab {
   isLoading?: boolean;
 }
 
-export type HighlightBBox = [number, number, number, number];
-
 export interface FileOpenOptions {
   /** Page number to scroll to after load */
   page?: number;
   /** Text to highlight/search after load */
   highlightText?: string;
-  /** PDF page coordinates to use when text search cannot locate the exact quote */
-  highlightBBox?: HighlightBBox;
   /** Whether to open as floating window or sidebar panel */
   displayMode?: DisplayMode;
   /** Spreadsheet-specific navigation (sheet + row highlighting) */
@@ -45,7 +41,6 @@ export interface PendingNavigation {
   tabId: string;
   page?: number;
   highlightText?: string;
-  highlightBBox?: HighlightBBox;
   spreadsheet?: SpreadsheetNavigationOptions;
 }
 

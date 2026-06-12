@@ -5,7 +5,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function asString(value: unknown): string {
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+  return typeof value === 'string' ? value : '';
 }
 
 function normalizeObjectKey(value: unknown): string {
@@ -16,16 +16,9 @@ function normalizeObjectKey(value: unknown): string {
     : text;
 }
 
-function normalizeBBox(value: unknown): unknown {
-  return Array.isArray(value) ? value : undefined;
-}
-
 function normalizeCitationData(source: Record<string, unknown>): Record<string, unknown> {
   const sourceType = asString(source.sourceType ?? source.type) === 'image' ? 'image' : 'text';
   const fileName = asString(source.fileName ?? source.file_name);
-  const highlightText = asString(source.highlightText ?? source.highlight_text);
-  const highlightBBox = normalizeBBox(source.highlightBBox ?? source.highlight_bbox);
-  const blockBBox = normalizeBBox(source.blockBBox ?? source.block_bbox);
 
   if (sourceType === 'image') {
     return {
@@ -34,15 +27,12 @@ function normalizeCitationData(source: Record<string, unknown>): Record<string, 
       source: fileName,
       path: normalizeObjectKey(source.path ?? source.source),
       fileName,
-      page: asString(source.page ?? source.page_number),
+      page: asString(source.page),
       pageContent: asString(source.pageContent ?? source.page_content ?? source.content),
       workspaceId: asString(source.workspaceId ?? source.workspace_id ?? source.workspace_name),
       height: asString(source.height),
       width: asString(source.width),
       reference: asString(source.reference),
-      highlightText,
-      highlightBBox,
-      blockBBox,
     };
   }
 
@@ -52,13 +42,10 @@ function normalizeCitationData(source: Record<string, unknown>): Record<string, 
     source: normalizeObjectKey(source.source ?? source.path),
     externalId: asString(source.externalId ?? source.external_id ?? source.source),
     fileName,
-    page: asString(source.page ?? source.page_number),
-    pageContent: highlightText || asString(source.pageContent ?? source.page_content ?? source.content),
+    page: asString(source.page),
+    pageContent: asString(source.pageContent ?? source.page_content ?? source.content),
     workspaceId: asString(source.workspaceId ?? source.workspace_id ?? source.workspace_name),
     reference: asString(source.reference),
-    highlightText,
-    highlightBBox,
-    blockBBox,
   };
 }
 

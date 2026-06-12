@@ -13,11 +13,6 @@ vi.mock('@embedpdf/core/react', () => ({
       getPlugin: registrySetPluginMock,
     },
   }),
-  useDocumentState: () => ({
-    document: {
-      pages: [{ size: { width: 600, height: 800 } }],
-    },
-  }),
 }));
 
 vi.mock('@embedpdf/plugin-document-manager/react', () => ({

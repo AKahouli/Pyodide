@@ -1,4 +1,4 @@
-import { Ban, Copy, Eye, Globe, Loader2, Lock, Pencil, Trash2 } from 'lucide-react';
+import { Copy, Eye, Lock, Pencil, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -14,9 +14,6 @@ interface AgentCardRichProps {
   onDelete?: (agent: Agent) => void;
   onView?: (agent: Agent) => void;
   onDuplicate?: (agent: Agent) => void;
-  onPublishA2A?: (agent: Agent) => void;
-  onRevokeA2A?: (agent: Agent) => void;
-  publishingA2A?: boolean;
 }
 
 function typeColor(typeId: string): string {
@@ -67,9 +64,6 @@ export function AgentCardRich({
   onDelete,
   onView,
   onDuplicate,
-  onPublishA2A,
-  onRevokeA2A,
-  publishingA2A = false,
 }: AgentCardRichProps) {
   const { t, language } = useModuleTranslation('agent');
 
@@ -129,44 +123,6 @@ export function AgentCardRich({
           title={t('card.duplicate')}
         >
           <Copy className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {isOwned && onPublishA2A && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn('h-7 w-7', agent.a2aPublished && 'text-primary')}
-          disabled={publishingA2A}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPublishA2A(agent);
-          }}
-          title={
-            agent.a2aPublished
-              ? t('a2a.rotateKey', { defaultValue: 'Rotate A2A key' })
-              : t('a2a.publish', { defaultValue: 'Publish to A2A' })
-          }
-        >
-          {publishingA2A ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Globe className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      )}
-      {isOwned && agent.a2aPublished && onRevokeA2A && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          disabled={publishingA2A}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRevokeA2A(agent);
-          }}
-          title={t('a2a.revoke', { defaultValue: 'Revoke A2A agent' })}
-        >
-          <Ban className="h-3.5 w-3.5" />
         </Button>
       )}
       {isOwned && onDelete && (

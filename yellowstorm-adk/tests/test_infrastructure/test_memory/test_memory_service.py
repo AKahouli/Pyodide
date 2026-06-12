@@ -114,7 +114,7 @@ class TestMemoryService:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    @patch('mem0.AsyncMemory')
+    @patch('src.smart_rag.infrastructure.memory.memory_service.AsyncMemory')
     async def test_initialize_success(self, mock_async_memory_class, memory_service):
         """Test successful initialization."""
         mock_memory_instance = AsyncMock()
@@ -131,7 +131,7 @@ class TestMemoryService:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    @patch('mem0.AsyncMemory')
+    @patch('src.smart_rag.infrastructure.memory.memory_service.AsyncMemory')
     async def test_initialize_failure(self, mock_async_memory_class, memory_service):
         """Test initialization failure."""
         mock_async_memory_class.from_config = AsyncMock(side_effect=Exception("Connection failed"))
@@ -145,7 +145,7 @@ class TestMemoryService:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    @patch('mem0.AsyncMemory')
+    @patch('src.smart_rag.infrastructure.memory.memory_service.AsyncMemory')
     async def test_initialize_with_empty_llm_model(self, mock_async_memory_class, memory_service):
         """Test initialization uses model from settings."""
         mock_memory_instance = AsyncMock()
@@ -163,7 +163,7 @@ class TestMemoryService:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    @patch('mem0.AsyncMemory')
+    @patch('src.smart_rag.infrastructure.memory.memory_service.AsyncMemory')
     async def test_initialize_with_custom_llm_model(self, mock_async_memory_class, memory_service):
         """Test initialization uses the model from settings."""
         mock_memory_instance = AsyncMock()

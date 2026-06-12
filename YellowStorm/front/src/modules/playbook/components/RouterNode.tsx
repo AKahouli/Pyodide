@@ -1,6 +1,6 @@
 import { useEffect, useContext } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { GitBranch, Trash2, Copy, Pencil, AlertTriangle, Scissors, ClipboardPaste } from 'lucide-react';
+import { GitBranch, Trash2, Copy, Pencil, CheckCircle2, AlertTriangle, Scissors, ClipboardPaste } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -17,11 +17,9 @@ import {
   NodeContent,
 } from '@/components/ai-elements/node';
 import { NodeContextMenuContext } from './PlaybookNode';
-import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
-import { PORT_COLORS } from '../utils/port-colors';
-import type { ArtifactKind, PlaybookNodeData, RouterConfig, StepStatus, TaskInputPort, TaskOutputPort } from '../types';
+import type { PlaybookNodeData, RouterConfig, StepStatus } from '../types';
 
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
@@ -40,20 +38,15 @@ const DEFAULT_ROUTER_CONFIG: RouterConfig = {
   maxIterations: 3,
 };
 
-function getSummaryCountKey<T extends string>(count: number, singularKey: T, pluralKey: T): T {
-  return count === 1 ? singularKey : pluralKey;
-}
-
 function getPortTopPercent(idx: number, total: number): number {
   if (total <= 1) return 50;
   const step = 100 / (total + 1);
   return step * (idx + 1);
 }
 
-function getHandleStyle(kind: ArtifactKind): React.CSSProperties {
-  const colors = PORT_COLORS[kind];
+function getHandleStyle(isError: boolean): React.CSSProperties {
   return {
-    background: colors?.raw || 'hsl(var(--muted))',
+    background: isError ? 'var(--destructive)' : 'hsl(var(--primary))',
     border: '2px solid hsl(var(--background))',
   };
 }
@@ -64,16 +57,8 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
   const { t } = useModuleTranslation('playbook');
   const routerConfig = data.routerConfig ?? DEFAULT_ROUTER_CONFIG;
   const outputLabels = routerConfig.outputLabels ?? DEFAULT_ROUTER_CONFIG.outputLabels;
-  const nonErrorLabels = outputLabels.filter((label) => label !== '__error__');
-  const inputPorts: TaskInputPort[] = data.inputPorts?.length
-    ? data.inputPorts
-    : [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }];
-  const outputPorts: TaskOutputPort[] = data.outputPorts?.length
-    ? data.outputPorts
-    : outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' }));
   const maxIterations = routerConfig.maxIterations ?? 0;
   const deterministicConditions = routerConfig.conditions?.length ?? 0;
-  const defaultLabel = routerConfig.defaultLabel;
   const status = data.stepStatus as StepStatus | undefined;
   const ringClass = status ? STATUS_RING[status] : '';
   const selectedClass = selected
@@ -83,7 +68,7 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
+  }, [id, outputLabels.length, updateNodeInternals]);
 
   return (
     <ContextMenu>
@@ -92,52 +77,13 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
           handles={false}
           className={cn('group min-w-[180px]', ringClass, selectedClass)}
         >
-          <div className="absolute left-0 inset-y-0 z-10 w-0 pointer-events-none">
-            {inputPorts.map((port, idx) => (
-              <div
-                key={port.id}
-                className="absolute left-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
-                style={{ top: `${getPortTopPercent(idx, inputPorts.length)}%` }}
-              >
-                <PortLabel name={port.name} kind={port.artifactKind} position="left" selected={selected} />
-                <Handle
-                  id={port.id}
-                  type="target"
-                  position={Position.Left}
-                  className="!w-3 !h-3"
-                  style={{ ...getHandleStyle(port.artifactKind), top: 0 }}
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="absolute right-0 inset-y-0 z-10 w-0 pointer-events-none">
-            {outputPorts.map((port, idx) => {
-              const top = `${getPortTopPercent(idx, outputPorts.length)}%`;
-              const isError = port.id === '__error__';
-              return (
-                <div
-                  key={port.id}
-                  className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
-                  style={{ top }}
-                >
-                  <Handle
-                    id={port.id}
-                    type="source"
-                    position={Position.Right}
-                    className="!w-3 !h-3"
-                    style={{ ...getHandleStyle(port.artifactKind), top: 0 }}
-                  />
-                  <div className="relative">
-                    <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={selected} />
-                    {isError ? (
-                      <AlertTriangle className="pointer-events-none absolute -left-1 -top-1 h-3 w-3 rounded-full bg-background text-destructive" />
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <Handle
+            id="default"
+            type="target"
+            position={Position.Left}
+            className="!w-3 !h-3"
+            style={{ background: 'hsl(var(--muted))', border: '2px solid hsl(var(--background))' }}
+          />
 
           <NodeHeader>
             <div className="flex items-center gap-2 w-full">
@@ -154,28 +100,16 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
             {data.description && (
               <p className="text-xs text-muted-foreground line-clamp-2">{data.description}</p>
             )}
-            <div className="space-y-1 text-[10px] text-muted-foreground">
-              <p>
-                {t(
-                  getSummaryCountKey(nonErrorLabels.length, 'routerNode.routesConfigured.one', 'routerNode.routesConfigured.other'),
-                  { count: nonErrorLabels.length },
-                )}
+            {maxIterations > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {t('routerNode.maxIterations', { count: maxIterations })}
               </p>
-              <p>
-                {deterministicConditions > 0
-                  ? t(
-                    getSummaryCountKey(deterministicConditions, 'routerNode.rulesConfigured.one', 'routerNode.rulesConfigured.other'),
-                    { count: deterministicConditions },
-                  )
-                  : t('routerNode.legacyRouting')}
+            )}
+            {deterministicConditions > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {t('routerNode.conditionsConfigured', { count: deterministicConditions })}
               </p>
-              {defaultLabel ? (
-                <p>{t('routerNode.defaultRoute', { label: defaultLabel })}</p>
-              ) : null}
-              {maxIterations > 0 ? (
-                <p>{t('routerNode.loopLimit', { count: maxIterations })}</p>
-              ) : null}
-            </div>
+            )}
 
             {data.activeRouterLabel && (
               <div className="flex items-center gap-1 rounded bg-green-500/10 border border-green-500/30 px-1.5 py-0.5 text-[10px] font-medium text-green-600">
@@ -184,6 +118,42 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             )}
 
+            <div className="space-y-0.5 pt-1">
+              {outputLabels.map((label, idx) => {
+                const isError = label === '__error__';
+                const isDone = label === 'done';
+                const top = `${getPortTopPercent(idx, outputLabels.length)}%`;
+                return (
+                  <div
+                    key={label}
+                    className="absolute right-0 z-10 flex -translate-y-1/2 items-center gap-1.5"
+                    style={{ top }}
+                  >
+                    <span
+                      className={cn(
+                        'rounded px-1.5 py-0.5 text-[10px] font-medium nodrag nopan',
+                        isError
+                          ? 'bg-destructive/10 text-destructive border border-destructive/30'
+                          : isDone
+                            ? 'bg-green-500/10 text-green-600 border border-green-500/30'
+                            : 'bg-primary/10 text-primary border border-primary/30',
+                      )}
+                    >
+                      {isError && <AlertTriangle className="mr-0.5 h-2.5 w-2.5 inline" />}
+                      {isDone && <CheckCircle2 className="mr-0.5 h-2.5 w-2.5 inline" />}
+                      {label}
+                    </span>
+                    <Handle
+                      id={label}
+                      type="source"
+                      position={Position.Right}
+                      className="!w-3 !h-3"
+                      style={getHandleStyle(isError)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </NodeContent>
 
           <div className="absolute right-1 top-1 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

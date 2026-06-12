@@ -58,14 +58,13 @@ function getDefaultMinimizedPosition(): WindowPosition {
 
 function createPendingNavigation(tabId: string, options?: FileOpenOptions): PendingNavigation | null {
   if (!options) return null;
-  if (options.page === undefined && !options.highlightText && !options.highlightBBox && !options.spreadsheet) {
+  if (options.page === undefined && !options.highlightText && !options.spreadsheet) {
     return null;
   }
   return {
     tabId,
     page: options.page,
     highlightText: options.highlightText,
-    highlightBBox: options.highlightBBox,
     spreadsheet: options.spreadsheet,
   };
 }
@@ -100,7 +99,7 @@ interface FileViewerActions {
     mimeType: string,
     options?: FileOpenOptions,
   ) => Promise<void>;
-  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
+  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'page' | 'highlightText' | 'spreadsheet'>) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   minimize: () => void;

@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
 
-export function OverflowTooltip({ children, text, className }: { children?: ReactNode; text: string; className?: string }) {
+export function OverflowTooltip({ children, text }: { children?: ReactNode; text: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
 
@@ -29,7 +28,7 @@ export function OverflowTooltip({ children, text, className }: { children?: Reac
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span ref={ref} className={cn('min-w-0 truncate', className)}>{content}</span>
+        <span ref={ref} className="min-w-0 truncate">{content}</span>
       </TooltipTrigger>
       {isOverflowing && (
         <TooltipContent side="right" sideOffset={8}>

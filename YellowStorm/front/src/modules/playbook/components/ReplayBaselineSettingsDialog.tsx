@@ -32,7 +32,7 @@ interface ReplayBaselineSettingsDialogProps {
   onOpenOutputFormatEditor?: (taskId: string) => Promise<void> | void;
   onReplayUpdated?: (replay: ValidatedTaskReplay) => void;
   onReplayRemoved?: (replayId: string) => void;
-  defaultTab?: 'overview' | 'rules' | 'history' | 'technical';
+  defaultTab?: 'capture' | 'settings';
 }
 
 const DEFAULT_REPLAY_CONFIG = {
@@ -72,14 +72,6 @@ function countFingerprintKeys(replay: ValidatedTaskReplay | null): number {
   return Object.values(replay.fingerprints).filter(Boolean).length;
 }
 
-function getExpectedFormatStatusKey(replay: ValidatedTaskReplay, isEnabled: boolean): string {
-  if (!isEnabled) return 'baselineBadge.expectedFormatStatus.notChecked';
-  if (replay.outputFormatGuide) return 'baselineBadge.expectedFormatStatus.ready';
-  if (replay.formatGuideStatus === 'pending') return 'baselineBadge.expectedFormatStatus.pending';
-  if (replay.formatGuideStatus === 'failed') return 'baselineBadge.expectedFormatStatus.failed';
-  return 'baselineBadge.expectedFormatStatus.missing';
-}
-
 export const ReplayBaselineSettingsDialog = forwardRef<ReplayBaselineSettingsDialogHandle, ReplayBaselineSettingsDialogProps>(function ReplayBaselineSettingsDialog({
   open,
   onOpenChange,
@@ -90,7 +82,7 @@ export const ReplayBaselineSettingsDialog = forwardRef<ReplayBaselineSettingsDia
   onOpenOutputFormatEditor,
   onReplayUpdated,
   onReplayRemoved,
-  defaultTab = 'rules',
+  defaultTab = 'settings',
 }: ReplayBaselineSettingsDialogProps,
 ref,
 ) {
@@ -100,14 +92,14 @@ ref,
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
   const [labelDraft, setLabelDraft] = useState(() => replay?.label || '');
-  const [replayConfigDraft, setReplayConfigDraft] = useState(() => replay?.replayConfig ?? DEFAULT_REPLAY_CONFIG);
+  const [replayConfigDraft, setReplayConfigDraft] = useState(DEFAULT_REPLAY_CONFIG);
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isLoadingReplay, setIsLoadingReplay] = useState(false);
   const [replayLoadFailed, setReplayLoadFailed] = useState(false);
   const [replayMissing, setReplayMissing] = useState(false);
-  const [currentReplay, setCurrentReplay] = useState<ValidatedTaskReplay | null>(() => replay ?? null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'rules' | 'history' | 'technical'>(defaultTab);
+  const [currentReplay, setCurrentReplay] = useState<ValidatedTaskReplay | null>(null);
+  const [activeTab, setActiveTab] = useState<'capture' | 'settings'>(defaultTab);
 
   useEffect(() => {
     if (!open) return;
@@ -119,13 +111,7 @@ ref,
 
     const loadReplay = async () => {
       if (!open) return;
-      const replaySnapshot = replay ?? null;
-
-      if (replaySnapshot) {
-        setCurrentReplay(replaySnapshot);
-        setLabelDraft(replaySnapshot.label || '');
-      }
-      setIsLoadingReplay(!replaySnapshot);
+      setIsLoadingReplay(true);
       setReplayLoadFailed(false);
       setReplayMissing(false);
 
@@ -188,9 +174,6 @@ ref,
       { label: t('baselineBadge.summary.fingerprints'), value: String(countFingerprintKeys(currentReplay)) },
     ];
   }, [currentReplay, t]);
-  const expectedFormatStatusKey = currentReplay
-    ? getExpectedFormatStatusKey(currentReplay, replayConfigDraft.replayOutputFormat)
-    : 'baselineBadge.expectedFormatStatus.notChecked';
 
   const performSave = async () => {
     if (!activeReplayId || !canEditReplay) return false;
@@ -293,26 +276,21 @@ ref,
           </div>
         ) : (
           <ScrollArea className="max-h-[70vh] pr-4">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'overview' | 'rules' | 'history' | 'technical')} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="overview">{t('baselineBadge.tabs.overview')}</TabsTrigger>
-                <TabsTrigger value="rules">{t('baselineBadge.tabs.rules')}</TabsTrigger>
-                <TabsTrigger value="history">{t('baselineBadge.tabs.history')}</TabsTrigger>
-                <TabsTrigger value="technical">{t('baselineBadge.tabs.technical')}</TabsTrigger>
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'capture' | 'settings')} className="space-y-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="capture">{t('baselineBadge.tabs.capture')}</TabsTrigger>
+                <TabsTrigger value="settings">{t('baselineBadge.tabs.settings')}</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="overview" className="space-y-4">
+              <TabsContent value="capture" className="space-y-4">
                 <div className="rounded-lg border bg-muted/20 p-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-medium">{currentReplay.isStale ? t('baselineBadge.overview.needsUpdate') : t('baselineBadge.overview.ready')}</div>
+                    <div className="font-medium">{t('baselineBadge.captureTitle')}</div>
                     <Badge variant="outline">{t('baselineBadge.validationVersion', { version: currentReplay.validationVersion })}</Badge>
                     {currentReplay.isStale && <Badge variant="secondary">{t('detail.badges.stale')}</Badge>}
                   </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {currentReplay.isStale ? t('baselineBadge.overview.staleDescription') : t('baselineBadge.overview.readyDescription')}
-                  </p>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {captureSummaryItems.slice(0, 5).map((item) => (
+                    {captureSummaryItems.map((item) => (
                       <div key={item.label} className="rounded-md border bg-background p-3">
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{item.label}</div>
                         <div className="mt-1 text-sm font-medium">{item.value}</div>
@@ -327,55 +305,6 @@ ref,
                         : <div>{t('baselineBadge.staleEmpty')}</div>}
                     </div>
                   )}
-                </div>
-
-                <div className="space-y-2">
-                  <div className="font-medium">{t('baselineBadge.overview.trustedAnswer')}</div>
-                  {currentReplay.referenceOutput ? (
-                    <div className="max-h-52 overflow-auto rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
-                      {currentReplay.referenceOutput}
-                    </div>
-                  ) : (
-                    <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-                      {t('baselineBadge.overview.noTrustedAnswer')}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <div className="font-medium">{t('baselineBadge.overview.rulesTitle')}</div>
-                  <div className="rounded-md border bg-muted/20 p-3 text-sm">
-                    <div className="font-medium">{t('nodeEditor.replayConfigOutputFormat')}</div>
-                    <div className="mt-1 text-muted-foreground">{t(expectedFormatStatusKey as any)}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {replayConfigDraft.replayOutputFormat && <Badge variant="outline">{t('baselineBadge.overview.ruleAnswerStructure')}</Badge>}
-                    {replayConfigDraft.replayToolTrace && <Badge variant="outline">{t('baselineBadge.overview.ruleToolSteps')}</Badge>}
-                    {replayConfigDraft.replayReasoningChain && <Badge variant="outline">{t('baselineBadge.overview.ruleReasoning')}</Badge>}
-                    {!replayConfigDraft.replayOutputFormat && !replayConfigDraft.replayToolTrace && !replayConfigDraft.replayReasoningChain && (
-                      <span className="text-sm text-muted-foreground">{t('baselineBadge.overview.noRules')}</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="font-medium">{t('baselineBadge.overview.actionsTitle')}</div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab('rules')}>
-                      {t('baselineBadge.overview.editRules')}
-                    </Button>
-                    {onOpenOutputFormatEditor && (
-                      <Button type="button" size="sm" variant="outline" onClick={() => void handleOpenOutputFormatEditor()} disabled={isBusy || !canEditReplay}>
-                        {currentReplay.outputFormatGuide ? t('baselineBadge.editOutputFormatTemplate') : t('baselineBadge.overview.createExpectedFormat')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="technical" className="space-y-4">
-                <div className="rounded-md border border-amber-500/30 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-                  {t('baselineBadge.technicalWarning')}
                 </div>
 
                 {renderCaptureSection(
@@ -544,7 +473,7 @@ ref,
                 )}
               </TabsContent>
 
-              <TabsContent value="rules" className="space-y-4">
+              <TabsContent value="settings" className="space-y-4">
                 <div className="space-y-4">
               {replayLoadFailed && (
                 <div className="rounded-md border border-muted bg-muted/30 p-3 text-sm text-muted-foreground">
@@ -569,7 +498,6 @@ ref,
                   <div>
                     <div className="text-sm font-medium">{t('nodeEditor.replayConfigOutputFormat')}</div>
                     <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigOutputFormatHint')}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{t(expectedFormatStatusKey as any)}</div>
                     {replayConfigDraft.replayOutputFormat && onOpenOutputFormatEditor && (
                       <div className="mt-2">
                         <Button
@@ -623,23 +551,6 @@ ref,
                   </div>
                 </div>
               )}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="history" className="space-y-4">
-                <div className="rounded-lg border bg-muted/20 p-4">
-                  <div className="font-medium">{t('baselineBadge.history.referenceTitle')}</div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-md border bg-background p-3 text-sm">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('baselineBadge.fields.referenceExecution')}</div>
-                      <div className="mt-1">#{currentReplay.referenceExecutionNumber}</div>
-                    </div>
-                    <div className="rounded-md border bg-background p-3 text-sm">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('baselineBadge.fields.createdAt')}</div>
-                      <div className="mt-1">{formatDateTime(currentReplay.createdAt, language)}</div>
-                    </div>
-                  </div>
-                  <div className="mt-3 text-sm text-muted-foreground">{t('baselineBadge.history.emptyChecks')}</div>
                 </div>
               </TabsContent>
             </Tabs>

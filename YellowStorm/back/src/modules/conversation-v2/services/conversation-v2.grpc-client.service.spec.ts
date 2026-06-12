@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ConversationV2GrpcClientService } from './conversation-v2.grpc-client.service';
-import { WorkspaceService } from '@modules/workspace/workspace.service';
 
 const mockGrpcClient = {
   CreateSession: jest.fn(),
@@ -42,14 +41,6 @@ describe('ConversationV2GrpcClientService', () => {
               };
               return map[key];
             },
-          },
-        },
-        {
-          provide: WorkspaceService,
-          useValue: {
-            // createSession translates workspaceIds → owner storage paths; with
-            // no workspaces selected this resolves to an empty list.
-            getStoragePathsByIds: jest.fn().mockResolvedValue([]),
           },
         },
       ],

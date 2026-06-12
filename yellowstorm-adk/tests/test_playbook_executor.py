@@ -141,7 +141,7 @@ class TestCreateConfigObject:
         assert config.session_id == session_id
         assert config.user_id == mock_playbook_request.userId
         assert config.chatbot_name == "gpt-4"
-        assert config.brain_ids == mock_playbook_request.agent.brain_ids
+        assert config.workspace_names == mock_playbook_request.agent.workspace_names
         assert config.vectorstore_name == mock_playbook_request.vectorstore_name
 
     def test_create_config_object_chatbot_name_dict(self, executor, mock_playbook_request):
@@ -154,7 +154,7 @@ class TestCreateConfigObject:
         """Test creating config when chatbot_name is None (uses default)."""
         mock_playbook_request.agent.chatbot_name = None
         config = executor._create_config_object(mock_playbook_request, "session-123")
-        assert config.chatbot_name == "gpt-5.4-mini"  # DEFAULT_MODEL
+        assert config.chatbot_name == "gpt-4"  # DEFAULT_MODEL
 
 
 class TestConvertRequestToAgentConfig:
@@ -172,7 +172,7 @@ class TestConvertRequestToAgentConfig:
         assert config["name"] == mock_playbook_request.agent.name
         assert config["description"] == mock_playbook_request.agent.description
         assert config["prompt"] == mock_playbook_request.agent.prompt
-        assert config["brain_ids"] == mock_playbook_request.agent.brain_ids
+        assert config["workspace_names"] == mock_playbook_request.agent.workspace_names
         # chatbot_name is now returned as a dict (not a string)
         assert config["chatbot_name"] == {"provider": "gpt-4"}
         assert config["vectorstore_name"] == mock_playbook_request.vectorstore_name
@@ -225,8 +225,8 @@ class TestConvertRequestToAgentConfig:
             {"name": "calculator", "attributes": []}
         ]
         config = executor._convert_request_to_agent_config(mock_playbook_request)
-        # When agent_params is None, temperature defaults to DEFAULT_TEMPERATURE
-        assert config["agent_params"] == {"temperature": 0.7}
+        # When agent_params is None, agent_params is empty dict {}
+        assert config["agent_params"] == {}
 
 
 class TestFilterEventsUpToCallId:

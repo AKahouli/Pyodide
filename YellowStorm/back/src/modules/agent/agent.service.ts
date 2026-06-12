@@ -1147,8 +1147,6 @@ export class AgentService {
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
-      a2aPublished: (d.a2aPublished as boolean) || false,
-      a2aAgentCardUrl: (d.a2aAgentCardUrl as string) || undefined,
       createdBy: d.createdBy ? (d.createdBy as { toString(): string }).toString() : '',
       createdAt: d.createdAt as Date,
       updatedAt: d.updatedAt as Date,

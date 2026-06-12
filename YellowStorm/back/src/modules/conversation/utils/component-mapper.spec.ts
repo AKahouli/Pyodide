@@ -227,40 +227,4 @@ describe('component-mapper chart extraction', () => {
       },
     });
   });
-
-  it('preserves citation highlight metadata from grpc components', () => {
-    const result = extractComponentData({
-      citation: {
-        parent_id: 'text-1',
-        text_source: {
-          source: 'user-1/workspace/Sodexo-DEU-2024-FR.pdf',
-          file_name: 'Sodexo-DEU-2024-FR.pdf',
-          page: '286',
-          page_content: 'dividende en croissance reguliere',
-          workspace_id: 'workspace',
-          reference: '[1]',
-          highlight_text: 'dividende en croissance reguliere',
-          highlight_bbox: [42.52, 123.16, 246.73, 52.5],
-          block_bbox: [42.52, 123.16, 246.73, 52.5],
-        },
-      },
-    });
-
-    expect(result).toEqual({
-      type: 'citation',
-      data: {
-        parentId: 'text-1',
-        sourceType: 'text',
-        source: 'user-1/workspace/Sodexo-DEU-2024-FR.pdf',
-        fileName: 'Sodexo-DEU-2024-FR.pdf',
-        page: '286',
-        pageContent: 'dividende en croissance reguliere',
-        workspaceId: 'workspace',
-        reference: '[1]',
-        highlightText: 'dividende en croissance reguliere',
-        highlightBBox: [42.52, 123.16, 246.73, 52.5],
-        blockBBox: [42.52, 123.16, 246.73, 52.5],
-      },
-    });
-  });
 });

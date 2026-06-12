@@ -39,8 +39,12 @@ class TestTraceRecorder:
 
         assert len(recorder.text_chunks) == 1
         assert recorder.text_chunks[0] == "test text"
-        # History tracking is not implemented in the current recorder.
-        assert recorder.history == []
+        assert len(recorder.history) == 1
+        assert recorder.history[0] == {
+            "type": "text_chunk",
+            "text": "test text",
+            "timestamp": "2024-01-01T00:00:00"
+        }
 
     @patch('src.smart_rag.infrastructure.monitoring.trace_recorder.TraceRecorder._get_timestamp')
     def test_record_function_call(self, mock_timestamp):
@@ -51,10 +55,20 @@ class TestTraceRecorder:
         args = {"param1": "value1", "param2": "value2"}
         recorder.record_function_call("test_function", args, "search")
 
-        # record_function_call is currently a no-op in the recorder.
-        assert recorder.function_calls == []
-        assert recorder.history == []
-        assert recorder.pending_function_call is None
+        assert len(recorder.function_calls) == 1
+        assert len(recorder.history) == 1
+
+        expected_entry = {
+            "type": "function_call",
+            "function_name": "test_function",
+            "arguments": args,
+            "tool_category": "search",
+            "timestamp": "2024-01-01T00:00:00"
+        }
+
+        assert recorder.function_calls[0] == expected_entry
+        assert recorder.history[0] == expected_entry
+        assert recorder.pending_function_call == expected_entry
 
     @patch('src.smart_rag.infrastructure.monitoring.trace_recorder.TraceRecorder._get_timestamp')
     def test_record_function_call_with_none_args(self, mock_timestamp):
@@ -64,8 +78,7 @@ class TestTraceRecorder:
 
         recorder.record_function_call("test_function", None, "search")
 
-        # record_function_call is currently a no-op in the recorder.
-        assert recorder.function_calls == []
+        assert recorder.function_calls[0]["arguments"] == {}
 
     def test_record_multiple_chunks(self):
         """Test recording multiple text chunks."""
@@ -77,8 +90,7 @@ class TestTraceRecorder:
 
         assert len(recorder.text_chunks) == 3
         assert recorder.text_chunks == ["chunk 1", "chunk 2", "chunk 3"]
-        # History tracking is not implemented in the current recorder.
-        assert recorder.history == []
+        assert len(recorder.history) == 3
 
     def test_record_multiple_function_calls(self):
         """Test recording multiple function calls."""
@@ -87,18 +99,25 @@ class TestTraceRecorder:
         recorder.record_function_call("func1", {"arg1": "val1"}, "search")
         recorder.record_function_call("func2", {"arg2": "val2"}, "calculation")
 
-        # record_function_call is currently a no-op in the recorder.
-        assert recorder.function_calls == []
+        assert len(recorder.function_calls) == 2
+        assert recorder.function_calls[0]["function_name"] == "func1"
+        assert recorder.function_calls[1]["function_name"] == "func2"
 
     def test_pending_function_call_updates(self):
         """Test that pending function call is updated correctly."""
         recorder = TraceRecorder("TestAgent")
 
+        # First function call
         recorder.record_function_call("func1", {"arg1": "val1"}, "search")
-        recorder.record_function_call("func2", {"arg2": "val2"}, "calculation")
+        first_call = recorder.pending_function_call
 
-        # record_function_call does not track pending calls in the current recorder.
-        assert recorder.pending_function_call is None
+        # Second function call should update pending
+        recorder.record_function_call("func2", {"arg2": "val2"}, "calculation")
+        second_call = recorder.pending_function_call
+
+        assert first_call["function_name"] == "func1"
+        assert second_call["function_name"] == "func2"
+        assert recorder.pending_function_call == second_call
 
     def test_history_order(self):
         """Test that history maintains chronological order."""
@@ -108,9 +127,13 @@ class TestTraceRecorder:
         recorder.record_function_call("func1", {"arg1": "val1"}, "search")
         recorder.record_chunk("text 2")
 
-        # History tracking is not implemented; only text_chunks are retained.
-        assert recorder.history == []
-        assert recorder.text_chunks == ["text 1", "text 2"]
+        assert len(recorder.history) == 3
+        assert recorder.history[0]["type"] == "text_chunk"
+        assert recorder.history[0]["text"] == "text 1"
+        assert recorder.history[1]["type"] == "function_call"
+        assert recorder.history[1]["function_name"] == "func1"
+        assert recorder.history[2]["type"] == "text_chunk"
+        assert recorder.history[2]["text"] == "text 2"
 
     def test_empty_recorder_state(self):
         """Test recorder state when no operations recorded."""

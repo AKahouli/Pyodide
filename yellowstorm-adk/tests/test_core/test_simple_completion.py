@@ -53,7 +53,7 @@ class TestSimpleCompletionService:
         """Test successful completion creation."""
         message = "What is the capital of France?"
         model = "gpt-4o-mini"
-        temperature = 0
+        temperature = 0.7
         max_tokens = 100
 
         result = await simple_completion_service.create_completion(

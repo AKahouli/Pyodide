@@ -72,7 +72,6 @@ import { PlaybookFlowDesignService } from './services/playbook-flow-design.servi
 import { PlaybookFlowDesignOperationService } from './services/playbook-flow-design-operation.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
 import { PlaybookFlowAdvisorModelService } from './services/advisor/playbook-flow-advisor-model.service';
-import { PlaybookFlowAdvisorScriptReplacementService } from './services/advisor/playbook-flow-advisor-script-replacement.service';
 import { PlaybookFlowExecutionAdvisorService } from './services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './services/advisor/playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './services/advisor/playbook-flow-heuristic-advisor-evaluator.service';
@@ -91,7 +90,6 @@ import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream
 import { PlaybookFlowExecutionLeaseService } from './services/playbook-flow-execution-lease.service';
 import { PlaybookFlowTokenBufferService } from './services/playbook-flow-token-buffer.service';
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
-import { PlaybookFlowIntentConstructionService } from './services/playbook-flow-intent-construction.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -209,7 +207,6 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowDesignOperationService,
     PlaybookFlowAdvisorService,
     PlaybookFlowAdvisorModelService,
-    PlaybookFlowAdvisorScriptReplacementService,
     PlaybookFlowHeuristicAdvisorEvaluatorService,
     PlaybookFlowLlmAdvisorEvaluatorService,
     PlaybookFlowExecutionAdvisorService,
@@ -232,7 +229,6 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowExecutionLeaseService,
     PlaybookFlowTokenBufferService,
     PlaybookFlowIntentService,
-    PlaybookFlowIntentConstructionService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
     PlaybookFlowPublicReasoningParserService,

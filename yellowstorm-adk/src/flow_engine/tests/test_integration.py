@@ -85,13 +85,13 @@ def event_loop():
 
 @pytest_asyncio.fixture(autouse=True)
 async def _setup_checkpointer(tmp_path):
-    """Initialize an isolated checkpointer for each test."""
-    from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
+    """Initialize a real in-memory checkpointer for tests that need it."""
+    from src.flow_engine.runtime.checkpointer import init_checkpointer
 
-    await close_checkpointer()
     db_path = str(tmp_path / "test_checkpoints.db")
     await init_checkpointer(db_path)
     yield
+    from src.flow_engine.runtime.checkpointer import close_checkpointer
     await close_checkpointer()
 
 

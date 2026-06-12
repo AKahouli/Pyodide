@@ -76,14 +76,14 @@ describe('AgentTelegramIntegrationSection', () => {
   });
 
   it('shows a hint and disables the switch when no agentId is provided (create mode)', () => {
-    render(<AgentTelegramIntegrationSection agentId={null} />);
+    render(<AgentTelegramIntegrationSection agentId={null} />);
 
     expect(screen.getByText('createEdit.fields.telegramRequiresAgent')).toBeInTheDocument();
     expect(screen.getByTestId('telegram-switch')).toBeDisabled();
     expect(getAgentTelegramIntegrationMock).not.toHaveBeenCalled();
-  });
-
-  it('loads existing integration and pre-fills enabled state', async () => {
+  });
+
+  it('loads existing integration and pre-fills enabled state', async () => {
     getAgentTelegramIntegrationMock.mockResolvedValue({
       enabled: true,
       hasToken: true,

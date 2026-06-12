@@ -49,19 +49,14 @@ import type {
   UpsertPlaybookScheduleData,
   ToolBinding,
   RequestPlaybookIntentData,
-  AdvisorRemediationPreviewRequest,
-  AdvisorScriptReplacementApplyRequest,
-  AdvisorScriptReplacementRequest,
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
-    PlaybookDefinitionExport,
-    UpdatePlaybookData,
-    UpdateFlowData,
-    InterruptPayload,
+  PlaybookDefinitionExport,
+  UpdateFlowData,
+  InterruptPayload,
 } from './types';
 import * as api from './api';
-import { normalizePlaybook } from './api.compat';
 import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
 import { handleApiError, parseApiError } from '@/lib/api-error';
@@ -215,19 +210,6 @@ function appendEvaluationHistory(
     return existing;
   }
   return [...existing, entry].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-}
-
-function buildResourceBindingValue(resource: PlaybookResourceReference): Record<string, unknown> {
-  return {
-    text: resource.content,
-    kind: resource.kind,
-    id: resource.id,
-    name: resource.name,
-    workspaceId: resource.workspaceId,
-    path: resource.path,
-    mimeType: resource.mimeType,
-    metadata: resource.metadata,
-  };
 }
 
 // ===== Initial State =====
@@ -674,65 +656,7 @@ function isDisabledDeltaPatchError(error: unknown): boolean {
     && rawError?.response?.data?.error?.message === 'Playbook delta patch is disabled.';
 }
 
-function getChangedDefinitionFields(previous: UpdateFlowData, current: UpdateFlowData): Set<keyof UpdateFlowData> {
-  const changed = new Set<keyof UpdateFlowData>();
-  const fields: Array<keyof UpdateFlowData> = [
-    'name',
-    'description',
-    'designSettings',
-    'settings',
-    'workspaces',
-    'reflectionEnabled',
-    'advisorScoringMode',
-    'advisorAutopilotEnabled',
-    'advisorAutopilotTargetScore',
-    'advisorAutopilotMaxTurns',
-    'nodes',
-    'controlEdges',
-    'dataBindings',
-  ];
-
-  for (const field of fields) {
-    if (api.stableStringify(previous[field]) !== api.stableStringify(current[field])) {
-      changed.add(field);
-    }
-  }
-
-  return changed;
-}
-
-function hasOverlappingDefinitionChanges(
-  base: UpdateFlowData,
-  localDraft: UpdateFlowData,
-  serverDraft: UpdateFlowData,
-): boolean {
-  const localChanges = getChangedDefinitionFields(base, localDraft);
-  const serverChanges = getChangedDefinitionFields(base, serverDraft);
-  for (const field of localChanges) {
-    if (serverChanges.has(field)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function rebaseDefinitionChanges(
-  base: UpdateFlowData,
-  localDraft: UpdateFlowData,
-  serverDraft: UpdateFlowData,
-): UpdateFlowData {
-  const rebased: UpdateFlowData = { ...serverDraft };
-  for (const field of getChangedDefinitionFields(base, localDraft)) {
-    rebased[field] = localDraft[field] as never;
-  }
-  return rebased;
-}
-
-function buildSavePayload(playbook: Playbook, options?: {
-  expectedDefinitionRevision?: number;
-  expectedUpdatedAt?: string;
-  clientMutationId?: string;
-}): UpdatePlaybookData {
+function buildSavePayload(playbook: Playbook, options?: { expectedUpdatedAt?: string; clientMutationId?: string }) {
   return {
     name: playbook.name,
     description: playbook.description,
@@ -747,7 +671,6 @@ function buildSavePayload(playbook: Playbook, options?: {
     advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
     advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
-    expectedDefinitionRevision: options?.expectedDefinitionRevision,
     expectedUpdatedAt: options?.expectedUpdatedAt,
     clientMutationId: options?.clientMutationId,
   };
@@ -1462,7 +1385,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           }
           const restored = perPlaybookUndoHistory[id] ?? { undoStack: [], redoStack: [] };
           const playbook = await fetchLegacyPlaybookDetail(id);
-          const baselineRequestBody = api.buildPlaybookBaselineRequestBody(buildSavePayload(playbook)) as UpdateFlowData;
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(playbook)) as UpdateFlowData;
           const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(playbook));
           set((state) => ({
             currentPlaybook: playbook,
@@ -1535,21 +1458,13 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const requestId = get().saveRequestId + 1;
         const saveStartDirtyVersion = get().dirtyVersion;
         const saveStartedAt = performance.now();
-        const effectiveData = {
-          ...data,
-          expectedDefinitionRevision: data.expectedDefinitionRevision ?? get().currentPlaybook?.definitionRevision,
-        };
-        const requestBody = api.buildPlaybookBaselineRequestBody(effectiveData) as UpdateFlowData;
-        const payloadTelemetry = api.getPlaybookUpdateTelemetry(effectiveData);
-        let savedRequestBody = requestBody;
-        let savedPayloadHash = payloadTelemetry.payloadHash;
+        const requestBody = api.buildPlaybookUpdateRequestBody(data) as UpdateFlowData;
+        const payloadTelemetry = api.getPlaybookUpdateTelemetry(data);
         const previousRequestBody = get().lastSavedRequestBodyByPlaybookId[id];
-        const expectedDefinitionRevision = effectiveData.expectedDefinitionRevision;
-        const deltaPatch = deltaAutosaveAvailableInSession
-          && previousRequestBody
-          && expectedDefinitionRevision !== undefined
+        const expectedUpdatedAt = data.expectedUpdatedAt ?? get().currentPlaybook?.updatedAt;
+        const deltaPatch = deltaAutosaveAvailableInSession && previousRequestBody && expectedUpdatedAt
           ? api.buildPlaybookDeltaPatch(previousRequestBody, requestBody, {
-            expectedDefinitionRevision,
+            expectedUpdatedAt,
             payloadHash: payloadTelemetry.payloadHash,
             basePayloadHash: get().lastSavedPayloadHashByPlaybookId[id],
             clientMutationId: data.clientMutationId,
@@ -1563,29 +1478,18 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         });
         try {
           let playbook: Playbook;
-          const saveDirectly = async (saveData: UpdatePlaybookData): Promise<Playbook> => (
-            playbookFeatures.queryMutationsEnabled
-              ? updatePlaybookMutation({ id, data: saveData })
-              : api.updatePlaybook(id, saveData)
-          );
-
-          const saveWithCurrentMode = async (): Promise<Playbook> => {
-            if (!deltaPatch) {
-              return saveDirectly(effectiveData);
-            }
-
+          if (deltaPatch) {
             try {
               const saveDelta = playbookFeatures.queryMutationsEnabled
                 ? patchFlowDeltaMutation({ id, data: deltaPatch })
                 : api.patchFlowDelta(id, deltaPatch);
-              return await saveDelta.then(async (result) => {
+              playbook = await saveDelta.then(async (result) => {
                 const current = get().currentPlaybook;
                 if (!current || current.id !== id) {
                   throw new Error('Playbook state changed during delta save.');
                 }
                 return {
                   ...current,
-                  definitionRevision: result.definitionRevision,
                   updatedAt: result.updatedAt,
                 };
               });
@@ -1597,56 +1501,20 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               // Validation failures mean the backend rejected this graph shape.
               deltaAutosaveAvailableInSession = false;
               effectiveSaveMode = 'full';
-              return saveDirectly(effectiveData);
+              playbook = playbookFeatures.queryMutationsEnabled
+                ? await updatePlaybookMutation({ id, data })
+                : await api.updatePlaybook(id, data);
             }
-          };
-
-          try {
-            playbook = await saveWithCurrentMode();
-          } catch (err) {
-            const apiError = parseApiError(err);
-            const latestState = get();
-            const currentDraft = latestState.currentPlaybook;
-            const isAutosaveConflict = latestState.lastSaveReason === 'autosave'
-              && apiError.code === 'ERR_1005'
-              && previousRequestBody
-              && currentDraft
-              && currentDraft.id === id;
-
-            if (!isAutosaveConflict) {
-              throw err;
-            }
-
-            const latestFlow = normalizePlaybook(await fetchPlaybookDetail(id, 'base') as any);
-            const latestServerBody = api.buildPlaybookBaselineRequestBody(buildSavePayload(latestFlow)) as UpdateFlowData;
-            const localDraftBody = api.buildPlaybookBaselineRequestBody(buildSavePayload(currentDraft)) as UpdateFlowData;
-
-            if (hasOverlappingDefinitionChanges(previousRequestBody, localDraftBody, latestServerBody)) {
-              throw err;
-            }
-
-            const rebasedPayload = {
-              ...rebaseDefinitionChanges(previousRequestBody, localDraftBody, latestServerBody),
-              expectedDefinitionRevision: latestFlow.definitionRevision,
-              clientMutationId: effectiveData.clientMutationId,
-            } as UpdatePlaybookData;
-            effectiveSaveMode = 'full';
-            savedRequestBody = api.buildPlaybookBaselineRequestBody(rebasedPayload) as UpdateFlowData;
-            savedPayloadHash = api.getPlaybookUpdateTelemetry(rebasedPayload).payloadHash;
-            playbook = await saveDirectly(rebasedPayload);
+          } else {
+            playbook = playbookFeatures.queryMutationsEnabled
+              ? await updatePlaybookMutation({ id, data })
+              : await api.updatePlaybook(id, data);
           }
-
-          if (effectiveSaveMode === 'full') {
-            savedRequestBody = api.buildPlaybookBaselineRequestBody(buildSavePayload(playbook)) as UpdateFlowData;
-            savedPayloadHash = api.getPlaybookUpdateTelemetry(buildSavePayload(playbook)).payloadHash;
-          }
-
           const existing = get().playbooks.find((p) => p.id === id);
           const summary: PlaybookSummary = {
             id: playbook.id,
             name: playbook.name,
             description: playbook.description,
-            definitionRevision: playbook.definitionRevision,
             taskCount: (playbook.tasks ?? playbook.nodes ?? []).length,
             isFavorite: existing?.isFavorite ?? false,
             scheduleEnabled: playbook.executionSchedule?.enabled === true,
@@ -1666,7 +1534,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               ? state.currentPlaybook
               : {
                 ...playbook,
-                definitionRevision: playbook.definitionRevision,
                 name: hasNewerLocalChanges
                   ? state.currentPlaybook.name
                   : playbook.name,
@@ -1717,11 +1584,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             lastAutosaveDurationMs: latestState.lastSaveReason === 'autosave' ? saveDurationMs : state.lastAutosaveDurationMs,
             lastSavedPayloadHashByPlaybookId: {
               ...state.lastSavedPayloadHashByPlaybookId,
-              [id]: savedPayloadHash,
+              [id]: payloadTelemetry.payloadHash,
             },
             lastSavedRequestBodyByPlaybookId: {
               ...state.lastSavedRequestBodyByPlaybookId,
-              [id]: savedRequestBody,
+              [id]: requestBody,
             },
           }));
           logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
@@ -3771,11 +3638,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                   ...tr,
                   judgeStatus: data.judgeStatus,
                   judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
-                  judgeResult: data.judgeResult ? api.normalizeJudgeResult(data.judgeResult) : null,
+                  judgeResult: data.judgeResult ?? null,
                   judgeError: data.judgeError ?? null,
-                  judgeHistory: data.judgeHistoryEntry
-                    ? [...(tr.judgeHistory || []), api.normalizeJudgeHistoryEntry(data.judgeHistoryEntry, (tr.judgeHistory || []).length)]
-                    : tr.judgeHistory || [],
+                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
                 }
               : tr;
           });
@@ -4452,20 +4317,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         return api.requestPlaybookIntent(playbookId, data);
       },
 
-      previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
-        return api.previewAdvisorRemediation(playbookId, data);
-      },
-
-      previewAdvisorScriptReplacement: async (playbookId: string, data: AdvisorScriptReplacementRequest) => {
-        return api.previewAdvisorScriptReplacement(playbookId, data);
-      },
-
-      applyAdvisorScriptReplacement: async (playbookId: string, data: AdvisorScriptReplacementApplyRequest) => {
-        const result = await api.applyAdvisorScriptReplacement(playbookId, data);
-        await get().fetchPlaybook(playbookId);
-        return result;
-      },
-
       revertToSnapshot: async (playbookId, messageId) => {
         try {
           const result = await api.revertToSnapshot(playbookId, messageId);
@@ -4620,7 +4471,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const existing = existingBindings.find(
           (b) => b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant',
         );
-        const bindingValue = buildResourceBindingValue(resource);
 
         let updatedBindings: DataBinding[];
         if (existing) {
@@ -4634,13 +4484,13 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               ? existingBindings
               : existingBindings.map((b) =>
                   b.id === existing.id
-                    ? { ...b, constantValue: [...prev, bindingValue] }
+                    ? { ...b, constantValue: [...prev, resource] }
                     : b,
                 );
           } else {
             updatedBindings = existingBindings.map((b) =>
               b.id === existing.id
-                ? { ...b, constantValue: bindingValue }
+                ? { ...b, constantValue: resource }
                 : b,
             );
           }
@@ -4652,7 +4502,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               targetNode: taskId,
               targetPort: portId,
               sourceKind: 'constant' as const,
-              constantValue: bindingValue,
+              constantValue: resource,
             },
           ];
         }
@@ -4666,8 +4516,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           metadata: {
             workspaceId: resource.workspaceId,
             documentId: resource.kind === 'document' ? resource.id : undefined,
-            filepath: resource.kind === 'document' ? resource.path : undefined,
-            folderpath: resource.kind === 'folder' ? resource.path : undefined,
             mimeType: resource.mimeType,
           },
         };
@@ -5136,7 +4984,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         set({ currentPlaybookLoading: true });
         try {
           const flow = await fetchPlaybookDetail(id, 'base');
-          const baselineRequestBody = api.buildPlaybookBaselineRequestBody(buildSavePayload(flow as any)) as UpdateFlowData;
+          const baselineRequestBody = api.buildPlaybookUpdateRequestBody(buildSavePayload(flow as any)) as UpdateFlowData;
           const baselineTelemetry = api.getPlaybookUpdateTelemetry(buildSavePayload(flow as any));
           set((state) => ({
             currentPlaybook: flow as any,
@@ -5437,19 +5285,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
 
       // ===== Port Inspection =====
 
-      openPortInspection: (inspection) => {
-        usePlaybookUiStore.getState().openExecutionDetailTab('results', inspection.nodeId);
-        set({
-          portInspection: inspection,
-          executionDetailTab: 'results',
-          executionPanelOpen: true,
-          workspaceExplorerOpen: false,
-          connectorSidebarOpen: false,
-          nodeEditorOpen: false,
-          selectedStepId: inspection.nodeId,
-          pageMode: 'run',
-        });
-      },
+      openPortInspection: (inspection) => set({ portInspection: inspection }),
       closePortInspection: () => set({ portInspection: null }),
 
       importPlaybookDefinition: (definition: PlaybookDefinitionExport) => {

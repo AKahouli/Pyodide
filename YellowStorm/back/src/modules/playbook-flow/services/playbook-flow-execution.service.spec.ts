@@ -53,23 +53,6 @@ describe('buildGrpcNodeMetadata', () => {
       hitl_policy: { mode: 'auto' },
     });
   });
-
-  it('passes only enabled user-created blockers to ADK metadata', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { metadata: {} },
-      {
-        hitlBlockers: [
-          { id: 'system-rule', createdBy: 'system', enabled: true },
-          { id: 'disabled-user-rule', createdBy: 'user', enabled: false },
-          { id: 'user-rule', createdBy: 'user', enabled: true },
-        ],
-      },
-    );
-
-    expect(metadata.hitl_blockers).toEqual([
-      { id: 'user-rule', createdBy: 'user', enabled: true },
-    ]);
-  });
 });
 
 describe('PlaybookFlowExecutionService start preflight', () => {

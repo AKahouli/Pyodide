@@ -16,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
-import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
+import { useWorkspaceStore } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
@@ -68,7 +68,6 @@ export function WorkspacePage() {
   const selectedWorkspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedWorkspace);
   const selectedWorkspaceRole = useWorkspaceStore((s) => s.selectedWorkspaceRole);
-  const canWrite = useCanWriteWorkspace();
   const selectPageWorkspace = useWorkspaceStore((s) => s.selectPageWorkspace);
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
@@ -76,9 +75,6 @@ export function WorkspacePage() {
   const navigateToFolder = useWorkspaceStore((s) => s.navigateToPageFolder);
   const search = useWorkspaceStore((s) => s.pageSearch);
   const setSearch = useWorkspaceStore((s) => s.setPageSearch);
-  const loadingPageFolders = useWorkspaceStore((s) => s.loadingPageFolders);
-  const loadingPageFiles = useWorkspaceStore((s) => s.loadingPageFiles);
-  const pageWorkspaceLoadedFor = useWorkspaceStore((s) => s.pageWorkspaceLoadedFor);
   const deletePageFolder = useWorkspaceStore((s) => s.deletePageFolder);
   const movePageFolder = useWorkspaceStore((s) => s.movePageFolder);
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
@@ -121,13 +117,6 @@ export function WorkspacePage() {
   }, [hasIndexingInFlight, refreshPageData]);
 
   const activeWorkspaceId = routeWorkspaceId ?? null;
-
-  // True only during the FIRST fetch for this workspace (not during background
-  // index-status polls), so the "empty" state never flashes before data loads.
-  const isInitialLoading =
-    !!activeWorkspaceId &&
-    pageWorkspaceLoadedFor !== activeWorkspaceId &&
-    (loadingPageFolders || loadingPageFiles);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editFolder, setEditFolder] = useState<WorkspaceFolder | null>(null);
@@ -202,7 +191,6 @@ export function WorkspacePage() {
 
   const handleDropOnFolder = useCallback(
     (targetFolder: WorkspaceFolder, payload: DragPayload) => {
-      if (!canWrite) return;
       if (payload.kind === 'file') {
         void setFileFolderAssignment(payload.id, targetFolder.id);
         toast.success(`${payload.name} déplacé dans ${targetFolder.name}`);
@@ -212,12 +200,11 @@ export function WorkspacePage() {
         toast.success(`${payload.name} déplacé dans ${targetFolder.name}`);
       }
     },
-    [canWrite, movePageFolder, setFileFolderAssignment],
+    [movePageFolder, setFileFolderAssignment],
   );
 
   const handleDropOnBreadcrumb = useCallback(
     (targetParentId: string | null, payload: DragPayload) => {
-      if (!canWrite) return;
       if (payload.kind === 'file') {
         void setFileFolderAssignment(payload.id, targetParentId);
         toast.success(targetParentId ? `${payload.name} déplacé` : `${payload.name} retiré du classement`);
@@ -226,7 +213,7 @@ export function WorkspacePage() {
         toast.success(`${payload.name} déplacé`);
       }
     },
-    [canWrite, movePageFolder, setFileFolderAssignment],
+    [movePageFolder, setFileFolderAssignment],
   );
 
   if (!activeWorkspaceId) {
@@ -244,11 +231,6 @@ export function WorkspacePage() {
           <div className='min-w-0 flex-1'>
             <div className='flex items-center gap-1.5'>
               {selectedWorkspace ? <EditableWorkspaceName workspace={selectedWorkspace} canEdit={selectedWorkspaceRole === 'owner' && !selectedWorkspace.isPersonal} /> : <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>}
-              {selectedWorkspace && !canWrite && (
-                <span className='inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground'>
-                  <Eye className='h-3 w-3' /> Lecture seule
-                </span>
-              )}
               {selectedWorkspace && <WorkspaceActionsMenu workspace={selectedWorkspace} role={selectedWorkspaceRole} onDeleted={() => navigate('/workspace')} />}
             </div>
             <p className='text-xs text-muted-foreground'>Organisez, classez et indexez vos documents au sein d'un workspace.</p>
@@ -289,31 +271,23 @@ export function WorkspacePage() {
               </Tooltip>
             </TooltipProvider>
             <Separator orientation='vertical' className='h-6' />
-            {canWrite && (
-              <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
-                <FolderPlus className='h-4 w-4' />
-                Nouveau dossier
-              </Button>
-            )}
-            {canWrite && (
-              <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
-                <Shield className='h-4 w-4' />
-                Règles
-              </Button>
-            )}
+            <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
+              <FolderPlus className='h-4 w-4' />
+              Nouveau dossier
+            </Button>
+            <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
+              <Shield className='h-4 w-4' />
+              Règles
+            </Button>
             <Button variant='outline' size='sm' onClick={handleSync} disabled={isSyncing} className='gap-1.5'>
               {isSyncing ? <Loader2 className='h-4 w-4 animate-spin' /> : <DownloadCloud className='h-4 w-4' />}
               Sync
             </Button>
-            {canWrite && (
-              <>
-                <Separator orientation='vertical' className='h-6' />
-                <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
-                  <Sparkles className='h-4 w-4' />
-                  Classifier
-                </Button>
-              </>
-            )}
+            <Separator orientation='vertical' className='h-6' />
+            <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
+              <Sparkles className='h-4 w-4' />
+              Classifier
+            </Button>
           </div>
         </div>
 
@@ -341,10 +315,8 @@ export function WorkspacePage() {
       <ScrollArea className='flex-1'>
         <div className='mx-auto w-full max-w-7xl px-6 py-6 space-y-6'>
           <WorkspaceUploadDropZone />
-          {isInitialLoading ? (
-            <WorkspaceContentLoading />
-          ) : visibleFolders.length === 0 && visibleFiles.length === 0 ? (
-            <EmptyFolderState hasSearch={!!search} canCreate={canWrite} onCreateFolder={() => setCreateOpen(true)} />
+          {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
+            <EmptyFolderState hasSearch={!!search} onCreateFolder={() => setCreateOpen(true)} />
           ) : (
             <div className='space-y-8'>
               {visibleFolders.length > 0 && (
@@ -662,19 +634,17 @@ function SectionHeader({ title, count, icon }: { title: string; count: number; i
 }
 
 function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onDelete, onDropItem }: { folder: WorkspaceFolder; childCount: number; fileCount: number; onOpen: () => void; onEdit: () => void; onMove: () => void; onDelete: () => void; onDropItem: (payload: DragPayload) => void }) {
-  const canWrite = useCanWriteWorkspace();
   const [isOver, setIsOver] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragStart = (e: React.DragEvent) => {
-    if (!canWrite) return;
     e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ kind: 'folder', id: folder.id, name: folder.name }));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    if (!canWrite || !hasItemPayload(e.dataTransfer)) return;
+    if (!hasItemPayload(e.dataTransfer)) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
@@ -682,7 +652,6 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
   };
 
   const handleDrop = (e: React.DragEvent) => {
-    if (!canWrite) return;
     e.preventDefault();
     e.stopPropagation();
     setIsOver(false);
@@ -697,7 +666,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
   return (
     <div className={cn('group relative pt-2 transition-transform duration-200', 'hover:-translate-y-0.5', isDragging && 'opacity-50')}>
       <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-card border border-b-0 transition-colors', borderClass)} />
-      <div draggable={canWrite} onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', canWrite && 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
+      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
         <button onClick={onOpen} className='w-full text-left p-4 pb-3'>
           <div className='flex items-start gap-3'>
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
@@ -720,27 +689,25 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
             </span>
           </div>
 
-          {canWrite && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} className='rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background'>
-                  <MoreVertical className='h-4 w-4' />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className='mr-2 h-4 w-4' /> Renommer / éditer
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onMove}>
-                  <Move className='mr-2 h-4 w-4' /> Déplacer
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={onDelete}>
-                  <Trash2 className='mr-2 h-4 w-4' /> Supprimer
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} className='rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background'>
+                <MoreVertical className='h-4 w-4' />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end' onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem onClick={onEdit}>
+                <Pencil className='mr-2 h-4 w-4' /> Renommer / éditer
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onMove}>
+                <Move className='mr-2 h-4 w-4' /> Déplacer
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={onDelete}>
+                <Trash2 className='mr-2 h-4 w-4' /> Supprimer
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </div>
@@ -770,7 +737,6 @@ function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexing
 
 function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
   const Icon = getFileIcon(file.mimeType);
-  const canWrite = useCanWriteWorkspace();
   const [isDragging, setIsDragging] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -785,7 +751,6 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const viewable = isViewableFile(file.mimeType);
 
   const handleDragStart = (e: React.DragEvent) => {
-    if (!canWrite) return;
     e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ kind: 'file', id: file.id, name: file.name }));
     e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true);
@@ -840,7 +805,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
 
   return (
     <>
-      <div draggable={canWrite} onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} className={cn('group flex items-center gap-4 rounded-md py-2 pl-2 pr-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}>
+      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} className={cn('group flex items-center gap-4 rounded-md py-2 pl-2 pr-1 transition-colors', 'hover:bg-accent/50 cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}>
         <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
 
         <div className='min-w-0 flex-1 flex items-center gap-2'>
@@ -866,21 +831,17 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
               {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
               Télécharger
             </DropdownMenuItem>
-            {canWrite && (
-              <>
-                <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
-                  {isReindexing ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RefreshCw className='mr-2 h-4 w-4' />}
-                  Indexer / Réindexer
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onMove}>
-                  <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteOpen(true)}>
-                  <Trash2 className='mr-2 h-4 w-4' /> Supprimer
-                </DropdownMenuItem>
-              </>
-            )}
+            <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
+              {isReindexing ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RefreshCw className='mr-2 h-4 w-4' />}
+              Indexer / Réindexer
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onMove}>
+              <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteOpen(true)}>
+              <Trash2 className='mr-2 h-4 w-4' /> Supprimer
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -914,43 +875,7 @@ function ConfirmDeleteFileDialog({ open, onOpenChange, fileName, isDeleting, onC
   );
 }
 
-/** Skeleton shown during the first load of a workspace so the empty state never
- * flashes before folders/files arrive. */
-function WorkspaceContentLoading() {
-  return (
-    <div className='space-y-8' aria-busy='true' aria-live='polite'>
-      <section>
-        <div className='mb-3 h-4 w-24 rounded bg-muted animate-pulse' />
-        <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3'>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className='rounded-md border bg-card p-4'>
-              <div className='flex items-start gap-3'>
-                <div className='h-12 w-12 shrink-0 rounded-lg bg-muted animate-pulse' />
-                <div className='flex-1 space-y-2 pt-1'>
-                  <div className='h-3.5 w-2/3 rounded bg-muted animate-pulse' />
-                  <div className='h-3 w-full rounded bg-muted animate-pulse' />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section>
-        <div className='mb-3 h-4 w-20 rounded bg-muted animate-pulse' />
-        <div className='space-y-1'>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className='flex items-center gap-4 rounded-md py-2 pl-2 pr-1'>
-              <div className='h-5 w-5 shrink-0 rounded bg-muted animate-pulse' />
-              <div className={cn('h-3.5 rounded bg-muted animate-pulse', i % 2 === 0 ? 'w-1/2' : 'w-1/3')} />
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function EmptyFolderState({ hasSearch, canCreate, onCreateFolder }: { hasSearch: boolean; canCreate: boolean; onCreateFolder: () => void }) {
+function EmptyFolderState({ hasSearch, onCreateFolder }: { hasSearch: boolean; onCreateFolder: () => void }) {
   if (hasSearch) {
     return (
       <div className='flex flex-col items-center justify-center py-24 text-center'>
@@ -969,19 +894,13 @@ function EmptyFolderState({ hasSearch, canCreate, onCreateFolder }: { hasSearch:
         <Folder className='h-7 w-7' />
       </div>
       <h3 className='text-base font-semibold'>Cet emplacement est vide</h3>
-      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>
-        {canCreate
-          ? "Créez un dossier pour structurer votre classification ou utilisez la zone d'upload ci-dessus pour ajouter des fichiers."
-          : 'Ce workspace partagé est en lecture seule.'}
-      </p>
-      {canCreate && (
-        <div className='mt-5 flex items-center gap-2'>
-          <Button variant='outline' onClick={onCreateFolder} className='gap-1.5'>
-            <FolderPlus className='h-4 w-4' />
-            Nouveau dossier
-          </Button>
-        </div>
-      )}
+      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>Créez un dossier pour structurer votre classification ou utilisez la zone d'upload ci-dessus pour ajouter des fichiers.</p>
+      <div className='mt-5 flex items-center gap-2'>
+        <Button variant='outline' onClick={onCreateFolder} className='gap-1.5'>
+          <FolderPlus className='h-4 w-4' />
+          Nouveau dossier
+        </Button>
+      </div>
     </div>
   );
 }

@@ -307,9 +307,6 @@ message TextSourceData {
     string page_content = 5;     // The actual text content
     string workspace_id = 6;     // Workspace ID
     string reference = 7;        // Citation reference (e.g., "[1]", "[2]")
-    string highlight_text = 8;   // Exact text to highlight in the source document
-    repeated double highlight_bbox = 9; // Highlight bounding box [x, y, width, height]
-    repeated double block_bbox = 10;    // Fallback block bounding box [x, y, width, height]
 }
 
 message ImageSourceData {
@@ -322,9 +319,6 @@ message ImageSourceData {
     string height = 7;           // Image height
     string width = 8;            // Image width
     string reference = 9;        // Citation reference (e.g., "[1]", "[2]")
-    string highlight_text = 10;  // Exact text to highlight in the source document
-    repeated double highlight_bbox = 11; // Highlight bounding box [x, y, width, height]
-    repeated double block_bbox = 12;     // Fallback block bounding box [x, y, width, height]
 }
 
 message CitationComponent {
@@ -380,8 +374,14 @@ message StreamChunk {
 service ChatbotService {
     rpc RunAgentTeam(RunAgentTeamRequest) returns (stream StreamChunk);
     rpc GenerateConversationName(GenerateConversationNameRequest) returns (GenerateConversationNameResponse);
+    rpc RunPlaybookWorkflow(RunPlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
+    rpc ResumePlaybookWorkflow(ResumePlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
+    rpc RunStep(RunStepRequest) returns (StepResponse);
+    rpc RunStepStream(RunStepRequest) returns (stream PlaybookStreamChunk);
+    rpc ResumeStep(ResumeStepRequest) returns (StepResponse);
     rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
+    rpc StopPlaybookWorkflow(StopPlaybookWorkflowRequest) returns (StopPlaybookWorkflowResponse);
     rpc EvaluateTask(TaskAdvisorRequest) returns (TaskAdvisorResult);
     rpc AdvisePlaybookNode(AdvisePlaybookNodeRequest) returns (AdvisePlaybookNodeResponse);
 }
@@ -475,6 +475,28 @@ message TaskArtifact {
     int64 size = 7;
 }
 
+message ArtifactRef {
+    string document_id = 1;
+    string workspace_id = 2;
+    string url = 3;
+    string filename = 4;
+    string mime_type = 5;
+}
+
+message PortPayload {
+    string port_id = 1;
+    string artifact_kind = 2;
+    oneof body {
+        string content = 3;
+        ArtifactRef ref = 4;
+        google.protobuf.Struct data = 5;
+    }
+    google.protobuf.Struct metadata = 6;
+    string source_task_id = 7;
+    string source_port_id = 8;
+    google.protobuf.Timestamp produced_at = 9;
+}
+
 message PlaybookEdgeConfig {
     string source_id = 1;
     string target_id = 2;
@@ -523,6 +545,108 @@ message GeneratePlaybookResponse {
     Usage usage = 3;
 }
 
+// --- Request messages ---
+
+message RunPlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string query = 4;
+    repeated PlaybookTaskConfig tasks = 5;
+    repeated Agent agents = 6;
+    repeated PlaybookEdgeConfig edges = 7;
+    repeated WorkspaceContext workspace_context = 8;
+    string execution_mode = 9;
+    repeated ValidatedTaskReplay validated_replays = 10;
+    map<string, string> step_execution_modes = 11;
+    map<string, string> prompt_overrides = 12;
+    google.protobuf.Struct trigger_context = 13;
+    string trigger_context_json = 14;
+    string user_language = 15;
+}
+
+message ResumePlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string thread_id = 4;
+    HumanResponse human_response = 5;
+    string task_id = 6;
+    string interrupt_id = 7;
+    repeated PlaybookTaskConfig tasks = 8;
+    repeated PlaybookEdgeConfig edges = 9;
+}
+
+message RunStepRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    PlaybookTaskConfig task = 4;
+    Agent agent = 5;
+    string context_from_dependencies = 6;
+    repeated WorkspaceContext workspace_context = 7;
+    string execution_mode = 8;
+    ValidatedTaskReplay validated_replay = 9;
+    repeated PlaybookEdgeConfig edges = 10;
+    repeated PlaybookTaskResult upstream_results = 11;
+    map<string, string> prompt_overrides = 12;
+    google.protobuf.Struct trigger_context = 13;
+    repeated PortPayload node_inputs = 14;
+    repeated string declared_output_ports = 15;
+    string user_language = 16;
+}
+
+message ResumeStepRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string thread_id = 3;
+    HumanResponse human_response = 4;
+    string task_id = 5;
+}
+
+message StopPlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string thread_id = 2;
+}
+
+message StopPlaybookWorkflowResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// --- Human-in-the-loop messages ---
+
+message HumanResponse {
+    string action = 1;                 // "reply" | "approve" | "reject" | "skip"
+    string message = 2;                // Free-form user reply for conversational HITL
+    bool approved = 3;               // Legacy compatibility: whether the human approved or rejected
+    string reason = 4;               // Legacy compatibility: reason for rejection
+    string feedback = 5;             // Legacy compatibility: review/clarification feedback
+}
+
+// --- Response messages ---
+
+message ToolTraceItem {
+    int32 call_index = 1;
+    string tool_name = 2;
+    google.protobuf.Struct args = 3;
+    string output_summary = 4;
+}
+
+message LLMPromptTraceItem {
+    string stage = 1;
+    string model = 2;
+    string prompt = 3;
+}
+
+message ValidatedTaskReplay {
+    string replay_id = 1;
+    string task_id = 2;
+    int32 validation_version = 3;
+    string mode = 4;
+    repeated ToolTraceItem tool_calls = 5;
+    string reference_output = 6;
+    bool preserve_output_format = 7;
+    string output_format_guide = 8;
+}
+
 message SemanticMatch {
     int32 match_score = 1;
     int32 semantic_similarity_score = 2;
@@ -533,6 +657,90 @@ message SemanticMatch {
     string model = 7;
     bool judge_used = 8;
     int32 evidence_consistency_score = 9;
+}
+
+message PlaybookTaskResult {
+    string task_id = 1;
+    string status = 2;              // "completed" | "failed" | "cancelled"
+    reserved 3;                     // was: string output (now in TextComponent inside components)
+    string error = 4;
+    int64 duration_ms = 5;
+    repeated Component components = 6;  // Ordered display components (TextComponent first, then tool components)
+    Usage usage = 7;                // Token usage for this task's LLM calls
+    repeated ToolTraceItem tool_trace = 8;
+    SemanticMatch semantic_match = 9;
+    repeated LLMPromptTraceItem llm_prompt_trace = 10;
+    repeated TaskArtifact artifacts = 11;
+    repeated PortPayload emitted_payloads = 20;
+    repeated IteratorIterationResult iterator_iterations = 21;
+}
+
+message IteratorChildResult {
+    string task_id = 1;
+    string task_title = 2;
+    string status = 3;
+    string output = 4;
+    string error = 5;
+    repeated Component components = 6;
+    repeated ToolTraceItem tool_trace = 7;
+    repeated LLMPromptTraceItem llm_prompt_trace = 8;
+    repeated TaskArtifact artifacts = 9;
+    repeated PortPayload emitted_payloads = 10;
+}
+
+message IteratorIterationResult {
+    int32 index = 1;
+    string status = 2;
+    string item_preview = 3;
+    string output = 4;
+    string error = 5;
+    repeated IteratorChildResult child_results = 6;
+    repeated TaskArtifact artifacts = 7;
+}
+
+message InterruptPayload {
+    string type = 1;                // "approval_request" | "review_request" | "clarification"
+    string task_id = 2;
+    string task_title = 3;
+    string message = 4;
+    string thread_id = 5;
+    string task_description = 6;    // Set for approval_request
+    string result = 7;              // Set for review_request
+    string interrupt_id = 8;        // Stable interrupt instance identifier
+    int32 round = 9;                // Conversational HITL round number (1-based)
+    string conversation_json = 10;  // JSON-encoded transcript for the current interrupt thread
+    repeated string resumable_actions = 11; // Allowed actions for the current interrupt
+}
+
+message PlaybookWorkflowResponse {
+    string status = 1;              // "completed" | "suspended" | "failed"
+    repeated PlaybookTaskResult task_results = 2;
+    InterruptPayload interrupt = 3;
+    string thread_id = 4;
+    string error = 5;
+}
+
+message PlaybookStepUpdate {
+    string task_id = 1;
+    string task_title = 2;
+    string status = 3;               // "in_progress" | "suspended" | "completed" | "failed"
+    PlaybookTaskResult result = 4;   // Set when completed/failed
+    InterruptPayload interrupt = 5;  // Set when suspended
+    string scope = 6;                // "" | "iterator_child"
+    string parent_iterator_id = 7;
+    int32 iteration_index = 8;
+}
+
+message PlaybookStreamChunk {
+    PlaybookStepUpdate step_update = 1;
+    string thread_id = 4;
+}
+
+message StepResponse {
+    string status = 1;              // "completed" | "suspended" | "failed"
+    PlaybookTaskResult result = 2;
+    InterruptPayload interrupt = 3;
+    string thread_id = 4;
 }
 
 message EvaluateSemanticMatchRequest {
@@ -557,12 +765,6 @@ message TaskAdvisorToolTraceItem {
     string output_summary = 4;
 }
 
-message TaskAdvisorPromptTraceItem {
-    string stage = 1;
-    string model = 2;
-    string prompt = 3;
-}
-
 message TaskAdvisorRequest {
     string execution_id = 1;
     string owner_id = 2;
@@ -579,8 +781,6 @@ message TaskAdvisorRequest {
     repeated TaskAdvisorToolTraceItem tool_trace = 13;
     string artifacts_json = 14;
     google.protobuf.Struct task_metadata = 15;
-    Usage usage = 16;
-    repeated TaskAdvisorPromptTraceItem llm_prompt_trace = 17;
 }
 
 message TaskAdvisorResult {
@@ -610,26 +810,6 @@ message TaskAdvisorResult {
     string recommendation = 24;
     string reason = 25;
     string model = 26;
-    int32 relevance_score = 27;
-    int32 specificity_score = 28;
-    int32 format_compliance_score = 29;
-    int32 evidence_grounding_score = 30;
-    int32 handoff_readiness_score = 31;
-    int32 hitl_appropriateness_score = 32;
-    int32 determinism_score = 33;
-    int32 step_optimization_priority = 34;
-    int32 playbook_optimization_priority = 35;
-    string risk_severity = 36;
-    int32 blocking_issue_count = 37;
-    string downstream_impact_level = 38;
-    string recommended_action = 39;
-    int32 cost_efficiency_score = 40;
-    int32 cost_optimization_priority = 41;
-    int32 estimated_token_reduction_pct = 42;   // -1 means unknown.
-    int32 estimated_latency_reduction_pct = 43; // -1 means unknown.
-    repeated string cost_optimization_hints = 44;
-    repeated string script_replacement_hints = 45;
-    repeated string llm_still_required_reasons = 46;
 }
 
 enum NodeAdvisorSuggestionType {

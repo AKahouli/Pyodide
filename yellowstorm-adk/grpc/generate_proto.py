@@ -25,8 +25,6 @@ PROJECT_ROOT = SCRIPT_DIR.parent      # project root
 PROTO_DIR = SCRIPT_DIR / "proto"  # grpc/proto/
 OUTPUT_DIR = PROJECT_ROOT / "src" / "grpc_generated"
 PROTO_FILE = PROTO_DIR / "chatbot.proto"
-# A2A admin management RPCs (imports chatbot.proto for the Agent message).
-A2A_ADMIN_PROTO = PROTO_DIR / "a2a_admin.proto"
 
 
 def main():
@@ -55,8 +53,7 @@ def main():
         f"--proto_path={PROTO_DIR}",
         f"--python_out={OUTPUT_DIR}",
         f"--grpc_python_out={OUTPUT_DIR}",
-        str(PROTO_FILE),
-        str(A2A_ADMIN_PROTO),
+        str(PROTO_FILE)
     ]
 
     print("\n" + "=" * 60)
@@ -98,13 +95,6 @@ def main():
         print("=" * 60)
         fix_imports(OUTPUT_DIR / "chatbot_pb2_grpc.py")
         fix_imports(OUTPUT_DIR / "playbook_flow_pb2_grpc.py")
-        fix_imports(OUTPUT_DIR / "a2a_admin_pb2_grpc.py")
-        # a2a_admin_pb2.py imports chatbot_pb2 (cross-proto, aliased) — fix it too.
-        fix_cross_import(
-            OUTPUT_DIR / "a2a_admin_pb2.py",
-            "import chatbot_pb2 as chatbot__pb2",
-            "from src.grpc_generated import chatbot_pb2 as chatbot__pb2",
-        )
 
         print("\n" + "=" * 60)
         print("All done! gRPC code is ready to use.")
@@ -125,21 +115,6 @@ def main():
     except Exception as e:
         print(f"ERROR: {str(e)}")
         sys.exit(1)
-
-
-def fix_cross_import(pb2_file: Path, old_import: str, new_import: str):
-    """Rewrite an aliased cross-proto import in a generated *_pb2.py file."""
-    if not pb2_file.exists():
-        print(f"Warning: File not found: {pb2_file}")
-        return
-    content = pb2_file.read_text()
-    if new_import in content:
-        print(f"No import fixes needed in {pb2_file.name}")
-    elif old_import in content:
-        pb2_file.write_text(content.replace(old_import, new_import))
-        print(f"Fixed cross-proto import in {pb2_file.name}")
-    else:
-        print(f"No import fixes needed in {pb2_file.name}")
 
 
 def fix_imports(grpc_file: Path):

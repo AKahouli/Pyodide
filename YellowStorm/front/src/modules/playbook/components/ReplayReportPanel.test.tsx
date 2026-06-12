@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getExecution } from '../api';
 import { ReplayReportPanel } from './ReplayReportPanel';
@@ -16,13 +16,6 @@ async function runPendingPoll() {
     await Promise.resolve();
     await Promise.resolve();
   });
-}
-
-function openAdvancedDiagnostics() {
-  const trigger = screen.getByRole('button', { name: /Advanced diagnostics/i });
-  if (trigger.getAttribute('aria-expanded') !== 'true') {
-    fireEvent.click(trigger);
-  }
 }
 
 const apiClientMock = vi.hoisted(() => ({
@@ -45,81 +38,17 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.loading': 'Loading replay report',
         'replayReport.empty': 'No replay report was recorded for this step.',
         'replayReport.loadFailed': 'Replay report failed to load.',
-        'replayReport.title': 'Reference Check',
-        'replayReport.outcome.consistent.title': 'Consistent with reference',
-        'replayReport.outcome.consistent.description': 'The result preserved the expected answer structure and required tool steps.',
-        'replayReport.outcome.needsReview.title': 'Needs review',
-        'replayReport.outcome.needsReview.description': 'The result mostly follows the reference, but one rule needs attention.',
-        'replayReport.outcome.notUsed.title': 'Reference was not used',
-        'replayReport.outcome.notUsed.description': 'The latest run was live because the reference rules could not be applied.',
-        'replayReport.outcome.notUsedWithReason': 'The reference was not used. Reason: {{reason}}',
-        'replayReport.outcome.blocked.title': 'Reference blocked',
-        'replayReport.outcome.blocked.description': 'The result did not satisfy the reference rules.',
-        'replayReport.outcome.pending.title': 'Checking consistency',
-        'replayReport.outcome.pending.description': 'The run completed. The consistency check is still being prepared.',
-        'replayReport.outcome.score': 'Score',
-        'replayReport.trust.consistent': 'Ready to trust',
-        'replayReport.trust.needsReview': 'Review needed',
-        'replayReport.trust.notUsed': 'Reference not used',
-        'replayReport.trust.blocked': 'Do not trust yet',
-        'replayReport.trust.pending': 'Check in progress',
-        'replayReport.rulesChecked': 'Rules checked',
-        'replayReport.recommendedFix': 'Recommended fix',
-        'replayReport.recommendedActions': 'Recommended actions',
-        'replayReport.action.reviewReference': 'Review why the reference was not used.',
-        'replayReport.action.createExpectedFormat': 'Create or edit the expected answer format.',
-        'replayReport.action.reviewChanges': 'Review the changed rules before trusting this run.',
-        'replayReport.action.updateReference': 'Update the reference after reviewing the latest run.',
-        'replayReport.action.keepReference': 'No action needed. Keep using this reference.',
-        'replayReport.fix.createExpectedFormat': 'The reference does not define the expected answer format.',
-        'replayReport.fix.reviewChanges': 'Review the listed changes before trusting this run.',
-        'replayReport.fix.updateReference': 'Update the reference only after confirming this run is trusted.',
-        'replayReport.rule.sameContext': 'Same business context',
-        'replayReport.rule.sameIntent': 'Same task intent',
-        'replayReport.rule.sameReasoning': 'Same reasoning path',
-        'replayReport.rule.requiredEvidenceSteps': 'Required evidence steps',
-        'replayReport.rule.expectedAnswerFormat': 'Expected answer format',
-        'replayReport.rule.sameAnswerMeaning': 'Same answer meaning',
-        'replayReport.ruleStatus.passed': 'Passed',
-        'replayReport.ruleStatus.changed': 'Changed',
-        'replayReport.ruleStatus.needsSetup': 'Needs setup',
-        'replayReport.ruleStatus.notChecked': 'Not checked',
-        'replayReport.humanInput.title': 'Human input',
-        'replayReport.humanInput.used': 'Human input from the reference was reused or was not needed in this run.',
-        'replayReport.humanInput.contextChanged': 'Human input context changed compared with the reference.',
-        'replayReport.humanInput.newClarifications': 'This run asked for {{count}} new clarification(s) compared with the reference.',
+        'replayReport.title': 'replayReport.title',
         'replayReport.notApplicable': 'Replay evaluation is not applicable for this step.',
         'replayReport.pending': 'Replay report is still pending for this step.',
-        'replayReport.postRun.title': 'Run comparison',
-        'replayReport.postRun.detailsTitle': 'Advanced diagnostics',
-        'replayReport.advancedHint': 'Open technical scores and raw judge output.',
+        'replayReport.postRun.title': 'Replay Evaluation Synthesis',
         'replayReport.postRun.loading': 'Replay post-run evaluation is in progress.',
         'replayReport.postRun.notAvailable': 'Post-run evaluation is not available for this run yet.',
         'replayReport.postRun.summary': 'Summary',
         'replayReport.postRun.verdict.match': 'Match',
         'replayReport.postRun.verdict.minor_drift': 'Minor Drift',
         'replayReport.postRun.action.accept': 'Accept',
-        'replayReport.postRun.action.review': 'Review',
-        'replayReport.postRun.overallScore': 'Overall',
-        'replayReport.postRun.tooltip.overallScore': 'Overall definition and formula.',
-        'replayReport.postRun.semanticMatch': 'Semantic Match',
-        'replayReport.postRun.outputFormat': 'Output Format',
-        'replayReport.postRun.toolSequence': 'Tool Sequence',
-        'replayReport.postRun.toolDefinition': 'Tool Definition',
-        'replayReport.postRun.reasoning': 'Reasoning',
-        'replayReport.postRun.tooltip.semanticMatch': 'Semantic match definition and formula.',
-        'replayReport.postRun.tooltip.outputFormat': 'Output format definition and formula.',
-        'replayReport.postRun.tooltip.toolSequence': 'Tool sequence definition and formula.',
-        'replayReport.postRun.tooltip.toolDefinition': 'Tool definition definition and formula.',
-        'replayReport.postRun.tooltip.reasoning': 'Reasoning definition and formula.',
-        'replayReport.postRun.preserved': 'Preserved points',
-        'replayReport.postRun.missing': 'Missing points',
-        'replayReport.postRun.changed': 'Changed points',
-        'replayReport.postRun.metadataTitle': 'Run comparison details',
-        'replayReport.postRun.metadataHint': 'Show technical run-comparison verdict, action, model, timestamp, overall score, failure reason, and raw judge output.',
-        'replayReport.outcome.trustLevel': 'Trust Level',
-        'replayReport.outcome.tooltip.trustLevel': 'Trust level definition and formula.',
-        'replayReport.hitl.title': 'Human input diagnostics',
+        'replayReport.hitl.title': 'HITL replay summary',
         'replayReport.hitl.baselineCount': 'Baseline pauses',
         'replayReport.hitl.runtimeCount': 'Runtime pauses',
         'replayReport.hitl.reusedMemoryCount': 'Reusable memories',
@@ -140,7 +69,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.verdict': 'replayReport.verdict',
         'replayReport.verdictValue.warning': 'Warning',
         'replayReport.overallScore': 'replayReport.overallScore',
-        'replayReport.overallScoreTooltip': 'Technical overall definition and formula.',
         'replayReport.applied': 'Applied',
         'replayReport.skipped': 'Skipped',
         'replayReport.mode': 'replayReport.mode',
@@ -224,15 +152,12 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.semanticExtra': 'Extra points',
         'replayReport.semanticStaleContext': 'Stale context references',
         'replayReport.semanticUnsupportedClaims': 'Unsupported claims',
-        'replayReport.section.toolCalls': 'Tool call evidence',
-        'replayReport.toolComparison.expected': 'Reference tool evidence',
-        'replayReport.toolComparison.observed': 'Current tool evidence',
-        'replayReport.toolComparison.index': 'Call',
-        'replayReport.toolComparison.capturedText': 'Captured text / result',
-        'replayReport.toolComparison.arguments': 'Arguments',
+        'replayReport.section.toolCalls': 'Expected vs observed tool calls',
+        'replayReport.toolComparison.expected': 'Expected',
+        'replayReport.toolComparison.observed': 'Observed',
         'replayReport.toolComparison.reasons': 'Reasons',
         'replayReport.toolComparison.unknownTool': 'Unknown tool',
-        'replayReport.toolComparisonStatus.matched': 'Tool used',
+        'replayReport.toolComparisonStatus.matched': 'Matched',
         'replayReport.toolComparisonStatus.warning': 'Warning',
         'replayReport.toolComparisonStatus.failed': 'Failed',
         'replayReport.toolComparisonStatus.missing': 'Missing',
@@ -380,29 +305,15 @@ describe('ReplayReportPanel', () => {
       { params: { executionId: 'exec-1', iteration: 0, limit: 1 } },
     );
 
-    expect(screen.getByText('Reference Check')).toBeInTheDocument();
-    expect(screen.getByText('Review needed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Trust level definition and formula.' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Semantic match definition and formula.' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Output format definition and formula.' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tool sequence definition and formula.' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tool definition definition and formula.' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reasoning definition and formula.' })).toBeInTheDocument();
-    expect(screen.queryByText('Run comparison')).not.toBeInTheDocument();
-    expect(screen.getByText('Review the changed rules before trusting this run.')).toBeInTheDocument();
-    expect(screen.getByText('Rules checked')).toBeInTheDocument();
-    openAdvancedDiagnostics();
+    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
+    expect(screen.getByText(/replayReport.overallScore: 76%/)).toBeInTheDocument();
     expect(screen.getByText(/Structural drift was detected./)).toBeInTheDocument();
     expect(screen.getByText(/node snapshot changed./)).toBeInTheDocument();
-    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Technical overall definition and formula.' })).toBeInTheDocument();
     expect(screen.getByText('Drift policy')).toBeInTheDocument();
     expect(screen.getByText('Replay confidence')).toBeInTheDocument();
-    expect(screen.getAllByText('Reasoning sequence drifted.').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Tool argument shape drifted.').length).toBeGreaterThan(0);
+    expect(screen.getByText('Reasoning sequence drifted.')).toBeInTheDocument();
+    expect(screen.getByText('Tool argument shape drifted.')).toBeInTheDocument();
     expect(screen.getByText('Output format match')).toBeInTheDocument();
-    expect(screen.getByText('Run comparison')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Overall definition and formula.' })).toBeInTheDocument();
   });
 
   it('polls for replay-enabled tasks even when the execution is not single-step', async () => {
@@ -500,7 +411,7 @@ describe('ReplayReportPanel', () => {
 
     await runPendingPoll();
 
-    expect(screen.getByText('Reference Check')).toBeInTheDocument();
+    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
     expect(apiClientMock.get).toHaveBeenCalledTimes(2);
   });
 
@@ -593,7 +504,7 @@ describe('ReplayReportPanel', () => {
     await runPendingPoll();
 
     expect(apiClientMock.get).toHaveBeenCalledTimes(2);
-    expect(screen.getByText('Reference Check')).toBeInTheDocument();
+    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
   });
 
   it('renders localized intent and additional-tool drift findings', async () => {
@@ -687,7 +598,6 @@ describe('ReplayReportPanel', () => {
 
     await flushAsyncWork();
 
-    openAdvancedDiagnostics();
     expect(screen.getByText('Replay intent could not be evaluated.')).toBeInTheDocument();
     expect(screen.getAllByText('Additional tools were used but not allowed.').length).toBeGreaterThan(0);
   });
@@ -771,63 +681,10 @@ describe('ReplayReportPanel', () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByText('Rules checked')).toBeInTheDocument();
-    expect(screen.getByText('Reference not used')).toBeInTheDocument();
-    expect(screen.getAllByText(/The reference was not used. Reason:/).length).toBeGreaterThan(0);
-    expect(screen.queryByText('What changed')).not.toBeInTheDocument();
-    expect(screen.getByText('Recommended actions')).toBeInTheDocument();
-    expect(screen.getByText('Review why the reference was not used.')).toBeInTheDocument();
-    openAdvancedDiagnostics();
     expect(screen.getByText('Signal evaluation')).toBeInTheDocument();
     expect(screen.getByText(/Skipped summary:/)).toBeInTheDocument();
     expect(screen.getAllByText('Replay confidence was below the required threshold.').length).toBeGreaterThan(0);
     expect(screen.queryByText('Drift policy')).not.toBeInTheDocument();
-  });
-
-  it('renders a consistent reference outcome with keep-reference action', async () => {
-    apiClientMock.get.mockResolvedValueOnce({
-      data: {
-        data: [{
-          id: 'report-pass', executionId: 'exec-pass', flowId: 'playbook-1', taskId: 'task-pass', replayId: 'replay-pass',
-          validationVersion: 1, mode: 'replay_flex', applied: true, confidenceScore: 95, appliedSections: [], skippedSections: [],
-          invalidationReasons: [], confidenceFactors: {}, outputContractEvaluated: true, outputContractPassed: true,
-          structuralDriftScore: null, toolPolicyScore: null, verdict: 'pass', overallScore: 95, verdictReasons: [],
-          structuralDriftReasons: [], semanticMatch: null, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
-        }],
-      },
-    });
-
-    render(<ReplayReportPanel playbookId="playbook-1" taskId="task-pass" executionId="exec-pass" execution={null} />);
-
-    await flushAsyncWork();
-
-    expect(screen.getByText('Ready to trust')).toBeInTheDocument();
-    expect(screen.getByText('Trust Level')).toBeInTheDocument();
-    expect(screen.getByText('95%')).toBeInTheDocument();
-    expect(screen.getByText('No action needed. Keep using this reference.')).toBeInTheDocument();
-  });
-
-  it('renders a blocked reference outcome with update-reference action', async () => {
-    apiClientMock.get.mockResolvedValueOnce({
-      data: {
-        data: [{
-          id: 'report-fail', executionId: 'exec-fail', flowId: 'playbook-1', taskId: 'task-fail', replayId: 'replay-fail',
-          validationVersion: 1, mode: 'replay_strict', applied: true, confidenceScore: 95, appliedSections: [], skippedSections: [],
-          invalidationReasons: [], confidenceFactors: {}, outputContractEvaluated: true, outputContractPassed: false,
-          structuralDriftScore: null, toolPolicyScore: null, verdict: 'fail', overallScore: 42, verdictReasons: ['output_contract_failed'],
-          structuralDriftReasons: [], semanticMatch: null, outputContractStatus: { status: 'failed', reason: 'output_contract_failed' },
-          createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
-        }],
-      },
-    });
-
-    render(<ReplayReportPanel playbookId="playbook-1" taskId="task-fail" executionId="exec-fail" execution={null} />);
-
-    await flushAsyncWork();
-
-    expect(screen.getByText('Do not trust yet')).toBeInTheDocument();
-    expect(screen.getByText('Update the reference after reviewing the latest run.')).toBeInTheDocument();
-    expect(screen.getByText('Create or edit the expected answer format.')).toBeInTheDocument();
   });
 
   it('shows not evaluated reasons instead of empty semantic and tooling summaries', async () => {
@@ -891,7 +748,6 @@ describe('ReplayReportPanel', () => {
 
     expect(screen.getAllByText('No semantic evaluation was recorded for this replay.').length).toBeGreaterThan(0);
     expect(screen.getByText('No observed tool trace was captured for this replay.')).toBeInTheDocument();
-    openAdvancedDiagnostics();
     expect(screen.queryByText('Structural & tooling')).not.toBeInTheDocument();
   });
 
@@ -951,15 +807,8 @@ describe('ReplayReportPanel', () => {
     render(<ReplayReportPanel playbookId="playbook-1" taskId="task-1" executionId="exec-1" iteration={0} />);
     await flushAsyncWork();
 
-    openAdvancedDiagnostics();
-    expect(screen.getByText('Tool call evidence')).toBeInTheDocument();
-    expect(screen.getByText('Reference tool evidence')).toBeInTheDocument();
-    expect(screen.getByText('Current tool evidence')).toBeInTheDocument();
-    expect(screen.getAllByText('Captured text / result')).toHaveLength(2);
-    expect(screen.getAllByText('Arguments')).toHaveLength(2);
+    expect(screen.getByText('Expected vs observed tool calls')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.queryByText('Expected tool request')).not.toBeInTheDocument();
-    expect(screen.queryByText('Actual tool request')).not.toBeInTheDocument();
     expect(screen.queryByText('A required tool call was missing.')).not.toBeInTheDocument();
     expect(screen.getByText('Observed tool arguments still used stale baseline context values.')).toBeInTheDocument();
   });
@@ -991,7 +840,6 @@ describe('ReplayReportPanel', () => {
     render(<ReplayReportPanel playbookId="playbook-1" taskId="task-1" executionId="exec-1" iteration={0} />);
     await flushAsyncWork();
 
-    openAdvancedDiagnostics();
     expect(screen.getByText(/Preserved points/)).toBeInTheDocument();
     expect(screen.getByText(/Stale context references/)).toBeInTheDocument();
     expect(screen.getByText(/Unsupported claims/)).toBeInTheDocument();
@@ -1123,17 +971,14 @@ describe('ReplayReportPanel', () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByText('Reference Check')).toBeInTheDocument();
+    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
     expect(screen.getByText('Replay post-run evaluation is in progress.')).toBeInTheDocument();
 
     await runPendingPoll();
 
-    expect(screen.queryByText('Run comparison')).not.toBeInTheDocument();
-    expect(screen.getByText('The replay preserved the core meaning.')).toBeInTheDocument();
-    openAdvancedDiagnostics();
-    expect(screen.getByText('Run comparison details')).toBeInTheDocument();
-    expect(screen.getByText('Run comparison')).toBeInTheDocument();
+    expect(screen.getByText('Replay Evaluation Synthesis')).toBeInTheDocument();
     expect(screen.getByText('Minor Drift')).toBeInTheDocument();
+    expect(screen.getByText('The replay preserved the core meaning.')).toBeInTheDocument();
   });
 
   it('renders HITL replay summary counts and findings', async () => {
@@ -1165,10 +1010,7 @@ describe('ReplayReportPanel', () => {
     render(<ReplayReportPanel playbookId="playbook-1" taskId="task-hitl" executionId="exec-hitl" iteration={0} />);
     await flushAsyncWork();
 
-    expect(screen.getByText('Human input')).toBeInTheDocument();
-    expect(screen.getByText('This run asked for 1 new clarification(s) compared with the reference.')).toBeInTheDocument();
-    openAdvancedDiagnostics();
-    expect(screen.getByText('Human input diagnostics')).toBeInTheDocument();
+    expect(screen.getByText('HITL replay summary')).toBeInTheDocument();
     expect(screen.getByText('Baseline pauses')).toBeInTheDocument();
     expect(screen.getByText('Runtime pauses')).toBeInTheDocument();
     expect(screen.getByText('Baseline pauses').parentElement).toHaveTextContent('2');

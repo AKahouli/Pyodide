@@ -15,7 +15,6 @@ import type {
   PlaybookStepJudgeUpdatedEvent,
   TaskResult,
 } from '@/modules/playbook/types';
-import { normalizeJudgeHistoryEntry, normalizeJudgeResult } from '@/modules/playbook/api';
 
 function now() {
   return new Date().toISOString();
@@ -51,11 +50,9 @@ export function mergeStepJudgeUpdated(previous: PlaybookExecution | undefined, d
   return updateTask(previous, data.taskId, (task) => ({
     judgeStatus: data.judgeStatus,
     judgeScoringMode: data.advisorScoringMode ?? task.judgeScoringMode ?? null,
-    judgeResult: data.judgeResult ? normalizeJudgeResult(data.judgeResult) : null,
+    judgeResult: data.judgeResult ?? null,
     judgeError: data.judgeError ?? null,
-    judgeHistory: data.judgeHistoryEntry
-      ? [...(task.judgeHistory || []), normalizeJudgeHistoryEntry(data.judgeHistoryEntry, (task.judgeHistory || []).length)]
-      : task.judgeHistory || [],
+    judgeHistory: data.judgeHistoryEntry ? [...(task.judgeHistory || []), data.judgeHistoryEntry] : task.judgeHistory || [],
   }));
 }
 

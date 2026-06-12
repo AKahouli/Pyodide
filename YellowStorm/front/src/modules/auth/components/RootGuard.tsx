@@ -18,18 +18,14 @@ import { LandingPage } from './LandingPage';
 import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
-import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 
 export function RootGuard() {
   const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
 
-  // Keep SSE connections alive at app level so streaming persists across
-  // navigation. v2 uses its own per-user pipe (one connection for all
-  // conversation-v2 sessions) so multiple conversations can stream at once.
+  // Keep SSE connection alive at app level so streaming persists across navigation
   useConversationStream();
-  useConversationV2StreamConnection();
 
   // TEMP deploy marker — open the browser console on the homepage to confirm the
   // latest front build is live. Remove after verifying.

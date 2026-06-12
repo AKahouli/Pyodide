@@ -25,17 +25,14 @@ def test_build_step_tool_scope_prefers_display_name_for_mounted_filename() -> No
         {},
     )
 
-    assert scope.file_names == ["doc-1-CV_Kevin_Diallo.pdf"]
-    assert scope.documents_by_port == {"default": ["doc-1-CV_Kevin_Diallo.pdf"]}
+    assert scope.input_files == ["doc-1"]
+    assert scope.documents_by_port == {"default": ["doc-1"]}
     assert scope.code_interpreter_files == [
         {
             "document_id": "doc-1",
             "filename": "CV_Kevin_Diallo.pdf",
-            "file_name": "doc-1-CV_Kevin_Diallo.pdf",
             "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
-            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert scope.mounted_filenames == ["CV_Kevin_Diallo.pdf"]
@@ -65,16 +62,13 @@ def test_build_step_tool_scope_normalizes_brain_context_fallback() -> None:
     assert scope.workspace_context == [
         {
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
             "documents": [
                 {
                     "id": "doc-1",
                     "_id": "doc-1",
                     "filename": "report.pdf",
-                    "file_name": "report.pdf",
                     "filepath": "user/workspace/doc-1/report.pdf",
                     "workspace_id": "workspace-1",
-                    "workspace_name": "workspace-1",
                 }
             ],
         }
@@ -133,17 +127,14 @@ def test_build_step_tool_scope_preserves_opaque_document_refs() -> None:
         },
     )
 
-    assert scope.file_names == ["report.xlsx"]
-    assert scope.documents_by_port == {"report": ["report.xlsx"]}
+    assert scope.input_files == ["doc-1"]
+    assert scope.documents_by_port == {"report": ["doc-1"]}
     assert scope.code_interpreter_files == [
         {
             "document_id": "doc-1",
             "filename": "report.xlsx",
-            "file_name": "report.xlsx",
             "filepath": "user/workspace/doc-1/report.xlsx",
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
-            "workspace_path": "user/workspace/doc-1",
         }
     ]
     assert scope.workspace_context == []
@@ -169,8 +160,8 @@ def test_build_step_tool_scope_keeps_opaque_refs_without_fallback_workspace() ->
         },
     )
 
-    assert scope.file_names == ["generated-report.xlsx"]
-    assert scope.documents_by_port == {"report": ["generated-report.xlsx"]}
+    assert scope.input_files == ["doc-2"]
+    assert scope.documents_by_port == {"report": ["doc-2"]}
     assert scope.code_interpreter_files == []
     assert scope.workspace_context == []
     assert scope.workspace_context_mode == "resolved_inputs_only"
@@ -199,10 +190,7 @@ def test_build_step_tool_scope_prefers_workspace_filename_when_hydrating() -> No
         {
             "document_id": "doc-1",
             "filename": "report.xlsx",
-            "file_name": "report.xlsx",
             "filepath": "user/workspace/doc-1/report.xlsx",
             "workspace_id": "workspace-1",
-            "workspace_name": "workspace-1",
-            "workspace_path": "user/workspace/doc-1",
         }
     ]

@@ -262,46 +262,6 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Router router-1 condition 0 source source-node cannot reach router');
   });
 
-  it('rejects deterministic router conditions whose source only reaches the router through conditional flow', () => {
-    expect(() => {
-      service.validate([
-        ...buildNodes(),
-        {
-          id: 'router-2',
-          kind: 'router',
-          input: { ports: [] },
-          output: { ports: [] },
-          routerConfig: {
-            outputLabels: ['continue'],
-            maxIterations: 1,
-            conditions: [],
-          },
-        },
-        {
-          id: 'router-1',
-          kind: 'router',
-          input: { ports: [] },
-          output: { ports: [] },
-          routerConfig: {
-            outputLabels: ['valid', 'invalid'],
-            maxIterations: 3,
-            defaultLabel: 'invalid',
-            conditions: [{
-              label: 'valid',
-              sourceNode: 'source-node',
-              sourcePort: 'summary',
-              operator: 'equals',
-              value: 'ok',
-            }],
-          },
-        },
-      ] as any, [
-        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-2' },
-        { id: 'edge-2', kind: 'conditional', source: 'router-2', target: 'router-1', routerLabel: 'continue' },
-      ] as any, [] as any);
-    }).toThrow('Router router-1 condition 0 source source-node is not guaranteed to run before the router');
-  });
-
   it('rejects cycles that do not include a router', () => {
     expect(() => {
       service.validate([

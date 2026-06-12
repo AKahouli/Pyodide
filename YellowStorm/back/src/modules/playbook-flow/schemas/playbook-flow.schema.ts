@@ -182,9 +182,6 @@ export class Flow {
   @Prop({ required: true, type: Number, default: 1 })
   schemaVersion!: number;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  definitionRevision!: number;
-
   @Prop({ required: true, type: String, minlength: 2, maxlength: 100 })
   name!: string;
 

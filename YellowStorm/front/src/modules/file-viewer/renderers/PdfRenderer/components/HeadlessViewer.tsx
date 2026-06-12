@@ -19,7 +19,6 @@ import { PendingNavigationEffect } from './PendingNavigationEffect';
 import { ViewerToolbar } from './ViewerToolbar';
 import { HighlightOnLoad } from './HighlightOnLoad';
 import { SearchControls } from './SearchControls';
-import { CitationBBoxOverlay } from './CitationBBoxOverlay';
 import { extractHighlightText } from '../utils/text';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -166,7 +165,6 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
                         <SelectionLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <AnnotationLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <SearchLayer documentId={activeDocumentId} pageIndex={pageIndex} />
-                        <CitationBBoxOverlay bbox={pendingNavigation?.highlightBBox} documentId={activeDocumentId} page={pendingNavigation?.page} pageIndex={pageIndex} />
                       </PagePointerProvider>
                     )}
                   />

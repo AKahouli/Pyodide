@@ -71,26 +71,14 @@ describe('playbook query mutation actions', () => {
     } = await import('@/modules/playbook/query/mutationActions');
     const invalidateSpy = vi.spyOn(playbookQueryClient, 'invalidateQueries');
 
-    apiMocks.patchFlowDelta.mockResolvedValueOnce({
-      updatedAt: '2026-05-30T00:00:00.000Z',
-      definitionRevision: 1,
-      applied: true,
-      patchSummary: {
-        scalarFields: 1,
-        nodesUpserted: 0,
-        nodesDeleted: 0,
-        edgeChanges: 0,
-        dataBindingChanges: 0,
-        positionUpdates: 0,
-      },
-    });
+    apiMocks.patchFlowDelta.mockResolvedValueOnce({ updatedAt: '2026-05-30T00:00:00.000Z' });
     apiMocks.startFlowExecution.mockResolvedValueOnce({ executionId: 'exec-1' });
     apiMocks.cancelFlowExecution.mockResolvedValueOnce(undefined);
     apiMocks.resumeFlowApproval.mockResolvedValueOnce({ ok: true });
     apiMocks.resumePlaybookFromStep.mockResolvedValueOnce({ executionId: 'exec-2' });
 
     const deltaPatch = {
-      expectedDefinitionRevision: 0,
+      expectedUpdatedAt: '2026-05-30T00:00:00.000Z',
       patch: { fields: { name: 'Saved' } },
     };
 

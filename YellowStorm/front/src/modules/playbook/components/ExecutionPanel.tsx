@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Clock, Square, ChevronDown, History, GitCompareArrows, PanelRightClose, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,7 +13,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { ExecutionStepList } from './ExecutionStepList';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
-import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
 import {
   usePlaybookStore,
   useCurrentExecution,
@@ -256,14 +255,6 @@ export function ExecutionPanel({
   const sidebarDragStartX = useRef(0);
   const sidebarDragStartWidth = useRef(0);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidthFallback);
-  const [referenceModePrompt, setReferenceModePrompt] = useState<ReferenceModePromptState>(null);
-  const taskOrderById = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const task of playbook?.tasks ?? []) {
-      map.set(task.id, task.executionOrder + 1);
-    }
-    return map;
-  }, [playbook?.tasks]);
   const visibleExecutionStatus = execution
     ? (execution.taskResults.some((taskResult) => taskResult.status === 'running')
       ? 'running'
@@ -380,13 +371,8 @@ export function ExecutionPanel({
         preserveOutputFormat: options?.preserveOutputFormat || false,
       });
       await fetchExecution(execution.playbookId, execution.id);
-      const task = playbook?.tasks.find((candidate) => candidate.id === taskId);
-      setReferenceModePrompt({
-        taskId,
-        taskTitle: task?.title || taskResult.nodeTitle || taskId,
-      });
     },
-    [execution, fetchExecution, playbook?.tasks, validateTaskReplay],
+    [execution, fetchExecution, validateTaskReplay],
   );
 
   const handleGrabOutputFormat = useCallback(
@@ -474,7 +460,7 @@ export function ExecutionPanel({
   const canDeleteAll = history.length > 0;
 
   const handleStepReplayModeChange = useCallback(
-    (taskId: string, mode: StepReplayMode) => {
+    (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => {
       if (!playbook) return;
       const updatedTasks = playbook.tasks.map((task) =>
         task.id === taskId ? { ...task, stepReplayMode: mode } : task,
@@ -483,12 +469,6 @@ export function ExecutionPanel({
     },
     [playbook, updateTasks],
   );
-
-  const handleReferenceModeChoice = useCallback((mode: StepReplayMode) => {
-    if (!referenceModePrompt) return;
-    handleStepReplayModeChange(referenceModePrompt.taskId, mode);
-    setReferenceModePrompt(null);
-  }, [handleStepReplayModeChange, referenceModePrompt]);
 
   if (!execution) {
     return (
@@ -534,7 +514,6 @@ export function ExecutionPanel({
   }
 
   return (
-    <>
     <div
       className="relative flex h-full shrink-0 flex-col overflow-hidden border-l bg-background"
       style={{
@@ -603,7 +582,6 @@ export function ExecutionPanel({
           selectedIterationIndex={selectedIterationIndex}
           onSelectStep={handleSelectStep}
           pageMode={pageMode}
-          taskOrderById={taskOrderById}
         />
         <ExecutionStepDetail
           step={selectedResult}
@@ -630,11 +608,5 @@ export function ExecutionPanel({
         />
       </div>
     </div>
-      <ReferenceModePromptDialog
-        prompt={referenceModePrompt}
-        onClose={() => setReferenceModePrompt(null)}
-        onChooseMode={handleReferenceModeChoice}
-      />
-    </>
   );
 }

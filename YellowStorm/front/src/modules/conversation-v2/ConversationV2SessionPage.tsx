@@ -3,6 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { conversationV2Api } from './api';
 import { useConversationV2Store } from './store';
+import { useConversationV2Stream } from './useStream';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
 import { ConversationV2Header } from './components/ConversationV2Header';
@@ -31,28 +32,27 @@ export default function ConversationV2SessionPage() {
   const initialModel = (location.state as LocationState | null)?.model;
 
   const {
-    switchToSession,
+    setSessionId,
     setSystemWorkspaceId,
     setWorkspaceIds,
     replayEvents,
-    setStreaming,
+    reset,
     streamError,
     events,
     hydrateSelectedModelForSession,
-    sendMessage,
   } = useConversationV2Store(
     useShallow((s) => ({
-      switchToSession: s.switchToSession,
+      setSessionId: s.setSessionId,
       setSystemWorkspaceId: s.setSystemWorkspaceId,
       setWorkspaceIds: s.setWorkspaceIds,
       replayEvents: s.replayEvents,
-      setStreaming: s.setStreaming,
+      reset: s.reset,
       streamError: s.streamError,
       events: s.events,
       hydrateSelectedModelForSession: s.hydrateSelectedModelForSession,
-      sendMessage: s.sendMessage,
     })),
   );
+  const { send, openLive } = useConversationV2Stream();
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const sentInitialForSession = useRef<string | null>(null);
@@ -69,41 +69,20 @@ export default function ConversationV2SessionPage() {
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+    reset();
     // Close the file viewer too — it's a global Zustand store, so a tab opened
     // in conversation A would otherwise stay open when navigating to B.
     useFileViewerStore.getState().closeViewer();
-    // Switch the on-screen conversation. If this session is streaming in the
-    // background (its live state is cached), we hydrate instantly and skip the
-    // server reload + spinner — that's what makes switching between concurrent
-    // conversations feel instant. Otherwise we fall through to a fresh load.
-    const hydratedFromCache = switchToSession(sessionId);
-    // After switchToSession so the model-persistence path knows which session
-    // to write under. New conversations leave selectedModelId null → the
-    // Composer falls back to the admin default.
+    setSessionId(sessionId);
+    // After setSessionId so that setSelectedModelId's persistence path knows
+    // which session to write under. If there's no localStorage entry, this
+    // leaves selectedModelId: null — the Composer falls through to the admin
+    // default, which is exactly what we want for fresh conversations.
     hydrateSelectedModelForSession(sessionId);
     // Idempotent: a no-op if models are already cached (≤ 5 min old).
     void useModelsStore.getState().fetchModels().catch(() => undefined);
-    setNotFound(false);
-
-    if (hydratedFromCache) {
-      // Live state already in memory; just refresh pointer metadata.
-      setLoading(false);
-      (async () => {
-        try {
-          const pointer = await conversationV2Api.getSession(sessionId);
-          if (cancelled) return;
-          setSystemWorkspaceId(pointer.systemWorkspaceId);
-          setWorkspaceIds(pointer.workspaceIds ?? []);
-        } catch {
-          /* keep the cached view */
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }
-
     setLoading(true);
+    setNotFound(false);
     (async () => {
       try {
         const pointer = await conversationV2Api.getSession(sessionId);
@@ -124,13 +103,8 @@ export default function ConversationV2SessionPage() {
         }
         replayEvents(collected);
 
-        // If the session is mid-turn server-side, show the thinking state; the
-        // per-user pipe delivers the rest (and a done/error to clear it). Guard
-        // the fresh-session case (status 'active' but no events yet).
         const nonTerminal = pointer.status === 'active' || pointer.status === 'waiting';
-        const last = collected[collected.length - 1];
-        const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
-        setStreaming(nonTerminal && collected.length > 0 && !lastIsTerminal);
+        if (nonTerminal) openLive();
       } catch {
         if (cancelled) return;
         setNotFound(true);
@@ -141,7 +115,7 @@ export default function ConversationV2SessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+  }, [sessionId, setSessionId, setSystemWorkspaceId, setWorkspaceIds, replayEvents, reset, hydrateSelectedModelForSession, openLive]);
 
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send
@@ -151,12 +125,12 @@ export default function ConversationV2SessionPage() {
     if (!sessionId || !initialMessage) return;
     if (sentInitialForSession.current === sessionId) return;
     sentInitialForSession.current = sessionId;
-    void sendMessage(initialMessage, initialModel);
+    send(initialMessage, initialModel);
     // Wipe the location state so a refresh doesn't replay the same prompt.
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, sessionId, initialMessage, initialModel, sendMessage]);
+  }, [loading, notFound, sessionId, initialMessage, initialModel, send]);
 
   if (loading) {
     return (
@@ -188,7 +162,7 @@ export default function ConversationV2SessionPage() {
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        <Composer onSend={sendMessage} />
+        <Composer onSend={send} />
       </div>
       <RightPanel />
       <FileViewerSidebar />

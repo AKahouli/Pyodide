@@ -301,9 +301,6 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         sourceData.pageContent = citation.text_source.page_content || '';
         sourceData.workspaceId = citation.text_source.workspace_id || '';
         sourceData.reference = citation.text_source.reference || '';
-        sourceData.highlightText = citation.text_source.highlight_text || '';
-        sourceData.highlightBBox = citation.text_source.highlight_bbox || [];
-        sourceData.blockBBox = citation.text_source.block_bbox || [];
       } else if (citation?.image_source) {
         sourceData.sourceType = 'image';
         sourceData.path = citation.image_source.path || '';
@@ -314,9 +311,6 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         sourceData.height = citation.image_source.height || '';
         sourceData.width = citation.image_source.width || '';
         sourceData.reference = citation.image_source.reference || '';
-        sourceData.highlightText = citation.image_source.highlight_text || '';
-        sourceData.highlightBBox = citation.image_source.highlight_bbox || [];
-        sourceData.blockBBox = citation.image_source.block_bbox || [];
       }
 
       return { type: 'citation' as ComponentType, data: sourceData };

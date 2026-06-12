@@ -18,7 +18,6 @@ from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerat
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents import handle_no_agents_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.manual_agents import handle_agents_provided_workflow
-from src.smart_rag.engines.multi_agent.agentic_workflows.single_agent import handle_single_agent_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.team_configuration import initialize_dependencies, create_team, \
     create_team_config
 
@@ -113,6 +112,4 @@ async def execute_workflow(team: AutoAgentGenerationTeam,
         await handle_no_agents_workflow(team, user_request, q, main_trace)
     elif user_request.agent_mode=="manual":
         await handle_agents_provided_workflow(team, user_request, q, main_trace)
-    elif user_request.agent_mode=="mono":
-        await handle_single_agent_workflow(team, user_request, q, main_trace)
     logger.info(f"Workflow execution completed - mode: {user_request.agent_mode}, session_id: {user_request.session_id}")

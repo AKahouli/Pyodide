@@ -150,8 +150,8 @@ class TestSmartRAGOrchestrator:
         mock_request.user_id = "user123"
         mock_request.session_id = "session456"
         mock_request.message = "Test user query"
-        # Missing required attribute (read during early param extraction) to trigger exception
-        del mock_request.brain_ids
+        # Missing required attributes to trigger exception
+        del mock_request.workspace_names
 
         mock_queue = AsyncMock()
 

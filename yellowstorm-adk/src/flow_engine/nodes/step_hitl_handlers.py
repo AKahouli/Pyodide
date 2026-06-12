@@ -23,7 +23,6 @@ from src.flow_engine.nodes.step_hitl import (
     _build_interrupt_payload,
     _flag,
     _meta_get,
-    append_hitl_transcript_block,
     build_clarification_pre_prompt,
     build_human_context_entry,
     extract_follow_up_question,
@@ -34,10 +33,7 @@ from src.flow_engine.nodes.step_hitl import (
 
 logger = get_logger(__name__)
 
-def _default_hitl_round_limit() -> int:
-    return max(int(getattr(get_settings(), "PLAYBOOK_MAX_HITL_ROUNDS", 5) or 0), 0)
-
-
+DEFAULT_CLARIFICATION_LIMIT = 3
 def _build_proceed_instruction(node_description: str) -> str:
     return (
         f"{node_description}\n\n"
@@ -79,9 +75,8 @@ async def handle_clarification_before(
     raw_limit = _meta_get(metadata, "max_clarifications", "maxClarifications")
     # Existing playbooks may omit maxClarifications; keep HITL useful by allowing
     # a short bounded clarification dialogue instead of a single partial answer.
-    clarification_limit = _default_hitl_round_limit() if raw_limit is None else max(int(raw_limit or 0), 0)
+    clarification_limit = DEFAULT_CLARIFICATION_LIMIT if raw_limit is None else max(int(raw_limit or 0), 0)
     clarification_prompt_text = str(_meta_get(metadata, "clarification_prompt", "clarificationPrompt") or "").strip()
-    transcript: list[dict[str, str]] = []
 
     llm = ChatOpenAI(
         base_url=settings.LITELLM_API_BASE_URL,
@@ -114,7 +109,6 @@ async def handle_clarification_before(
             label=label,
             node_description=node_description,
             round_number=round_number,
-            transcript=[*transcript, {"role": "assistant", "content": check_text}],
             resumable_actions=["reply", "skip"],
         )
         writer({"type": "NodeSuspended", "node_id": node_id, "payload": payload})
@@ -148,9 +142,7 @@ async def handle_clarification_before(
         )
         if context_entry:
             result.human_context.append(context_entry)
-        transcript.append({"role": "assistant", "content": check_text})
-        transcript.append({"role": "user", "content": user_reply})
-        node_description = append_hitl_transcript_block(node_description, transcript)
+        node_description = f"{node_description}\n\nClarification from user: {user_reply}"
         result.updated_description = node_description
 
     if not clarification_resolved:
@@ -230,7 +222,7 @@ async def handle_clarification_after(
         return result
 
     raw_limit = _meta_get(metadata, "max_clarifications", "maxClarifications")
-    clarification_limit = _default_hitl_round_limit() if raw_limit is None else max(int(raw_limit or 0), 0)
+    clarification_limit = DEFAULT_CLARIFICATION_LIMIT if raw_limit is None else max(int(raw_limit or 0), 0)
     if clarification_limit <= 0:
         return result
     if round_number > clarification_limit:
@@ -283,7 +275,7 @@ async def handle_clarification_after(
     )
     if context_entry:
         result.human_context.append(context_entry)
-    node_description = append_hitl_transcript_block(node_description, transcript)
+    node_description = f"{node_description}\n\nClarification from user: {user_reply}"
     result.updated_description = node_description
     result.needs_reexec = True
     return result

@@ -23,13 +23,7 @@ describe('PlaybookFlowIdempotencyService', () => {
     return crypto.createHash('sha256').update(JSON.stringify(sortKeys(body))).digest('hex');
   };
 
-  type StoredRecord = {
-    ownerId: string;
-    idempotencyKey: string;
-    payloadHash: string;
-    executionId?: string;
-    responseBody?: Record<string, unknown>;
-  };
+  type StoredRecord = { ownerId: string; idempotencyKey: string; payloadHash: string; executionId?: string };
 
   let stored: StoredRecord[] = [];
 
@@ -59,7 +53,6 @@ describe('PlaybookFlowIdempotencyService', () => {
           idempotencyKey: doc.idempotencyKey,
           payloadHash: doc.payloadHash,
           executionId: doc.executionId,
-          responseBody: doc.responseBody,
         };
         stored.push(record);
         return record;
@@ -139,38 +132,6 @@ describe('PlaybookFlowIdempotencyService', () => {
 
       await service.confirmLink(OWNER, KEY, 'exec-99');
       expect(stored[0].executionId).toBe('exec-99');
-    });
-  });
-
-  describe('reserveSave / confirmSaveResult', () => {
-    it('returns duplicate with stored response body for matching payload', async () => {
-      const payload = { flowId: 'f1', name: 'Saved' };
-      const hash = hashPayload(payload);
-      stored.push({
-        ownerId: OWNER,
-        idempotencyKey: KEY,
-        payloadHash: hash,
-        responseBody: { id: 'flow-1', definitionRevision: 2 },
-      });
-
-      const result = await service.reserveSave(OWNER, KEY, payload);
-      expect(result).toEqual({ type: 'duplicate', responseBody: { id: 'flow-1', definitionRevision: 2 } });
-    });
-
-    it('returns duplicate-pending when a matching save reservation has no response body yet', async () => {
-      const payload = { flowId: 'f1', name: 'Saved' };
-      const hash = hashPayload(payload);
-      stored.push({ ownerId: OWNER, idempotencyKey: KEY, payloadHash: hash });
-
-      const result = await service.reserveSave(OWNER, KEY, payload);
-      expect(result).toEqual({ type: 'duplicate-pending' });
-    });
-
-    it('stores response body when confirming a save result', async () => {
-      stored.push({ ownerId: OWNER, idempotencyKey: KEY, payloadHash: 'abc123' });
-
-      await service.confirmSaveResult(OWNER, KEY, { id: 'flow-1', applied: true });
-      expect(stored[0].responseBody).toEqual({ id: 'flow-1', applied: true });
     });
   });
 

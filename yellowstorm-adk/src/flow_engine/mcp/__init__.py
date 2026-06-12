@@ -11,39 +11,9 @@ logger = logging.getLogger(__name__)
 def _log_payload(value: Any) -> str:
     """Serialize payloads for full-fidelity logging."""
     try:
-        return json.dumps(_redact_log_payload(value), ensure_ascii=False, default=str, indent=2)
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
     except (TypeError, ValueError):
         return str(value)
-
-
-def _redact_log_payload(value: Any) -> Any:
-    if isinstance(value, dict):
-        redacted: Dict[str, Any] = {}
-        for key, nested in value.items():
-            if key == "image_base64" and isinstance(nested, str):
-                redacted[key] = f"[redacted base64 length={len(nested)}]"
-            else:
-                redacted[key] = _redact_log_payload(nested)
-        return redacted
-    if isinstance(value, list):
-        return [_redact_log_payload(item) for item in value]
-    return value
-
-
-def _is_locate_answer_citations_action(action_key: str) -> bool:
-    return "locate_answer_citations" in str(action_key or "")
-
-
-def _keeps_citation_fields(action_key: str) -> bool:
-    return _is_locate_answer_citations_action(action_key)
-
-
-def _strip_legacy_citation_fields(response: Dict[str, Any]) -> Dict[str, Any]:
-    stripped = dict(response)
-    stripped.pop("citation_sources", None)
-    stripped.pop("citations", None)
-    stripped.pop("sources", None)
-    return stripped
 
 
 def _display_source_name(value: Any) -> str:
@@ -278,20 +248,23 @@ def _normalize_mcp_response(
             "text": fallback_text,
             "result": parsed_payload,
         }
-        if _is_locate_answer_citations_action(action_key):
-            block_citation_sources = _normalize_search_result_blocks(
-                parsed_payload,
-                source_label=action_key or "Connector Search Result",
-            )
-            if block_citation_sources:
-                response["citation_sources"] = block_citation_sources
-
-        returned_response = (
-            response
-            if _keeps_citation_fields(action_key)
-            else _strip_legacy_citation_fields(response)
+        block_citation_sources = _normalize_search_result_blocks(
+            parsed_payload,
+            source_label=action_key or "Connector Search Result",
         )
-        return returned_response
+        if block_citation_sources:
+            response["citation_sources"] = block_citation_sources
+
+        logger.info(
+            "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
+            sorted(response.keys()),
+            0,
+            len(response.get("citation_sources", []))
+            if isinstance(response.get("citation_sources"), list)
+            else 0,
+            len(response.get("text", "")) if isinstance(response.get("text"), str) else 0,
+        )
+        return response
 
     if not isinstance(parsed_payload, dict):
         return fallback_text
@@ -315,12 +288,7 @@ def _normalize_mcp_response(
 
         content_mode = str(response.get("contentMode") or "").strip().lower()
         inline_text = response.get("text")
-        if (
-            _is_locate_answer_citations_action(action_key)
-            and content_mode == "inline_text"
-            and isinstance(inline_text, str)
-            and inline_text.strip()
-        ):
+        if content_mode == "inline_text" and isinstance(inline_text, str) and inline_text.strip():
             item_workspace_id = str(
                 item.get("workspace_id")
                 or item.get("brain_id")
@@ -350,11 +318,7 @@ def _normalize_mcp_response(
                 }
             ]
 
-    if (
-        _is_locate_answer_citations_action(action_key)
-        and "citation_sources" not in response
-        and "result" in response
-    ):
+    if "citation_sources" not in response and "result" in response:
         block_citation_sources = _normalize_search_result_blocks(
             response.get("result"),
             source_label=action_key or "Connector Search Result",
@@ -362,11 +326,7 @@ def _normalize_mcp_response(
         if block_citation_sources:
             response["citation_sources"] = block_citation_sources
 
-    if (
-        _is_locate_answer_citations_action(action_key)
-        and "citation_sources" not in response
-        and isinstance(response.get("blocks"), list)
-    ):
+    if "citation_sources" not in response and isinstance(response.get("blocks"), list):
         blocks_citation_sources = _normalize_blocks_list(
             response.get("blocks"),
             source_label=str(response.get("source") or action_key or ""),
@@ -376,9 +336,7 @@ def _normalize_mcp_response(
         if blocks_citation_sources:
             response["citation_sources"] = blocks_citation_sources
 
-    if _is_locate_answer_citations_action(action_key) and isinstance(
-        response.get("images"), list
-    ):
+    if isinstance(response.get("images"), list):
         image_citation_sources = _normalize_image_list(
             response.get("images"),
             source_label=str(response.get("source") or action_key or ""),
@@ -395,13 +353,19 @@ def _normalize_mcp_response(
     if normalized_sources:
         response["sources"] = normalized_sources
 
-    returned_response = (
-        response
-        if _keeps_citation_fields(action_key)
-        else _strip_legacy_citation_fields(response)
+    logger.info(
+        "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
+        sorted(response.keys()),
+        len(response.get("sources", []))
+        if isinstance(response.get("sources"), list)
+        else 0,
+        len(response.get("citation_sources", []))
+        if isinstance(response.get("citation_sources"), list)
+        else 0,
+        len(response.get("text", "")) if isinstance(response.get("text"), str) else 0,
     )
 
-    return returned_response
+    return response
 
 
 async def call_mcp_tool(
@@ -508,18 +472,8 @@ async def call_mcp_tool(
         if hasattr(result, "isError") and result.isError:
             content_parts = getattr(result, "content", []) or []
             error_texts = [p.text for p in content_parts if hasattr(p, "text")]
-            error_response = (
-                f"Connector action '{action_key}' failed: "
-                f"{'; '.join(error_texts) or 'Unknown error'}"
-            )
             logger.error("mcp_tool_error action=%s error_text=%s", action_key, "; ".join(error_texts) or "Unknown error")
-            logger.info(
-                "mcp_call_tool_response action=%s transport=%s response_payload=%s",
-                action_key,
-                transport_type,
-                _log_payload(error_response),
-            )
-            return error_response
+            return f"Connector action '{action_key}' failed: {'; '.join(error_texts) or 'Unknown error'}"
 
         content_parts = getattr(result, "content", []) or []
         texts = []
@@ -540,18 +494,42 @@ async def call_mcp_tool(
             else:
                 texts.append(str(part))
         response_text = "\n".join(texts) if texts else str(result)
+        logger.info(
+            "mcp_tool_response action=%s response_length=%s full_response=%s",
+            action_key,
+            len(response_text),
+            response_text,
+        )
+        if parsed_payload is not None:
+            logger.info(
+                "mcp_tool_structured_payload_detected action=%s payload_type=%s payload=%s",
+                action_key,
+                type(parsed_payload).__name__,
+                _log_payload(parsed_payload),
+            )
+        else:
+            logger.info(
+                "mcp_tool_no_structured_payload action=%s content_part_count=%s",
+                action_key,
+                len(content_parts),
+            )
         normalized_response = _normalize_mcp_response(
             parsed_payload, response_text, action_key=action_key
         )
-        logger.info(
-            "mcp_call_tool_response action=%s transport=%s response_payload=%s",
-            action_key,
-            transport_type,
-            _log_payload(normalized_response),
-        )
+        if isinstance(normalized_response, dict):
+            logger.info(
+                "mcp_tool_normalized_summary action=%s source_count=%s citation_source_count=%s normalized_response=%s",
+                action_key,
+                len(normalized_response.get("sources", []))
+                if isinstance(normalized_response.get("sources"), list)
+                else 0,
+                len(normalized_response.get("citation_sources", []))
+                if isinstance(normalized_response.get("citation_sources"), list)
+                else 0,
+                _log_payload(normalized_response),
+            )
         return normalized_response
     except Exception as e:
-        error_response = f"Connector action '{action_key}' failed: {str(e)}"
         logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, str(e))
         # Unwrap ExceptionGroup / TaskGroup sub-exceptions for visibility
         # BaseExceptionGroup is only a builtin on Python 3.11+; use backport on 3.10
@@ -568,13 +546,7 @@ async def call_mcp_tool(
                 if isinstance(sub, _BEG):
                     for nested in sub.exceptions:  # type: ignore[attr-defined]
                         logger.error("MCP nested-exception: action=%s type=%s error=%s", action_key, type(nested).__name__, str(nested))
-        logger.info(
-            "mcp_call_tool_response action=%s transport=%s response_payload=%s",
-            action_key,
-            transport_type,
-            _log_payload(error_response),
-        )
-        return error_response
+        return f"Connector action '{action_key}' failed: {str(e)}"
 
 
 def _build_headers(

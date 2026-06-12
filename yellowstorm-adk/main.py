@@ -34,10 +34,8 @@ from src.smart_rag.infrastructure.session.manager import (
     dispose_shared_engine,
 )
 from src.routers.evaluation_batch import router as evaluation_batch_router
-
+from google.adk.sessions.database_session_service import Base
 from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
-from src.a2a_gateway.repository import A2AAgentRepository, dispose_a2a_engine
-from src.a2a_gateway.router import serving_router as a2a_serving_router
 
 # Import gRPC server
 from src.grpc_server.server import start_grpc_server
@@ -96,13 +94,6 @@ async def lifespan(app: FastAPI):
         await EvaluationRepository.initialize()
     except Exception as e:
         logger.error(f"Failed to initialize evaluation repository: {e}")
-
-    # Initialize A2A gateway agent store
-    try:
-        logger.info("Initializing A2A agent store...")
-        await A2AAgentRepository.initialize()
-    except Exception as e:
-        logger.error(f"Failed to initialize A2A agent store: {e}")
 
     # Pre-initialize shared database engine for parallel access
     logger.info("Pre-initializing shared database engine...")
@@ -182,7 +173,6 @@ async def lifespan(app: FastAPI):
             logger.error(f"Error stopping gRPC server: {str(e)}")
 
     await dispose_evaluation_engine()
-    await dispose_a2a_engine()
     logger.info("Finished router chatbot (DOWN)")
     logger.info("Exiting...")
 
@@ -223,7 +213,6 @@ app.include_router(auth_router)
 app.include_router(playbook_router)
 app.include_router(evaluation_router)
 app.include_router(evaluation_batch_router)
-app.include_router(a2a_serving_router)
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",

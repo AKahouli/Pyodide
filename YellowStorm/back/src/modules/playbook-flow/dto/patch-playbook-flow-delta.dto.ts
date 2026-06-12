@@ -130,14 +130,9 @@ class PatchPlaybookFlowDeltaPatchDto {
 }
 
 export class PatchPlaybookFlowDeltaDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  expectedUpdatedAt?: string;
-
   @ApiProperty()
-  @IsNumber()
-  expectedDefinitionRevision!: number;
+  @IsString()
+  expectedUpdatedAt!: string;
 
   @ApiPropertyOptional()
   @IsOptional()

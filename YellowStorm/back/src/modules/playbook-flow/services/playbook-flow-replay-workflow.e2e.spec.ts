@@ -311,15 +311,6 @@ function createReplayWorkflowHarness() {
     { create: jest.fn(), deleteMany: jest.fn() } as any,
     { get: jest.fn((_: string, fallback: unknown) => fallback) } as any,
     {
-      init: jest.fn(),
-      isAvailable: jest.fn().mockReturnValue(true),
-      run: jest.fn(),
-      runFromCheckpoint: jest.fn(),
-      cancel: jest.fn(),
-      resumeApproval: jest.fn(),
-      resumeFromStep: jest.fn(),
-    } as any,
-    {
       admit: jest.fn().mockResolvedValue(1),
       release: jest.fn().mockImplementation(async (ownerId: string) => {
         const next = Array.from(executions.values()).find((execution) => (

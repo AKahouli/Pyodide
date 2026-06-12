@@ -8,14 +8,8 @@ import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.servi
 
 function mockExecutionModel(overrides?: Record<string, any>) {
   const base = {
-    exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ _id: 'exec-e2e', ownerId: 'owner-1', inputContext: {} }),
-      }),
-      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }),
-    })),
+    findById: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) })),
     findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     findByIdAndDelete: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     countDocuments: jest.fn().mockResolvedValue(0),
@@ -121,15 +115,6 @@ async function createE2EService(
     get: jest.fn((key: string, fallback: unknown) => fallback),
     ...overrides?.configService,
   };
-  const runtimeClient = {
-    init: jest.fn(),
-    isAvailable: jest.fn().mockReturnValue(true),
-    run: jest.fn(),
-    runFromCheckpoint: jest.fn(),
-    cancel: jest.fn(),
-    resumeApproval: jest.fn(),
-    resumeFromStep: jest.fn(),
-  };
   const queueService = {
     admit: jest.fn().mockResolvedValue(1),
     release: jest.fn()
@@ -147,12 +132,6 @@ async function createE2EService(
   };
   const flowService = {
     findOne: jest.fn().mockResolvedValue({
-      nodes: [],
-      controlEdges: [],
-      dataBindings: [],
-      settings: { recursionLimit: 25, maxParallelism: 5 },
-    }),
-    findOneForExecutionStart: jest.fn().mockResolvedValue({
       nodes: [],
       controlEdges: [],
       dataBindings: [],
@@ -181,8 +160,6 @@ async function createE2EService(
     emitStepStart: jest.fn(),
     emitStepUpdate: jest.fn(),
     emitInterrupt: jest.fn(),
-    emitHitlInterruptResolved: jest.fn(),
-    emitHitlMemorySaved: jest.fn(),
     cacheOwner: jest.fn(),
     emitExecutionQueued: jest.fn(),
   };
@@ -201,7 +178,6 @@ async function createE2EService(
     taskResultModel as any,
     routerDecisionModel as any,
     configService as any,
-    runtimeClient as any,
     queueService as any,
     idempotencyService as any,
     flowService as any,
@@ -228,14 +204,6 @@ async function createE2EService(
 
   (service as any).isGrpcAvailable = true;
   (service as any).playbookFlowClient = { Run: mockRun };
-  // Drive queue drains synchronously instead of through the real 1s dispatch
-  // timer so the test can observe runtime dispatch within microtask flushes.
-  (service as any).executionDispatcherService = {
-    schedule: (ownerId: string, drain: (id: string) => Promise<void>) => {
-      void drain(ownerId);
-    },
-    cancel: jest.fn(),
-  };
 
   return {
     service,
@@ -507,27 +475,25 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({ _id: 'exec-e2e' }),
       expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'pending_approval',
-          pendingApproval: expect.objectContaining({
-            nodeId: 'task-1',
-            iteration: 1,
-            prompt: 'Which country should I analyze?',
-            interruptType: 'clarification',
-            interruptId: 'task-1:clarification:1',
-            taskTitle: 'GDP Analysis',
-            taskDescription: 'Analyze GDP for a country and year',
-            payloadJson: '[]',
-            resumableActions: ['reply', 'skip'],
-            blockerRuleId: 'rule-1',
-            blockerKind: 'missing_required_input',
-            reasonCode: 'missing_required_input',
-            riskLevel: 'medium',
-            confidence: 1,
-            downstreamNodeIds: ['task-2'],
-            feedbackScopeDefault: 'downstream_run',
-            interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
-          }),
+        status: 'pending_approval',
+        pendingApproval: expect.objectContaining({
+          nodeId: 'task-1',
+          iteration: 1,
+          prompt: 'Which country should I analyze?',
+          interruptType: 'clarification',
+          interruptId: 'task-1:clarification:1',
+          taskTitle: 'GDP Analysis',
+          taskDescription: 'Analyze GDP for a country and year',
+          payloadJson: '[]',
+          resumableActions: ['reply', 'skip'],
+          blockerRuleId: 'rule-1',
+          blockerKind: 'missing_required_input',
+          reasonCode: 'missing_required_input',
+          riskLevel: 'medium',
+          confidence: 1,
+          downstreamNodeIds: ['task-2'],
+          feedbackScopeDefault: 'downstream_run',
+          interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
         }),
       }),
     );
@@ -556,10 +522,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
 
     expect(executionModel.updateOne).toHaveBeenCalledWith(
       { _id: 'exec-hum-1', status: 'pending_approval' },
-      expect.objectContaining({
-        $set: expect.objectContaining({ status: 'running', pendingApproval: null }),
-      }),
-      expect.objectContaining({ arrayFilters: expect.any(Array) }),
+      { status: 'running', pendingApproval: null },
     );
     expect(mockResumeApproval).toHaveBeenCalled();
     const grpcArgs = mockResumeApproval.mock.calls[0];
@@ -654,10 +617,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
 
     expect(executionModel.updateOne).toHaveBeenCalledWith(
       { _id: 'exec-step-1', status: 'pending_approval' },
-      expect.objectContaining({
-        $set: expect.objectContaining({ status: 'running', pendingApproval: null }),
-      }),
-      expect.objectContaining({ arrayFilters: expect.any(Array) }),
+      { status: 'running', pendingApproval: null },
     );
     expect(mockResumeFromStep).toHaveBeenCalled();
     const grpcArgs = mockResumeFromStep.mock.calls[0];

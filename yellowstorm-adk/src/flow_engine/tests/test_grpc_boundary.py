@@ -92,16 +92,6 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def _setup_checkpointer(tmp_path):
-    from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
-
-    await close_checkpointer()
-    await init_checkpointer(str(tmp_path / "test_checkpoints.db"))
-    yield
-    await close_checkpointer()
-
-
 @pytest_asyncio.fixture
 async def grpc_server_and_port():
     server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=1))
@@ -200,23 +190,17 @@ async def test_grpc_boundary_cancel_during_human_approval(stub):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock"]),
     ):
-        approval_requested = asyncio.Event()
-        events = []
-
         async def _collect():
-            async for event in stub.Run(run_request):
-                events.append(event)
-                if event.event_type == "ApprovalRequested":
-                    approval_requested.set()
+            return [e async for e in stub.Run(run_request)]
 
         run_task = asyncio.create_task(_collect())
-        await asyncio.wait_for(approval_requested.wait(), timeout=5)
+        await asyncio.sleep(0.05)
 
         cancel_req = pb.CancelRequest(execution_id="gb-cancel-1")
         cancel_resp = await stub.Cancel(cancel_req)
         assert cancel_resp.cancelled
 
-        await run_task
+        events = await run_task
         assert len(events) > 0
         event_types = [e.event_type for e in events]
         assert "ApprovalRequested" in event_types

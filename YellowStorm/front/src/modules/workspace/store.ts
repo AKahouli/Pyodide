@@ -530,30 +530,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           }
         }
 
-        // Resolve the caller's role. A workspace in the owned cache is ours
-        // (owner). Otherwise look it up in the shared-with-me cache to honor the
-        // granted permission (read / readwrite) — without this, opening a shared
-        // workspace from the workspace page would wrongly grant full edit rights.
-        // Defaults to 'owner' only when the workspace is in neither cache (the
-        // page pre-loads both lists so this stays correct on a direct URL load).
-        let role: WorkspaceRole = 'owner';
-        let sharedInfo: WorkspaceState['selectedSharedWorkspaceInfo'] = null;
-        if (!cachedWorkspace) {
-          for (const shared of state.sharedWorkspaces.values()) {
-            const found = shared.find((w) => w.id === workspaceId);
-            if (found) {
-              role = found.permission;
-              sharedInfo = { owner: found.owner, permission: found.permission, shareId: found.shareId };
-              break;
-            }
-          }
-        }
-
         set({
           selectedWorkspaceId: workspaceId,
           selectedWorkspace: cachedWorkspace,
-          selectedWorkspaceRole: role,
-          selectedSharedWorkspaceInfo: sharedInfo,
+          selectedWorkspaceRole: 'owner',
+          selectedSharedWorkspaceInfo: null,
           isLoadingDocuments: true,
           documents: new Map(),
           documentsCurrentPage: 1,
@@ -1687,14 +1668,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         });
         if (workspaceId) {
           if (workspaceId !== previous) {
-            // Make sure both the owned and shared lists are loaded so
-            // selectWorkspace can resolve the caller's role (owner vs shared
-            // read/readwrite) even on a direct URL load / hard refresh.
-            const { workspaces, sharedWorkspaces } = get();
-            await Promise.all([
-              workspaces.size === 0 ? get().fetchWorkspaces(1) : Promise.resolve(),
-              sharedWorkspaces.size === 0 ? get().fetchSharedWorkspaces(1) : Promise.resolve(),
-            ]);
             await get().selectWorkspace(workspaceId);
           }
           await get().refreshPageData();

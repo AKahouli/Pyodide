@@ -34,8 +34,6 @@ import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 // Message Content Part Types
 // ============================================================================
 
-export type CitationBBox = [number, number, number, number];
-
 export interface CitationData {
   parentId: string;
   sourceType: 'text' | 'image';
@@ -48,9 +46,6 @@ export interface CitationData {
   path?: string;
   height?: string;
   width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
 }
 
 export interface TextPart {
@@ -165,9 +160,6 @@ export interface CitationPart {
   path?: string;
   height?: string;
   width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
 }
 
 export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart;
@@ -259,16 +251,16 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     );
   },
   p({ children }) {
-    return <p className='my-0 leading-relaxed'>{children}</p>;
+    return <p className='mb-3 last:mb-0 leading-loose'>{children}</p>;
   },
   ul({ children }) {
-    return <ul className='my-2 list-disc pl-5 space-y-1'>{children}</ul>;
+    return <ul className='list-disc pl-5 mb-4 space-y-1'>{children}</ul>;
   },
   ol({ children }) {
-    return <ol className='my-2 list-decimal pl-5 space-y-1'>{children}</ol>;
+    return <ol className='list-decimal pl-5 mb-4 space-y-1'>{children}</ol>;
   },
   li({ children }) {
-    return <li className='my-0 leading-relaxed'>{children}</li>;
+    return <li className='mb-1.5 leading-loose'>{children}</li>;
   },
   h1({ children }) {
     return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0'>{children}</h1>;
@@ -396,8 +388,7 @@ async function openCitationSource(
   openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
     displayMode,
     page,
-    highlightText: c.highlightText || c.pageContent || undefined,
-    highlightBBox: c.highlightBBox || c.blockBBox,
+    highlightText: c.pageContent || undefined,
   });
 }
 
@@ -490,9 +481,6 @@ const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
         path: citation.path,
         height: citation.height,
         width: citation.width,
-        highlightText: citation.highlightText,
-        highlightBBox: citation.highlightBBox,
-        blockBBox: citation.blockBBox,
       },
     ]}
   />

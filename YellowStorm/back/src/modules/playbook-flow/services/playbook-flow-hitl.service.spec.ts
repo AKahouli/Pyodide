@@ -5,23 +5,29 @@ const createFlowModel = (flow: { hitlBlockers?: unknown[]; save?: jest.Mock }) =
 });
 
 describe('PlaybookFlowHitlBlockerService', () => {
-  it('lists only persisted blockers without seeding system defaults', async () => {
+  it('seeds system blockers when Smart HITL defaults are enabled', async () => {
     const flow = {
-      hitlBlockers: [{ id: 'user-blocker', createdBy: 'user' }],
+      hitlBlockers: [],
       save: jest.fn().mockResolvedValue(undefined),
     };
     const flowModel = {
       findOne: jest.fn().mockResolvedValue(flow),
     };
-    const service = new PlaybookFlowHitlBlockerService(flowModel as any);
+    const configService = {
+      get: jest.fn().mockReturnValue(true),
+    };
+    const service = new PlaybookFlowHitlBlockerService(flowModel as any, configService as any);
 
     const blockers = await service.listBlockers('flow-1', 'user-1');
 
-    expect(blockers).toEqual([{ id: 'user-blocker', createdBy: 'user' }]);
-    expect(flow.save).not.toHaveBeenCalled();
+    expect(blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'system-missing-required-input', createdBy: 'system' }),
+      expect.objectContaining({ id: 'system-external-send', riskLevel: 'critical' }),
+    ]));
+    expect(flow.save).toHaveBeenCalledTimes(1);
   });
 
-  it('returns an empty list when no blockers are stored', async () => {
+  it('does not seed system blockers when Smart HITL defaults are disabled', async () => {
     const flow = {
       hitlBlockers: [],
       save: jest.fn(),
@@ -29,7 +35,10 @@ describe('PlaybookFlowHitlBlockerService', () => {
     const flowModel = {
       findOne: jest.fn().mockResolvedValue(flow),
     };
-    const service = new PlaybookFlowHitlBlockerService(flowModel as any);
+    const configService = {
+      get: jest.fn().mockReturnValue(false),
+    };
+    const service = new PlaybookFlowHitlBlockerService(flowModel as any, configService as any);
 
     await expect(service.listBlockers('flow-1', 'user-1')).resolves.toEqual([]);
     expect(flow.save).not.toHaveBeenCalled();
@@ -37,7 +46,7 @@ describe('PlaybookFlowHitlBlockerService', () => {
 
   it('requires nodeId when creating node-scoped blockers', async () => {
     const flow = { hitlBlockers: [], save: jest.fn() };
-    const service = new PlaybookFlowHitlBlockerService(createFlowModel(flow) as any);
+    const service = new PlaybookFlowHitlBlockerService(createFlowModel(flow) as any, { get: jest.fn().mockReturnValue(true) } as any);
     await expect(service.createBlocker('flow-1', 'user-1', {
       scope: 'node',
       kind: 'custom',
@@ -49,7 +58,7 @@ describe('PlaybookFlowHitlBlockerService', () => {
 
   it('rejects workflow-scoped blockers with nodeId', async () => {
     const flow = { hitlBlockers: [], save: jest.fn() };
-    const service = new PlaybookFlowHitlBlockerService(createFlowModel(flow) as any);
+    const service = new PlaybookFlowHitlBlockerService(createFlowModel(flow) as any, { get: jest.fn().mockReturnValue(true) } as any);
     await expect(service.createBlocker('flow-1', 'user-1', {
       scope: 'workflow',
       nodeId: 'step-1',

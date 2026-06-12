@@ -5,7 +5,6 @@ import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import type { PlaybookTask } from '../types';
 
 const fetchAgents = vi.fn();
-const fetchModels = vi.fn();
 const fetchTaskReplays = vi.fn().mockResolvedValue([]);
 const activateTaskReplay = vi.fn();
 const fetchEvaluationBaseline = vi.fn();
@@ -47,12 +46,6 @@ vi.mock('@/modules/agent/store', () => ({
 
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({ user: null }),
-}));
-
-vi.mock('@/modules/models', () => ({
-  useModels: () => [],
-  useModelsStore: (selector: (state: { fetchModels: typeof fetchModels }) => unknown) =>
-    selector({ fetchModels }),
 }));
 
 vi.mock('../store', () => ({
@@ -113,22 +106,11 @@ vi.mock('@/components/ui/searchable-select', () => ({
 }));
 
 vi.mock('./PlaybookDataFlowSection', () => ({
-  PlaybookDataFlowSection: ({
-    inputPortsOverride,
-    outputPortsOverride,
-    showOutputPorts = true,
-    canEditOutputPortNames = true,
-    canEditOutputPortKinds = true,
-    canModifyOutputPorts = true,
-  }: any) => (
+  PlaybookDataFlowSection: ({ onInputPortsChange, onOutputPortsChange, inputPortsOverride, outputPortsOverride }: any) => (
     <div data-testid="data-flow-section">
       <span>dataFlow.sectionTitle</span>
       {inputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
-      <span data-testid="data-flow-show-outputs">{String(showOutputPorts)}</span>
-      <span data-testid="data-flow-can-edit-output-names">{String(canEditOutputPortNames)}</span>
-      <span data-testid="data-flow-can-edit-output-kinds">{String(canEditOutputPortKinds)}</span>
-      <span data-testid="data-flow-can-modify-outputs">{String(canModifyOutputPorts)}</span>
-      {showOutputPorts && outputPortsOverride?.map((p: any) => <span key={p.id} data-testid="data-flow-output-port">{p.name}</span>)}
+      {outputPortsOverride?.map((p: any) => <span key={p.id}>{p.name}</span>)}
     </div>
   ),
 }));
@@ -202,26 +184,6 @@ const iteratorTask: PlaybookTask = {
     itemVariable: 'item',
     outputVariable: 'processed_items',
     errorStrategy: 'stop',
-  },
-  evaluationConfig: undefined,
-};
-
-const routerTask: PlaybookTask = {
-  ...baseTask,
-  taskType: 'generic',
-  nodeType: 'router',
-  title: 'Route document',
-  description: 'Pick the next branch',
-  inputPorts: [{ id: 'doc_type', name: 'Doc type', artifactKind: 'data', required: false }],
-  outputPorts: [
-    { id: 'retry', name: 'retry', artifactKind: 'text' },
-    { id: 'done', name: 'done', artifactKind: 'text' },
-  ],
-  routerConfig: {
-    outputLabels: ['retry', 'done'],
-    maxIterations: 3,
-    conditions: [],
-    defaultLabel: 'done',
   },
   evaluationConfig: undefined,
 };
@@ -310,46 +272,6 @@ describe('PlaybookNodeEditor', () => {
     });
   });
 
-  it('keeps in-progress description text when the same task rerenders while open', async () => {
-    vi.useFakeTimers();
-
-    const { container, rerender } = render(
-      <PlaybookNodeEditor
-        playbookId="playbook-1"
-        task={genericTask}
-        open
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-      />,
-    );
-
-    act(() => {
-      vi.runOnlyPendingTimers();
-    });
-
-    const descriptionField = Array.from(container.querySelectorAll('textarea')).find(
-      (element) => (element as HTMLTextAreaElement).value === genericTask.description,
-    ) as HTMLTextAreaElement;
-
-    fireEvent.change(descriptionField, {
-      target: { value: `${genericTask.description} Extra typing that should stay.` },
-    });
-
-    rerender(
-      <PlaybookNodeEditor
-        playbookId="playbook-1"
-        task={{ ...genericTask, description: genericTask.description }}
-        open
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-      />,
-    );
-
-    expect(descriptionField.value).toBe(`${genericTask.description} Extra typing that should stay.`);
-
-    vi.useRealTimers();
-  });
-
   it('does not render expected result placeholder for evaluation tasks', async () => {
     const { container } = render(
       <PlaybookNodeEditor
@@ -426,24 +348,6 @@ describe('PlaybookNodeEditor', () => {
     );
 
     vi.useRealTimers();
-  });
-
-  it('keeps router output artifact kinds editable without duplicating label editing', () => {
-    render(
-      <PlaybookNodeEditor
-        playbookId="playbook-1"
-        task={routerTask}
-        open
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId('data-flow-show-outputs')).toHaveTextContent('true');
-    expect(screen.getByTestId('data-flow-can-edit-output-names')).toHaveTextContent('false');
-    expect(screen.getByTestId('data-flow-can-edit-output-kinds')).toHaveTextContent('true');
-    expect(screen.getByTestId('data-flow-can-modify-outputs')).toHaveTextContent('false');
-    expect(screen.queryAllByTestId('data-flow-output-port')).toHaveLength(2);
   });
 
   it('renders data flow section before retry policy for generic steps', () => {

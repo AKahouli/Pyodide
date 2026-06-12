@@ -16,13 +16,6 @@ const mapComponentsToContentPartsMock = vi.hoisted(() => vi.fn((items: any[]) =>
       content: item?.data?.content ?? item?.data?.text ?? '',
     };
   }
-  if (item?.type === 'artifact') {
-    return {
-      type: 'artifact',
-      filePath: item?.data?.filePath ?? item?.data?.file_path ?? '',
-      filename: item?.data?.filename ?? '',
-    };
-  }
   return item;
 })));
 const storeState = vi.hoisted(() => ({
@@ -46,14 +39,11 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
     t: (key: string, values?: Record<string, string | number>) => {
       const translations: Record<string, string> = {
-        'detail.tabs.evaluation': 'Reference Check',
-        'replayReport.title': 'Reference Check',
-        'replayReport.postRun.detailsTitle': 'Advanced diagnostics',
-        'replayReport.advancedHint': 'Open technical scores and raw judge output.',
         'replayReport.section.verdict': 'Replay verdict',
         'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.semantic': 'Semantic match',
         'replayReport.section.structuralTooling': 'Structural & tooling',
+        'replayReport.section.actions': 'Actions',
         'replayReport.verdictReasons': 'Verdict reasons',
         'replayReport.verdictReason.structuralDriftDetected': 'Structural drift was detected.',
         'replayReport.modeValue.replay_strict': 'Replay (Strict)',
@@ -121,39 +111,6 @@ const baseStep: TaskResult = {
 };
 
 describe('ExecutionStepDetail', () => {
-  it('shows generated artifact view and download actions in the result card', () => {
-    storeState.currentPlaybook = {
-      id: 'p1',
-      tasks: [{
-        id: 't1',
-        title: 'Analyze Data',
-        outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'document' }],
-      }],
-    };
-
-    render(
-      <ExecutionStepDetail
-        step={{
-          ...baseStep,
-          output: 'PDF generated successfully',
-          components: [{
-            type: 'artifact',
-            data: {
-              filePath: 'generated/intelligence_artificielle.pdf',
-              filename: 'intelligence_artificielle.pdf',
-            },
-          } as any],
-        }}
-      />,
-    );
-
-    expect(screen.getByText('intelligence_artificielle.pdf')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionView' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionDownload' })).toBeInTheDocument();
-
-    storeState.currentPlaybook = null;
-  });
-
   it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
     const onOpenOutputFormatEditor = vi.fn();
     storeState.currentPlaybook = {
@@ -210,41 +167,6 @@ describe('ExecutionStepDetail', () => {
   it('renders step title and status badge', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
-  });
-
-  it('renders persisted HITL feedback for the selected node result', () => {
-    render(
-      <ExecutionStepDetail
-        step={{
-          ...baseStep,
-          hitlHistory: [{
-            interruptId: 'interrupt-1',
-            taskId: 't1',
-            type: 'clarification',
-            taskTitle: 'Analyze Data',
-            message: 'Which region should I search?',
-            taskDescription: '',
-            result: '',
-            round: 0,
-            payloadJson: '',
-            resumableActions: [],
-            status: 'answered',
-            responseAction: 'reply',
-            responseMessage: 'France',
-            responseApproved: null,
-            responseReason: null,
-            responseFeedback: null,
-            respondedBy: null,
-            respondedAt: '2026-06-02T08:47:00.000Z',
-            createdAt: '2026-06-02T08:46:00.000Z',
-          }],
-        }}
-      />,
-    );
-
-    expect(screen.getByText('detail.hitlFeedback.title')).toBeInTheDocument();
-    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
-    expect(screen.getByText('France')).toBeInTheDocument();
   });
 
   it('renders replay flex planning details when available on the execution', () => {
@@ -711,118 +633,7 @@ describe('ExecutionStepDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
 
     expect(onApplyAdvisorIntent).toHaveBeenCalledWith({
-      mode: 'optimize-step',
-      executionId: 'exec-1',
-      items: [
-        {
-          id: 'rem-1',
-          category: 'prompt',
-          description: 'Clarify the task prompt to request a concise summary.',
-        },
-      ],
-      selectedTaskId: 't1',
-    });
-
-    storeState.currentPlaybook = null;
-  });
-
-  it('keeps optimize actions available despite high score, no recommendation, and empty rewrite hints', async () => {
-    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
-    storeState.fetchAdvisorRemediations.mockClear();
-    storeState.currentPlaybook = {
-      id: 'p1',
-      tasks: [{ id: 't1', title: 'Analyze Data' }],
-    };
-
-    render(
-      <ExecutionStepDetail
-        step={{
-          ...baseStep,
-          judgeResult: {
-            overallScore: 98,
-            recommendation: 'none',
-            safeAutoFixType: 'none',
-            rewriteHints: [],
-            reason: 'Looks good.',
-          } as any,
-          judgeStatus: 'evaluated',
-        }}
-        execution={{
-          id: 'exec-1',
-          playbookId: 'p1',
-          executedBy: 'user-1',
-          executionNumber: 1,
-          status: 'completed',
-          taskResults: [{ ...baseStep, judgeResult: { overallScore: 98 } as any, judgeStatus: 'evaluated' }],
-          threadId: null,
-          interruptPayload: null,
-          error: null,
-          durationMs: 1000,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-          singleStepTaskId: null,
-          playbookSnapshot: null,
-          totalInputTokens: 0,
-          totalOutputTokens: 0,
-          totalTokens: 0,
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-01-01T00:00:01.000Z',
-        }}
-        onApplyAdvisorIntent={onApplyAdvisorIntent}
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: 'detail.judge.previewChanges' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'detail.judge.applyToCurrentPlaybook' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' })).toBeEnabled();
-
-    storeState.currentPlaybook = null;
-  });
-
-  it('allows optimize-step apply with no selected remediation items', async () => {
-    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
-    storeState.fetchAdvisorRemediations.mockResolvedValueOnce([]);
-    storeState.currentPlaybook = {
-      id: 'p1',
-      tasks: [{ id: 't1', title: 'Analyze Data' }],
-    };
-
-    render(
-      <ExecutionStepDetail
-        step={{ ...baseStep, judgeResult: { overallScore: 98, rewriteHints: [] } as any, judgeStatus: 'evaluated' }}
-        execution={{
-          id: 'exec-1',
-          playbookId: 'p1',
-          executedBy: 'user-1',
-          executionNumber: 1,
-          status: 'completed',
-          taskResults: [{ ...baseStep, judgeResult: { overallScore: 98, rewriteHints: [] } as any, judgeStatus: 'evaluated' }],
-          threadId: null,
-          interruptPayload: null,
-          error: null,
-          durationMs: 1000,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-          singleStepTaskId: null,
-          playbookSnapshot: null,
-          totalInputTokens: 0,
-          totalOutputTokens: 0,
-          totalTokens: 0,
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-01-01T00:00:01.000Z',
-        }}
-        onApplyAdvisorIntent={onApplyAdvisorIntent}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.previewChanges' }));
-    await screen.findByText('detail.remediation.optimizeStepTitle');
-    await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
-
-    expect(onApplyAdvisorIntent).toHaveBeenCalledWith({
-      mode: 'optimize-step',
-      executionId: 'exec-1',
-      items: [],
+      intent: expect.stringContaining('Optimize only the step "Analyze Data" based on these advisor findings.'),
       selectedTaskId: 't1',
     });
 
@@ -1176,6 +987,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    expect(screen.getByText('Streaming output')).toBeInTheDocument();
     expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
     expect(screen.getByText('execution.running')).toBeInTheDocument();
   });
@@ -1272,7 +1084,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Product A')).toBeInTheDocument();
   });
 
-  it('uses compact fallback output styling', () => {
+  it('preserves plain-text line breaks in fallback output styling', () => {
     render(
       <ExecutionStepDetail
         step={{
@@ -1282,7 +1094,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByTestId('step-result-markdown')).toHaveClass('[&_*]:!text-[14px]');
+    expect(screen.getByTestId('step-result-markdown')).toHaveClass('[&_p]:whitespace-pre-wrap');
   });
 
   it('prefers displayText over raw output json', () => {
@@ -1563,7 +1375,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withEvaluationArtifact} />);
-    await userEvent.click(screen.getByText('Reference Check'));
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
     expect(screen.getByText('Evaluation succeeded.')).toBeInTheDocument();
     expect(screen.getByText(/pass/i)).toBeInTheDocument();
     expect(screen.getByText('88%')).toBeInTheDocument();
@@ -1595,7 +1407,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} />);
-    await userEvent.click(screen.getByText('Reference Check'));
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
     expect(screen.getByText('detail.actions.saveEvaluationBaseline')).toBeInTheDocument();
   });
 
@@ -1663,7 +1475,7 @@ describe('ExecutionStepDetail', () => {
         />,
       );
 
-    await userEvent.click(screen.getByText('Reference Check'));
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
     await userEvent.click(screen.getByText('detail.actions.runReplayEvaluation'));
     expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
   });
@@ -1732,19 +1544,19 @@ describe('ExecutionStepDetail', () => {
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} activeTab="evaluation" />);
 
-    expect((await screen.findAllByText('Reference Check')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: /Advanced diagnostics/i }));
+    expect(await screen.findByText('replayReport.title')).toBeInTheDocument();
     expect(screen.getByText('Replay verdict')).toBeInTheDocument();
     expect(screen.getByText('Eligibility')).toBeInTheDocument();
     expect(screen.getByText('Semantic match')).toBeInTheDocument();
     expect(screen.getByText('Structural & tooling')).toBeInTheDocument();
     expect(screen.getByText(/replayReport.verdict: replayReport.verdictValue.warning/)).toBeInTheDocument();
     expect(screen.getByText(/replayReport.overallScore: 76%/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Structural drift was detected./).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Structural drift was detected./)).toBeInTheDocument();
     expect(screen.getByText(/Replay output matches the captured intent/)).toBeInTheDocument();
-    expect(screen.getAllByText(/minor citation detail/).length).toBeGreaterThan(0);
-    expect(document.body).toHaveTextContent('node snapshot changed.');
-    expect(document.body).toHaveTextContent('Missing required section: Summary.');
+    expect(screen.getByText(/minor citation detail/)).toBeInTheDocument();
+    const reportPanel = screen.getByText('replayReport.title').closest('div')?.parentElement;
+    expect(reportPanel).toHaveTextContent('node snapshot changed.');
+    expect(reportPanel).toHaveTextContent('Missing required section: Summary.');
   });
 
   it('runs advisor evaluation from the advisor pane CTA', async () => {

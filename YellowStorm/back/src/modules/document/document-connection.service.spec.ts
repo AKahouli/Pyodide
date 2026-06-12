@@ -1,44 +1,33 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { DocumentConnectionService } from './document-connection.service';
+import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
 import { LoggerService } from '../logger';
 
-// Track the S3Client instances created and the `send` mock so tests can drive behavior.
-const mockSend = jest.fn();
-const mockDestroy = jest.fn();
-// Spy invoked with the S3Client constructor config so tests can assert on it.
-const mockS3ClientCtor = jest.fn();
+// Create mock functions that can be controlled per test
+const mockCreateIfNotExists = jest.fn();
+const mockGetProperties = jest.fn();
 
-// Mock AWS S3 client
-jest.mock('@aws-sdk/client-s3', () => {
-  class S3Client {
-    send = mockSend;
-    destroy = mockDestroy;
-    config: unknown;
-    constructor(config: unknown) {
-      this.config = config;
-      mockS3ClientCtor(config);
-    }
-  }
+const mockContainerClient = {
+  createIfNotExists: mockCreateIfNotExists,
+  getProperties: mockGetProperties,
+};
 
-  class HeadBucketCommand {
-    input: unknown;
-    constructor(input: unknown) {
-      this.input = input;
-    }
-  }
+const mockBlobServiceClient = {
+  getContainerClient: jest.fn().mockReturnValue(mockContainerClient),
+};
 
-  class CreateBucketCommand {
-    input: unknown;
-    constructor(input: unknown) {
-      this.input = input;
-    }
-  }
+// Mock Azure Storage
+jest.mock('@azure/storage-blob', () => ({
+  BlobServiceClient: {
+    fromConnectionString: jest.fn().mockImplementation(() => mockBlobServiceClient),
+  },
+  StorageSharedKeyCredential: jest.fn().mockImplementation((accountName, accountKey) => ({
+    accountName,
+    accountKey,
+  })),
+}));
 
-  return { S3Client, HeadBucketCommand, CreateBucketCommand };
-});
-
-import { HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
+import { BlobServiceClient, StorageSharedKeyCredential } from '@azure/storage-blob';
 
 describe('DocumentConnectionService', () => {
   let service: DocumentConnectionService;
@@ -46,13 +35,9 @@ describe('DocumentConnectionService', () => {
   let loggerService: jest.Mocked<LoggerService>;
 
   const defaultConfig: Record<string, unknown> = {
-    'storage.s3.endpoint': 'https://s3.example.com',
-    'storage.s3.region': 'us-east-1',
-    'storage.s3.bucket': 'documents',
-    'storage.s3.accessKeyId': 'testAccessKey',
-    'storage.s3.secretAccessKey': 'testSecretKey',
-    'storage.s3.forcePathStyle': true,
-    'storage.s3.publicUrl': 'https://s3.example.com',
+    'storage.azure.connectionString': 'DefaultEndpointsProtocol=https;AccountName=testaccount;AccountKey=dGVzdGtleQ==;EndpointSuffix=core.windows.net',
+    'storage.azure.containerName': 'documents',
+    'storage.azure.accountName': 'testaccount',
     'storage.reconnect.enabled': true,
     'storage.reconnect.initialDelayMs': 1000,
     'storage.reconnect.maxDelayMs': 30000,
@@ -98,8 +83,9 @@ describe('DocumentConnectionService', () => {
     jest.clearAllMocks();
     jest.useFakeTimers();
 
-    // Default successful behavior: HeadBucket / CreateBucket resolve.
-    mockSend.mockResolvedValue({});
+    // Default successful behavior
+    mockCreateIfNotExists.mockResolvedValue({});
+    mockGetProperties.mockResolvedValue({});
 
     const result = await createService();
     service = result.service;
@@ -120,11 +106,9 @@ describe('DocumentConnectionService', () => {
     });
 
     it('should load configuration values', () => {
-      expect(configService.get).toHaveBeenCalledWith('storage.s3.endpoint', '');
-      expect(configService.get).toHaveBeenCalledWith('storage.s3.region', 'us-east-1');
-      expect(configService.get).toHaveBeenCalledWith('storage.s3.bucket', 'documents');
-      expect(configService.get).toHaveBeenCalledWith('storage.s3.accessKeyId', '');
-      expect(configService.get).toHaveBeenCalledWith('storage.s3.secretAccessKey', '');
+      expect(configService.get).toHaveBeenCalledWith('storage.azure.connectionString', '');
+      expect(configService.get).toHaveBeenCalledWith('storage.azure.containerName', 'documents');
+      expect(configService.get).toHaveBeenCalledWith('storage.azure.accountName', '');
     });
   });
 
@@ -142,103 +126,67 @@ describe('DocumentConnectionService', () => {
       service.onModuleDestroy();
       // Should not throw
     });
-
-    it('should destroy the S3 client', async () => {
-      await service.connect();
-      service.onModuleDestroy();
-      expect(mockDestroy).toHaveBeenCalled();
-    });
   });
 
   describe('connect', () => {
     it('should establish connection successfully', async () => {
       await service.connect();
 
-      expect(mockS3ClientCtor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          endpoint: defaultConfig['storage.s3.endpoint'],
-          region: defaultConfig['storage.s3.region'],
-          credentials: {
-            accessKeyId: defaultConfig['storage.s3.accessKeyId'],
-            secretAccessKey: defaultConfig['storage.s3.secretAccessKey'],
-          },
-          forcePathStyle: true,
-        }),
+      expect(BlobServiceClient.fromConnectionString).toHaveBeenCalledWith(
+        defaultConfig['storage.azure.connectionString'],
       );
       expect(service.isConnectedNow()).toBe(true);
       expect(loggerService.log).toHaveBeenCalledWith(
-        'Ceph S3 connection established',
+        'Azure Blob Storage connection established',
         expect.any(Object),
       );
     });
 
-    it('should ensure the bucket exists via HeadBucketCommand', async () => {
+    it('should create StorageSharedKeyCredential when account key is present', async () => {
       await service.connect();
 
-      expect(mockSend).toHaveBeenCalledWith(expect.any(HeadBucketCommand));
-    });
-
-    it('should create the bucket when it does not exist', async () => {
-      const notFound = Object.assign(new Error('not found'), {
-        name: 'NotFound',
-        $metadata: { httpStatusCode: 404 },
-      });
-      // First send (HeadBucket) rejects with 404, second send (CreateBucket) resolves.
-      mockSend.mockRejectedValueOnce(notFound).mockResolvedValueOnce({});
-
-      await service.connect();
-
-      expect(mockSend).toHaveBeenCalledWith(expect.any(CreateBucketCommand));
-      expect(service.isConnectedNow()).toBe(true);
-    });
-
-    it('should not connect when endpoint is empty', async () => {
-      const { service: newService, loggerService: newLogger } = await createService({
-        'storage.s3.endpoint': '',
-      });
-
-      await newService.connect();
-
-      expect(newService.isConnectedNow()).toBe(false);
-      expect(newLogger.warn).toHaveBeenCalledWith(
-        'Ceph S3 credentials not configured (endpoint/accessKey/secretKey). Document service disabled.',
+      expect(StorageSharedKeyCredential).toHaveBeenCalledWith(
+        'testaccount',
+        'dGVzdGtleQ==',
       );
-
-      newService.onModuleDestroy();
     });
 
-    it('should not connect when access key is empty', async () => {
+    it('should not connect when connection string is empty', async () => {
       const { service: newService, loggerService: newLogger } = await createService({
-        'storage.s3.accessKeyId': '',
+        'storage.azure.connectionString': '',
       });
 
       await newService.connect();
 
       expect(newService.isConnectedNow()).toBe(false);
       expect(newLogger.warn).toHaveBeenCalledWith(
-        'Ceph S3 credentials not configured (endpoint/accessKey/secretKey). Document service disabled.',
+        'Azure Storage connection string not configured. Document service disabled.',
       );
 
       newService.onModuleDestroy();
     });
 
     it('should not attempt duplicate connections', async () => {
+      // Start first connection but don't await
       const connectPromise1 = service.connect();
+      // Second call should detect connection in progress
       const connectPromise2 = service.connect();
 
       await Promise.all([connectPromise1, connectPromise2]);
 
+      // fromConnectionString should only be called once per service instance
+      // (once during the first connect call)
       expect(loggerService.debug).toHaveBeenCalledWith('Connection attempt already in progress');
     });
 
     it('should handle connection failure and schedule reconnect', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Connection refused'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection refused'));
 
       await service.connect();
 
       expect(service.isConnectedNow()).toBe(false);
       expect(loggerService.error).toHaveBeenCalledWith(
-        'Ceph S3 connection failed',
+        'Azure Blob Storage connection failed',
         expect.objectContaining({ message: 'Connection refused' }),
       );
     });
@@ -261,12 +209,11 @@ describe('DocumentConnectionService', () => {
 
       expect(result).toBe(true);
       expect(service.isConnectedNow()).toBe(true);
-      expect(mockSend).toHaveBeenCalledWith(expect.any(HeadBucketCommand));
     });
 
-    it('should return false when S3 client is null', async () => {
+    it('should return false when container client is null', async () => {
       const { service: newService } = await createService();
-      // Don't call connect, so s3Client is null
+      // Don't call connect, so containerClient is null
       const result = await newService.verifyConnection();
 
       expect(result).toBe(false);
@@ -274,7 +221,7 @@ describe('DocumentConnectionService', () => {
     });
 
     it('should handle verification failure', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Connection lost'));
+      mockGetProperties.mockRejectedValueOnce(new Error('Connection lost'));
 
       const result = await service.verifyConnection();
 
@@ -284,7 +231,7 @@ describe('DocumentConnectionService', () => {
 
     it('should log when connection is restored', async () => {
       // First, disconnect by failing verification
-      mockSend.mockRejectedValueOnce(new Error('Connection lost'));
+      mockGetProperties.mockRejectedValueOnce(new Error('Connection lost'));
       await service.verifyConnection();
       expect(service.isConnectedNow()).toBe(false);
 
@@ -292,35 +239,23 @@ describe('DocumentConnectionService', () => {
       loggerService.log.mockClear();
 
       // Now verification succeeds (connection restored)
-      mockSend.mockResolvedValueOnce({});
+      mockGetProperties.mockResolvedValueOnce({});
       await service.verifyConnection();
 
       expect(service.isConnectedNow()).toBe(true);
-      expect(loggerService.log).toHaveBeenCalledWith('Ceph S3 connection restored');
-    });
-
-    it('should warn when connection is lost', async () => {
-      // service is connected from beforeEach
-      mockSend.mockRejectedValueOnce(new Error('Connection lost'));
-
-      await service.verifyConnection();
-
-      expect(loggerService.warn).toHaveBeenCalledWith(
-        'Ceph S3 connection lost',
-        expect.objectContaining({ error: 'Connection lost' }),
-      );
+      expect(loggerService.log).toHaveBeenCalledWith('Azure Blob Storage connection restored');
     });
   });
 
   describe('reconnection', () => {
     it('should schedule reconnect with exponential backoff', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Connection failed'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection failed'));
 
       await service.connect();
 
       expect(service.getHealthStatus().isReconnecting).toBe(true);
       expect(loggerService.log).toHaveBeenCalledWith(
-        expect.stringContaining('Scheduling Ceph S3 reconnection attempt'),
+        expect.stringContaining('Scheduling Azure Storage reconnection'),
         expect.any(Object),
       );
     });
@@ -330,13 +265,13 @@ describe('DocumentConnectionService', () => {
         'storage.reconnect.enabled': false,
       });
 
-      mockSend.mockRejectedValueOnce(new Error('Connection failed'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection failed'));
 
       await newService.connect();
 
       expect(newService.getHealthStatus().isReconnecting).toBe(false);
       expect(newLogger.warn).toHaveBeenCalledWith(
-        'Reconnection disabled, Ceph S3 will remain disconnected',
+        'Reconnection disabled, Azure Storage will remain disconnected',
       );
 
       newService.onModuleDestroy();
@@ -347,18 +282,17 @@ describe('DocumentConnectionService', () => {
         'storage.reconnect.maxAttempts': 1,
       });
 
-      // All connection attempts fail
-      mockSend.mockRejectedValue(new Error('Connection failed'));
+      // First connection attempt fails
+      mockCreateIfNotExists.mockRejectedValue(new Error('Connection failed'));
       await newService.connect();
 
       // After first failure, reconnect is scheduled
       expect(newService.getHealthStatus().reconnectAttempts).toBe(1);
 
       // Advance timer to trigger reconnect
-      jest.advanceTimersByTime(5000);
+      jest.advanceTimersByTime(2000);
       await Promise.resolve(); // Flush promises
       await Promise.resolve(); // Let async operations complete
-      await Promise.resolve();
 
       expect(newLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Max reconnection attempts'),
@@ -369,31 +303,13 @@ describe('DocumentConnectionService', () => {
   });
 
   describe('isAvailable', () => {
-    it('should return true when credentials are configured', () => {
+    it('should return true when connection string is configured', () => {
       expect(service.isAvailable()).toBe(true);
     });
 
-    it('should return false when endpoint is not configured', async () => {
+    it('should return false when connection string is not configured', async () => {
       const { service: newService } = await createService({
-        'storage.s3.endpoint': '',
-      });
-
-      expect(newService.isAvailable()).toBe(false);
-      newService.onModuleDestroy();
-    });
-
-    it('should return false when access key is not configured', async () => {
-      const { service: newService } = await createService({
-        'storage.s3.accessKeyId': '',
-      });
-
-      expect(newService.isAvailable()).toBe(false);
-      newService.onModuleDestroy();
-    });
-
-    it('should return false when secret key is not configured', async () => {
-      const { service: newService } = await createService({
-        'storage.s3.secretAccessKey': '',
+        'storage.azure.connectionString': '',
       });
 
       expect(newService.isAvailable()).toBe(false);
@@ -412,36 +328,53 @@ describe('DocumentConnectionService', () => {
     });
   });
 
-  describe('getS3Client', () => {
+  describe('getContainerClient', () => {
     it('should return null before connecting', () => {
-      expect(service.getS3Client()).toBeNull();
+      expect(service.getContainerClient()).toBeNull();
     });
 
-    it('should return S3 client after connecting', async () => {
+    it('should return container client after connecting', async () => {
       await service.connect();
-      expect(service.getS3Client()).not.toBeNull();
+      expect(service.getContainerClient()).not.toBeNull();
     });
   });
 
-  describe('getBucket', () => {
-    it('should return configured bucket name', () => {
-      expect(service.getBucket()).toBe('documents');
+  describe('getBlobServiceClient', () => {
+    it('should return null before connecting', () => {
+      expect(service.getBlobServiceClient()).toBeNull();
+    });
+
+    it('should return blob service client after connecting', async () => {
+      await service.connect();
+      expect(service.getBlobServiceClient()).not.toBeNull();
     });
   });
 
-  describe('getPublicUrl', () => {
-    it('should return configured public URL', () => {
-      expect(service.getPublicUrl()).toBe('https://s3.example.com');
+  describe('getSharedKeyCredential', () => {
+    it('should return null before connecting', () => {
+      expect(service.getSharedKeyCredential()).toBeNull();
     });
 
-    it('should fall back to endpoint when public URL is empty', async () => {
+    it('should return credential after connecting', async () => {
+      await service.connect();
+      expect(service.getSharedKeyCredential()).not.toBeNull();
+    });
+
+    it('should return null when account name is not configured', async () => {
       const { service: newService } = await createService({
-        'storage.s3.publicUrl': '',
-        'storage.s3.endpoint': 'https://endpoint.example.com',
+        'storage.azure.accountName': '',
       });
 
-      expect(newService.getPublicUrl()).toBe('https://endpoint.example.com');
+      await newService.connect();
+
+      expect(newService.getSharedKeyCredential()).toBeNull();
       newService.onModuleDestroy();
+    });
+  });
+
+  describe('getContainerName', () => {
+    it('should return configured container name', () => {
+      expect(service.getContainerName()).toBe('documents');
     });
   });
 
@@ -473,7 +406,7 @@ describe('DocumentConnectionService', () => {
     });
 
     it('should return error status after failed connection', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Connection failed'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection failed'));
 
       await service.connect();
       const status = service.getHealthStatus();
@@ -493,23 +426,23 @@ describe('DocumentConnectionService', () => {
       await newService.onModuleInit();
 
       expect(newLogger.log).toHaveBeenCalledWith(
-        'Starting Ceph S3 health check',
+        'Starting Azure Storage health check',
         expect.any(Object),
       );
 
       newService.onModuleDestroy();
     });
 
-    it('should not start health check when endpoint is empty', async () => {
+    it('should not start health check when connection string is empty', async () => {
       const { service: newService, loggerService: newLogger } = await createService({
-        'storage.s3.endpoint': '',
+        'storage.azure.connectionString': '',
         'storage.healthCheck.enabled': true,
       });
 
       await newService.onModuleInit();
 
       expect(newLogger.log).not.toHaveBeenCalledWith(
-        'Starting Ceph S3 health check',
+        'Starting Azure Storage health check',
         expect.any(Object),
       );
 
@@ -519,7 +452,7 @@ describe('DocumentConnectionService', () => {
 
   describe('backoff calculation', () => {
     it('should calculate exponential backoff with jitter', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Connection failed'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection failed'));
 
       await service.connect();
 
@@ -534,7 +467,7 @@ describe('DocumentConnectionService', () => {
         'storage.reconnect.multiplier': 10,
       });
 
-      mockSend.mockRejectedValueOnce(new Error('Connection failed'));
+      mockCreateIfNotExists.mockRejectedValueOnce(new Error('Connection failed'));
 
       await newService.connect();
 

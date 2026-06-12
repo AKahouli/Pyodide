@@ -197,40 +197,40 @@ class TestDocumentHelpers:
         assert result["relationships"] == ["base_rel1", "agent_rel1"]
 
     def test_get_base_workspace_names(self):
-        """Test getting base brain ids."""
+        """Test getting base workspace names."""
         user_request = MagicMock()
         team = MagicMock()
 
-        # Test with user request brain ids
-        user_request.brain_ids = ["user_brain1", "user_brain2"]
-        team.config.brain_ids = ["team_brain1"]
+        # Test with user request workspace names
+        user_request.workspace_names = ["user_brain1", "user_brain2"]
+        team.config.workspace_names = ["team_brain1"]
 
-        result = DocumentHelpers._get_base_brain_ids(user_request, team)
+        result = DocumentHelpers._get_base_workspace_names(user_request, team)
         assert result == ["user_brain1", "user_brain2"]
 
-        # Test with team brain ids when no user brain ids
-        user_request.brain_ids = None
-        result = DocumentHelpers._get_base_brain_ids(user_request, team)
+        # Test with team workspace names when no user workspace names
+        user_request.workspace_names = None
+        result = DocumentHelpers._get_base_workspace_names(user_request, team)
         assert result == ["team_brain1"]
 
-        # Test with no brain ids
-        team.config.brain_ids = None
-        result = DocumentHelpers._get_base_brain_ids(user_request, team)
+        # Test with no workspace names
+        team.config.workspace_names = None
+        result = DocumentHelpers._get_base_workspace_names(user_request, team)
         assert result == []
 
     def test_combine_workspace_names(self):
-        """Test combining brain ids."""
+        """Test combining workspace names."""
         agent_data = {
-            "brain_ids": ["agent_brain1", "agent_brain2"]
+            "workspace_names": ["agent_brain1", "agent_brain2"]
         }
 
         user_request = MagicMock()
-        user_request.brain_ids = ["user_brain1", "agent_brain1"]  # agent_brain1 is duplicate
+        user_request.workspace_names = ["user_brain1", "agent_brain1"]  # agent_brain1 is duplicate
 
         team = MagicMock()
-        team.config.brain_ids = ["team_brain1"]
+        team.config.workspace_names = ["team_brain1"]
 
-        result = DocumentHelpers._combine_brain_ids(agent_data, user_request, team)
+        result = DocumentHelpers._combine_workspace_names(agent_data, user_request, team)
 
         assert len(result) == 3
         assert "user_brain1" in result
@@ -242,25 +242,25 @@ class TestDocumentHelpers:
         agent_data = {
             "brain_documents": [{"id": "agent_doc"}],
             "brain_relations": {"nodes": ["agent_node"]},
-            "brain_ids": ["agent_brain"]
+            "workspace_names": ["agent_brain"]
         }
 
         user_request = MagicMock()
         user_request.brain_documents = [{"id": "user_doc"}]
         user_request.brain_relations = {"nodes": ["user_node"]}
-        user_request.brain_ids = ["user_brain"]
+        user_request.workspace_names = ["user_brain"]
 
         team = MagicMock()
         team.config.doc_tree = None
         team.config.brain_tree = None
-        team.config.brain_ids = None
+        team.config.workspace_names = None
 
         result = DocumentHelpers._populate_brain_data(agent_data, user_request, team)
 
         assert "_original_brain_documents" in result
         assert "_original_brain_relations" in result
         assert len(result["brain_documents"]) == 2
-        assert len(result["brain_ids"]) == 2
+        assert len(result["workspace_names"]) == 2
 
     def test_remove_ids_from_tree(self):
         """Test removing IDs from document tree."""

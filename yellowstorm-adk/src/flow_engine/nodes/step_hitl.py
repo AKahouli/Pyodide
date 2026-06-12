@@ -22,8 +22,6 @@ FEEDBACK_SCOPES = {
     "future_workflow_runs",
 }
 CURRENT_RUN_CONTEXT_SCOPES = {"downstream_run", "entire_run"}
-HITL_TRANSCRIPT_START = "<HITL_Transcript>"
-HITL_TRANSCRIPT_END = "</HITL_Transcript>"
 
 SKIP_STEP_REASON = "__skip_step__"
 IGNORE_CLARIFICATION_REPLIES = {
@@ -156,41 +154,6 @@ def extract_follow_up_question(text: Any) -> str:
     return ""
 
 
-def build_hitl_transcript_block(transcript: list[dict[str, str]] | None) -> str:
-    lines: list[str] = [HITL_TRANSCRIPT_START]
-    counters = {"assistant": 0, "user": 0, "system": 0}
-    for turn in transcript or []:
-        if not isinstance(turn, dict):
-            continue
-        role = str(turn.get("role") or "user").strip().lower()
-        content = str(turn.get("content") or "").strip()
-        content = content.replace(HITL_TRANSCRIPT_START, "[HITL_Transcript]")
-        content = content.replace(HITL_TRANSCRIPT_END, "[/HITL_Transcript]")
-        if not content:
-            continue
-        normalized_role = role if role in counters else "system"
-        counters[normalized_role] += 1
-        label = {
-            "assistant": "Assistant question",
-            "user": "User answer",
-            "system": "System note",
-        }[normalized_role]
-        lines.append(f"{label} {counters[normalized_role]}: {content}")
-    if len(lines) == 1:
-        return ""
-    lines.append(HITL_TRANSCRIPT_END)
-    return "\n".join(lines)
-
-
-def append_hitl_transcript_block(base_text: str, transcript: list[dict[str, str]] | None) -> str:
-    block = build_hitl_transcript_block(transcript)
-    if not block:
-        return base_text
-    pattern = rf"\n*{re.escape(HITL_TRANSCRIPT_START)}.*?{re.escape(HITL_TRANSCRIPT_END)}"
-    cleaned = re.sub(pattern, "", base_text or "", flags=re.DOTALL).rstrip()
-    return f"{cleaned}\n\n{block}" if cleaned else block
-
-
 def build_clarification_pre_prompt(
     label: str,
     node_description: str,
@@ -207,6 +170,7 @@ def build_clarification_pre_prompt(
     )
     prompt = prompt.replace("{{UserLanguage}}", user_language or "en")
     blocks: list[str] = [prompt]
+    blocks.append(f"Task title: {label}")
     blocks.append(f"Task description:\n{node_description}")
     if user_query.strip():
         blocks.append(f"User request:\n{user_query.strip()}")
@@ -223,14 +187,12 @@ def build_blocker_judge_prompt(
     node_description: str,
     input_context: dict[str, Any],
     blockers: list[dict[str, Any]],
-    feedback_history: list[dict[str, str]] | None = None,
 ) -> str:
-    blocker_lines: list[str] = []
-    seen_blockers: set[str] = set()
+    blocker_lines = []
     for blocker in blockers:
         matcher_config = blocker.get("matcherConfig") or blocker.get("matcher_config") or {}
         natural_rule = matcher_config.get("naturalLanguageRule") or matcher_config.get("natural_language_rule") if isinstance(matcher_config, dict) else ""
-        blocker_payload = {
+        blocker_lines.append(json.dumps({
             "id": blocker.get("id"),
             "kind": blocker.get("kind"),
             "action": blocker.get("action"),
@@ -238,36 +200,19 @@ def build_blocker_judge_prompt(
             "description": blocker.get("description"),
             "naturalLanguageRule": natural_rule,
             "promptTemplate": blocker.get("promptTemplate") or blocker.get("prompt_template"),
-        }
-        blocker_key = json.dumps(
-            {
-                "kind": blocker_payload["kind"],
-                "action": blocker_payload["action"],
-                "label": blocker_payload["label"],
-                "description": blocker_payload["description"],
-                "naturalLanguageRule": blocker_payload["naturalLanguageRule"],
-                "promptTemplate": blocker_payload["promptTemplate"],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        if blocker_key in seen_blockers:
-            continue
-        seen_blockers.add(blocker_key)
-        blocker_lines.append(json.dumps(blocker_payload, ensure_ascii=False))
+        }, ensure_ascii=False))
     return "\n\n".join([
-        "Must always Evaluate **every** configured human-in-the-loop blocker definition (listed below) to determine if it applies regarding the given task description and ask for clarification or approval if needed.",
+        "Must always Evaluate whether any configured human-in-the-loop blocker applies regarding the given task description and ask for clarification or approval if needed.",
         "Return exactly one JSON object and no markdown.",
-        "If a blocker applies, return {\"decision\":\"block\",\"blocker_id\":\"...\",\"message\":\"one concise question or approval request for the user\"}.",
         "If no blocker applies, return {\"decision\":\"clear\"}.",
+        "If a blocker applies, return {\"decision\":\"block\",\"blocker_id\":\"...\",\"message\":\"one concise question or approval request for the user\"}.",
         "Do not invent missing user requirements. Judge only from the task, current inputs, and blocker definitions.",
         "When a blocker describes missing or ambiguous criteria that are still not provided, prefer block over clear.",
-        "If prior user feedback is insufficient, contradictory, or too broad, block again and ask a better question with brief examples.",
         "For clarify actions, the message must be one direct user-facing question asking only for the missing information.",
         "For approval actions, the message must be one concise approval request.",
+        f"Task title: {label}",
         f"Task description:\n{node_description}",
         f"Current inputs/context:\n{json.dumps(input_context, ensure_ascii=False, default=str)}",
-        f"Prior HITL feedback:\n{json.dumps(feedback_history or [], ensure_ascii=False, default=str)}",
         "Blocker definitions:\n" + "\n".join(blocker_lines),
     ])
 

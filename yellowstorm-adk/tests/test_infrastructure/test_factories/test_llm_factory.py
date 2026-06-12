@@ -14,7 +14,7 @@ class TestLLMFactory:
         factory = LLMFactory()
         assert factory is not None
 
-    @patch('google.adk.models.lite_llm.LiteLlm')
+    @patch('src.smart_rag.infrastructure.factories.llm_factory.LiteLlm')
     def test_create_parallel_tool_calls_llm(self, mock_litellm):
         """Test creating LLM with parallel tool calls support."""
         mock_llm = MagicMock()
@@ -26,7 +26,7 @@ class TestLLMFactory:
         assert result == mock_llm
         mock_litellm.assert_called_once()
 
-    @patch('google.adk.models.lite_llm.LiteLlm')
+    @patch('src.smart_rag.infrastructure.factories.llm_factory.LiteLlm')
     def test_create_no_tool_calls_llm(self, mock_litellm):
         """Test creating LLM without tool calls support."""
         mock_llm = MagicMock()

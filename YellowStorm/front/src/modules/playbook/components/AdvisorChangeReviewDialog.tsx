@@ -25,11 +25,6 @@ const CATEGORY_META: Record<RemediationCategory, { labelKey: string; description
   tooling: { labelKey: 'detail.remediation.category.tooling', descriptionKey: 'detail.remediation.categoryDescription.tooling', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
   evidence: { labelKey: 'detail.remediation.category.evidence', descriptionKey: 'detail.remediation.categoryDescription.evidence', color: 'bg-sky-100 text-sky-700 border-sky-200' },
   outputFormat: { labelKey: 'detail.remediation.category.outputFormat', descriptionKey: 'detail.remediation.categoryDescription.outputFormat', color: 'bg-orange-100 text-orange-700 border-orange-200' },
-  format: { labelKey: 'detail.remediation.category.format', descriptionKey: 'detail.remediation.categoryDescription.format', color: 'bg-orange-100 text-orange-700 border-orange-200' },
-  hitl: { labelKey: 'detail.remediation.category.hitl', descriptionKey: 'detail.remediation.categoryDescription.hitl', color: 'bg-red-100 text-red-700 border-red-200' },
-  determinism: { labelKey: 'detail.remediation.category.determinism', descriptionKey: 'detail.remediation.categoryDescription.determinism', color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  expected_result: { labelKey: 'detail.remediation.category.expected_result', descriptionKey: 'detail.remediation.categoryDescription.expected_result', color: 'bg-amber-100 text-amber-700 border-amber-200' },
-  cost_efficiency: { labelKey: 'detail.remediation.category.cost_efficiency', descriptionKey: 'detail.remediation.categoryDescription.cost_efficiency', color: 'bg-lime-100 text-lime-700 border-lime-200' },
 };
 
 interface Props {
@@ -67,7 +62,7 @@ export function AdvisorChangeReviewDialog({
       existing.push(item);
       groups.set(item.category, existing);
     }
-    const order: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat', 'format', 'hitl', 'determinism', 'expected_result', 'cost_efficiency'];
+    const order: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'];
     return order.filter((cat) => groups.has(cat)).map((cat) => ({
       category: cat,
       items: [...groups.get(cat)!].sort((a, b) => Number(b.defaultSelected) - Number(a.defaultSelected)),
@@ -127,6 +122,7 @@ export function AdvisorChangeReviewDialog({
   }, [tasks]);
 
   const handleApply = useCallback(async () => {
+    if (selections.size === 0) return;
     setApplying(true);
     try {
       const selectedIds = Array.from(selections);
@@ -308,7 +304,7 @@ export function AdvisorChangeReviewDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={handleApply} disabled={applying || loading}>
+          <Button onClick={handleApply} disabled={selections.size === 0 || applying || loading}>
             {(applying || loading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {t('detail.remediation.applySelected', { count: selections.size })}
           </Button>

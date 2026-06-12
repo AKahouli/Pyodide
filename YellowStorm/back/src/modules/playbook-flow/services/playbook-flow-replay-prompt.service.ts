@@ -65,6 +65,8 @@ export class PlaybookFlowReplayPromptService {
 
     return [
       '## Validated Replay Baseline',
+      `Replay version ${artifacts.validationVersion}.`,
+      `Replay mode: ${mode}.`,
       'This baseline is metadata from a prior validated execution. Do not copy prior wording. Use it only to preserve validated structure, constraints, and execution decisions.',
       '',
       '### Replay Intent',
@@ -94,7 +96,7 @@ export class PlaybookFlowReplayPromptService {
   }
 
   private buildOutputFormatSection(artifacts: ResolvedReplayArtifacts): string {
-    return `### Output Format Guide\n Must always generate output as following :\n${artifacts.outputFormatGuide}`;
+    return `### Output Format Guide\n${artifacts.outputFormatGuide}`;
   }
 
   private buildBehaviorSection(artifacts: ResolvedReplayArtifacts): string {
@@ -111,15 +113,15 @@ export class PlaybookFlowReplayPromptService {
     }
 
     const lines: string[] = [];
-    // if (planning.intentLabel) {
-    //   lines.push(`Preserve intent: ${planning.intentLabel}`);
-    // } else if (planning.intentKey) {
-    //   lines.push(`Preserve intent key: ${planning.intentKey}`);
-    // }
+    if (planning.intentLabel) {
+      lines.push(`Preserve intent: ${planning.intentLabel}`);
+    } else if (planning.intentKey) {
+      lines.push(`Preserve intent key: ${planning.intentKey}`);
+    }
     if (mode === 'replay_strict') {
-      lines.push('Maust always Preserve the validated tool names and order. Do not add extra tools.');
+      lines.push('Preserve the validated tool names and order. Do not add extra tools.');
     } else if (mode === 'replay_flex') {
-      lines.push('Must always Preserve validated tool purposes and **argument shapes** **using current substituted context values**.');
+      lines.push('Preserve validated tool purposes and argument shapes using current substituted context values.');
     } else if (mode === 'replay_adaptive') {
       lines.push('Use validated tools as guidance; alternative tools are allowed but will be scored.');
     }

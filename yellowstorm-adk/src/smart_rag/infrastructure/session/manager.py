@@ -8,7 +8,7 @@ from threading import Lock
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService, Session
-
+from google.adk.sessions.database_session_service import Base
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 

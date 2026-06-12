@@ -6,10 +6,6 @@ from src.flow_engine.bindings.resolver import _extract_port_value
 from src.flow_engine.state import ExecutionState
 
 
-class RouterConditionSourceUnavailableError(RuntimeError):
-    """Raised when a deterministic router source node has no completed output yet."""
-
-
 def _dot_get(value: Any, path: str | None) -> Any:
     if not path:
         return value
@@ -39,11 +35,6 @@ def _read_source_value(state: ExecutionState, source_node: str, source_port: str
     payload = state["task_outputs"].get((source_node, max(0, next_iteration - 1)))
     value = _extract_port_value(payload, source_port)
     return _dot_get(value, path)
-
-
-def _has_source_output(state: ExecutionState, source_node: str) -> bool:
-    next_iteration = state["iterations"].get(source_node, 0)
-    return (source_node, max(0, next_iteration - 1)) in state["task_outputs"]
 
 
 def _matches(operator: str, actual: Any, expected: Any) -> bool:
@@ -100,11 +91,6 @@ def choose_deterministic_label(node_config: dict[str, Any], state: ExecutionStat
 
         if not source_node or not source_port or not operator:
             continue
-
-        if not _has_source_output(state, source_node):
-            raise RouterConditionSourceUnavailableError(
-                f"Deterministic router source {source_node} has no completed output yet",
-            )
 
         actual = _read_source_value(
             state,

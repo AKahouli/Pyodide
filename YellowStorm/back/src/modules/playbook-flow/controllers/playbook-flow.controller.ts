@@ -1,5 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ConfigType } from '@nestjs/config';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
@@ -7,13 +6,11 @@ import { PlaybookFlowDesignService } from '../services/playbook-flow-design.serv
 import { PlaybookFlowDesignOperationService } from '../services/playbook-flow-design-operation.service';
 import { PlaybookFlowEvaluationService } from '../services/playbook-flow-evaluation.service';
 import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
-import { PlaybookFlowIntentConstructionService } from '../services/playbook-flow-intent-construction.service';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowQueryDto } from '../dto/playbook-flow-query.dto';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
-import { CancelIntentConstructionDto } from '../dto/cancel-intent-construction.dto';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
@@ -35,7 +32,6 @@ export class PlaybookFlowController {
     private readonly designOperationService: PlaybookFlowDesignOperationService,
     private readonly evaluationService: PlaybookFlowEvaluationService,
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
-    private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
     @Inject(playbookFlowConfig.KEY)
     private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
@@ -322,68 +318,5 @@ export class PlaybookFlowController {
     @Body() dto: RequestPlaybookFlowIntentDto,
   ) {
     return this.playbookFlowIntentService.analyze(id, userId, dto);
-  }
-
-  @Post(':id/intent-constructions')
-  @ApiOperation({ summary: 'Start realtime playbook intent construction' })
-  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
-  async startIntentConstruction(
-    @CurrentUser('_id') userId: string,
-    @Param('id') id: string,
-    @Body() dto: RequestPlaybookFlowIntentDto,
-  ) {
-    return this.playbookFlowIntentConstructionService.start(id, userId, dto);
-  }
-
-  @Get(':id/intent-constructions/:constructionId/stream')
-  @ApiOperation({ summary: 'Stream realtime playbook intent construction events' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
-  async streamIntentConstruction(
-    @CurrentUser('_id') userId: string,
-    @Param('id') id: string,
-    @Param('constructionId') constructionId: string,
-    @Query('after') after: string | undefined,
-    @Res() res: Response,
-  ) {
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders?.();
-    const afterSequence = Number.isFinite(Number(after)) ? Number(after) : 0;
-    try {
-      for await (const event of this.playbookFlowIntentConstructionService.stream(id, userId, constructionId, afterSequence)) {
-        res.write(`${JSON.stringify(event)}\n`);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Intent construction stream failed.';
-      this.logger.error(`playbook_intent_construction_stream_failed playbookId=${id} constructionId=${constructionId} message=${message}`);
-      if (!res.destroyed && !res.writableEnded) {
-        res.write(`${JSON.stringify({
-          type: 'failed',
-          constructionId,
-          playbookId: id,
-          sequence: afterSequence + 1,
-          createdAt: new Date().toISOString(),
-          message,
-          recoverable: true,
-        })}\n`);
-      }
-    }
-    if (!res.destroyed && !res.writableEnded) {
-      res.end();
-    }
-  }
-
-  @Post(':id/intent-constructions/:constructionId/cancel')
-  @ApiOperation({ summary: 'Cancel realtime playbook intent construction' })
-  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
-  async cancelIntentConstruction(
-    @CurrentUser('_id') userId: string,
-    @Param('id') id: string,
-    @Param('constructionId') constructionId: string,
-    @Body() body: CancelIntentConstructionDto,
-  ) {
-    return this.playbookFlowIntentConstructionService.cancel(id, userId, constructionId, body?.reason);
   }
 }

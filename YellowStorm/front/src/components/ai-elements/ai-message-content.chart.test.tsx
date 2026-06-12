@@ -1,52 +1,14 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AIMessageContent, type MessageContentPart } from './ai-message-content';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
-
-const openFileViewerFromUrlMock = vi.hoisted(() => vi.fn());
-const getArtifactDownloadUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
 }));
 
-vi.mock('@/modules/file-viewer', () => ({
-  openFileViewerFromUrl: openFileViewerFromUrlMock,
-  getMimeTypeFromFilename: () => 'application/pdf',
-  useFileViewerDisplayMode: () => 'sidebar',
-}));
-
-vi.mock('@/modules/conversation/api', () => ({
-  getArtifactDownloadUrl: getArtifactDownloadUrlMock,
-}));
-
-beforeAll(() => {
-  vi.stubGlobal('IntersectionObserver', class {
-    observe = vi.fn();
-    unobserve = vi.fn();
-    disconnect = vi.fn();
-  });
-});
-
 describe('AIMessageContent charts', () => {
-  it('renders markdown lists with compact shared spacing', () => {
-    const parts: MessageContentPart[] = [
-      {
-        type: 'text',
-        content: '- **Best approach:** use a newsletter funnel\n- **Core strategy:** publish useful insights\n  - AI adoption\n  - data strategy',
-      },
-    ];
-
-    const { container } = render(<AIMessageContent parts={parts} />);
-    const list = container.querySelector('ul');
-    const listItem = container.querySelector('li');
-
-    expect(list).toHaveClass('my-2');
-    expect(listItem).toHaveClass('my-0', 'leading-relaxed');
-  });
-
   it('renders inline citation markers without bracket text', () => {
     const parts: MessageContentPart[] = [
       {
@@ -69,43 +31,6 @@ describe('AIMessageContent charts', () => {
 
     expect(screen.queryByText('[2]')).not.toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
-  });
-
-  it('opens citations with exact located highlight text', async () => {
-    getArtifactDownloadUrlMock.mockResolvedValueOnce({ downloadUrl: 'https://example.test/contract.pdf' });
-    const parts: MessageContentPart[] = [
-      {
-        type: 'text',
-        content: 'Priorite haute [2].',
-        citations: [{
-          parentId: '',
-          sourceType: 'text',
-          source: 'user-1/codeinterpreter/contract.pdf',
-          externalId: '',
-          page: '2',
-          pageContent: 'Retrieved chunk',
-          workspaceId: 'codeinterpreter',
-          reference: '[2]',
-          highlightText: 'Exact located quote',
-          highlightBBox: [10, 20, 30, 40],
-        }],
-      },
-    ];
-
-    render(<AIMessageContent parts={parts} />);
-    await userEvent.click(screen.getByText('2'));
-
-    expect(openFileViewerFromUrlMock).toHaveBeenCalledWith(
-      'https://example.test/contract.pdf',
-      'contract.pdf',
-      'application/pdf',
-      {
-        displayMode: 'sidebar',
-        page: 2,
-        highlightText: 'Exact located quote',
-        highlightBBox: [10, 20, 30, 40],
-      },
-    );
   });
 
   it('renders a line chart between text parts', () => {

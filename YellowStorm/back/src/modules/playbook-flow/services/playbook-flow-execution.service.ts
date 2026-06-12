@@ -106,24 +106,13 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
-function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(blockers)) return [];
-  return blockers.filter((blocker): blocker is Record<string, unknown> => (
-    !!blocker
-    && typeof blocker === 'object'
-    && !Array.isArray(blocker)
-    && blocker.enabled !== false
-    && blocker.createdBy === 'user'
-  ));
-}
-
 export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> {
   const metadata = node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
     ? node.metadata as Record<string, unknown>
     : {};
   const flowHitlPolicy = snapshot.hitlPolicy;
   const nodeHitlPolicy = node.hitlPolicy ?? metadata.hitlPolicy ?? metadata.hitl_policy;
-  const hitlBlockers = filterRuntimeHitlBlockers(snapshot.hitlBlockers);
+  const hitlBlockers = snapshot.hitlBlockers;
 
   // Keep HITL contract data inside metadata until the runtime proto carries first-class flow-node fields.
   return {
@@ -144,7 +133,7 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       ? { max_clarifications: Number(node.maxClarifications ?? metadata.maxClarifications) || 0 }
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
-    ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
+    ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
   };
 }
 
@@ -378,19 +367,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return replayPlanService.hasUnresolvedRequiredContext(planning.contextMapping);
   }
 
-  private resolveStepExecutionMode(
-    node: { id: string; metadata?: Record<string, unknown> },
-    stepModes: Record<string, string>,
-    globalExecMode: string,
-    validStepModes: Set<string>,
-  ): string {
-    const savedStepMode = typeof node.metadata?.stepReplayMode === 'string'
-      ? node.metadata.stepReplayMode
-      : undefined;
-    const rawStepMode = stepModes[node.id] || savedStepMode || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
-    return validStepModes.has(rawStepMode) ? rawStepMode : 'live';
-  }
-
   /** Keeps runtime HITL memory payloads lean and stable across the NestJS to ADK boundary. */
   private mapRuntimeHitlMemories(memories: Array<Record<string, unknown>>): RuntimeHitlMemory[] {
     return memories.map((memory) => ({
@@ -585,10 +561,21 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     dispatcher.schedule(ownerId, (queuedOwnerId) => this.drainQueue(queuedOwnerId));
   }
 
-  private async prepareExecutionStartFlow(
+  async start(
     flowId: string,
     ownerId: string,
-  ): Promise<IFlowResponse> {
+    inputContext?: Record<string, unknown>,
+    idempotencyKey?: string,
+    singleStepTaskId?: string,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
+    reflectionEnabled?: boolean,
+    advisorScoringMode?: AdvisorScoringMode,
+    executionMode?: string,
+    stepExecutionModes?: Record<string, string>,
+    modelIdOverride?: string,
+  ): Promise<IFlowExecutionResponse> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
@@ -620,26 +607,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
-
-    return flow;
-  }
-
-  async start(
-    flowId: string,
-    ownerId: string,
-    inputContext?: Record<string, unknown>,
-    idempotencyKey?: string,
-    singleStepTaskId?: string,
-    advisorAutopilotEnabled?: boolean,
-    advisorAutopilotTargetScore?: number,
-    advisorAutopilotMaxTurns?: number,
-    reflectionEnabled?: boolean,
-    advisorScoringMode?: AdvisorScoringMode,
-    executionMode?: string,
-    stepExecutionModes?: Record<string, string>,
-    modelIdOverride?: string,
-  ): Promise<IFlowExecutionResponse> {
-    const flow = await this.prepareExecutionStartFlow(flowId, ownerId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
@@ -1170,8 +1137,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const globalExecMode = executionMeta?.executionMode || 'live';
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
-      const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
-      const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       const replayFingerprintNodes = ((snapshot.nodes as Array<Record<string, unknown>> | undefined) || []).map((node) => {
         if (!executionModelIdOverride || typeof executionModelIdOverride !== 'string') {
           return { ...node };
@@ -1191,12 +1156,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         ...(snapshot as FlowSnapshot),
         nodes: replayFingerprintNodes as unknown as FlowSnapshot['nodes'],
       });
-      const replayModeNodeIds = enrichedNodes
-        .filter((node: any) => REPLAY_MODES.has(this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES)))
-        .map((node: any) => node.id);
       const nodesEligibleForReplay = singleStepTargetId
         ? [singleStepTargetId]
-        : Array.from(new Set([...taskNodeIds, ...replayModeNodeIds]));
+          : taskNodeIds;
       const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
       const activeOutputFormatTemplates = this.outputFormatService
         ? await this.outputFormatService.getActiveTemplates(flowId, nodesEligibleForReplay)
@@ -1223,23 +1185,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
 
       const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
+      const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
+      const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       for (const node of enrichedNodes) {
         const taskId = node.id;
-        const stepMode = this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES);
+        const rawStepMode = stepModes[taskId] || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
+        const stepMode = VALID_STEP_MODES.has(rawStepMode) ? rawStepMode : 'live';
         const isReplayMode = REPLAY_MODES.has(stepMode);
         node.metadata = { ...node.metadata, execution_mode: stepMode };
         if (!isReplayMode) continue;
-        let artifacts = replayArtifacts.get(taskId);
-        if (!artifacts) {
-          artifacts = await this.replayArtifactService.resolveActiveReplayArtifact(flowId, taskId) ?? undefined;
-          if (artifacts) {
-            replayArtifacts.set(taskId, artifacts);
-          }
-        }
-        if (!artifacts) {
-          this.logger.warn(`Replay skipped for task ${taskId}: missing_replay_baseline`);
-          continue;
-        }
+        const artifacts = replayArtifacts.get(taskId);
+        if (!artifacts) continue;
         const currentNodeSnapshot = replayFingerprintNodesById.get(taskId) ?? { ...node };
         const eligibilityThreshold = this.systemService
           ? (await this.systemService.getPlaybookSettings().catch(() => null))?.replayEligibilityConfidenceThreshold
@@ -1616,7 +1572,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .find({ executionId })
       .sort({ decidedAt: 1 })
       .lean();
-    const hitlEvents = execution.hitlEvents ?? [];
 
       return {
         ...(execution.toJSON() as unknown as IFlowExecutionResponse),
@@ -1649,7 +1604,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           judgeResult: (r as any).judgeResult ?? null,
           judgeError: (r as any).judgeError ?? null,
           judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
-          hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
         };
       }),
       routerDecisions: routerDecisions.map((r) => ({
@@ -1705,7 +1659,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       const claimedExecution = await this.executionModel
         .findById(next.id)
-        .select('+snapshot')
+        .select('+snapshot replaySource')
         .lean();
 
       if (!claimedExecution) {
@@ -2386,12 +2340,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
-    const executableSnapshot = this.buildExecutableSnapshot(
-      this.builderService.buildSnapshot(latestFlow as any),
-      String(sourceExecution.flowId),
-    );
-    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
+    const snapshot = sourceExecution.snapshot as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -2402,20 +2351,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const iteration = payload.iteration ?? 0;
-    const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
-      ? snapshot.settings as Record<string, unknown>
-      : {};
-    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
-    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
-      recursionLimit,
-      maxParallelism,
+      recursionLimit: sourceExecution.recursionLimit,
+      maxParallelism: sourceExecution.maxParallelism,
       inputContext: sourceExecution.inputContext,
-      snapshot,
+      snapshot: sourceExecution.snapshot,
       replaySource: {
         executionId: sourceExecution.id,
         taskId: payload.taskId,

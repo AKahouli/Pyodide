@@ -14,10 +14,6 @@ export interface FlowSnapshot {
   workspaces: string[];
 }
 
-function filterRuntimeHitlBlockers(blockers: HitlBlockerRule[] | undefined): HitlBlockerRule[] {
-  return (blockers ?? []).filter((blocker) => blocker?.enabled !== false && blocker?.createdBy === 'user');
-}
-
 export function flowToSnapshot(flow: Flow): FlowSnapshot {
   return {
     nodes: flow.nodes,
@@ -28,7 +24,7 @@ export function flowToSnapshot(flow: Flow): FlowSnapshot {
       maxParallelism: flow.settings.maxParallelism,
     },
     hitlPolicy: flow.hitlPolicy,
-    hitlBlockers: filterRuntimeHitlBlockers(flow.hitlBlockers),
+    hitlBlockers: flow.hitlBlockers || [],
     workspaces: (flow.workspaces || []).map((w: any) =>
       typeof w === 'object' && w.toString ? w.toString() : String(w),
     ),

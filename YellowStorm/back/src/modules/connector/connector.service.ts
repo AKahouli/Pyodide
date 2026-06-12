@@ -543,24 +543,17 @@ export class ConnectorService {
     supportsIteration?: boolean;
     isEnabled?: boolean;
   }>): ConnectorAction[] {
-    return (actions ?? []).map((action) => {
-      // Replace {variable_name} with [variable_name] to prevent Google ADK template substitution
-      // This fixes "Context variable not found" errors when variables like {property_name}
-      // appear in connector tool descriptions but are not meant to be substituted
-      const sanitizedDescription = (action.description ?? '').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, '[$1]');
-
-      return {
-        key: this.truncateValue(action.key, ConnectorService.CONNECTOR_ACTION_KEY_MAX_LENGTH),
-        label: this.truncateValue(action.label, ConnectorService.CONNECTOR_ACTION_LABEL_MAX_LENGTH),
-        description: this.truncateValue(sanitizedDescription, ConnectorService.CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
-        parameterSchema: action.parameterSchema ?? {},
-        outputSchema: action.outputSchema ?? {},
-        safety: action.safety ?? 'read',
-        supportsBatch: action.supportsBatch ?? false,
-        supportsIteration: action.supportsIteration ?? false,
-        isEnabled: action.isEnabled ?? true,
-      };
-    }) as ConnectorAction[];
+    return (actions ?? []).map((action) => ({
+      key: this.truncateValue(action.key, ConnectorService.CONNECTOR_ACTION_KEY_MAX_LENGTH),
+      label: this.truncateValue(action.label, ConnectorService.CONNECTOR_ACTION_LABEL_MAX_LENGTH),
+      description: this.truncateValue(action.description ?? '', ConnectorService.CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
+      parameterSchema: action.parameterSchema ?? {},
+      outputSchema: action.outputSchema ?? {},
+      safety: action.safety ?? 'read',
+      supportsBatch: action.supportsBatch ?? false,
+      supportsIteration: action.supportsIteration ?? false,
+      isEnabled: action.isEnabled ?? true,
+    })) as ConnectorAction[];
   }
 
   private truncateValue(value: string, maxLength: number): string {

@@ -4,16 +4,14 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { parseApiError } from '@/lib/api-error';
-import { ErrorCode } from '@/lib/error-codes';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
 import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/required-port-validation';
 import { playbookFeatures } from '../features';
 import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
-const IDLE_DEBOUNCE_MS = 600;
-const ACTIVE_EDIT_DEBOUNCE_MS = 1500;
-const MAX_DEBOUNCE_MS = 2500;
+const IDLE_DEBOUNCE_MS = 1200;
+const ACTIVE_EDIT_DEBOUNCE_MS = 3000;
+const MAX_DEBOUNCE_MS = 5000;
 
 function getAdaptiveDebounceMs(params: {
   lastAutosaveDurationMs: number | null;
@@ -63,18 +61,6 @@ export function useAutosave() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDirtyAtRef = useRef<number | null>(null);
 
-  const notifySaveFailure = useCallback((error: unknown) => {
-    if (!playbookFeatures.xstateAutosaveEnabled) return;
-
-    const apiError = parseApiError(error);
-    if (apiError.code === ErrorCode.CONFLICT) {
-      autosaveActor.send({ type: 'CONFLICT_DETECTED', errorCode: apiError.code });
-      return;
-    }
-
-    autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
-  }, [autosaveActor]);
-
   const clearTimer = useCallback(() => {
     if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
   }, []);
@@ -90,10 +76,12 @@ export function useAutosave() {
       }
       return result;
     }).catch((error: unknown) => {
-      notifySaveFailure(error);
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+      }
       throw error;
     });
-  }, [autosaveActor, clearTimer, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
+  }, [autosaveActor, clearTimer, lastAutosaveDurationMs, saveCurrentPlaybook]);
 
   useEffect(() => {
     if (!isDirty || dirtyVersion === 0 || hasUnboundRequiredPorts || hasIncompleteBindings) return;
@@ -147,7 +135,9 @@ export function useAutosave() {
       }
       return result;
     }).catch((error: unknown) => {
-      notifySaveFailure(error);
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+      }
       throw error;
     });
   }, [
@@ -156,7 +146,6 @@ export function useAutosave() {
     hasIncompleteBindings,
     hasUnboundRequiredPorts,
     lastAutosaveDurationMs,
-    notifySaveFailure,
     saveCurrentPlaybook,
   ]);
 

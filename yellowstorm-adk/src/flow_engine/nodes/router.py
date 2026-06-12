@@ -17,10 +17,7 @@ from structlog import get_logger
 from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
-from src.flow_engine.nodes.router_conditions import (
-    RouterConditionSourceUnavailableError,
-    choose_deterministic_label,
-)
+from src.flow_engine.nodes.router_conditions import choose_deterministic_label
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
@@ -56,22 +53,7 @@ async def run_router(
     chosen_label = output_labels[0]
     decision_payload: dict[str, Any] = {"label": chosen_label, "mode": "llm"}
 
-    try:
-        deterministic_decision = choose_deterministic_label(node_config, state)
-    except RouterConditionSourceUnavailableError as exc:
-        writer({
-            "type": "NodeFailed",
-            "node_id": node_id,
-            "iteration": iteration,
-            "payload": {"error": str(exc)},
-        })
-        logger.warning(
-            "[router] Deterministic routing blocked by unavailable source output",
-            node_id=node_id,
-            error=str(exc),
-        )
-        raise
-
+    deterministic_decision = choose_deterministic_label(node_config, state)
     if deterministic_decision is not None:
         chosen_label = str(deterministic_decision["label"])
         decision_payload = {**deterministic_decision, "label": chosen_label}
