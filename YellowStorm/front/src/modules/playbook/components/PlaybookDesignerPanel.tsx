@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   usePlaybookStore,
@@ -14,6 +15,7 @@ import {
   useIsDesigning,
   useDesignerOpen,
   useCopilotMode,
+  useCurrentPlaybook,
   useCurrentExecution,
   useLatestExecutionForPlaybook,
   useSelectedStep,
@@ -59,13 +61,6 @@ function getInterruptResponseDetail(entry: InterruptEntry, primaryText: string) 
   const detail = entry.feedback || entry.reason || '';
   if (!detail || detail === primaryText) return '';
   return detail;
-}
-
-function getRiskLabel(riskLevel: string, t: (key: 'interrupt.risk.low' | 'interrupt.risk.medium' | 'interrupt.risk.high' | 'interrupt.risk.critical') => string) {
-  if (riskLevel === 'low') return t('interrupt.risk.low');
-  if (riskLevel === 'high') return t('interrupt.risk.high');
-  if (riskLevel === 'critical') return t('interrupt.risk.critical');
-  return t('interrupt.risk.medium');
 }
 
 function historyEntryToInterruptEntry(entry: HitlHistoryEntry): InterruptEntry {
@@ -114,6 +109,65 @@ function getRawHumanAnswer(entry: InterruptEntry) {
   return entry.replyMessage || entry.feedback || entry.reason || entry.humanResponse || '';
 }
 
+function normalizeFeedbackText(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function hasThreadAnswer(interruptThread: InterruptEntry[], feedback: string) {
+  const normalized = normalizeFeedbackText(feedback);
+  return interruptThread.some((entry) => hasHumanAnswer(entry) && normalizeFeedbackText(getRawHumanAnswer(entry)) === normalized);
+}
+
+function extractTaskDescriptionFeedback(taskDescription: string | undefined) {
+  if (!taskDescription) return [];
+  return taskDescription
+    .split('\n')
+    .map((line) => line.match(/^\s*Clarification from user:\s*(.+)\s*$/i)?.[1]?.trim() || '')
+    .filter(Boolean);
+}
+
+function removeTaskDescriptionFeedback(taskDescription: string | undefined) {
+  if (!taskDescription) return '';
+  return taskDescription
+    .split('\n')
+    .filter((line) => !/^\s*Clarification from user:/i.test(line))
+    .join('\n')
+    .trim();
+}
+
+function getInterruptContextText(entry: InterruptEntry | null) {
+  if (!entry) return '';
+  return [removeTaskDescriptionFeedback(entry.taskDescription), entry.result].filter(Boolean).join('\n\n');
+}
+
+function getInterruptEntryKey(entry: InterruptEntry) {
+  return entry.interruptId || entry.id;
+}
+
+function mergeInterruptThreads(localEntries: InterruptEntry[], computedEntries: InterruptEntry[]) {
+  if (localEntries.length === 0) return computedEntries;
+  if (computedEntries.length === 0) return localEntries;
+
+  const merged = [...localEntries];
+  const entryIndexes = new Map(merged.map((entry, index) => [getInterruptEntryKey(entry), index]));
+
+  for (const computedEntry of computedEntries) {
+    const key = getInterruptEntryKey(computedEntry);
+    const existingIndex = entryIndexes.get(key);
+    if (existingIndex === undefined) {
+      entryIndexes.set(key, merged.length);
+      merged.push(computedEntry);
+      continue;
+    }
+
+    if (!hasHumanAnswer(merged[existingIndex]) && hasHumanAnswer(computedEntry)) {
+      merged[existingIndex] = computedEntry;
+    }
+  }
+
+  return merged;
+}
+
 export function PlaybookDesignerPanel({ playbookId }: Props) {
   const { t } = useModuleTranslation('playbook');
 
@@ -123,6 +177,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const messagesLoading = useDesignMessagesLoading();
   const isDesigning = useIsDesigning();
   const isDirty = useIsDirty();
+  const playbook = useCurrentPlaybook();
   const rawCurrentExecution = useCurrentExecution();
   const latestExecution = useLatestExecutionForPlaybook(playbookId);
   const currentPlaybookExecution = rawCurrentExecution?.playbookId === playbookId ? rawCurrentExecution : null;
@@ -160,9 +215,14 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const [feedbackScope, setFeedbackScope] = useState<HitlFeedbackScope>('downstream_run');
   const [rememberFeedback, setRememberFeedback] = useState(false);
   const [showRejectReason, setShowRejectReason] = useState(false);
+  const [showInterruptOptions, setShowInterruptOptions] = useState(false);
   const [localInterruptThread, setLocalInterruptThread] = useState<{
     executionId: string;
     entries: InterruptEntry[];
+  } | null>(null);
+  const [awaitingInterruptReply, setAwaitingInterruptReply] = useState<{
+    executionId: string;
+    interruptId: string;
   } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -215,7 +275,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const activeInterruptEntry: InterruptEntry | null = interruptEntries.find((entry) => entry.status === 'pending')
     || (interruptPayload
       ? {
-          id: `${interruptPayload.taskId}-active`,
+          id: `${interruptPayload.taskId}-${interruptPayload.interruptId || 'active'}`,
           interruptType: interruptPayload.type,
           message: interruptPayload.message,
           status: 'pending' as const,
@@ -250,9 +310,18 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const localThreadEntries = rememberedThread && rememberedThread.executionId === currentExecution?.id
     ? rememberedThread.entries
     : [];
-  const interruptThread = computedInterruptThread.length > 0
-    ? computedInterruptThread
-    : localThreadEntries;
+  const interruptThread = mergeInterruptThreads(localThreadEntries, computedInterruptThread);
+  const lastLocalInterruptEntry = localThreadEntries.length > 0 ? localThreadEntries[localThreadEntries.length - 1] : null;
+  const isAwaitingInterruptReply = Boolean(awaitingInterruptReply && awaitingInterruptReply.executionId === currentExecution?.id);
+  const composerInterruptEntry = activeInterruptEntry || (isAwaitingInterruptReply ? lastLocalInterruptEntry : null);
+  const isInterruptBusy = isSubmittingInterrupt || isAwaitingInterruptReply;
+  const isRunningAfterHitl = Boolean(
+    currentExecution
+      && interruptThread.length > 0
+      && !composerInterruptEntry
+      && !currentExecution.waitingForHumanInput
+      && currentExecution.status === 'running',
+  );
   const pendingInterrupts = currentExecution?.pendingInterrupts || [];
   const queuedInterrupts = pendingInterrupts.filter((entry) => (
     entry.interruptId !== activeInterruptEntry?.interruptId
@@ -291,6 +360,20 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     setFeedbackScope(activeInterruptEntry.scope ?? (isSensitiveApproval ? 'step_only' : 'downstream_run'));
     setRememberFeedback(false);
   }, [activeInterruptEntry?.interruptId, activeInterruptEntry?.interruptType, activeInterruptEntry?.riskLevel, activeInterruptEntry?.scope]);
+
+  useEffect(() => {
+    if (!activeInterruptEntry || !awaitingInterruptReply) return;
+    if (activeInterruptEntry.interruptId !== awaitingInterruptReply.interruptId) {
+      setAwaitingInterruptReply(null);
+    }
+  }, [activeInterruptEntry?.interruptId, awaitingInterruptReply]);
+
+  useEffect(() => {
+    if (!awaitingInterruptReply || currentExecution?.id !== awaitingInterruptReply.executionId) return;
+    if (!activeInterruptEntry && !currentExecution.waitingForHumanInput) {
+      setAwaitingInterruptReply(null);
+    }
+  }, [activeInterruptEntry, awaitingInterruptReply, currentExecution?.id, currentExecution?.waitingForHumanInput]);
 
   useEffect(() => {
     if (!designerOpen || copilotMode !== 'interrupt') return;
@@ -338,10 +421,11 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     if (!playbookId || !currentExecution || !activeInterruptEntry) return;
 
     setIsSubmittingInterrupt(true);
+    const responseMessage = extra?.message || extra?.feedback || extra?.reason || '';
+    const responseScope = options?.scope ?? feedbackScope;
+    const responseRemember = options?.remember ?? rememberFeedback;
+    const previousThreadEntries = interruptThread.length > 0 ? interruptThread : [activeInterruptEntry];
     try {
-      const responseMessage = extra?.message || extra?.feedback || extra?.reason || '';
-      const responseScope = options?.scope ?? feedbackScope;
-      const responseRemember = options?.remember ?? rememberFeedback;
       const answeredEntry: InterruptEntry = {
         ...activeInterruptEntry,
         status: 'answered',
@@ -357,10 +441,16 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       };
       setLocalInterruptThread({
         executionId: currentExecution.id,
-        entries: (interruptThread.length > 0 ? interruptThread : [activeInterruptEntry]).map((entry) => (
+        entries: previousThreadEntries.map((entry) => (
           entry.interruptId === activeInterruptEntry.interruptId ? answeredEntry : entry
         )),
       });
+      setAwaitingInterruptReply({
+        executionId: currentExecution.id,
+        interruptId: activeInterruptEntry.interruptId || activeInterruptEntry.id,
+      });
+      setResponse('');
+      setRejectReason('');
       await resumeExecution(playbookId, {
         executionId: currentExecution.id,
         taskId: interruptPayload?.taskId || interruptedTask?.taskId || '',
@@ -373,11 +463,19 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         scope: responseScope,
         remember: responseRemember,
       });
-      setResponse('');
-      setRejectReason('');
       setRememberFeedback(false);
       setShowRejectReason(false);
+      setShowInterruptOptions(false);
     } catch {
+      setAwaitingInterruptReply(null);
+      setLocalInterruptThread({
+        executionId: currentExecution.id,
+        entries: previousThreadEntries,
+      });
+      setResponse(responseMessage);
+      setRejectReason(extra?.reason || '');
+      setFeedbackScope(responseScope);
+      setRememberFeedback(responseRemember);
       // handled in store
     } finally {
       setIsSubmittingInterrupt(false);
@@ -438,7 +536,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     }
 
     e.preventDefault();
-    if (isSubmittingInterrupt || !activeInterruptEntry) {
+    if (isInterruptBusy || !activeInterruptEntry) {
       return;
     }
 
@@ -446,23 +544,74 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       'reply',
       { message: response || undefined, feedback: response || undefined },
     );
-  }, [activeInterruptEntry, handleInterruptSubmit, isSubmittingInterrupt, response]);
+  }, [activeInterruptEntry, handleInterruptSubmit, isInterruptBusy, response]);
 
   const panelTitle = effectiveCopilotMode === 'interrupt'
-    ? getInterruptTitle(activeInterruptEntry?.interruptType ?? interruptPayload?.type ?? 'clarification', t)
+    ? t('interrupt.assistantInbox')
     : t('designer.title');
-  const pendingInterruptTaskTitle = interruptedTask?.nodeTitle || interruptPayload?.taskTitle || t('copilot.pendingTaskFallback');
+  const interruptTitle = getInterruptTitle(activeInterruptEntry?.interruptType ?? interruptPayload?.type ?? 'clarification', t);
+  const playbookTaskTitle = currentInterruptTaskId
+    ? playbook?.tasks.find((task) => task.id === currentInterruptTaskId)?.title
+    : undefined;
+  const pendingInterruptTaskTitle = interruptedTask?.nodeTitle || playbookTaskTitle || interruptPayload?.taskTitle || t('copilot.pendingTaskFallback');
+  const interruptContextText = getInterruptContextText(activeInterruptEntry);
+  const showInterruptReopen = !designerOpen && effectiveCopilotMode === 'interrupt' && (activeInterruptEntry || interruptThread.length > 0 || currentExecution?.waitingForHumanInput);
 
   return (
-    <div
-      className="absolute right-0 inset-y-0 w-80 sm:w-96 z-40 border-l bg-background flex flex-col transition-transform duration-300"
-      style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)' }}
-    >
+    <>
+      {showInterruptReopen && (
+        <Button
+          type="button"
+          className="absolute right-3 top-20 z-50 gap-2 rounded-full border border-primary/30 bg-background px-3 shadow-lg"
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setCopilotMode('interrupt');
+            setDesignerOpen(true);
+          }}
+          aria-label={t('interrupt.reopenAssistant')}
+        >
+          <PanelRightOpen className="h-4 w-4" />
+          <span>{t('interrupt.reopenAssistant')}</span>
+          {activeInterruptEntry && <span aria-hidden="true" className="h-2 w-2 rounded-full bg-amber-500" />}
+        </Button>
+      )}
+      <div
+        className="absolute right-0 inset-y-0 w-80 sm:w-96 z-40 border-l bg-background flex flex-col transition-transform duration-300"
+        style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)' }}
+      >
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">{panelTitle}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">{panelTitle}</h3>
+            {effectiveCopilotMode === 'interrupt' && activeInterruptEntry && (
+              <Badge variant="secondary" className="h-5 px-2 text-[10px]">
+                {interruptTitle}
+              </Badge>
+            )}
+          </div>
           {effectiveCopilotMode === 'interrupt' && (
-            <p className="text-xs text-muted-foreground truncate">{pendingInterruptTaskTitle}</p>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">{pendingInterruptTaskTitle}</span>
+              {interruptContextText && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full hover:bg-muted"
+                        aria-label={t('interrupt.contextTooltip')}
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start" className="max-w-72 whitespace-pre-wrap bg-popover text-popover-foreground shadow-lg">
+                      {interruptContextText}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -478,7 +627,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               <Square className="h-4 w-4" />
             </Button>
           )}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)} aria-label={t('interrupt.collapseAssistant')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -604,9 +753,24 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               const agentText = entry.result || entry.message;
               const responseText = getInterruptResponseText(entry, t);
               const responseDetail = getInterruptResponseDetail(entry, responseText);
+              const extractedFeedback = hasHumanAnswer(entry)
+                ? []
+                : extractTaskDescriptionFeedback(entry.taskDescription).filter((feedback) => !hasThreadAnswer(interruptThread, feedback));
 
               return (
                 <div key={entry.id} className="space-y-3">
+                  {extractedFeedback.map((feedback, feedbackIndex) => (
+                    <div key={`${entry.id}-extracted-${feedbackIndex}`} className="flex justify-end">
+                      <div className="max-w-[88%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground shadow-sm">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] opacity-80">
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          <span>{t('interrupt.you')}</span>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{feedback}</p>
+                        <p className="mt-1 text-[10px] opacity-70">{formatMessageTime(entry.createdAt)}</p>
+                      </div>
+                    </div>
+                  ))}
                   <div className="flex justify-start">
                     <div className="max-w-[88%] rounded-2xl rounded-tl-sm border bg-muted/50 px-3 py-2 shadow-sm">
                       <div className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
@@ -618,34 +782,9 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                           <MessageSquare className="h-3.5 w-3.5" />
                         )}
                         <span>{t('interrupt.agent')}</span>
-                        <span className="text-muted-foreground/60">{formatMessageTime(entry.createdAt)}</span>
                       </div>
                       <p className="text-sm whitespace-pre-wrap">{agentText}</p>
-                      {entry.taskDescription && (
-                        <div className="mt-2 rounded-md border bg-background/70 px-3 py-2">
-                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
-                            {t('interrupt.taskDescription')}
-                          </p>
-                          <p className="text-xs whitespace-pre-wrap">{entry.taskDescription}</p>
-                        </div>
-                      )}
-                      {(entry.reasonCode || entry.blockerKind || entry.riskLevel || (entry.downstreamNodeIds?.length ?? 0) > 0) && (
-                        <div className="rounded-md border bg-background px-3 py-2 text-xs">
-                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
-                            {t('interrupt.whyPaused')}
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {entry.reasonCode && <Badge variant="secondary">{entry.reasonCode}</Badge>}
-                            {entry.blockerKind && <Badge variant="outline">{entry.blockerKind}</Badge>}
-                            {entry.riskLevel && <Badge variant="outline">{getRiskLabel(String(entry.riskLevel), t)}</Badge>}
-                          </div>
-                          {(entry.downstreamNodeIds?.length ?? 0) > 0 && (
-                            <p className="mt-2 text-muted-foreground">
-                              {t('interrupt.downstreamImpact', { count: entry.downstreamNodeIds?.length ?? 0 })}
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      <p className="mt-1 text-[10px] text-muted-foreground/70">{formatMessageTime(entry.createdAt)}</p>
                     </div>
                   </div>
 
@@ -659,10 +798,10 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                             <MessageSquare className="h-3.5 w-3.5" />
                           )}
                           <span>{t('interrupt.you')}</span>
-                          <span>{formatMessageTime(entry.respondedAt)}</span>
                         </div>
                         <p className="text-sm whitespace-pre-wrap">{responseText}</p>
                         {responseDetail && <p className="text-xs opacity-90 whitespace-pre-wrap">{responseDetail}</p>}
+                        <p className="mt-1 text-[10px] opacity-70">{formatMessageTime(entry.respondedAt)}</p>
                       </div>
                     </div>
                   )}
@@ -686,117 +825,114 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
             <Send className="h-4 w-4" />
           </Button>
         </form>
-      ) : activeInterruptEntry ? (
+      ) : composerInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">
-          <div className="space-y-2 rounded-lg border bg-muted/30 px-3 py-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">{t('interrupt.scopeLabel')}</label>
-              <Select value={feedbackScope} onValueChange={(value) => setFeedbackScope(value as HitlFeedbackScope)}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="step_only">{t('interrupt.scope.step_only')}</SelectItem>
-                  <SelectItem value="downstream_run">{t('interrupt.scope.downstream_run')}</SelectItem>
-                  <SelectItem value="entire_run">{t('interrupt.scope.entire_run')}</SelectItem>
-                  <SelectItem value="future_node_runs">{t('interrupt.scope.future_node_runs')}</SelectItem>
-                  <SelectItem value="future_workflow_runs">{t('interrupt.scope.future_workflow_runs')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="flex items-center gap-2 text-xs">
-              <Checkbox
-                checked={rememberFeedback}
-                onCheckedChange={(checked) => setRememberFeedback(checked === true)}
-              />
-              <span>{t('interrupt.rememberFeedback')}</span>
-            </label>
-            <div className="grid grid-cols-1 gap-1.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 justify-start px-2 text-xs text-muted-foreground"
-                disabled={isSubmittingInterrupt}
-                onClick={() => void handleQuickResume('entire_run')}
-              >
-                {t('interrupt.disableForRun')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 justify-start px-2 text-xs text-muted-foreground"
-                disabled={isSubmittingInterrupt}
-                onClick={() => void handleQuickResume('step_only')}
-              >
-                {t('interrupt.disableForStep')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 justify-start px-2 text-xs text-muted-foreground"
-                onClick={() => void handleDisableSmartHitlForNode()}
-              >
-                {t('interrupt.disableSmartForNode')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 justify-start px-2 text-xs text-muted-foreground"
-                onClick={() => void handleSaveWorkflowRule()}
-              >
-                {t('interrupt.saveWorkflowRule')}
-              </Button>
-            </div>
-            {activeInterruptEntry.blockerRuleId && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs text-muted-foreground"
-                disabled={isDisablingBlocker}
-                onClick={() => void handleDisableBlocker()}
-              >
-                {t('interrupt.disableBlocker')}
-              </Button>
+          <div className="rounded-lg border bg-muted/20">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 w-full justify-between px-3 text-xs text-muted-foreground"
+              aria-expanded={showInterruptOptions}
+              disabled={!activeInterruptEntry || isInterruptBusy}
+              onClick={() => setShowInterruptOptions((value) => !value)}
+            >
+              <span className="inline-flex items-center gap-2">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {t('interrupt.options')}
+              </span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showInterruptOptions ? 'rotate-180' : ''}`} />
+            </Button>
+            {showInterruptOptions && (
+              <div className="space-y-2 border-t px-3 py-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium">{t('interrupt.scopeLabel')}</label>
+                  <Select value={feedbackScope} onValueChange={(value) => setFeedbackScope(value as HitlFeedbackScope)}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="step_only">{t('interrupt.scope.step_only')}</SelectItem>
+                      <SelectItem value="downstream_run">{t('interrupt.scope.downstream_run')}</SelectItem>
+                      <SelectItem value="entire_run">{t('interrupt.scope.entire_run')}</SelectItem>
+                      <SelectItem value="future_node_runs">{t('interrupt.scope.future_node_runs')}</SelectItem>
+                      <SelectItem value="future_workflow_runs">{t('interrupt.scope.future_workflow_runs')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <label className="flex items-center gap-2 text-xs">
+                  <Checkbox
+                    checked={rememberFeedback}
+                    onCheckedChange={(checked) => setRememberFeedback(checked === true)}
+                  />
+                  <span>{t('interrupt.rememberFeedback')}</span>
+                </label>
+                <div className="grid grid-cols-1 gap-1.5">
+                  <Button type="button" variant="ghost" size="sm" className="h-7 justify-start px-2 text-xs text-muted-foreground" disabled={isInterruptBusy} onClick={() => void handleQuickResume('entire_run')}>
+                    {t('interrupt.disableForRun')}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 justify-start px-2 text-xs text-muted-foreground" disabled={isInterruptBusy} onClick={() => void handleQuickResume('step_only')}>
+                    {t('interrupt.disableForStep')}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 justify-start px-2 text-xs text-muted-foreground" disabled={isInterruptBusy} onClick={() => void handleDisableSmartHitlForNode()}>
+                    {t('interrupt.disableSmartForNode')}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 justify-start px-2 text-xs text-muted-foreground" disabled={isInterruptBusy} onClick={() => void handleSaveWorkflowRule()}>
+                    {t('interrupt.saveWorkflowRule')}
+                  </Button>
+                </div>
+                {activeInterruptEntry?.blockerRuleId && (
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={isDisablingBlocker || isInterruptBusy} onClick={() => void handleDisableBlocker()}>
+                    {t('interrupt.disableBlocker')}
+                  </Button>
+                )}
+              </div>
             )}
           </div>
-          {activeInterruptEntry.interruptType === 'approval_request' ? (
+          {isAwaitingInterruptReply && (
+            <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span>{t('interrupt.thinking')}</span>
+              <span className="flex gap-0.5" aria-hidden="true">
+                {[0, 0.2, 0.4].map((delay) => (
+                  <span
+                    key={delay}
+                    className="inline-block h-1 w-1 rounded-full bg-primary animate-pulse"
+                    style={{ animationDelay: `${delay}s` }}
+                  />
+                ))}
+              </span>
+            </div>
+          )}
+          {composerInterruptEntry.interruptType === 'approval_request' ? (
             <>
-              <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold">{t('interrupt.approvalActionHint')}</span>
-                  {interruptIterationCount > 1 && (
-                    <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-200">
-                      {t('interrupt.iterationContext', { current: interruptIterationIndex + 1, total: interruptIterationCount })}
-                    </Badge>
-                  )}
-                </div>
-              </div>
+              {interruptIterationCount > 1 && (
+                <Badge variant="outline" className="w-fit text-[10px]">
+                  {t('interrupt.iterationContext', { current: interruptIterationIndex + 1, total: interruptIterationCount })}
+                </Badge>
+              )}
               {showRejectReason && (
                 <Textarea
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   placeholder={t('interrupt.rejectReasonPlaceholder')}
                   rows={2}
+                  disabled={isInterruptBusy}
                 />
               )}
               <div className="flex items-center justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      if (!showRejectReason) {
-                        setShowRejectReason(true);
-                        return;
-                      }
-                      void handleInterruptSubmit('reject', { reason: rejectReason || undefined });
-                    }}
-                    disabled={isSubmittingInterrupt}
-                  >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (!showRejectReason) {
+                      setShowRejectReason(true);
+                      return;
+                    }
+                    void handleInterruptSubmit('reject', { reason: rejectReason || undefined });
+                  }}
+                  disabled={isInterruptBusy || !activeInterruptEntry}
+                >
                   <XCircle className="h-4 w-4 mr-1" />
                   {t('interrupt.reject')}
                 </Button>
@@ -804,43 +940,47 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                   size="sm"
                   className="min-w-[180px]"
                   onClick={() => void handleInterruptSubmit('approve')}
-                  disabled={isSubmittingInterrupt}
+                  disabled={isInterruptBusy || !activeInterruptEntry}
                 >
-                  <CheckCircle2 className="h-4 w-4 mr-1" />
-                  {t('interrupt.approveAndContinue')}
+                  {isInterruptBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      {t('interrupt.thinking')}
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-1" />
+                      {t('interrupt.approveAndContinue')}
+                    </>
+                  )}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <div className="rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-100">
-                <div className="font-semibold">
-                  {activeInterruptEntry.interruptType === 'review_request'
-                    ? t('interrupt.reviewActionHint')
-                    : t('interrupt.clarificationActionHint')}
-                </div>
-              </div>
               <Textarea
                 ref={interruptComposerRef}
                 value={response}
                 onChange={(e) => setResponse(e.target.value)}
-                placeholder={t('interrupt.responsePlaceholder')}
+                placeholder={isInterruptBusy ? t('interrupt.waitingPlaceholder') : t('interrupt.responsePlaceholder')}
                 rows={3}
                 onKeyDown={handleInterruptResponseKeyDown}
+                disabled={isInterruptBusy || !activeInterruptEntry}
+                className={isInterruptBusy ? 'border-primary/50 bg-muted/30 opacity-100' : undefined}
               />
               <div className="flex items-center justify-end gap-2">
-                {activeInterruptEntry.interruptType === 'review_request' && (
+                {composerInterruptEntry.interruptType === 'review_request' && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void handleInterruptSubmit('reply', { message: response || undefined, feedback: response || undefined })}
-                    disabled={isSubmittingInterrupt || !response.trim()}
+                    disabled={isInterruptBusy || !activeInterruptEntry || !response.trim()}
                   >
                     <XCircle className="h-4 w-4 mr-1" />
                     {t('interrupt.submit')}
                   </Button>
                 )}
-                {activeInterruptEntry.interruptType === 'clarification' && (
+                {composerInterruptEntry.interruptType === 'clarification' && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -848,21 +988,26 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                       message: PROCEED_WITH_AVAILABLE_INFORMATION,
                       feedback: PROCEED_WITH_AVAILABLE_INFORMATION,
                     })}
-                    disabled={isSubmittingInterrupt}
+                    disabled={isInterruptBusy || !activeInterruptEntry}
                   >
                     {t('interrupt.proceedWithoutMore')}
                   </Button>
                 )}
                 <Button
                   size="sm"
-                  className={activeInterruptEntry.interruptType === 'review_request' ? 'min-w-[180px]' : undefined}
+                  className={composerInterruptEntry.interruptType === 'review_request' ? 'min-w-[180px]' : undefined}
                   onClick={() => void handleInterruptSubmit(
-                    activeInterruptEntry.interruptType === 'review_request' ? 'approve' : 'reply',
+                    composerInterruptEntry.interruptType === 'review_request' ? 'approve' : 'reply',
                     { message: response || undefined, feedback: response || undefined },
                   )}
-                  disabled={isSubmittingInterrupt || (activeInterruptEntry.interruptType !== 'review_request' && !response.trim())}
+                  disabled={isInterruptBusy || !activeInterruptEntry || (composerInterruptEntry.interruptType !== 'review_request' && !response.trim())}
                 >
-                    {activeInterruptEntry.interruptType === 'review_request' ? (
+                    {isInterruptBusy ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        {t('interrupt.thinking')}
+                      </>
+                    ) : composerInterruptEntry.interruptType === 'review_request' ? (
                       <>
                         <CheckCircle2 className="h-4 w-4 mr-1" />
                         {t('interrupt.approveAndContinue')}
@@ -875,17 +1020,24 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
             </>
           )}
         </div>
-      ) : interruptThread.length > 0 ? (
+      ) : isRunningAfterHitl ? (
         <div className="border-t px-3 py-3 shrink-0">
-          <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 font-medium text-foreground">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              {t('interrupt.threadIdleTitle')}
-            </div>
-            <p className="mt-1">{t('interrupt.threadIdleHint')}</p>
+          <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>{t('interrupt.runningWithFeedback')}</span>
+            <span className="flex gap-0.5" aria-hidden="true">
+              {[0, 0.2, 0.4].map((delay) => (
+                <span
+                  key={delay}
+                  className="inline-block h-1 w-1 rounded-full bg-primary animate-pulse"
+                  style={{ animationDelay: `${delay}s` }}
+                />
+              ))}
+            </span>
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }

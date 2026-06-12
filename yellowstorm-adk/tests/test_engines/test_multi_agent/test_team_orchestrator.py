@@ -50,7 +50,7 @@ class TestAutoAgentGenerationTeam:
             mock_memory_service.save_manager_conversation = AsyncMock()
 
             # Mock DatabaseSessionService
-            with patch('src.smart_rag.engines.multi_agent.team_orchestrator.DatabaseSessionService') as mock_db_session_class:
+            with patch('google.adk.sessions.DatabaseSessionService') as mock_db_session_class:
                 mock_db_session = MagicMock()
                 mock_db_session.get_session = AsyncMock(return_value=MagicMock())
                 mock_db_session_class.return_value = mock_db_session
@@ -94,7 +94,7 @@ class TestAutoAgentGenerationTeam:
             mock_memory_service.save_manager_conversation = AsyncMock()
 
             # Mock DatabaseSessionService
-            with patch('src.smart_rag.engines.multi_agent.team_orchestrator.DatabaseSessionService') as mock_db_session_class:
+            with patch('google.adk.sessions.DatabaseSessionService') as mock_db_session_class:
                 mock_db_session = MagicMock()
                 mock_db_session.get_session = AsyncMock(return_value=MagicMock())
                 mock_db_session_class.return_value = mock_db_session
@@ -109,6 +109,66 @@ class TestAutoAgentGenerationTeam:
                 mock_memory_service.initialize.assert_not_called()
                 mock_memory_service.create_manager_context.assert_not_called()
                 mock_memory_service.save_manager_conversation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_agent_team_falls_back_to_memory_session_on_os_error(self):
+        """Database session I/O timeouts should not abort the agent team."""
+        mock_config = MagicMock()
+        mock_config.user_id = "user123"
+        orchestrator = AutoAgentGenerationTeam(mock_config)
+        orchestrator.streaming_formatter = MagicMock()
+
+        mock_queue = AsyncMock()
+        mock_database_session = MagicMock()
+        mock_database_session.get_session = AsyncMock(
+            side_effect=OSError(121, "The semaphore timeout period has expired")
+        )
+        mock_memory_session = MagicMock()
+        mock_memory_session.create_session = AsyncMock()
+        created_runners = []
+
+        class MockRunner:
+            def __init__(self, agent, app_name, session_service, plugins):
+                self.session_service = session_service
+                created_runners.append(self)
+
+        with patch.object(orchestrator, 'agent_tools_manager') as mock_tools_manager, \
+             patch.object(orchestrator, 'manager_factory') as mock_manager_factory, \
+             patch.object(orchestrator, 'streaming_processor') as mock_streaming_processor, \
+             patch.object(orchestrator, 'memory_service') as mock_memory_service, \
+             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_database_session_service') as mock_db_factory, \
+             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_in_memory_session_service') as mock_memory_factory, \
+             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_adk_runner', return_value=MockRunner), \
+             patch('src.smart_rag.infrastructure.session.citation_manager.get_citation_manager', new=AsyncMock(return_value=MagicMock())):
+
+            mock_tools_manager.create_tools_from_all_agents.return_value = []
+            mock_manager_agent = MagicMock()
+            mock_manager_agent.name = "Manager"
+            mock_manager_agent.instruction = "Manage"
+            mock_manager_factory.create_manager_agent.return_value = mock_manager_agent
+            mock_streaming_processor.process_streaming_events = AsyncMock(return_value="Manager response")
+            mock_memory_service.save_manager_conversation = AsyncMock()
+            mock_db_factory.return_value.return_value = mock_database_session
+            mock_memory_factory.return_value.return_value = mock_memory_session
+
+            result = await orchestrator.run_agent_team(
+                "Test user query",
+                "Manage the team",
+                "session123",
+                False,
+                mock_queue,
+            )
+
+        assert result is None
+        mock_memory_session.create_session.assert_awaited_once()
+        assert created_runners[0].session_service is mock_memory_session
+        error_events = [
+            call.args[0]
+            for call in mock_queue.put.await_args_list
+            if call.args and isinstance(call.args[0], dict)
+            and call.args[0].get("component", {}).get("type") == "error"
+        ]
+        assert error_events == []
 
     @pytest.mark.asyncio
     async def test_create_agent_team(self):
@@ -318,7 +378,7 @@ class TestAutoAgentGenerationTeam:
 
         with patch('src.smart_rag.agents.core.runner.AgentRunner', return_value=mock_runner), \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.MessageTransformer', return_value=mock_transformer), \
-             patch('src.smart_rag.engines.multi_agent.team_orchestrator.InMemorySessionService', return_value=mock_session):
+             patch('google.adk.sessions.InMemorySessionService', return_value=mock_session):
 
             result = await orchestrator._run_agent(mock_agent, task, mock_queue)
 

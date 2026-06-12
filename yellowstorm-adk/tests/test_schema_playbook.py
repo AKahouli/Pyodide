@@ -226,6 +226,13 @@ class TestRunPlaybookStepRequest:
         """Test that task_metadata defaults to empty dict."""
         del valid_request_data["task_metadata"]
 
+    def test_result_optional(self, valid_request_data):
+        """Test that result is optional."""
+        valid_request_data["result"] = None
+        request = RunPlaybookStepRequest(**valid_request_data)
+
+        assert request.result is None
+
 
 class TestPlaybookMailTriggerNodeInput:
     """Test suite for future mail-trigger payload schema."""
@@ -336,13 +343,6 @@ class TestRunPlaybookRequest:
         )
 
         assert request.trigger_context["type"] == "mail"
-
-    def test_result_optional(self, valid_request_data):
-        """Test that result is optional."""
-        valid_request_data["result"] = None
-        request = RunPlaybookStepRequest(**valid_request_data)
-
-        assert request.result is None
 
     def test_missing_required_fields(self):
         """Test that missing required fields raise ValidationError."""

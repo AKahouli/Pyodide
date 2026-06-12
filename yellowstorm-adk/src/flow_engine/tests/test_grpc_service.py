@@ -27,7 +27,7 @@ def test_snapshot_hitl_policy_reads_node_metadata_fallback():
 
 
 def test_snapshot_hitl_blockers_reads_deduped_node_metadata_fallback():
-    blocker = {"id": "system-explicit-user-instruction", "kind": "explicit_user_instruction"}
+    blocker = {"id": "custom-rule", "kind": "custom", "createdBy": "user"}
     snapshot = {
         "nodes": [
             {"id": "step-1", "metadata": {"hitl_blockers": [blocker]}},
@@ -36,6 +36,19 @@ def test_snapshot_hitl_blockers_reads_deduped_node_metadata_fallback():
     }
 
     assert _snapshot_hitl_blockers(snapshot) == [blocker]
+
+
+def test_snapshot_hitl_blockers_filters_out_system_blockers():
+    snapshot = {
+        "hitl_blockers": [
+            {"id": "system-rule", "kind": "custom", "createdBy": "system"},
+            {"id": "user-rule", "kind": "custom", "createdBy": "user"},
+        ],
+    }
+
+    assert _snapshot_hitl_blockers(snapshot) == [
+        {"id": "user-rule", "kind": "custom", "createdBy": "user"},
+    ]
 
 
 class TestUnwrapMetadataFields:
@@ -1447,7 +1460,8 @@ def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
                 yield {}
 
         async def fake_emit_events(execution_id, event_stream):
-            await event_stream.__anext__() if hasattr(event_stream, "__anext__") else None
+            async for _ in event_stream:
+                pass
             if len(calls) == 1:
                 yield _build_event("ApprovalRequested", execution_id, "step-2", {"prompt": "approve?"}, 0)
                 return

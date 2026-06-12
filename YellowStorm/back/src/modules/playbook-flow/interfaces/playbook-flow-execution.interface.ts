@@ -1,4 +1,4 @@
-import { PendingApproval } from '../schemas/playbook-flow-execution.schema';
+import { HitlEventLog, PendingApproval } from '../schemas/playbook-flow-execution.schema';
 import type { ReplayPlanningSummary } from './playbook-flow-replay-plan.interface';
 import {
   FlowLlmPromptTraceItem,
@@ -24,6 +24,7 @@ export interface IFlowExecutionResponse {
   inputContext?: Record<string, unknown>;
   idempotencyKey?: string;
   pendingApproval: PendingApproval | null;
+  hitlEvents?: HitlEventLog[];
   queuePosition?: number;
   threadId?: string;
   replaySource?: { executionId: string; taskId: string; iteration?: number };
@@ -76,6 +77,7 @@ export interface IFlowTaskResultResponse {
   judgeResult?: FlowExecutionJudgeResult | null;
   judgeError?: string | null;
   judgeHistory?: FlowExecutionJudgeHistoryEntry[];
+  hitlHistory?: HitlEventLog[];
 }
 
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {

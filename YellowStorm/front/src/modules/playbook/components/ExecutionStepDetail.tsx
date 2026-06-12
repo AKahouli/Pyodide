@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, Eye, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw, MessageSquare } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -11,6 +11,7 @@ import { PortContentViewer } from './PortContentViewer';
 import { ReplayReportPanel } from './ReplayReportPanel';
 import { ReplayContextMappingCard } from './ReplayContextMappingCard';
 import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
+import { getStepNumberTone } from './ExecutionStepList';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -19,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
@@ -28,17 +30,17 @@ import type {
   AdvisorIntentApplyRequest,
   AdvisorRemediationItem,
   AdvisorRemediationMode,
+  AdvisorScriptReplacementPreviewResponse,
   PlaybookEvaluationExecution,
   PlaybookExecution,
   PlaybookPageMode,
   RemediationCategory,
   TaskArtifact,
   TaskResult,
+  HitlHistoryEntry,
   ValidatedTaskReplay,
 } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
-
-const MAX_ADVISOR_INTENT_LENGTH = 4000;
 
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   structure: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -48,6 +50,11 @@ const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   tooling: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   evidence: 'bg-sky-100 text-sky-700 border-sky-200',
   outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
+  format: 'bg-orange-100 text-orange-700 border-orange-200',
+  hitl: 'bg-red-100 text-red-700 border-red-200',
+  determinism: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  expected_result: 'bg-amber-100 text-amber-700 border-amber-200',
+  cost_efficiency: 'bg-lime-100 text-lime-700 border-lime-200',
 };
 
 type JudgeResultLike = {
@@ -62,6 +69,10 @@ type JudgeResultLike = {
   toolSequencingIssues?: string[];
   toolUsageStrengths?: string[];
   rewriteHints?: string[];
+  costOptimizationHints?: string[];
+  scriptReplacementHints?: string[];
+  llmStillRequiredReasons?: string[];
+  costOptimizationPriority?: number;
 };
 
 function buildLocalRemediationItems(
@@ -73,21 +84,42 @@ function buildLocalRemediationItems(
   const items: AdvisorRemediationItem[] = [];
   const scope = mode === 'optimize-step' ? 'task' as const : 'playbook' as const;
   const targetTaskId = mode === 'optimize-step' ? (taskId ?? null) : null;
-  const mappings: Array<{ entries: string[]; category: RemediationCategory; defaultSelected: boolean }> = [
-    { entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true },
-    { entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true },
-    { entries: judgeResult.unsupportedClaims || [], category: 'contract', defaultSelected: true },
-    { entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true },
-    { entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false },
-    { entries: judgeResult.toolOutputUseIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true },
-    { entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false },
-    { entries: judgeResult.rewriteHints || [], category: 'prompt', defaultSelected: true },
+  const mappings: Array<{ key: keyof JudgeResultLike; entries: string[]; category: RemediationCategory; defaultSelected: boolean; blocking: boolean }> = [
+    { key: 'missingFacts', entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true, blocking: false },
+    { key: 'incoherences', entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true, blocking: false },
+    { key: 'unsupportedClaims', entries: judgeResult.unsupportedClaims || [], category: 'evidence', defaultSelected: true, blocking: true },
+    { key: 'handoffRisks', entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true, blocking: true },
+    { key: 'toolSelectionIssues', entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true, blocking: false },
+    { key: 'missingToolCalls', entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true, blocking: true },
+    { key: 'redundantToolCalls', entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false, blocking: false },
+    { key: 'toolOutputUseIssues', entries: judgeResult.toolOutputUseIssues || [], category: 'evidence', defaultSelected: true, blocking: true },
+    { key: 'toolSequencingIssues', entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true, blocking: false },
+    { key: 'toolUsageStrengths', entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false, blocking: false },
+    { key: 'rewriteHints', entries: judgeResult.rewriteHints || [], category: 'determinism', defaultSelected: true, blocking: false },
+    { key: 'costOptimizationHints', entries: judgeResult.costOptimizationHints || [], category: 'cost_efficiency', defaultSelected: true, blocking: false },
+    { key: 'scriptReplacementHints', entries: judgeResult.scriptReplacementHints || [], category: 'cost_efficiency', defaultSelected: false, blocking: false },
+    { key: 'llmStillRequiredReasons', entries: judgeResult.llmStillRequiredReasons || [], category: 'cost_efficiency', defaultSelected: false, blocking: false },
   ];
-  for (const { entries, category, defaultSelected } of mappings) {
+  for (const { key, entries, category, defaultSelected, blocking } of mappings) {
     entries.forEach((description, index) => {
+      const severity = category === 'cost_efficiency' && (judgeResult.costOptimizationPriority ?? 0) >= 80
+        ? 'high'
+        : category === 'cost_efficiency' && (judgeResult.costOptimizationPriority ?? 0) >= 50
+          ? 'medium'
+          : blocking
+            ? 'high'
+            : defaultSelected
+              ? 'medium'
+              : 'low';
+      const suggestedAction = key === 'scriptReplacementHints'
+        ? 'replace_with_deterministic_script'
+        : category === 'cost_efficiency'
+          ? 'optimize_prompt_cost'
+          : category === 'tooling'
+            ? 'improve_tooling'
+            : category === 'handoff'
+              ? 'optimize_playbook'
+              : 'optimize_step';
       items.push({
         id: `local-${category}-${index}`,
         category,
@@ -95,9 +127,13 @@ function buildLocalRemediationItems(
         targetTaskId,
         title: description.length > 80 ? description.slice(0, 80) + '...' : description,
         description,
+        severity,
+        confidence: 0.8,
+        suggestedAction,
+        blocking,
         editable: true,
         defaultSelected,
-        source: { kind: 'judge_result', field: category, index },
+        source: { kind: 'judge_result', field: key, index },
       });
     });
   }
@@ -136,8 +172,10 @@ function RemediationItemRow({
 
 function ArtifactListItem({
   artifact,
+  onInspect,
 }: {
   artifact: TaskArtifact;
+  onInspect?: () => void;
 }) {
   const { t } = useModuleTranslation('playbook');
   const colors = PORT_COLORS[artifact.artifactKind];
@@ -188,17 +226,25 @@ function ArtifactListItem({
           </p>
         )}
       </div>
-      {hasDownload && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="shrink-0 h-7 px-2 text-xs"
-          onClick={handleDownload}
-        >
-          <Download className="mr-1 h-3 w-3" />
-          {t('artifacts.download' as any)}
-        </Button>
-      )}
+      <div className="flex shrink-0 items-center gap-1">
+        {onInspect && (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
+            <Eye className="mr-1 h-3 w-3" />
+            {t('artifacts.view' as any)}
+          </Button>
+        )}
+        {hasDownload && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={handleDownload}
+          >
+            <Download className="mr-1 h-3 w-3" />
+            {t('artifacts.download' as any)}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -265,11 +311,11 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+function getExecutionModeLabelKey(mode?: string): string {
+  if (mode === 'replay_strict') return 'execution.modeLabel.exactReference';
+  if (mode === 'replay_flex') return 'execution.modeLabel.flexibleReference';
+  if (mode === 'replay_adaptive') return 'execution.modeLabel.referenceChecked';
+  return 'execution.modeLabel.liveRun';
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -419,6 +465,7 @@ function buildCurrentStepExecution(step: TaskResult) {
     totalTokens: step.totalTokens ?? null,
     modelName: step.modelName ?? null,
     artifacts: step.artifacts || [],
+    hitlHistory: step.hitlHistory || [],
   };
 }
 
@@ -441,6 +488,10 @@ function buildResultComponentsWithText(text: string, components: TaskResult['com
 
 function isHtmlResultText(text: string): boolean {
   return /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(text);
+}
+
+function getHitlResponseText(entry: HitlHistoryEntry) {
+  return entry.responseMessage || entry.responseFeedback || entry.responseReason || '';
 }
 
 export function ExecutionStepDetail({
@@ -468,6 +519,8 @@ export function ExecutionStepDetail({
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const replayPlanning = step ? execution?.replayPlanningByTask?.[step.taskId] ?? null : null;
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
+  const previewAdvisorScriptReplacement = usePlaybookStore((s) => s.previewAdvisorScriptReplacement);
+  const applyAdvisorScriptReplacement = usePlaybookStore((s) => s.applyAdvisorScriptReplacement);
   const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
@@ -495,10 +548,15 @@ export function ExecutionStepDetail({
   const [remediationDialogMode, setRemediationDialogMode] = useState<AdvisorRemediationMode>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
+  const [scriptPreview, setScriptPreview] = useState<AdvisorScriptReplacementPreviewResponse | null>(null);
+  const [scriptPreviewOpen, setScriptPreviewOpen] = useState(false);
+  const [scriptPreviewLoading, setScriptPreviewLoading] = useState(false);
+  const [scriptApplyLoading, setScriptApplyLoading] = useState(false);
   const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
   const [missingAdvisorTaskIds, setMissingAdvisorTaskIds] = useState<string[]>([]);
   const [runningAdvisorPreflight, setRunningAdvisorPreflight] = useState(false);
   const [copiedToClipboard, setCopiedToClipboard] = useState(false);
+  const [shouldSelectLatestJudgeHistory, setShouldSelectLatestJudgeHistory] = useState(false);
   const executionSnapshotTask = useMemo(() => {
     const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
@@ -566,9 +624,9 @@ export function ExecutionStepDetail({
         items: stepJudgeResult.incoherences || [],
       },
       {
-        title: t('detail.judge.contractIssues'),
-        badge: t('detail.remediation.category.contract'),
-        badgeClassName: 'bg-amber-100 text-amber-700 border-amber-200',
+        title: t('detail.judge.evidenceIssues'),
+        badge: t('detail.remediation.category.evidence'),
+        badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
         items: stepJudgeResult.unsupportedClaims || [],
       },
       {
@@ -628,6 +686,7 @@ export function ExecutionStepDetail({
   );
   const canApplyAdvisorChanges = typeof onApplyAdvisorIntent === 'function';
   const remediationCount = stepJudgeResult?.rewriteHints?.length ?? 0;
+  const hasScriptReplacementCandidate = (stepJudgeResult?.scriptReplacementHints?.length ?? 0) > 0;
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
@@ -864,69 +923,17 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, executePlaybook, t]);
 
-  const buildAdvisorIntent = useCallback((
+  const buildSelectedRemediationItems = useCallback((
     selectedIds: string[],
     editedItems: Map<string, string>,
-    mode: AdvisorRemediationMode,
-  ): string => {
+  ): Array<Pick<AdvisorRemediationItem, 'id' | 'category' | 'description'>> => {
     const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
-    const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
-    for (const item of selectedItems) {
-      const existing = groupedByCategory.get(item.category) || [];
-      existing.push(item);
-      groupedByCategory.set(item.category, existing);
-    }
-    const categoryOrder: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'];
-    const findings = categoryOrder
-      .filter((cat) => groupedByCategory.has(cat))
-      .map((cat) => {
-        const items = groupedByCategory.get(cat)!;
-        const lines = items.map((item) => {
-          const desc = editedItems.get(item.id) || item.description;
-          return `- [${cat}] ${desc}`;
-        });
-        return lines.join('\n');
-      })
-      .join('\n');
-
-    if (mode === 'optimize-step') {
-      const taskTitle = step?.taskId
-        ? currentPlaybook?.tasks.find((t) => t.id === step.taskId)?.title || step.taskId
-        : 'this step';
-      return [
-        `Optimize only the step "${taskTitle}" based on these advisor findings.`,
-        'Preserve the rest of the playbook unless a connection or port must change to keep the workflow valid.',
-        '',
-        'Advisor findings:',
-        findings,
-        '',
-        'Apply the changes directly to the current playbook.',
-      ].join('\n');
-    }
-
-    if (mode === 'generate-new') {
-      return [
-        'Plan a broader optimization of the current playbook based on these advisor findings.',
-        'Restructure the current workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
-        'Preserve the user\'s original intent.',
-        '',
-        'Advisor findings:',
-        findings,
-        '',
-        'Apply the changes directly to the current playbook.',
-      ].join('\n');
-    }
-
-    return [
-      'Optimize the current playbook based on these advisor findings.',
-      'Preserve the user\'s original intent, keep valid DAG structure, and only change steps, edges, ports, or agent assignments that are necessary to address the findings.',
-      '',
-      'Advisor findings:',
-      findings,
-      '',
-      'Apply the changes directly to the current playbook.',
-    ].join('\n');
-  }, [remediationItems, step?.taskId, currentPlaybook?.tasks]);
+    return selectedItems.map((item) => ({
+      id: item.id,
+      category: item.category,
+      description: editedItems.get(item.id) || item.description,
+    }));
+  }, [remediationItems]);
 
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
@@ -937,18 +944,59 @@ export function ExecutionStepDetail({
       throw new Error(message);
     }
 
-    const intent = buildAdvisorIntent(selectedIds, editedItems, remediationDialogMode);
-    if (intent.length > MAX_ADVISOR_INTENT_LENGTH) {
-      const message = t('detail.remediation.intentTooLong', { max: MAX_ADVISOR_INTENT_LENGTH });
-      showError(message);
-      throw new Error(message);
-    }
+    const items = buildSelectedRemediationItems(selectedIds, editedItems);
 
     return onApplyAdvisorIntent({
-      intent,
+      mode: remediationDialogMode,
+      executionId: execution.id,
+      items,
       selectedTaskId: remediationDialogMode === 'optimize-step' ? step?.taskId : undefined,
     });
-  }, [buildAdvisorIntent, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
+  }, [buildSelectedRemediationItems, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
+
+  const handlePreviewScriptReplacement = useCallback(async () => {
+    if (!currentPlaybook || !execution || !step) return;
+    const items = buildLocalRemediationItems(stepJudgeResult, 'optimize-step', step.taskId)
+      .filter((item) => item.suggestedAction === 'replace_with_deterministic_script')
+      .map((item) => ({ id: item.id, category: item.category, description: item.description }));
+    if (!items.length) return;
+    setScriptPreviewLoading(true);
+    try {
+      const preview = await previewAdvisorScriptReplacement(currentPlaybook.id, {
+        executionId: execution.id,
+        targetTaskId: step.taskId,
+        items,
+      });
+      setScriptPreview(preview);
+      setScriptPreviewOpen(true);
+    } catch (error) {
+      showError(t('detail.remediation.scriptPreviewFailed'));
+    } finally {
+      setScriptPreviewLoading(false);
+    }
+  }, [currentPlaybook, execution, previewAdvisorScriptReplacement, step, stepJudgeResult, t]);
+
+  const handleApplyScriptReplacement = useCallback(async () => {
+    if (!currentPlaybook || !execution || !step || !scriptPreview) return;
+    setScriptApplyLoading(true);
+    try {
+      const items = buildLocalRemediationItems(stepJudgeResult, 'optimize-step', step.taskId)
+        .filter((item) => item.suggestedAction === 'replace_with_deterministic_script')
+        .map((item) => ({ id: item.id, category: item.category, description: item.description }));
+      await applyAdvisorScriptReplacement(currentPlaybook.id, {
+        executionId: execution.id,
+        targetTaskId: step.taskId,
+        items,
+        script: scriptPreview.candidate.script,
+      });
+      showSuccess(t('detail.remediation.scriptApplied'));
+      setScriptPreviewOpen(false);
+    } catch (error) {
+      showError(t('detail.remediation.scriptApplyFailed'));
+    } finally {
+      setScriptApplyLoading(false);
+    }
+  }, [applyAdvisorScriptReplacement, currentPlaybook, execution, scriptPreview, step, stepJudgeResult, t]);
 
   const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
     if (!currentPlaybook || !execution || !step) return;
@@ -999,10 +1047,29 @@ export function ExecutionStepDetail({
     setSelectedJudgeHistoryId((current) => {
       if (!judgeHistory.length) return null;
       const latestJudgeHistoryId = judgeHistory[judgeHistory.length - 1].id;
+      if (shouldSelectLatestJudgeHistory) {
+        return latestJudgeHistoryId;
+      }
       if (current && judgeHistory.some((entry) => entry.id === current)) return current;
       return latestJudgeHistoryId;
     });
-  }, [judgeHistory, step?.taskId]);
+  }, [judgeHistory, shouldSelectLatestJudgeHistory, step?.taskId]);
+
+  useEffect(() => {
+    if (
+      shouldSelectLatestJudgeHistory
+      && stepJudgeStatus !== 'evaluating'
+      && selectedJudgeHistory?.id === latestJudgeHistory?.id
+    ) {
+      setShouldSelectLatestJudgeHistory(false);
+    }
+  }, [latestJudgeHistory?.id, selectedJudgeHistory?.id, shouldSelectLatestJudgeHistory, stepJudgeStatus]);
+
+  const handleRunAdvisorEvaluation = useCallback(() => {
+    if (!step || !onRequestRunAdvisorEvaluation) return;
+    setShouldSelectLatestJudgeHistory(true);
+    onRequestRunAdvisorEvaluation(step.taskId, step.iteration);
+  }, [onRequestRunAdvisorEvaluation, step]);
 
   const handleSaveEvaluationBaseline = useCallback(async () => {
     if (!execution || !step) return;
@@ -1017,6 +1084,8 @@ export function ExecutionStepDetail({
 
   const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
   const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
+  const selectedHitlHistory = ((selectedStepExecution as { hitlHistory?: HitlHistoryEntry[] } | null)?.hitlHistory || [])
+    .filter((entry) => entry.taskId === step?.taskId && entry.round === (step?.iteration ?? 0));
 
   const groupedArtifacts = useMemo(() => {
     const artifacts = selectedStepExecution?.artifacts || [];
@@ -1164,6 +1233,9 @@ export function ExecutionStepDetail({
             </div>
           )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className={cn('flex h-6 min-w-6 shrink-0 items-center justify-center rounded border px-1 text-[11px] font-bold shadow-sm', getStepNumberTone(step.status, true))}>
+              {(currentTask?.executionOrder ?? (step.order - 1)) + 1}
+            </span>
             <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
@@ -1334,139 +1406,190 @@ export function ExecutionStepDetail({
           </div>
         )}
         <Tabs value={detailActiveTab} onValueChange={handleActiveTabChange} className="gap-4">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
-            <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
-            <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
-            <TabsTrigger value="traces">{t('detail.tabs.traces')}</TabsTrigger>
+          <TabsList className="flex w-full justify-start gap-1 overflow-x-auto sm:grid sm:grid-cols-4">
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="results">{t('detail.tabs.results')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="judge">{t('detail.tabs.judge')}</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap" value="traces">{t('detail.tabs.traces')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
-            {canDownload && (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
-                  <FileText className="mr-1 h-4 w-4" />
-                  {t('detail.actions.downloadHtml')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
-                  <Download className="mr-1 h-4 w-4" />
-                  {t('detail.actions.downloadPdf')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
-                  {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
-                  {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
-                </Button>
+            {selectedStepExecution?.status === 'running' ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-6 w-6 animate-spin mb-3" />
+                <span className="text-sm">{t('execution.running')}</span>
               </div>
-            )}
-
-            {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
-              <IteratorResultPanel step={step} />
             ) : (
               <>
-                {selectedStepExecutionText && (() => {
-                  const isHtml = isHtmlResultText(selectedStepExecutionText);
-                  const parts = isHtml
-                    ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
-                    : mapComponentsToContentParts(buildResultComponentsWithText(
-                        selectedStepExecutionText,
-                        selectedStepExecution?.components,
-                        step.taskId,
-                      ) as never);
-                  return (
-                    <div
-                      data-testid="step-result-markdown"
-                      className={cn(
-                        'rounded-lg bg-muted/50 p-4',
-                        isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap',
+                {canDownload && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
+                      <FileText className="mr-1 h-4 w-4" />
+                      {t('detail.actions.downloadHtml')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
+                      <Download className="mr-1 h-4 w-4" />
+                      {t('detail.actions.downloadPdf')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
+                      {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
+                      {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
+                    </Button>
+                  </div>
+                )}
+
+                {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
+                  <IteratorResultPanel step={step} />
+                ) : (
+                  <>
+                    {selectedHitlHistory.length > 0 && (
+                      <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                        <div className="mb-3 flex items-center gap-2 font-medium">
+                          <MessageSquare className="h-4 w-4 text-primary" />
+                          {t('detail.hitlFeedback.title')}
+                        </div>
+                        <div className="space-y-3">
+                          {selectedHitlHistory.map((entry) => {
+                            const responseText = getHitlResponseText(entry);
+                            return (
+                              <div key={entry.interruptId} className="space-y-2 rounded-md border bg-background/60 p-3">
+                                <div className="text-xs text-muted-foreground">
+                                  {entry.respondedAt ? formatDateTimeCompact(entry.respondedAt) : formatDateTimeCompact(entry.createdAt)}
+                                </div>
+                                <div>
+                                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.agent')}</div>
+                                  <p className="mt-1 whitespace-pre-wrap">{entry.message}</p>
+                                </div>
+                                {responseText && (
+                                  <div>
+                                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.hitlFeedback.user')}</div>
+                                    <p className="mt-1 whitespace-pre-wrap">{responseText}</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {selectedStepExecutionText && (() => {
+                      const isHtml = isHtmlResultText(selectedStepExecutionText);
+                      const parts = isHtml
+                        ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                        : mapComponentsToContentParts(buildResultComponentsWithText(
+                            selectedStepExecutionText,
+                            selectedStepExecution?.components,
+                            step.taskId,
+                          ) as never);
+                      return (
+                        <div
+                          data-testid="step-result-markdown"
+                          className={cn(
+                            'rounded-lg bg-muted/50 p-4',
+                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]',
+                          )}
+                        >
+                          <MessageProvider fileViewerDisplayMode="floating">
+                            <AIMessageContent parts={parts} />
+                          </MessageProvider>
+                        </div>
+                      );
+                    })()}
+                    {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
+                      && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                    <div className="font-medium">{t('detail.provenance.title')}</div>
+                    <div className="mt-2 space-y-1 text-muted-foreground">
+                      <div>{t('detail.provenance.mode')}: {t(getExecutionModeLabelKey(execution?.executionMode) as any)}</div>
+                      {replaySource && (
+                        <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                       )}
-                    >
-                      <MessageProvider fileViewerDisplayMode="floating">
-                        <AIMessageContent parts={parts} />
-                      </MessageProvider>
+                      {replayPlanning && (
+                        <div>
+                          {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
+                          {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
+                        </div>
+                      )}
+                      {baselineReplay?.preserveOutputFormat && (
+                        <div>{t('detail.provenance.outputFormat')}</div>
+                      )}
                     </div>
-                  );
-                })()}
-                {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
-                  && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                  </div>
+                )}
+                {replayPlanning && (
+                  <div className="space-y-3">
+                    {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+                        {t('replayPlanning.unresolvedRequiredWarning')}
+                      </div>
+                    )}
+                    <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
+                    <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
+                  </div>
+                )}
+                {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
+                  <Collapsible defaultOpen className="rounded-lg border">
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-4 border-t px-4 py-3">
+                      {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+                        <div className="space-y-2">
+                          {groupedArtifacts.map((group) => (
+                            <PortArtifactPane
+                              key={group.portId}
+                              portId={group.portId}
+                              portName={group.portName}
+                              portKind={group.portKind}
+                              artifacts={group.artifacts}
+                              onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
+                            />
+                          ))}
+                        </div>
+                      )}
+
+                      {inputPortEntries.length > 0 && (
+                        <div className="space-y-2">
+                          {inputPortEntries.map((entry) => (
+                            <PortArtifactPane
+                              key={entry.portId}
+                              portId={entry.portId}
+                              portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
+                              portKind={entry.portKind}
+                              artifacts={entry.artifacts}
+                              defaultOpen={false}
+                              onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
+                {selectedStepExecution?.error && (
+                  <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+                    <div className="mb-2 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                      <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
+                    </div>
+                    <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                      {selectedStepExecution.error}
+                    </pre>
                   </div>
                 )}
               </>
-            )}
-
-            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                <div className="font-medium">{t('detail.provenance.title')}</div>
-                <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
-                  {replaySource && (
-                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
-                  )}
-                  {replayPlanning && (
-                    <div>
-                      {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
-                      {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
-                    </div>
-                  )}
-                  {baselineReplay?.preserveOutputFormat && (
-                    <div>{t('detail.provenance.outputFormat')}</div>
-                  )}
-                </div>
-              </div>
-            )}
-            {replayPlanning && (
-              <div className="space-y-3">
-                {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
-                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
-                    {t('replayPlanning.unresolvedRequiredWarning')}
-                  </div>
-                )}
-                <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
-                <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
-              </div>
-            )}
-            {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
-              <Collapsible defaultOpen className="rounded-lg border">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 border-t px-4 py-3">
-                  {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
-                    <div className="space-y-2">
-                      {groupedArtifacts.map((group) => (
-                        <PortArtifactPane
-                          key={group.portId}
-                          portId={group.portId}
-                          portName={group.portName}
-                          portKind={group.portKind}
-                          artifacts={group.artifacts}
-                          onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {inputPortEntries.length > 0 && (
-                    <div className="space-y-2">
-                      {inputPortEntries.map((entry) => (
-                        <PortArtifactPane
-                          key={entry.portId}
-                          portId={entry.portId}
-                          portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
-                          portKind={entry.portKind}
-                          artifacts={entry.artifacts}
-                          defaultOpen={false}
-                          onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
             )}
 
             <PortContentViewer
@@ -1476,25 +1599,6 @@ export function ExecutionStepDetail({
               portKind={detailInspectPortKind}
               artifacts={detailInspectArtifacts}
             />
-
-            {selectedStepExecution?.status === 'running' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-                {t('execution.running')}
-              </div>
-            )}
-
-            {selectedStepExecution?.error && (
-              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
-                </div>
-                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
-                  {selectedStepExecution.error}
-                </pre>
-              </div>
-            )}
 
           </TabsContent>
 
@@ -1806,7 +1910,7 @@ export function ExecutionStepDetail({
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : execution?.id && step?.taskId ? null : (
               <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">
                 {isEvaluationPending ? (
                   <Loader2 className="h-5 w-5 animate-spin" />
@@ -1850,7 +1954,7 @@ export function ExecutionStepDetail({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId, step.iteration)}
+                  onClick={handleRunAdvisorEvaluation}
                   disabled={!canRunAdvisorEvaluation || stepJudgeStatus === 'evaluating'}
                 >
                   {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
@@ -2047,6 +2151,12 @@ export function ExecutionStepDetail({
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.previewChanges')}
                       </Button>
+                      {hasScriptReplacementCandidate && (
+                        <Button size="sm" variant="outline" onClick={() => void handlePreviewScriptReplacement()} disabled={scriptPreviewLoading}>
+                          {scriptPreviewLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {t('detail.remediation.previewScriptReplacement')}
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.applyToCurrentPlaybook')}
@@ -2078,6 +2188,52 @@ export function ExecutionStepDetail({
                   loading={remediationLoading}
                   onApply={handleApplyRemediations}
                 />
+
+                <Dialog open={scriptPreviewOpen} onOpenChange={setScriptPreviewOpen}>
+                  <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>{t('detail.remediation.scriptPreviewTitle')}</DialogTitle>
+                      <DialogDescription>{t('detail.remediation.scriptPreviewDescription')}</DialogDescription>
+                    </DialogHeader>
+                    {scriptPreview && (
+                      <div className="space-y-4 text-sm">
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.validationStatus')}</div>
+                            <div className="font-medium">{t(`detail.remediation.validation.${scriptPreview.validation.status}`)}</div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.validationSamples')}</div>
+                            <div className="font-medium">{scriptPreview.validation.passedCount}/{scriptPreview.validation.sampleCount}</div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs uppercase text-muted-foreground">{t('detail.remediation.estimatedTokenReduction')}</div>
+                            <div className="font-medium">{formatPercent(scriptPreview.estimatedTokenReductionPct)}</div>
+                          </div>
+                        </div>
+                        {scriptPreview.warnings.length > 0 && (
+                          <Alert>
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle>{t('detail.remediation.scriptWarnings')}</AlertTitle>
+                            <AlertDescription>
+                              <ul className="list-disc space-y-1 pl-4">
+                                {scriptPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                              </ul>
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap">{scriptPreview.candidate.script}</pre>
+                      </div>
+                    )}
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setScriptPreviewOpen(false)}>{t('detail.remediation.cancel')}</Button>
+                      <Button onClick={() => void handleApplyScriptReplacement()} disabled={!scriptPreview || scriptPreview.validation.status !== 'passed' || scriptApplyLoading}>
+                        {scriptApplyLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.remediation.applyScriptReplacement')}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
@@ -2138,10 +2294,24 @@ export function ExecutionStepDetail({
                 </pre>
               </div>
             ) : (
-              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-                {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
-                  ? t('detail.judge.evaluating')
-                  : t('detail.judge.empty')}
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                <div>
+                  {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
+                    ? t('detail.judge.evaluating')
+                    : t('detail.judge.empty')}
+                </div>
+                {canApplyAdvisorChanges && execution && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.previewChanges')}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.applyToCurrentPlaybook')}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 

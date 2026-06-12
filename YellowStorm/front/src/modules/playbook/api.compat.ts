@@ -96,6 +96,7 @@ export function mapFlowNodeToPlaybookTask(
     iteratorConfig: buildPlaybookIteratorConfig(node.iteratorConfig, meta),
     routerConfig: node.routerConfig ?? (meta.routerConfig as any) ?? null,
     humanApprovalConfig: buildPlaybookHumanApprovalConfig(node.humanApprovalConfig, meta),
+    hitlPolicy: node.hitlPolicy ?? null,
     retryPolicy: node.retryPolicy ?? (meta.retryPolicy as RetryPolicy | null | undefined) ?? null,
     modelId: node.modelId || (meta.modelId as string | null | undefined) || null,
     ...(inputPorts ? { inputPorts } : {}),
@@ -249,6 +250,7 @@ export function normalizePlaybook(raw: any): Playbook {
 
   return {
     ...raw,
+    definitionRevision: typeof raw.definitionRevision === 'number' ? raw.definitionRevision : 0,
     tasks: normalizePlaybookTasks(raw, activeReplays),
     edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
     triggers: triggerFields.triggers,
@@ -308,6 +310,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
       timeoutSeconds: timeoutSeconds ?? 0,
     };
   }
+  if (task.hitlPolicy) node.hitlPolicy = task.hitlPolicy;
   if (task.retryPolicy) node.retryPolicy = task.retryPolicy;
   if (task.modelId) node.modelId = task.modelId;
 

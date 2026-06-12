@@ -36,24 +36,17 @@ workflow_plan requires: kind="workflow_plan", label, summary, reason, confidence
 - delete_edge
 - create_data_binding
 - delete_data_binding
-- update_hitl_policy
-- create_blocker_rule
-- update_blocker_rule
-- delete_blocker_rule
-- create_hitl_memory
-
-# Smart HITL Rules
-- Suggest HITL policy or blocker changes when the user asks for approval, review, safety, missing-data handling, compliance, external sends, destructive actions, or repeated clarification behavior.
-- Default new workflows and new nodes to Smart HITL auto/balanced unless the user explicitly disables human involvement.
-- Do not add manual interrupt flags when a business-friendly blocker rule captures the same intent.
 
 For create_node include:
 - nodeRef
 - task { title, description, agentSlug, templateType?, inputPorts?, outputPorts?, iteratorBody? }
 - anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs?, sourceOutputPortId?, targetInputPortId? }
 
+
 For update_node:
 - include task.agentSlug only when the current task has no assigned agent or the user clearly requests reassignment
+- must always update THE NODE title AND the source/target ports accordingly specially when the new task description is fondamentally different from the old one
+- must always remove stale/irrelevant input/output ports
 
 For create_data_binding include:
 - sourceKind
@@ -79,6 +72,7 @@ For delete_data_binding include:
 9. Validate that the final suggestion has no duplicates, orphan nodes, invalid references, or iterator leakage.
 
 # Graph Rules
+- when creating edges must always create_data_binding with the downstream and upstream ports
 - Independent work uses parallel branches via "append". Do not chain siblings with "after".
 - "after" means a real dependency, not just preferred ordering.
 - "append" adds an independent or downstream child without rewiring current downstream steps.
@@ -107,12 +101,11 @@ For delete_data_binding include:
 - Keep plans lean because service-side normalization may trim excessive changes, ports, iterator steps, iterator edges, and data binding details to the admin-configured limits.
 
 # Data Binding Rules
-- If an input port is required: true, include a matching create_data_binding in the same suggestion.
+- Must always include a matching create_data_binding in the same suggestion.
 - If you cannot identify a reliable source output, either mark the input port required: false or add a prerequisite step that produces the needed output.
-- Never mark an input port required: true without also supplying the matching binding.
 - Prefer sourceKind: "node-output" when the source is another node output.
-- Use compatible artifact kinds.
-- Use delete_data_binding when an old binding becomes invalid because of the new workflow design.
+- Must Use compatible artifact kinds.
+- Must Use delete_data_binding when an old binding becomes invalid because of the new workflow design.
 - Keep impact counts aligned with the actual create_data_binding and delete_data_binding changes.
 
 # Iterator Rules
@@ -138,6 +131,12 @@ For delete_data_binding include:
 - Impact counts must match the actual changes.
 - Confidence must reflect uncertainty honestly.
 
+# Advisor Remediation Instructions
+- If the intent asks to optimize only a selected step, return exactly one single_change suggestion with operationType="update_node" and targetTaskId equal to that selected task. Do not create, delete, reorder, reconnect, or modify unrelated nodes.
+- If the intent asks to optimize the current playbook, prefer a minimal valid workflow_plan that preserves business intent, graph validity, port compatibility, data bindings, and existing agents/templates.
+- Improve task contracts, expected results, output format, tool guidance, handoff readiness, and HITL/clarification rules instead of only rewording text.
+- Never invent agents or template types.
+
 # Short Examples
 
 Sequential creation:
@@ -149,15 +148,15 @@ Parallel work plus merge:
 {"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia.","agentSlug":"research-agent"}}
 {"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and produce one synthesis.","agentSlug":"synthesis-agent","templateType":"report_generation"}}
 
-Required input with matching binding:
-{"type":"create_node","nodeRef":"extract_invoice_fields","anchor":{"mode":"after","targetTaskId":"ocr-step-id","nodeRef":null},"task":{"title":"Extract invoice fields","description":"Extract structured invoice fields from OCR text.","agentSlug":"extraction-agent","inputPorts":[{"id":"invoice_text","name":"Invoice Text","artifactKind":"text","required":true}],"outputPorts":[{"id":"invoice_data","name":"Invoice Data","artifactKind":"data"}]}}
+Input ports with matching binding:
+{"type":"create_node","nodeRef":"extract_invoice_fields","anchor":{"mode":"after","targetTaskId":"ocr-step-id","nodeRef":null},"task":{"title":"Extract invoice fields","description":"Extract structured invoice fields from OCR text.","agentSlug":"extraction-agent","inputPorts":[{"id":"invoice_text","name":"Invoice Text","artifactKind":"text","required":false}],"outputPorts":[{"id":"invoice_data","name":"Invoice Data","artifactKind":"data"}]}}
 {"type":"create_data_binding","sourceKind":"node-output","sourceTaskId":"ocr-step-id","sourcePort":"text","targetNodeRef":"extract_invoice_fields","targetPort":"invoice_text"}
 
 Delete obsolete binding:
 {"type":"delete_data_binding","targetTaskId":"extract_invoice_fields","targetPort":"legacy_invoice_text"}
 
 Iterator body with isolated internal edges:
-{"type":"create_node","nodeRef":"iterate_attachments","anchor":{"mode":"append","targetTaskId":"mail-intake-step-id","nodeRef":null},"task":{"title":"Process attachments","description":"Iterate over each attachment and extract the needed fields.","agentSlug":"attachment-agent","templateType":"iterator","iteratorBody":{"steps":[{"nodeRef":"extract_attachment_text","title":"Extract attachment text","description":"Extract text from the current attachment item.","agentSlug":"attachment-agent","inputPorts":[{"id":"attachment","name":"Attachment","artifactKind":"document","required":false}],"outputPorts":[{"id":"attachment_text","name":"Attachment Text","artifactKind":"text"}]},{"nodeRef":"classify_attachment","title":"Classify attachment","description":"Classify the current attachment based on its extracted text.","agentSlug":"classification-agent","inputPorts":[{"id":"input","name":"Input","artifactKind":"text","required":true}],"outputPorts":[{"id":"classification","name":"Classification","artifactKind":"data"}]}],"edges":[{"sourceNodeRef":"extract_attachment_text","sourceOutputPortId":"attachment_text","targetNodeRef":"classify_attachment","targetInputPortId":"input"}]}}}
+{"type":"create_node","nodeRef":"iterate_attachments","anchor":{"mode":"append","targetTaskId":"mail-intake-step-id","nodeRef":null},"task":{"title":"Process attachments","description":"Iterate over each attachment and extract the needed fields.","agentSlug":"attachment-agent","templateType":"iterator","iteratorBody":{"steps":[{"nodeRef":"extract_attachment_text","title":"Extract attachment text","description":"Extract text from the current attachment item.","agentSlug":"attachment-agent","inputPorts":[{"id":"attachment","name":"Attachment","artifactKind":"document","required":false}],"outputPorts":[{"id":"attachment_text","name":"Attachment Text","artifactKind":"text"}]},{"nodeRef":"classify_attachment","title":"Classify attachment","description":"Classify the current attachment based on its extracted text.","agentSlug":"classification-agent","inputPorts":[{"id":"input","name":"Input","artifactKind":"text","required":false}],"outputPorts":[{"id":"classification","name":"Classification","artifactKind":"data"}]}],"edges":[{"sourceNodeRef":"extract_attachment_text","sourceOutputPortId":"attachment_text","targetNodeRef":"classify_attachment","targetInputPortId":"input"}]}}}
 {"type":"create_data_binding","sourceKind":"node-output","sourceNodeRef":"extract_attachment_text","sourcePort":"attachment_text","targetNodeRef":"classify_attachment","targetPort":"input","iteration":"current"}
 
 # Return JSON like:
@@ -226,7 +225,7 @@ Must always consider all the workflow structure (including edges) before evaluat
     key: 'task.output_ports.structured_response', title: 'Task structured output ports', category: 'task',
     description: 'Instruction block for structured final response output ports with JSON schema.',
     systemTemplate: '',
-    userTemplate: 'Return JSON only with this exact shape:\n{\n  \"display_text\": \"user-visible final answer\",\n  \"outputs\": [\n    {\n      \"output_port_id\": \"declared-port-id\",\n      \"artifact_kind\": \"text|code|document|image|data|dashboard\",\n      \"content\": \"artifact payload\"\n    }\n  ]\n}\n\nRules:\n- `display_text` is the final user-visible answer.\n- Use only declared `output_port_id` values.\n- Every output object must include `artifact_kind`; it must match the declared port kind.\n- Every output object must use `content` for its payload.\n- For text/code outputs, `content` is the final downstream string.\n- For data outputs, `content` is the structured JSON payload.\n- For file outputs, `content` is an object like {\"filename\": \"report.pdf\", \"file_path\": \"optional exact file path\"}.\n- For file outputs, reference only files you actually generated.\n- Do not use top-level `data`, `filename`, `file_path`, or `filePath`.\n- If no routed output should be produced for a port, omit it.\n- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences.',
+    userTemplate: 'Return JSON only with this exact shape:\n{\n  \"display_text\": \"user-visible final answer\",\n  \"outputs\": [\n    {\n      \"output_port_id\": \"declared-port-id\",\n      \"artifact_kind\": \"text|code|document|image|data|dashboard\",\n      \"content\": \"artifact payload\"\n    }\n  ]\n}\n\nRules:\n- `display_text` display_text must be plain markdown. Never embed a JSON object inside it.\n- Use only declared `output_port_id` values.\n- Every output object must include `artifact_kind`; it must match the declared port kind.\n- Every output object must use `content` for its payload.\n- For text/code outputs, `content` is the final downstream string.\n- For data outputs, `content` is the structured JSON payload.\n- For file outputs, `content` is an object like {\"filename\": \"report.pdf\", \"file_path\": \"optional exact file path\"}.\n- For file outputs, reference only files you actually generated.\n- Do not use top-level `data`, `filename`, `file_path`, or `filePath`.\n- If no routed output should be produced for a port, omit it.\n- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences.',
     enabled: true, isBuiltIn: true, version: 1,
   },
   {
@@ -259,7 +258,7 @@ Must always consider all the workflow structure (including edges) before evaluat
     key: 'evaluation.task.user', title: 'Evaluation task user prompt', category: 'evaluation',
     description: 'User prompt for evaluation task nodes.',
     systemTemplate: '',
-    userTemplate: 'Task: {{taskTitle}} — {{taskDescription}}\nExpected result:\n{{expectation}}\nBaseline:\n{{baselineSummary}}\nInputs:\n{{inputsJson}}\nRubric:\n{{rubricJson}}\nReturn JSON with score, verdict, findings.',
+    userTemplate: '{{taskDescription}}\nExpected result:\n{{expectation}}\nBaseline:\n{{baselineSummary}}\nInputs:\n{{inputsJson}}\nRubric:\n{{rubricJson}}\nReturn JSON with score, verdict, findings.',
     enabled: true, isBuiltIn: true, version: 1,
   },
   {
@@ -272,7 +271,7 @@ Must always consider all the workflow structure (including edges) before evaluat
     key: 'judge.node_reflection', title: 'Playbook Advisor step analysis', category: 'judge',
     description: 'Per-step Playbook Advisor analysis prompt.',
     systemTemplate: 'You are a strict Playbook Advisor. Evaluate step output against task contract, upstream context, tool quality, and whether the step should have paused for HITL clarification, approval, or review. Score every dimension 0-100. Return strict JSON only with ALL fields listed.',
-    userTemplate: `Task: {{taskTitle}} — {{taskDescription}}
+    userTemplate: `{{taskDescription}}
 Workflow goal: {{workflowGoal}}
 Expected result: {{expectedResult}}
 Upstream context: {{upstreamContextJson}}
@@ -280,6 +279,7 @@ Task output: {{taskOutput}}
 Artifacts: {{artifactsJson}}
 Tool trace: {{toolTraceJson}}
 Prompt trace: {{promptTraceJson}}
+Task execution usage: {{taskExecutionUsageJson}}
 
 Return strict JSON with ALL of these fields (no omissions):
 
@@ -290,6 +290,22 @@ Scoring fields (each 0-100 integer):
 - "overallScore": weighted average of the above, rounded to nearest integer
 - "confidence": your confidence in this evaluation (0-100)
 - "toolUsageScore": quality of tool selection, sequencing, and output utilization (0-100)
+- "relevanceScore": whether output stayed focused on task intent
+- "specificityScore": whether output is concrete enough for downstream use
+- "formatComplianceScore": whether output respects expected format, ports, schema, or guide
+- "evidenceGroundingScore": whether claims are backed by upstream context or tool outputs
+- "handoffReadinessScore": whether downstream nodes can consume the output reliably
+- "hitlAppropriatenessScore": whether the step should have paused for clarification, approval, or review
+- "determinismScore": whether the task instruction is precise enough for stable future outputs
+- "costEfficiencyScore": whether the step is already cost-efficient for its required reasoning level
+- "stepOptimizationPriority": expected value of optimizing the selected step
+- "playbookOptimizationPriority": expected value of broader workflow optimization
+- "costOptimizationPriority": expected value of reducing LLM inference cost for this step
+
+Priority fields:
+- "riskSeverity": "low" | "medium" | "high" | "critical"
+- "blockingIssueCount": count of severe issues that can break execution
+- "downstreamImpactLevel": "none" | "low" | "medium" | "high"
 
 Expected result matching:
 - "expectedResultSource": "node_field" | "golden_baseline" | "none"
@@ -313,11 +329,26 @@ Tool usage analysis:
 - "toolUsageStrengths": aspects of tool usage that were effective
 - "toolUsageRecommendation": one-sentence summary recommendation for tool usage
 
+Cost efficiency analysis:
+- "estimatedTokenReductionPct": estimated percentage of LLM tokens that could be removed or avoided, or null if unknown
+- "estimatedLatencyReductionPct": estimated percentage of latency that could be reduced, or null if unknown
+- "costOptimizationHints": concrete low-risk changes to reduce prompt size, context, model cost, repeated inference, or unnecessary tool/LLM calls
+- "scriptReplacementHints": concrete reasons this step may be safely replaced by deterministic code, empty if not safe
+- "llmStillRequiredReasons": reasons LLM inference is still needed, such as judgment, research, synthesis, ambiguity, creative generation, or human-sensitive decision-making
+
+Cost safety rules:
+- Only recommend "replace_with_deterministic_script" when the step is a pure deterministic transformation, parser, validator, formatter, calculator, filter, mapper, router, or schema normalizer.
+- Do not recommend script replacement when the task requires open-ended reasoning, creative writing, subjective judgment, current external knowledge, research, policy interpretation, human approval, sensitive decisions, or external side effects.
+- Prefer "optimize_prompt_cost" when cost can be reduced but LLM reasoning is still required.
+
 Actionable outcome:
+- Do not decide whether optimization is allowed. Optimization actions are user-driven. Your role is to evaluate quality, identify risks, and recommend the most useful next action.
 - "safeAutoFixType": "optimize_step" if a safe automatic rewrite would improve this step, otherwise "none"
 - "recommendation": "update_current_playbook" | "generate_new_optimized_playbook" | "none"
+- "recommendedAction": "optimize_step" | "optimize_playbook" | "review_only" | "add_hitl_guard" | "improve_tooling" | "improve_output_contract" | "optimize_prompt_cost" | "switch_to_cheaper_model" | "add_result_cache" | "replace_with_deterministic_script"
+- "availableActions": { "optimizeStep": true, "optimizePlaybook": true }
 - "reason": concise justification for the overallScore and recommendation`,
-    enabled: true, isBuiltIn: true, version: 3,
+    enabled: true, isBuiltIn: true, version: 4,
   },
   {
     key: 'judge.execution_summary', title: 'Playbook Advisor execution summary', category: 'judge',

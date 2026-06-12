@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
-import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import type { CitationBBox, MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { ChartComponentData, ChartKind, ChartLayout, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
@@ -82,6 +82,14 @@ return {
 /**
  * Builds a CitationData object from raw component data.
  */
+function asCitationBBox(value: unknown): CitationBBox | undefined {
+  if (!Array.isArray(value) || value.length !== 4) {
+    return undefined;
+  }
+  const bbox = value.map((item) => Number(item));
+  return bbox.every(Number.isFinite) ? bbox as CitationBBox : undefined;
+}
+
 function buildCitationData(data: Record<string, unknown>): {
   parentId: string;
   sourceType: 'text' | 'image';
@@ -94,6 +102,9 @@ function buildCitationData(data: Record<string, unknown>): {
   path?: string;
   height?: string;
   width?: string;
+  highlightText?: string;
+  highlightBBox?: CitationBBox;
+  blockBBox?: CitationBBox;
 } {
   const textSource = data.text_source as Record<string, unknown> | undefined;
   const imageSource = data.image_source as Record<string, unknown> | undefined;
@@ -106,12 +117,15 @@ function buildCitationData(data: Record<string, unknown>): {
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
     page: (sourceData.page as string) || '',
-    pageContent: (sourceData.pageContent as string) || (sourceData.page_content as string) || (sourceData.content as string) || '',
+    pageContent: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || (sourceData.pageContent as string) || (sourceData.page_content as string) || (sourceData.content as string) || '',
     workspaceId: (sourceData.workspaceId as string) || (sourceData.workspace_id as string) || (sourceData.workspace_name as string) || '',
     reference: (sourceData.reference as string) || undefined,
     path: (sourceData.path as string) || '',
     height: (sourceData.height as string) || '',
     width: (sourceData.width as string) || '',
+    highlightText: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || undefined,
+    highlightBBox: asCitationBBox(sourceData.highlightBBox ?? sourceData.highlight_bbox),
+    blockBBox: asCitationBBox(sourceData.blockBBox ?? sourceData.block_bbox),
   };
 }
 
