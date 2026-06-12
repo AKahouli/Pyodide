@@ -2,6 +2,14 @@ import { registerAs } from '@nestjs/config';
 
 export default registerAs('conversation', () => ({
   grpcUrl: process.env.CONVERSATION_GRPC_URL || 'localhost:50051',
+  // gRPC channel security (backend -> AI service). Defaults preserve legacy
+  // plaintext/no-auth behavior so nothing breaks before cutover.
+  grpcApiKey: process.env.CONVERSATION_GRPC_API_KEY,
+  grpcTlsMode: process.env.CONVERSATION_GRPC_TLS_MODE || 'insecure',
+  grpcTlsCaCertPath: process.env.CONVERSATION_GRPC_TLS_CA_CERT_PATH,
+  grpcTlsServerNameOverride:
+    process.env.CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE,
+  grpcRequireTls: process.env.CONVERSATION_GRPC_REQUIRE_TLS === 'true',
   grpcTimeoutMs: parseInt(
     process.env.CONVERSATION_GRPC_TIMEOUT_MS || '120000',
     10,

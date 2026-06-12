@@ -140,10 +140,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
 
-      this.chatbotClient = new chatbotPackage.ChatbotService(
-        grpcUrl,
-        grpc.credentials.createInsecure(),
-      );
+      const { credentials, options } = this.buildChannelCredentials();
+
+      this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, credentials, options);
 
       // Test connection
       const deadline = new Date(Date.now() + 5000);
@@ -185,6 +184,84 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     return existingPath;
+  }
+
+  /**
+   * Build the gRPC channel credentials + options from config.
+   *
+   * - `insecure` (default): plaintext, legacy behavior.
+   * - `tls`: verify the server certificate. A CA path is only needed for a
+   *   private/internal CA; unset uses Node's built-in public roots.
+   *
+   * Fails closed at startup so misconfiguration is loud, never a silent
+   * downgrade to plaintext.
+   */
+  private buildChannelCredentials(): {
+    credentials: grpc.ChannelCredentials;
+    options: Record<string, string>;
+  } {
+    const tlsMode = this.configService.get<string>('conversation.grpcTlsMode', 'insecure');
+    const requireTls = this.configService.get<boolean>('conversation.grpcRequireTls', false);
+    const caCertPath = this.configService.get<string>('conversation.grpcTlsCaCertPath');
+    const serverNameOverride = this.configService.get<string>(
+      'conversation.grpcTlsServerNameOverride',
+    );
+    const isProd = process.env.NODE_ENV === 'production';
+
+    if (requireTls && tlsMode !== 'tls') {
+      throw new Error(
+        `CONVERSATION_GRPC_REQUIRE_TLS=true but CONVERSATION_GRPC_TLS_MODE='${tlsMode}'. Refusing to start with an insecure gRPC channel.`,
+      );
+    }
+
+    if (tlsMode !== 'tls') {
+      if (isProd) {
+        this.logger.warn(
+          'Conversation gRPC channel is INSECURE (plaintext). Chat content is sent in cleartext. Set CONVERSATION_GRPC_TLS_MODE=tls.',
+        );
+      }
+      return { credentials: grpc.credentials.createInsecure(), options: {} };
+    }
+
+    // tls mode: load the CA root only if a private CA is configured. A bad path
+    // must throw — never fall back to insecure.
+    let rootCert: Buffer | null = null;
+    if (caCertPath) {
+      try {
+        rootCert = fs.readFileSync(caCertPath);
+      } catch (error) {
+        throw new Error(
+          `CONVERSATION_GRPC_TLS_CA_CERT_PATH='${caCertPath}' is unreadable: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    const credentials = grpc.credentials.createSsl(rootCert);
+
+    const options: Record<string, string> = {};
+    if (serverNameOverride) {
+      options['grpc.ssl_target_name_override'] = serverNameOverride;
+      options['grpc.default_authority'] = serverNameOverride;
+    }
+
+    this.logger.log('Conversation gRPC channel using TLS', {
+      privateCa: !!caCertPath,
+      serverNameOverride: serverNameOverride || null,
+    });
+
+    return { credentials, options };
+  }
+
+  /**
+   * Attach the shared API key as `x-api-key` metadata. The server interceptor
+   * requires it on every RPC once auth is enforced. No-op until the key is
+   * configured, so this is safe to ship before the server turns auth on.
+   */
+  private attachApiKey(metadata: grpc.Metadata): void {
+    const apiKey = this.configService.get<string>('conversation.grpcApiKey');
+    if (apiKey) {
+      metadata.set('x-api-key', apiKey);
+    }
   }
 
   isAvailable(): boolean {
@@ -808,6 +885,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const metadata = new grpc.Metadata();
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
+      this.attachApiKey(metadata);
 
       // No absolute deadline - we use idle timeout instead
       const call = this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
@@ -1122,12 +1200,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           logOpts,
         );
 
+        // UNAUTHENTICATED (16) means a wrong/missing/rotated API key, not a
+        // transient outage. Surface it distinctly instead of the generic
+        // stream-failed so it doesn't get mistaken for "AI service down".
+        const errorCode =
+          error?.code === grpc.status.UNAUTHENTICATED
+            ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED
+            : ErrorCode.CHAT_STREAM_FAILED;
+
         this.handleStreamError(
           userId,
           conversationId,
           messageId,
           streamKey,
-          ErrorCode.CHAT_STREAM_FAILED,
+          errorCode,
           requestId,
         );
         reject(error);
@@ -1370,6 +1456,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private getErrorMessage(code: ErrorCode): string {
     const messages: Record<string, string> = {
       [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
+      [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
+        'AI service rejected the request (authentication failed).',
       [ErrorCode.CHAT_STREAM_LIMIT]: 'Maximum concurrent streams reached.',
       [ErrorCode.CHAT_STREAM_FAILED]: 'AI stream failed unexpectedly.',
       [ErrorCode.CHAT_STREAM_TIMEOUT]: 'AI stream timed out.',
@@ -1517,6 +1605,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const metadata = new grpc.Metadata();
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
+      this.attachApiKey(metadata);
 
       const deadline = new Date(Date.now() + 60000); // 60s timeout
       this.chatbotClient.GenerateConversationName(
