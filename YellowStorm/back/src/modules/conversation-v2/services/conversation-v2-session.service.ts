@@ -18,6 +18,7 @@ export interface PointerSummary {
   isShared: boolean;
   workspaceIds: string[];
   selectedSkillIds: string[];
+  selectedConnectorIds: string[];
 }
 
 @Injectable()
@@ -160,6 +161,18 @@ export class ConversationV2SessionService {
     );
   }
 
+  /**
+   * Persist the connector selection for a session (mirrors setSelectedSkills),
+   * so the UI re-displays the selected connectors on reload. Re-display only.
+   */
+  async setSelectedConnectors(id: string, connectorIds: string[]): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) return;
+    await this.model.updateOne(
+      { _id: new Types.ObjectId(id), deletedAt: null },
+      { $set: { selectedConnectorIds: connectorIds } },
+    );
+  }
+
   async softDelete(ownerId: string, id: string) {
     if (!Types.ObjectId.isValid(id)) return null;
     return this.model
@@ -183,6 +196,7 @@ export class ConversationV2SessionService {
       isShared: (doc.isShared as boolean | undefined) ?? false,
       workspaceIds: (doc.workspaceIds as string[] | undefined) ?? [],
       selectedSkillIds: (doc.selectedSkillIds as string[] | undefined) ?? [],
+      selectedConnectorIds: (doc.selectedConnectorIds as string[] | undefined) ?? [],
     };
   };
 }

@@ -105,10 +105,7 @@ export default function ConversationV2SessionPage() {
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
           setSelectedSkillIds(pointer.selectedSkillIds ?? []);
-          // Connector selection isn't persisted on the pointer; clear it so a
-          // selection from another session doesn't leak in (re-applied below for
-          // a fresh agent conversation from its nav state).
-          setSelectedConnectorIds([]);
+          setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
         } catch {
           /* keep the cached view */
         }
@@ -127,7 +124,7 @@ export default function ConversationV2SessionPage() {
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
         setSelectedSkillIds(pointer.selectedSkillIds ?? []);
-        setSelectedConnectorIds([]);
+        setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
 
         const collected: AgentEvent[] = [];
         let since = 0;

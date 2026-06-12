@@ -191,6 +191,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // Persist the current selection on the session so it survives a reload
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
+    await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
     this.runGrpc(userId, sessionId, aiSessionId, systemWorkspaceId, req, skills, connectors);
   }
 

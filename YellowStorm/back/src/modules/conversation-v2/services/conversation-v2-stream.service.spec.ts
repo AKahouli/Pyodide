@@ -55,6 +55,7 @@ describe('ConversationV2StreamService', () => {
           useValue: {
             getOne: jest.fn().mockResolvedValue(pointer),
             setSelectedSkills: jest.fn().mockResolvedValue(undefined),
+            setSelectedConnectors: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: ConversationV2StreamGatewayService, useValue: gateway },
