@@ -815,8 +815,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
-      // No absolute deadline - we use idle timeout instead
-      const call = this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
+      // No absolute deadline - we use idle timeout instead.
+      // Pass metadata as the positional metadata arg — wrapping it as
+      // `{ metadata }` makes grpc-js treat it as call options and silently
+      // drop the headers (x-api-key + user).
+      const call = this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -1537,7 +1540,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const deadline = new Date(Date.now() + 60000); // 60s timeout
       this.chatbotClient.GenerateConversationName(
         { query, model: modelId || '' },
-        { deadline, metadata },
+        metadata,
+        { deadline },
         (err: Error | null, response: { conversation_name: string }) => {
           if (err) reject(err);
           else resolve(response);
