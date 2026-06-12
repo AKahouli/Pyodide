@@ -153,6 +153,14 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_SHARE_EXPIRY_DAYS: Joi.number().min(1).max(365).default(30),
   CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
 
+  // Shared gRPC channel security (conversation, a2a-admin, playbook-flow all
+  // dial the same AI service, so these are one shared cert + key).
+  CONVERSATION_GRPC_API_KEY: Joi.string().optional(),
+  CONVERSATION_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
+  CONVERSATION_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
+  CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
+  CONVERSATION_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
+
   // Conversation V2 (Manus)
   CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
