@@ -193,9 +193,13 @@ export async function getDocumentDownloadUrl(
 export async function reindexDocument(
   workspaceId: string,
   documentId: string,
+  deepSearch?: boolean,
 ): Promise<WorkspaceDocument> {
+  const params = deepSearch ? { deepSearch: 'true' } : undefined;
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.reindex(workspaceId, documentId),
+    undefined,
+    { params },
   );
   return response.data.data;
 }

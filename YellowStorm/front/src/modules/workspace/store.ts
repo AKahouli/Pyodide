@@ -280,7 +280,7 @@ interface WorkspaceActions {
   deletePageFolder: (id: string) => Promise<void>;
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
-  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean }) => Promise<void>;
+  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -1849,7 +1849,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           if (options?.autoIndex) {
             if (newFileIds.length > 0) {
               const results = await Promise.allSettled(
-                newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId)),
+                newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId, options?.deepSearch)),
               );
               const failed = results.filter((r) => r.status === 'rejected').length;
               if (failed === 0) {

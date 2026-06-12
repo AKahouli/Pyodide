@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -38,8 +39,13 @@ export class IndexingController {
   async reindexDocument(
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
+    @Query('deepSearch') deepSearch?: string,
   ) {
-    const document = await this.indexingService.reindexDocument(workspaceId, docId);
+    const document = await this.indexingService.reindexDocument(
+      workspaceId,
+      docId,
+      deepSearch === 'true',
+    );
     return {
       id: document._id.toString(),
       indexingStatus: document.indexingStatus,

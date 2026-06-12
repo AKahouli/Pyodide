@@ -20,6 +20,7 @@ import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
+import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -137,6 +138,7 @@ export function WorkspacePage() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
+  const { enabled: deepSearch, setEnabled: setDeepSearch } = useDeepSearchIndexation();
 
   const handleSync = useCallback(async () => {
     if (!activeWorkspaceId || isSyncing) return;
@@ -285,6 +287,22 @@ export function WorkspacePage() {
                 </TooltipTrigger>
                 <TooltipContent side='bottom' className='max-w-xs text-center'>
                   {autoIndex ? 'Les nouveaux fichiers uploadés sont envoyés au pipeline d’indexation automatiquement.' : 'Les fichiers sont uploadés sans indexation. Vous pouvez indexer manuellement plus tard.'}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
+                    <Label htmlFor='deep-search-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
+                      Recherche approfondie
+                    </Label>
+                    <Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label="Activer la recherche approfondie lors de l'indexation" />
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', deepSearch ? 'text-amber-600' : 'text-muted-foreground')}>{deepSearch ? 'ON' : 'OFF'}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='max-w-xs text-center'>
+                  {deepSearch ? 'Indexation avec analyse approfondie : le document est envoyé au graphe de connaissances en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour enrichir le document avec une analyse approfondie.'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

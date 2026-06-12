@@ -108,7 +108,7 @@ export class IndexingService {
    * Process a single document
    * Called by cron job or manually
    */
-  async processDocument(documentId: string): Promise<void> {
+  async processDocument(documentId: string, deepSearch?: boolean): Promise<void> {
     const document = await this.documentModel.findById(documentId);
     if (!document) {
       throw new NotFoundException(
@@ -192,6 +192,7 @@ export class IndexingService {
         oneshotPrompt: settings?.instruction,
         brainTag: settings?.tag,
         user_id: document.createdBy.toString(),
+        deepSearch,
       });
 
       // Store API response IDs in metadata, keep status as PROCESSING
@@ -240,6 +241,7 @@ export class IndexingService {
   async reindexDocument(
     workspaceId: string,
     documentId: string,
+    deepSearch?: boolean,
   ): Promise<WorkspaceDocumentDoc> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -282,7 +284,7 @@ export class IndexingService {
     });
 
     // Optionally process immediately (non-blocking)
-    this.processDocument(documentId).catch((err) => {
+    this.processDocument(documentId, deepSearch).catch((err) => {
       this.logger.warn('Immediate re-indexing failed, will retry in cron', {
         documentId,
         error: err instanceof Error ? err.message : 'Unknown error',

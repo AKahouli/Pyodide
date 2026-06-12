@@ -6,11 +6,13 @@ import { cn } from '@/lib/utils';
 import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import { ACCEPT_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
+import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 
 export function WorkspaceUploadDropZone() {
   const canWrite = useCanWriteWorkspace();
   const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
   const { enabled: autoIndex } = useAutoIndexation();
+  const { enabled: deepSearch } = useDeepSearchIndexation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -18,9 +20,9 @@ export function WorkspaceUploadDropZone() {
   const pushFiles = useCallback(
     (list: FileList | null) => {
       if (!list || list.length === 0) return;
-      void uploadPageFiles(Array.from(list), { autoIndex });
+      void uploadPageFiles(Array.from(list), { autoIndex, deepSearch });
     },
-    [uploadPageFiles, autoIndex],
+    [uploadPageFiles, autoIndex, deepSearch],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {

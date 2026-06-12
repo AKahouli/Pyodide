@@ -166,6 +166,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
         webhook_url: this.webhookUrl,
         oneshot_prompt: request.oneshotPrompt || undefined,
         brain_tag: [''],
+        deep_research: request.deepSearch || false,
       };
       const response = await this.httpClient.post(
         '/vectorstores/indexDocumentFromCephStore',
