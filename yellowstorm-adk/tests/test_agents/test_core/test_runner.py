@@ -7,7 +7,6 @@ from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
 from src.smart_rag.tools.utilities.connector_tools import (
-    _buffer_connector_images,
     _register_connector_response_sources,
 )
 
@@ -829,40 +828,6 @@ class TestAgentRunner:
         assert response["text"] == "Preparation steps."
         assert "citation_sources" not in response
         assert "_connector_image_sources" not in tool_context.state
-
-    def test_buffer_connector_images_strips_base64_and_buffers_for_model_injection(self):
-        tool_context = MagicMock()
-        tool_context.state = {}
-
-        response = _buffer_connector_images(
-            {
-                "citation_sources": [
-                    {
-                        "file_name": "contract.pdf",
-                        "images": [
-                            {
-                                "image_id": "img-1",
-                                "mime": "image/png",
-                                "image_base64": "abc123",
-                            }
-                        ],
-                    }
-                ]
-            },
-            tool_context,
-        )
-
-        assert "image_base64" not in str(response)
-        assert response["citation_sources"][0]["images"][0]["image_attached"] is True
-        assert response["citation_sources"][0]["images"][0]["image_id"] == "img-1"
-        assert response["citation_sources"][0]["images"][0]["mime"] == "image/png"
-        image_keys = [
-            key for key in tool_context.state if key.startswith("_pending_tool_images_")
-        ]
-        assert len(image_keys) == 1
-        assert tool_context.state[image_keys[0]] == [
-            {"mime": "image/png", "data": "abc123"}
-        ]
 
     def test_find_source_by_reference_reads_connector_sources_from_session_state(self):
         mock_event_extractor = MagicMock()

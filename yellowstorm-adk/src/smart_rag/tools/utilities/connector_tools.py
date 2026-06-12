@@ -23,6 +23,7 @@ _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+_MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
 @dataclass(frozen=True)
@@ -68,11 +69,6 @@ def _redact_log_payload(value: Any) -> Any:
 
 def _is_locate_answer_citations_action(action_key: str) -> bool:
     return "locate_answer_citations" in str(action_key or "")
-
-
-def _is_read_source_action(action_key: str) -> bool:
-    normalized = str(action_key or "").lower()
-    return "read_content" in normalized or "read_section" in normalized
 
 
 def _keeps_citation_fields(action_key: str) -> bool:
@@ -124,96 +120,78 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
     return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
 
 
-def _collect_result_images(value: Any, fallback_name: str = "") -> List[Dict[str, str]]:
-    images: List[Dict[str, str]] = []
-    if isinstance(value, dict):
-        image_base64 = value.get("image_base64")
-        if isinstance(image_base64, str) and image_base64:
-            images.append(
-                {
-                    "data": image_base64,
-                    "mime": str(value.get("mime") or value.get("mime_type") or "image/jpeg"),
-                    "filename": str(
-                        value.get("image_id")
-                        or value.get("file_name")
-                        or value.get("filename")
-                        or fallback_name
-                        or "connector-image"
-                    ),
-                }
-            )
-        next_name = str(value.get("file_name") or value.get("filename") or fallback_name)
-        for nested in value.values():
-            images.extend(_collect_result_images(nested, next_name))
-    elif isinstance(value, list):
-        for item in value:
-            images.extend(_collect_result_images(item, fallback_name))
-    elif isinstance(value, str) and "image_base64" in value:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, (dict, list)):
-            images.extend(_collect_result_images(parsed, fallback_name))
-    return images
-
-
-def _strip_result_images(value: Any) -> Any:
-    if isinstance(value, dict):
-        cleaned = {
-            key: _strip_result_images(nested)
-            for key, nested in value.items()
-            if key != "image_base64"
-        }
-        if isinstance(value.get("image_base64"), str) and value.get("image_base64"):
-            cleaned.setdefault("image_attached", True)
-        return cleaned
-    if isinstance(value, list):
-        return [_strip_result_images(item) for item in value]
-    if isinstance(value, str) and "image_base64" in value:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-        if isinstance(parsed, (dict, list)):
-            return json.dumps(
-                _strip_result_images(parsed),
-                ensure_ascii=False,
-                default=str,
-            )
-    return value
-
-
-def _buffer_connector_images(response: Any, tool_context: Optional[ToolContext]) -> Any:
-    if not tool_context:
+def _strip_mcp_content_parts(response: Any) -> Any:
+    if not isinstance(response, dict) or _MCP_CONTENT_PARTS_KEY not in response:
         return response
-    images = _collect_result_images(response)
-    if not images:
-        return response
-    deduped_images: List[Dict[str, str]] = []
-    seen_images = set()
+    stripped = dict(response)
+    stripped.pop(_MCP_CONTENT_PARTS_KEY, None)
+    return stripped
+
+
+def _build_image_reference_labels(response: Dict[str, Any]) -> List[str]:
+    labels: List[str] = []
+    images = response.get("images")
+    if not isinstance(images, list):
+        return labels
     for image in images:
-        signature = (image["mime"], image["filename"], image["data"])
-        if signature in seen_images:
+        if not isinstance(image, dict):
             continue
-        seen_images.add(signature)
-        deduped_images.append(image)
-    images = deduped_images
+        image_id = str(image.get("image_id") or image.get("id") or "").strip()
+        index = str(image.get("image_content_index") or "").strip()
+        label_parts = []
+        if image_id:
+            label_parts.append(f"image_id={image_id}")
+        if index:
+            label_parts.append(f"image_content_index={index}")
+        labels.append(", ".join(label_parts) or "retrieved-image")
+    return labels
+
+
+def _buffer_mcp_images_for_model(response: Any, tool_context: Optional[ToolContext]) -> Any:
+    if not tool_context or not isinstance(response, dict):
+        return response
+    parts = response.get(_MCP_CONTENT_PARTS_KEY)
+    if not isinstance(parts, list):
+        return response
+
+    images: List[Dict[str, str]] = []
+    image_log: List[Dict[str, Any]] = []
+    for part in parts:
+        if not isinstance(part, dict) or part.get("type") != "image":
+            continue
+        data = str(part.get("data") or "").strip()
+        if not data:
+            continue
+        images.append(
+            {
+                "mime": str(part.get("mimeType") or "image/jpeg"),
+                "data": data,
+            }
+        )
+        image_log.append(
+            {
+                "mimeType": part.get("mimeType") or "image/jpeg",
+                "decodedByteSize": part.get("decodedByteSize"),
+                "forwardedToProvider": False,
+            }
+        )
+
+    if not images:
+        return _strip_mcp_content_parts(response)
 
     response_id = str(uuid.uuid4())
-    tool_context.state[f"_pending_tool_images_{response_id}"] = [
-        {"mime": image["mime"], "data": image["data"]} for image in images
-    ]
-    tool_context.state[f"_list_of_filenames_{response_id}"] = [
-        image["filename"] for image in images
-    ]
+    labels = _build_image_reference_labels(response)
+    tool_context.state[f"_pending_tool_images_{response_id}"] = images
+    tool_context.state[f"_list_of_filenames_{response_id}"] = labels
     logger.info(
-        "CONVERSATION_MCP_IMAGES_BUFFERED response_id=%s image_count=%s filenames=%s",
+        "CONVERSATION_MCP_IMAGE_BRIDGE_BUFFERED response_id=%s total_content_parts=%s text_parts=%s image_parts=%s images=%s",
         response_id,
+        len(parts),
+        sum(1 for part in parts if isinstance(part, dict) and part.get("type") == "text"),
         len(images),
-        [image["filename"] for image in images],
+        image_log,
     )
-    return _strip_result_images(response)
+    return _strip_mcp_content_parts(response)
 
 
 def _register_connector_text_source(
@@ -1114,19 +1092,12 @@ def create_connector_tools(
                     auth_headers=effective_auth_headers,
                     auth_env=_auth_env,
                 )
-                if _is_read_source_action(_action_key):
-                    response = _buffer_connector_images(response, tool_context)
+                response = _buffer_mcp_images_for_model(response, tool_context)
                 registered_response = _register_connector_response_sources(
                     response,
                     tool_context,
                     action_key=_action_key,
                 )
-                if _is_read_source_action(_action_key):
-                    logger.info(
-                        "conversation_connector_tool_response_for_model action=%s response_payload=%s",
-                        _action_key,
-                        _log_payload(registered_response),
-                    )
                 return registered_response
 
             logger.info(

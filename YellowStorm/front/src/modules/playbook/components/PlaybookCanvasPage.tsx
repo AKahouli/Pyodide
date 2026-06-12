@@ -66,7 +66,7 @@ import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHan
 import { usePlaybookCanvasExecutionHandlers } from '../hooks/usePlaybookCanvasExecutionHandlers';
 import { usePlaybookCanvasOutputFormatHandlers } from '../hooks/usePlaybookCanvasOutputFormatHandlers';
 import { flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
-import { dataBindingsToLayerEdges } from '../hooks/helpers/data-binding-serializer';
+import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
@@ -803,7 +803,11 @@ function PlaybookCanvasInner() {
       return styledControlEdges;
     }
 
-    const dataLayerEdges: Edge[] = dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []).map((edge) => ({
+    const visibleDataBindings = filterMirroredDataLayerEdges(
+      dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []),
+      styledControlEdges,
+    );
+    const dataLayerEdges: Edge[] = visibleDataBindings.map((edge) => ({
         id: `binding:${edge.id}`,
         source: edge.source,
         target: edge.target,
@@ -1261,13 +1265,14 @@ function PlaybookCanvasInner() {
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
-    options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier' },
+    options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean },
   ) => {
     if (!playbook) return;
 
     const shouldSave = options?.save ?? true;
     const shouldClearSuggestions = options?.clearSuggestions ?? true;
     const shouldFocus = options?.focus ?? true;
+    const shouldConnectAnchors = options?.connectAnchors ?? true;
     const focusMode = options?.focusMode ?? 'changed-area';
     const suggestionApplicationKey = options?.applicationKey ?? createIntentSuggestionApplicationKey(playbook.id, suggestion);
     const latestPlaybook = usePlaybookStore.getState().currentPlaybook;
@@ -1667,7 +1672,7 @@ function PlaybookCanvasInner() {
         });
       }
 
-      if (!anchorTask) {
+      if (!anchorTask || !shouldConnectAnchors) {
         return true;
       }
 
@@ -2040,6 +2045,18 @@ function PlaybookCanvasInner() {
       })) {
         return;
       }
+
+      nextEdges = nextEdges.filter((edge) => {
+        const edgeData = (edge.data || {}) as { routerLabel?: string | null };
+        const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+        const shouldReplace = !isConditionalEdge
+          && edge.source === resolvedSourceId
+          && edge.target === resolvedTargetId;
+        if (shouldReplace) {
+          changedEdgeIds.add(edge.id);
+        }
+        return !shouldReplace;
+      });
 
       appendIntentEdge(
         resolvedSourceId,

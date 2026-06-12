@@ -40,6 +40,17 @@ class _ClientSession:
         )
 
 
+class _ImageClientSession(_ClientSession):
+    async def call_tool(self, action_key: str, arguments: dict[str, Any]) -> Any:
+        return SimpleNamespace(
+            content=[
+                SimpleNamespace(text='{"text": "ok", "images": [{"image_content_index": 1}]}'),
+                SimpleNamespace(type="image", data="YWJjMTIz", mimeType="image/png"),
+            ],
+            isError=False,
+        )
+
+
 class _StdioServerParameters:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
@@ -85,3 +96,42 @@ async def test_call_mcp_tool_logs_request_and_response(
         and '"text": "ok"' in message
         for message in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_tool_preserves_image_content_parts(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mcp_module = ModuleType("mcp")
+    mcp_module.ClientSession = _ImageClientSession
+    mcp_client_module = ModuleType("mcp.client")
+    stdio_module = ModuleType("mcp.client.stdio")
+    stdio_module.stdio_client = _stdio_client
+    stdio_module.StdioServerParameters = _StdioServerParameters
+    monkeypatch.setitem(sys.modules, "mcp", mcp_module)
+    monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
+    monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
+
+    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+
+    response = await call_mcp_tool(
+        "stdio",
+        "fake-command",
+        {},
+        "read_content",
+        {"query": "recipe"},
+    )
+
+    parts = response["__mcp_content_parts"]
+    assert response["text"] == "ok"
+    assert parts[0]["type"] == "text"
+    assert parts[1]["type"] == "image"
+    assert parts[1]["data"] == "YWJjMTIz"
+    assert parts[1]["mimeType"] == "image/png"
+    assert parts[1]["decodedByteSize"] == 6
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("mcp_image_bridge_received action=read_content" in message for message in messages)
+    assert not any("YWJjMTIz" in message for message in messages)
+    assert any("[redacted image base64 length=8]" in message for message in messages)

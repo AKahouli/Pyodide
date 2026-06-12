@@ -591,6 +591,7 @@ async def _execute_step(
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
         deep_search=deep_search,
+        binding_workspace_ids=tool_scope.binding_workspace_ids,
     )
     components: list[dict[str, Any]] = []
     should_stream_tokens = (

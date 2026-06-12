@@ -106,6 +106,8 @@ class TestCallbackHelper:
 
         assert len(llm_request.contents) == 1
         assert "Inspect this image visually" in llm_request.contents[0].parts[0].text
+        assert llm_request.contents[0].parts[1].inline_data.mime_type == "image/png"
+        assert llm_request.contents[0].parts[1].inline_data.data == b"\x89PNG\r\n\x1a\nfake"
         assert state["_pending_tool_images_response-1"] == []
 
     def test_get_structured_context_multiple_events(self):

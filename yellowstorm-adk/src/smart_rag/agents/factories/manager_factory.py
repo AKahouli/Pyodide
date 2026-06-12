@@ -6,6 +6,7 @@ from google.genai import types
 from src.logger.logging import get_logger
 from src.smart_rag.agents.factories.delegation_factory_helper import (
     _append_connector_repo_context,
+    _append_workspace_document_context,
     _get_connector_repo,
     _get_team_skills,
 )
@@ -168,6 +169,10 @@ class ManagerAgentFactory:
         manager_instruction = _append_connector_repo_context(
             manager_instruction,
             _get_connector_repo(self.config),
+        )
+        manager_instruction = _append_workspace_document_context(
+            manager_instruction,
+            getattr(self.config, "brain_documents", None),
         )
 
         # Expose the conversation-level skills to the manager (catalog only; the

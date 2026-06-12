@@ -909,7 +909,7 @@ export function CreateEditConnectorDialog({
                         disabled={oauthConnecting}
                         className='flex items-center gap-2'
                       >
-                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <Github className='h-4 w-4' />}
+                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : null}
                         {t('connectors.form.auth.connectAction', { app: app.displayName })}
                       </Button>
                     ) : (
@@ -920,7 +920,6 @@ export function CreateEditConnectorDialog({
                           className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
                           disabled
                         >
-                          <Github className='h-4 w-4' />
                           {t('connectors.form.auth.connectedAction', { app: app.displayName })}
                         </Button>
                         <Button

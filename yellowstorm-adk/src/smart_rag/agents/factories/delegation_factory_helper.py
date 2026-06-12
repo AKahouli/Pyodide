@@ -101,6 +101,54 @@ def _append_connector_repo_context(
     return f"{prompt}{context}"
 
 
+def _build_workspace_document_context(brain_documents: Any) -> str:
+    if not isinstance(brain_documents, list):
+        return ""
+
+    documents = []
+    seen = set()
+    for doc in brain_documents:
+        if not isinstance(doc, dict):
+            continue
+        filename = str(doc.get("filename") or doc.get("file_name") or "").strip()
+        file_name = str(doc.get("file_name") or filename).strip()
+        workspace_id = str(doc.get("workspace_id") or "").strip()
+        workspace_name = str(doc.get("workspace_name") or workspace_id).strip()
+        if not filename and not file_name:
+            continue
+        signature = (filename, file_name, workspace_id)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        documents.append(
+            {
+                "filename": filename or file_name,
+                "file_name": file_name or filename,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+            }
+        )
+
+    if not documents:
+        return ""
+
+    return "\n".join(
+        [
+            "<workspace_documents>",
+            "Use these exact file names and workspace IDs when calling MCP connector document tools.",
+            json.dumps(documents, ensure_ascii=False, indent=2),
+            "</workspace_documents>",
+        ]
+    )
+
+
+def _append_workspace_document_context(prompt: str, brain_documents: Any) -> str:
+    context = _build_workspace_document_context(brain_documents)
+    if not context:
+        return prompt
+    return f"{prompt}\n\n{context}"
+
+
 def _get_connector_repo(config: Any) -> Optional[Dict[str, str]]:
     connector_repo = getattr(config, "connector_repo", None)
     return connector_repo if isinstance(connector_repo, dict) else None
@@ -379,6 +427,10 @@ def create_search_agent_with_tools(
         enhanced_prompt,
         _get_connector_repo(config),
     )
+    enhanced_prompt = _append_workspace_document_context(
+        enhanced_prompt,
+        agent_config.get("brain_documents", []),
+    )
 
     temp = (
         agent_config.get("agent_params").get("temperature", 0.0)
@@ -588,6 +640,10 @@ def create_standard_agent_with_tools(
     enhanced_prompt = _append_connector_repo_context(
         enhanced_prompt,
         _get_connector_repo(config),
+    )
+    enhanced_prompt = _append_workspace_document_context(
+        enhanced_prompt,
+        agent_config.get("brain_documents", []),
     )
 
     connector_bindings = []
