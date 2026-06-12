@@ -117,6 +117,7 @@ class AgentTeamConfig:
         brain_tree (Optional[List]): Tree structure representing knowledge relationships, defaults to None
         brain_ids (Optional[List[str]]): Compatibility alias for workspace_names
         workspace_names (Optional[List[str]]): Workspace names to search, defaults to None
+        brain_documents (Optional[List[dict]]): Raw workspace documents with filenames and workspace IDs
         top_k (int): Number of top results to retrieve from searches, defaults to 10
         vectorstore_name (str): Name of the vector database to use, defaults to "default"
         attached_files (Optional[List[dict]]): Documents attached in this turn (being indexed)
@@ -131,6 +132,7 @@ class AgentTeamConfig:
     brain_tree: Optional[List] = None
     brain_ids: Optional[List[str]] = None
     workspace_names: Optional[List[str]] = None
+    brain_documents: Optional[List[dict]] = None
     vectorstore_name: str = "default"
     attached_files: Optional[List[dict]] = None
     attached_images: Optional[List[dict]] = None

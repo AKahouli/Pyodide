@@ -12,6 +12,10 @@ from src.smart_rag.engines.multi_agent.config import (
     FUNCTION_NAME_PATTERN,
     AGENT_MENTION_PATTERN
 )
+from src.schema.chatbot_schema import RunAgentTeamRequest
+from src.smart_rag.engines.multi_agent.agentic_workflows.team_configuration import (
+    create_team_config,
+)
 
 
 class TestAgentTeamConfig:
@@ -30,6 +34,7 @@ class TestAgentTeamConfig:
         assert config.chatbot_name == {"provider": "openai", "model": "gpt-4"}
         assert config.doc_tree is None
         assert config.brain_tree is None
+        assert config.brain_documents is None
         assert config.workspace_names is None
         assert config.vectorstore_name == "default"
 
@@ -38,6 +43,7 @@ class TestAgentTeamConfig:
         doc_tree = [{"id": "doc1", "name": "Document 1"}]
         brain_tree = [{"id": "brain1", "name": "Brain 1"}]
         workspace_names = ["brain1", "brain2"]
+        brain_documents = [{"filename": "doc.pdf", "workspace_id": "brain1"}]
 
         config = AgentTeamConfig(
             session_id="test-session-456",
@@ -45,6 +51,7 @@ class TestAgentTeamConfig:
             chatbot_name={"provider": "anthropic", "model": "claude-3"},
             doc_tree=doc_tree,
             brain_tree=brain_tree,
+            brain_documents=brain_documents,
             workspace_names=workspace_names,
             vectorstore_name="custom-vectorstore"
         )
@@ -54,6 +61,7 @@ class TestAgentTeamConfig:
         assert config.chatbot_name == {"provider": "anthropic", "model": "claude-3"}
         assert config.doc_tree == doc_tree
         assert config.brain_tree == brain_tree
+        assert config.brain_documents == brain_documents
         assert config.workspace_names == workspace_names
         assert config.vectorstore_name == "custom-vectorstore"
 
@@ -109,6 +117,30 @@ class TestAgentTeamConfig:
         assert config.chatbot_name == complex_chatbot
         assert config.chatbot_name["provider"] == "openai"
         assert config.chatbot_name["settings"]["temperature"] == 0.7
+
+    def test_create_team_config_preserves_brain_documents(self):
+        """Test team config keeps raw docs for prompt-visible MCP identifiers."""
+        brain_documents = [
+            {
+                "_id": "doc-1",
+                "filename": "30-recettes.pdf",
+                "file_name": "30-recettes.pdf",
+                "workspace_id": "workspace-1",
+            }
+        ]
+        request = RunAgentTeamRequest(
+            user_id="user",
+            session_id="session",
+            message="message",
+            chatbot_name={"provider": "openai/gpt-4o"},
+            brain_documents=brain_documents,
+            brain_ids=["workspace-1"],
+            agent_mode="mono",
+        )
+
+        config = create_team_config(request)
+
+        assert config.brain_documents == brain_documents
 
 
 class TestConstants:

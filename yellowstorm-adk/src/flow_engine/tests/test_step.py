@@ -449,6 +449,35 @@ class _ReadContentTool:
         }
 
 
+class _ReadContentMcpImageTool:
+    name = "read_content"
+    description = "Read document content"
+    args_schema = _CalculatorArgs
+
+    async def ainvoke(self, args):
+        return {
+            "file_name": "recipes.pdf",
+            "images": [
+                {
+                    "image_id": "p1_b8",
+                    "image_content_index": 1,
+                }
+            ],
+            "__mcp_content_parts": [
+                {
+                    "type": "text",
+                    "text": '{"file_name":"recipes.pdf","images":[{"image_id":"p1_b8","image_content_index":1}]}',
+                },
+                {
+                    "type": "image",
+                    "data": "YWJjMTIz",
+                    "mimeType": "image/png",
+                    "decodedByteSize": 6,
+                },
+            ],
+        }
+
+
 class _ToolCallResponse:
     def __init__(self, content, tool_calls=None):
         self.choices = [
@@ -519,7 +548,7 @@ async def test_run_step_executes_bound_tools(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_run_step_with_tools_sends_tool_base64_images_as_image_parts(monkeypatch):
+async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
     from src.flow_engine.nodes.step_tools import run_step_with_tools
 
     calls = []
@@ -552,10 +581,52 @@ async def test_run_step_with_tools_sends_tool_base64_images_as_image_parts(monke
     assert output == "I used the attached images."
     second_messages = calls[1]["messages"]
     tool_message = next(message for message in second_messages if message.get("role") == "tool")
-    assert "image_base64" not in tool_message["content"]
+    assert "image_base64" in tool_message["content"]
     assert "image_description" not in tool_message["content"]
     assert "img-1" in tool_message["content"]
     assert "[1, 2, 3, 4]" in tool_message["content"]
+    assert not any(
+        message.get("role") == "user" and isinstance(message.get("content"), list)
+        for message in second_messages
+    )
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("The answer is in image p1_b8.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentMcpImageTool()],
+    )
+
+    assert output == "The answer is in image p1_b8."
+    second_messages = calls[1]["messages"]
+    tool_message = next(message for message in second_messages if message.get("role") == "tool")
+    assert "__mcp_content_parts" not in tool_message["content"]
+    assert "p1_b8" in tool_message["content"]
 
     image_message = next(
         message
@@ -567,11 +638,9 @@ async def test_run_step_with_tools_sends_tool_base64_images_as_image_parts(monke
         for block in image_message["content"]
         if isinstance(block, dict) and block.get("type") == "image_url"
     ]
-    assert len(image_blocks) == 2
-    assert all(
-        block["image_url"]["url"].startswith("data:image/jpeg;base64,")
-        for block in image_blocks
-    )
+    assert image_message["content"][0]["text"] == tool_message["content"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"] == "data:image/png;base64,YWJjMTIz"
 
 
 @pytest.mark.anyio
