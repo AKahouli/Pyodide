@@ -31,7 +31,7 @@ Key features:
 - **QR pairing** — Baileys `connection.update` QR events, cached and exposed via REST + Socket.IO
 - **Encrypted auth persistence** — Baileys credentials stored in MongoDB via `CryptoService`
 - **Real-time UI updates** — Socket.IO namespace `/whatsapp` with JWT authentication
-- **Inbound routing** — WhatsApp DMs invoke ADK `POST /agentic/run_single_agent` (single linked agent, no manager)
+- **Inbound routing** — WhatsApp DMs invoke gRPC `RunSingleAgent` (`RunSingleAgentRequest`, single linked agent, no manager / no SSE)
 - **Outbound replies** — AI response text sent back through Baileys `sendMessage`
 - **Session resilience** — reconnect with exponential backoff; restore connected sessions on app bootstrap
 - **Network probe** — HTTPS reachability check to `web.whatsapp.com` before pairing/connect
@@ -72,8 +72,9 @@ There is **no public REST endpoint to send arbitrary WhatsApp messages**. Outbou
 │         └── WhatsAppMessageService                                          │
 │                    │                                                        │
 │                    ▼                                                        │
-│  ConversationModule ──► MessageService                                       │
-│  WhatsAppSingleAgentStreamService ──► ADK /agentic/run_single_agent (SSE)   │
+│  ConversationModule ──► MessageService + StreamService                       │
+│  WhatsAppStreamService ──► StreamService.runSingleAgentStream()              │
+│         └── gRPC RunSingleAgent (RunSingleAgentRequest → stream StreamChunk) │
 └───────────────────────────────┬─────────────────────────────────────────────┘
                                 │
                 ┌───────────────┴───────────────┐
@@ -132,14 +133,22 @@ There is **no public REST endpoint to send arbitrary WhatsApp messages**. Outbou
    ↓
 6. MessageService.createUserMessage + createAIPlaceholder
    ↓
-7. WhatsAppSingleAgentStreamService.runSingleAgentStream() → ADK /agentic/run_single_agent
+7. WhatsAppStreamService.runStream()
+   └── StreamService.runSingleAgentStream() → gRPC `ChatbotService.RunSingleAgent`
+       Request: `RunSingleAgentRequest` (one `Agent`, workspace context, no `agent_mode`)
+       Response: `stream StreamChunk` (buffered server-side, no SSE gateway)
    ↓
-8. Extract text/reasoning from completed AI message
+8. extractWhatsAppReplyText() from completed AI message components
    ↓
 9. socket.sendMessage(remoteJid, { text }) via sendReply callback
 ```
 
-**Requirement:** `API_ADK_URL` must be reachable (e.g. `http://localhost:8001`). ADK auth uses `INDEXING_API_USERNAME` / `INDEXING_API_PASSWORD` via `POST /token`. Optional: `WHATSAPP_ADK_STREAM_TIMEOUT_MS` (default 120000).
+**Requirements:**
+
+- `CONVERSATION_GRPC_URL` must point to the ADK gRPC server (e.g. `localhost:50051`)
+- Backend `chatbot.proto` must declare `RunSingleAgent` / `RunSingleAgentRequest` (same contract as ADK)
+- Stream idle timeout follows `conversation.grpcTimeoutMs` (default 120s) via `StreamService.runSingleAgentStream()`
+- Optional: `WHATSAPP_FALLBACK_REPLY` — text sent when reply extraction fails
 
 ---
 
@@ -170,9 +179,12 @@ back/src/modules/whatsapp/
 │   ├── whatsapp-connection.service.ts     # connect / disconnect / reconnect
 │   ├── whatsapp-integration.service.ts    # CRUD + status persistence
 │   ├── whatsapp-message.service.ts        # inbound routing → agent
+│   ├── whatsapp-stream.service.ts         # delegates to StreamService.runSingleAgentStream
 │   ├── whatsapp-pairing-cache.service.ts  # in-memory QR cache
 │   ├── whatsapp-session.manager.ts        # Baileys socket lifecycle
 │   └── whatsapp-integration.service.spec.ts
+├── utils/
+│   └── whatsapp-reply-text.util.ts      # extract text/reasoning from message components
 ├── index.ts
 ├── whatsapp.module.ts
 └── README.md                            # This file
@@ -323,8 +335,8 @@ Invalid/missing token → immediate disconnect.
 | `WhatsAppIntegrationService` | CRUD integration documents, status updates, user/agent ownership checks |
 | `WhatsAppConnectionService` | Orchestrates connect, pairing poll, reconnect, disconnect, delete |
 | `WhatsAppSessionManager` | In-memory Baileys sockets, QR generation, creds save, reconnect backoff, bootstrap restore |
-| `WhatsAppSingleAgentStreamService` | ADK HTTP SSE `/agentic/run_single_agent` for linked agent only |
-| `WhatsAppMessageService` | Inbound filter + binding + conversation + single-agent stream + outbound reply |
+| `WhatsAppStreamService` | Thin wrapper around `StreamService.runSingleAgentStream()` (gRPC `RunSingleAgent`) |
+| `WhatsAppMessageService` | Inbound filter + binding + conversation + gRPC stream + outbound reply |
 | `WhatsAppConnectivityService` | Probe `https://web.whatsapp.com/sw.js` before connect |
 | `WhatsAppPairingCacheService` | Short-lived in-memory QR/pairing code per `sessionId` |
 | `BaileysClientFactory` | Build `WASocket` with resolved WA Web version |
@@ -370,14 +382,16 @@ Defined in `config.schema.ts`, loaded via `whatsapp.config.ts`:
 | `WHATSAPP_RECONNECT_MAX_DELAY_MS` | `120000` | Max reconnect backoff |
 | `WHATSAPP_RECONNECT_MAX_ATTEMPTS` | `10` | Max reconnect tries before FAILED |
 | `WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS` | `10000` | Network probe timeout |
+| `WHATSAPP_FALLBACK_REPLY` | *(see config)* | Reply when AI response text cannot be extracted |
+
+`CONVERSATION_GRPC_URL` is defined in conversation config (not `whatsapp.config.ts`) but is required for inbound AI replies.
 
 ### Example `.env`
 
 ```bash
 WHATSAPP_ENABLED=true
 WHATSAPP_MAX_REPLY_LENGTH=4000
-
-# Required for inbound AI replies
+# Required for inbound AI replies (conversation module gRPC client)
 CONVERSATION_GRPC_URL=localhost:50051
 ```
 
@@ -452,14 +466,14 @@ Manual verification checklist:
 | **No REST send API** | Outbound messages only as AI replies to inbound DMs |
 | **Text only** | Supports `conversation` and `extendedTextMessage`; media not handled |
 | **LID JIDs** | WhatsApp privacy IDs (`*@lid`) used for routing; phone display uses `@s.whatsapp.net` JID only |
-| **ADK HTTP dependency** | Inbound replies require `API_ADK_URL` + `/agentic/run_single_agent` |
+| **gRPC dependency** | Inbound replies require ADK gRPC (`CONVERSATION_GRPC_URL`) with `RunSingleAgent` RPC |
 | **Direct connection** | No HTTP/S proxy for WhatsApp Web; server must reach `web.whatsapp.com` |
 
 ---
 
 ## Related Documentation
 
-- [Conversation Module](../conversation/README.md) — `StreamService`, gRPC, message pipeline
+- [Conversation Module](../conversation/README.md) — `StreamService.runSingleAgentStream()`, `RunSingleAgentRequest`, message pipeline
 - [Agent Module](../agent/README.md) — agent ownership and configuration
 - [Frontend WhatsApp UI](../../../front/src/modules/agent/whatsapp/README.md) — pairing UI, Socket.IO client
 - [Crypto Service](../../common/services/crypto.service.ts) — credential encryption

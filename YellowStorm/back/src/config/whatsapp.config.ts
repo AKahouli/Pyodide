@@ -11,24 +11,7 @@ export default registerAs('whatsapp', () => ({
     process.env.WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS || '10000',
     10,
   ),
-  adkUrl: process.env.API_ADK_URL || '',
-  adkUsername: process.env.INDEXING_API_USERNAME || '',
-  adkPassword: process.env.INDEXING_API_PASSWORD || '',
-  adkStreamTimeoutMs: parseInt(
-    process.env.WHATSAPP_ADK_STREAM_TIMEOUT_MS ||
-      process.env.CONVERSATION_GRPC_TIMEOUT_MS ||
-      '120000',
-    10,
-  ),
   processingTimeoutMs: parseInt(process.env.WHATSAPP_PROCESSING_TIMEOUT_MS || '180000', 10),
-  maxInboundPerMinute: parseInt(process.env.WHATSAPP_MAX_INBOUND_PER_MINUTE || '30', 10),
-  fallbackReply: process.env.WHATSAPP_FALLBACK_REPLY || 'I could not generate a response for this message.',
-  circuitBreakerFailureThreshold: parseInt(
-    process.env.WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD || '3',
-    10,
-  ),
-  circuitBreakerCooldownMs: parseInt(
-    process.env.WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS || '60000',
-    10,
-  ),
+  fallbackReply:
+    process.env.WHATSAPP_FALLBACK_REPLY || 'I could not generate a response for this message.',
 }));
