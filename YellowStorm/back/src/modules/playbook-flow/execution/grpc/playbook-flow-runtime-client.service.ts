@@ -4,6 +4,10 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  buildGrpcChannelCredentials,
+  createGrpcMetadata,
+} from '../../../../common/grpc/grpc-security.util';
 
 @Injectable()
 /**
@@ -30,10 +34,11 @@ export class PlaybookFlowRuntimeClientService {
       const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
       const pfPackage = protoDescriptor.playbook_flow as any;
       const grpcUrl = this.configService.get<string>('playbook-flow.grpcUrl', 'localhost:50051');
-      this.client = new pfPackage.PlaybookFlowRuntime(
-        grpcUrl,
-        grpc.credentials.createInsecure(),
+      const { credentials, options } = buildGrpcChannelCredentials(
+        this.configService,
+        (msg) => this.logger.warn(msg),
       );
+      this.client = new pfPackage.PlaybookFlowRuntime(grpcUrl, credentials, options);
       this.available = true;
       this.logger.log(`Playbook flow gRPC client initialized at ${grpcUrl}`);
     } catch (err) {
@@ -47,23 +52,34 @@ export class PlaybookFlowRuntimeClientService {
   }
 
   run(request: Record<string, unknown>): any {
-    return this.client.Run(request);
+    return this.client.Run(request, createGrpcMetadata(this.configService));
   }
 
   runFromCheckpoint(request: Record<string, unknown>): any {
-    return this.client.RunFromCheckpoint(request);
+    return this.client.RunFromCheckpoint(
+      request,
+      createGrpcMetadata(this.configService),
+    );
   }
 
   cancel(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
-    this.client.Cancel(request, callback);
+    this.client.Cancel(request, createGrpcMetadata(this.configService), callback);
   }
 
   resumeApproval(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
-    this.client.ResumeApproval(request, callback);
+    this.client.ResumeApproval(
+      request,
+      createGrpcMetadata(this.configService),
+      callback,
+    );
   }
 
   resumeFromStep(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
-    this.client.ResumeFromStep(request, callback);
+    this.client.ResumeFromStep(
+      request,
+      createGrpcMetadata(this.configService),
+      callback,
+    );
   }
 
   private resolveProtoPath(): string {
