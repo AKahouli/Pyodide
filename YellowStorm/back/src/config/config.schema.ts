@@ -169,6 +169,13 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
   CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
 
+  // Conversation V2 gRPC channel security (separate AI service → own cert + key).
+  CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
+  CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
+
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
