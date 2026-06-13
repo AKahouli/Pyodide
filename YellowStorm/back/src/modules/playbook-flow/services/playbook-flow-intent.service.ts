@@ -14,6 +14,8 @@ import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse 
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
+const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
+
 type PlaybookIntentOperationType =
   | 'create_node'
   | 'insert_before'
@@ -178,6 +180,7 @@ export interface PlaybookIntentAnalysisContext {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
 }
@@ -230,13 +233,16 @@ export class PlaybookFlowIntentService {
   async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
     const prompt = await this.promptService.findByKey('intent.design_assessment');
+    const userPrompt = prompt?.userTemplate?.trim()
+      ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
+      : context.userPrompt;
     const response = await context.httpClient.post('/v1/chat/completions', {
       model: context.model,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
-        { role: 'user', content: context.userPrompt },
+        { role: 'user', content: userPrompt },
       ],
     }, { timeout: 180000 });
 
@@ -271,7 +277,8 @@ export class PlaybookFlowIntentService {
     const defaultAgents = await this.agentService.findDefaultAgents({ page: 1, limit: 100, isActive: true });
     const nodeTemplates = await this.nodeTemplateService.findEnabled();
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return JSON only with a top-level suggestions array.';
-    const userPrompt = this.promptRenderer.render(prompt?.userTemplate || '', {
+    const intentParts = this.splitIntentClarifications(dto.intent);
+    const promptVariables = {
       playbook_name: flow.name,
       playbook_description: (flow as any).description || '',
       workflow_summary: JSON.stringify(this.buildWorkflowSummary(flow, dto.selectedTaskId || null), null, 2),
@@ -302,12 +309,17 @@ export class PlaybookFlowIntentService {
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
       })), null, 2),
-      intent_text: dto.intent.trim(),
+      intent_text: intentParts.intentText,
+      captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
       selected_task_context: JSON.stringify(this.buildSelectedNodeContext(flow, selectedNode?.id || null), null, 2),
-    });
+    };
+    const userPrompt = this.promptRenderer.render(
+      prompt?.userTemplate || '',
+      this.withClarificationTemplateFallback(promptVariables, prompt?.userTemplate || ''),
+    );
 
     const validationContext = this.buildValidationContext(flow);
     return {
@@ -318,9 +330,41 @@ export class PlaybookFlowIntentService {
       model,
       systemPrompt,
       userPrompt,
+      promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
     };
+  }
+
+  private splitIntentClarifications(intent: string): { intentText: string; capturedClarifications: string } {
+    const marker = '\n\nClarifications:\n';
+    const normalizedIntent = intent.trim();
+    const markerIndex = normalizedIntent.indexOf(marker);
+    if (markerIndex === -1) {
+      return { intentText: normalizedIntent, capturedClarifications: '' };
+    }
+
+    return {
+      intentText: normalizedIntent.slice(0, markerIndex).trim(),
+      capturedClarifications: normalizedIntent.slice(markerIndex + marker.length).trim(),
+    };
+  }
+
+  private withClarificationTemplateFallback(variables: Record<string, unknown>, template: string): Record<string, unknown> {
+    const capturedClarifications = this.asString(variables.captured_clarifications);
+    const intentText = this.asString(variables.intent_text);
+    if (!capturedClarifications || capturedClarifications === NO_CAPTURED_CLARIFICATIONS || this.hasClarificationPlaceholder(template)) {
+      return variables;
+    }
+
+    return {
+      ...variables,
+      intent_text: `${intentText}\n\nClarifications:\n${capturedClarifications}`,
+    };
+  }
+
+  private hasClarificationPlaceholder(template: string): boolean {
+    return /\{captured_clarifications\}|\{\{\s*captured_clarifications\s*\}\}/.test(template);
   }
 
   normalizeConstructionSuggestions(args: {

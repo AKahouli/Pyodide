@@ -227,7 +227,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
   });
 
   it('respects the minimum left offset when restoring position', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 8, y: 16 }));
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 8, y: 16 }));
 
     render(
       <PlaybookCanvasFloatingToolbar
@@ -279,7 +279,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
   });
 
   it('allows restoring position at the top edge', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 0 }));
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 40, y: 0 }));
 
     render(
       <PlaybookCanvasFloatingToolbar
@@ -306,7 +306,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
   });
 
   it('moves restored position to the right of the avoid rect when they overlap', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 16, y: 16 }));
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 16, y: 16 }));
 
     render(
       <PlaybookCanvasFloatingToolbar
@@ -333,7 +333,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
   });
 
   it('reclamps after expand changes the toolbar size', async () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 92 }));
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 40, y: 92 }));
     avoidRect = { x: 300, y: 0, left: 300, top: 0, right: 780, bottom: 200, width: 480, height: 200, toJSON: () => ({}) };
 
     render(

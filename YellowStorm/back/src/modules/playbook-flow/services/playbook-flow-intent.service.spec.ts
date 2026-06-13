@@ -19,12 +19,13 @@ const DEFAULT_LIMITS: EffectiveFlowDesignSettings['intentNormalizationLimits'] =
 
 function createService(overrides: Partial<{
   promptService: PlaybookFlowPromptTemplateService;
+  promptRenderer: PlaybookFlowPromptRendererService;
 }> = {}): PlaybookFlowIntentService {
   return new PlaybookFlowIntentService(
     {} as PlaybookFlowService,
     {} as PlaybookFlowSettingsService,
     overrides.promptService || {} as PlaybookFlowPromptTemplateService,
-    {} as PlaybookFlowPromptRendererService,
+    overrides.promptRenderer || {} as PlaybookFlowPromptRendererService,
     {} as AgentService,
     {} as PlaybookFlowNodeTemplateService,
     {} as LiteLLMConnectionService,
@@ -117,6 +118,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
     });
@@ -128,6 +130,123 @@ describe('PlaybookFlowIntentService normalization', () => {
       messages: [
         { role: 'system', content: 'Custom design assessment prompt' },
         { role: 'user', content: 'User intent context' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('renders the customizable design assessment user prompt when configured', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom design assessment prompt',
+        userTemplate: 'Intent={intent_text}\nClarifications={captured_clarifications}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Fallback user context',
+      promptVariables: {
+        intent_text: 'Build workflow',
+        captured_clarifications: 'Which datasource?: SAP',
+      },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: 'Intent=Build workflow\nClarifications=Which datasource?: SAP' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('keeps captured clarifications in intent text for customized prompts without the new placeholder', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom design assessment prompt',
+        userTemplate: 'Intent={intent_text}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Fallback user context',
+      promptVariables: {
+        intent_text: 'Build workflow',
+        captured_clarifications: 'Which datasource?: SAP',
+      },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: 'Intent=Build workflow\n\nClarifications:\nWhich datasource?: SAP' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('does not treat unsupported spaced single-brace placeholders as clarification placeholders', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom design assessment prompt',
+        userTemplate: 'Intent={intent_text}\nClarifications={ captured_clarifications }',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Fallback user context',
+      promptVariables: {
+        intent_text: 'Build workflow',
+        captured_clarifications: 'Which datasource?: SAP',
+      },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: 'Intent=Build workflow\n\nClarifications:\nWhich datasource?: SAP\nClarifications={ captured_clarifications }' },
       ],
     }), { timeout: 180000 });
   });
@@ -150,6 +269,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
     });
@@ -170,6 +290,26 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(result.status).toBe('needs_clarification');
     if (result.status !== 'needs_clarification') return;
     expect(result.questions[0].choices.length).toBeGreaterThan(0);
+  });
+
+  it('splits captured clarification answers from the base intent', () => {
+    const result = (service as any).splitIntentClarifications(
+      'Build invoice workflow\n\nClarifications:\nWhich datasource?: SAP\nWhat output?: CSV',
+    );
+
+    expect(result).toEqual({
+      intentText: 'Build invoice workflow',
+      capturedClarifications: 'Which datasource?: SAP\nWhat output?: CSV',
+    });
+  });
+
+  it('returns no captured clarifications when the marker is absent', () => {
+    const result = (service as any).splitIntentClarifications('Build invoice workflow');
+
+    expect(result).toEqual({
+      intentText: 'Build invoice workflow',
+      capturedClarifications: '',
+    });
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {

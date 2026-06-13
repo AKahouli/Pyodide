@@ -198,6 +198,10 @@ Iterator body with isolated internal edges:
 
     userTemplate: `Playbook: {playbook_name} — {playbook_description}
 Intent: {intent_text}
+
+<Captured_Design_Clarifications>
+{captured_clarifications}
+</Captured_Design_Clarifications>
 Selected task: {selected_task_id} | {selected_task_title}
 Description: {selected_task_description}
 Context: {selected_task_context}
@@ -222,7 +226,7 @@ Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-outp
 
 ***Non negotiable rule***
 Must always consider all the workflow structure (including edges) before evaluating the required changes to suggest, it could be a mix of changes (create_node, update_node, delete_edge ...) in the "changes" array.`,
-    enabled: true, isBuiltIn: true, version: 5,
+    enabled: true, isBuiltIn: true, version: 6,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -244,7 +248,24 @@ Shape:
 {"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."]}],"missingRequirements":["..."],"riskFlags":["..."]}
 or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
 or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`,
-    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    userTemplate: `Playbook: {playbook_name} — {playbook_description}
+Intent: {intent_text}
+
+<Captured_Design_Clarifications>
+{captured_clarifications}
+</Captured_Design_Clarifications>
+Selected task: {selected_task_id} | {selected_task_title}
+Description: {selected_task_description}
+Context: {selected_task_context}
+
+<Existing_Workflow_JSON>
+{workflow_summary}
+</Existing_Workflow_JSON>
+
+
+<Available_node_templates_JSON>
+{node_templates}
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 2,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',

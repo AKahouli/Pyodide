@@ -63,7 +63,7 @@ type Position = { x: number; y: number };
 
 const DEFAULT_POSITION: Position = { x: 16, y: 16 };
 const VIEWPORT_PADDING = 16;
-const STORAGE_KEY = 'playbook-canvas-floating-toolbar-position-v2';
+const STORAGE_KEY = 'playbook-canvas-floating-toolbar-position-v3';
 
 function positionsMatch(a: Position, b: Position): boolean {
   return a.x === b.x && a.y === b.y;
