@@ -10,6 +10,7 @@ import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-templa
 import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-renderer.service';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
+import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
@@ -226,6 +227,25 @@ export class PlaybookFlowIntentService {
     };
   }
 
+  async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
+    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
+    const prompt = await this.promptService.findByKey('intent.design_assessment');
+    const response = await context.httpClient.post('/v1/chat/completions', {
+      model: context.model,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
+        { role: 'user', content: context.userPrompt },
+      ],
+    }, { timeout: 180000 });
+
+    return this.normalizeDesignAssessment(
+      this.extractChatCompletionText(response.data),
+      dto.intent,
+    );
+  }
+
   async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
@@ -269,12 +289,16 @@ export class PlaybookFlowIntentService {
         executionMode: template.executionMode,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
+          name: port.name,
           artifactKind: port.artifactKind,
           required: port.required === true,
+          description: port.description || '',
         })),
         outputPorts: template.outputPorts.map((port) => ({
           id: port.id,
+          name: port.name,
           artifactKind: port.artifactKind,
+          description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
       })), null, 2),
@@ -315,6 +339,119 @@ export class PlaybookFlowIntentService {
       args.validationContext,
       args.includeFallback,
     );
+  }
+
+  private buildDesignAssessmentSystemPrompt(): string {
+    return `You are a strict workflow design reviewer. Before playbook generation, challenge missing requirements that would make the generated workflow unreliable.
+Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
+Ask at most 4 concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
+For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
+Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
+Use ready_for_review when enough information exists but assumptions should be confirmed.
+Use ready_to_generate only when the intent is complete and low risk.
+Shape:
+{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."]}],"missingRequirements":["..."],"riskFlags":["..."]}
+or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
+or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`;
+  }
+
+  private normalizeDesignAssessment(raw: string, intent: string): PlaybookIntentDesignResponse {
+    const parsed = this.parseJsonObject(raw);
+    if (!parsed) return this.buildFallbackDesignAssessment(intent);
+    const status = parsed.status;
+    if (status === 'ready_to_generate') return this.normalizeReadyToGenerate(parsed, intent);
+    if (status === 'ready_for_review') return this.normalizeReadyForReview(parsed, intent);
+    return this.normalizeNeedsClarification(parsed, intent);
+  }
+
+  private normalizeNeedsClarification(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+    const normalizedQuestions = questions
+      .map((question, index) => this.normalizeClarificationQuestion(question, index))
+      .filter((question) => question.question)
+      .slice(0, 4);
+    return {
+      status: 'needs_clarification',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      questions: normalizedQuestions.length > 0 ? normalizedQuestions : this.buildFallbackQuestions(),
+      missingRequirements: this.asStringArray(parsed.missingRequirements),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeReadyForReview(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    const brief = typeof parsed.brief === 'object' && parsed.brief ? parsed.brief as Record<string, unknown> : {};
+    return {
+      status: 'ready_for_review',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      brief: {
+        goal: this.asString(brief.goal) || intent.trim(),
+        trigger: this.asString(brief.trigger) || 'Manual trigger',
+        datasources: this.asStringArray(brief.datasources),
+        steps: this.asStringArray(brief.steps),
+        outputs: this.asStringArray(brief.outputs),
+        hitlRules: this.asStringArray(brief.hitlRules),
+      },
+      assumptions: this.asStringArray(parsed.assumptions),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeReadyToGenerate(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    return {
+      status: 'ready_to_generate',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      assumptions: this.asStringArray(parsed.assumptions),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeClarificationQuestion(value: unknown, index: number): PlaybookIntentClarificationQuestion {
+    const item = typeof value === 'object' && value ? value as Record<string, unknown> : {};
+    const allowedCategories = ['datasource', 'trigger', 'input', 'output', 'business_rule', 'approval', 'scope'];
+    const category = this.asString(item.category);
+    return {
+      id: this.asString(item.id) || `q${index + 1}`,
+      question: this.asString(item.question),
+      reason: this.asString(item.reason),
+      category: this.asQuestionCategory(category, allowedCategories),
+      required: item.required !== false,
+      choices: [...new Set(this.asStringArray(item.choices))].slice(0, 4),
+    };
+  }
+
+  private asQuestionCategory(category: string, allowedCategories: string[]): PlaybookIntentClarificationQuestion['category'] {
+    return allowedCategories.includes(category)
+      ? category as PlaybookIntentClarificationQuestion['category']
+      : 'scope';
+  }
+
+  private parseJsonObject(raw: string): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return typeof parsed === 'object' && parsed ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private asString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private asStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.map((item) => this.asString(item)).filter(Boolean).slice(0, 8) : [];
+  }
+
+  private buildFallbackDesignAssessment(intent: string): PlaybookIntentDesignResponse {
+    return { status: 'needs_clarification', detectedIntent: intent.trim(), questions: this.buildFallbackQuestions(), missingRequirements: ['Workflow requirements need confirmation.'], riskFlags: [] };
+  }
+
+  private buildFallbackQuestions() {
+    return [
+      { id: 'datasource', question: 'Which datasource should this workflow use?', reason: 'Datasource choice affects workflow structure and input bindings.', category: 'datasource' as const, required: true, choices: ['Workspace documents', 'Connected business app', 'Uploaded files'] },
+      { id: 'output', question: 'What final output should the workflow produce?', reason: 'The output contract determines the final steps.', category: 'output' as const, required: true, choices: ['Summary report', 'Structured table', 'Approval-ready recommendation'] },
+    ];
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {

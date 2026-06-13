@@ -615,6 +615,46 @@ export interface RequestPlaybookIntentData {
   selectedTaskId?: string;
 }
 
+export interface PlaybookIntentClarificationQuestion {
+  id: string;
+  question: string;
+  reason: string;
+  category: 'datasource' | 'trigger' | 'input' | 'output' | 'business_rule' | 'approval' | 'scope';
+  required: boolean;
+  choices: string[];
+}
+
+export interface PlaybookIntentWorkflowBrief {
+  goal: string;
+  trigger: string;
+  datasources: string[];
+  steps: string[];
+  outputs: string[];
+  hitlRules: string[];
+}
+
+export type PlaybookIntentDesignResponse =
+  | {
+      status: 'needs_clarification';
+      detectedIntent: string;
+      questions: PlaybookIntentClarificationQuestion[];
+      missingRequirements: string[];
+      riskFlags: string[];
+    }
+  | {
+      status: 'ready_for_review';
+      detectedIntent: string;
+      brief: PlaybookIntentWorkflowBrief;
+      assumptions: string[];
+      riskFlags: string[];
+    }
+  | {
+      status: 'ready_to_generate';
+      detectedIntent: string;
+      assumptions: string[];
+      riskFlags: string[];
+    };
+
 export interface PlaybookIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
   model: string;
@@ -2396,6 +2436,7 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  assessPlaybookIntentDesign: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentDesignResponse>;
   requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;

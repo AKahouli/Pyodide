@@ -17,11 +17,13 @@ const DEFAULT_LIMITS: EffectiveFlowDesignSettings['intentNormalizationLimits'] =
   maxIteratorBodyEdges: 24,
 };
 
-function createService(): PlaybookFlowIntentService {
+function createService(overrides: Partial<{
+  promptService: PlaybookFlowPromptTemplateService;
+}> = {}): PlaybookFlowIntentService {
   return new PlaybookFlowIntentService(
     {} as PlaybookFlowService,
     {} as PlaybookFlowSettingsService,
-    {} as PlaybookFlowPromptTemplateService,
+    overrides.promptService || {} as PlaybookFlowPromptTemplateService,
     {} as PlaybookFlowPromptRendererService,
     {} as AgentService,
     {} as PlaybookFlowNodeTemplateService,
@@ -71,6 +73,104 @@ describe('PlaybookFlowIntentService normalization', () => {
       ctx,
     );
   };
+
+  const callNormalizeDesign = (raw: string) => {
+    return (service as any).normalizeDesignAssessment(raw, 'Build invoice workflow');
+  };
+
+  it('normalizes design clarification choices and caps questions', () => {
+    const result = callNormalizeDesign(JSON.stringify({
+      status: 'needs_clarification',
+      detectedIntent: 'Build invoice workflow',
+      questions: [
+        { id: 'q1', question: 'Which datasource?', category: 'datasource', choices: ['SAP', 'SAP', 'SharePoint', 'Email', 'Upload'] },
+        { id: 'q2', question: 'What trigger?', category: 'trigger' },
+        { id: 'q3', question: 'What output?', category: 'output', choices: ['Report'] },
+        { id: 'q4', question: 'Which approval?', category: 'approval', choices: ['Manager'] },
+        { id: 'q5', question: 'Which rule?', category: 'business_rule', choices: ['Overdue only'] },
+        { id: 'q6', question: 'Extra question?', category: 'scope', choices: ['Extra'] },
+      ],
+    }));
+
+    expect(result.status).toBe('needs_clarification');
+    if (result.status !== 'needs_clarification') return;
+    expect(result.questions).toHaveLength(4);
+    expect(result.questions[0].choices).toEqual(['SAP', 'SharePoint', 'Email', 'Upload']);
+    expect(result.questions[1].choices).toEqual([]);
+  });
+
+  it('uses the customizable design assessment prompt when available', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'Custom design assessment prompt' }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'User intent context',
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(promptService.findByKey).toHaveBeenCalledWith('intent.design_assessment');
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: 'User intent context' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('falls back to the built-in design assessment prompt when no template is configured', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue(null),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'User intent context',
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: expect.stringContaining('strict workflow design reviewer') },
+        { role: 'user', content: 'User intent context' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('falls back to clarification questions when design JSON is malformed', () => {
+    const result = callNormalizeDesign('not-json');
+
+    expect(result.status).toBe('needs_clarification');
+    if (result.status !== 'needs_clarification') return;
+    expect(result.questions[0].choices.length).toBeGreaterThan(0);
+  });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {
     const ctx = makeContext();

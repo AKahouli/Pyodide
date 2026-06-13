@@ -466,4 +466,85 @@ describe('PlaybookIntentBar', () => {
 
     expect(screen.getByText('intentBar.emptyState')).toBeInTheDocument();
   });
+
+  it('shows stepped clarification choices and forwards captured answers on skip', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource'],
+          riskFlags: [],
+          questions: [{
+            id: 'q1',
+            question: 'Which datasource should this workflow use?',
+            reason: 'Datasource affects bindings.',
+            category: 'datasource',
+            required: true,
+            choices: ['SharePoint', 'SAP'],
+          }],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    expect(screen.getByText('Which datasource should this workflow use?')).toBeInTheDocument();
+    expect(screen.getByText('SharePoint')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('SharePoint'));
+    fireEvent.click(screen.getByText('intentBar.design.skip'));
+    expect(onForceGenerate).toHaveBeenCalledWith('Which datasource should this workflow use?: SharePoint');
+  });
+
+  it('steps through choice questions and generates with a custom final answer', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource', 'Output'],
+          riskFlags: [],
+          questions: [
+            {
+              id: 'q1',
+              question: 'Which datasource should this workflow use?',
+              reason: 'Datasource affects bindings.',
+              category: 'datasource',
+              required: true,
+              choices: ['SharePoint', 'SAP'],
+            },
+            {
+              id: 'q2',
+              question: 'What final output should it produce?',
+              reason: 'Output affects final steps.',
+              category: 'output',
+              required: true,
+              choices: ['Summary report'],
+            },
+          ],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('SAP'));
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('intentBar.design.other'));
+    fireEvent.change(screen.getAllByRole('textbox')[1], { target: { value: 'Approval-ready CSV export' } });
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith([
+      'Which datasource should this workflow use?: SAP',
+      'What final output should it produce?: Approval-ready CSV export',
+    ].join('\n'));
+  });
 });

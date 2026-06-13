@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Clock, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
+import type { PlaybookIntentDesignResponse, PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
 import type { PlaybookIntentConstructionStatus } from '../types';
 
 function releasePointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
@@ -40,12 +40,14 @@ interface Props {
   loading: boolean;
   value: string;
   suggestions: PlaybookIntentSuggestion[];
+  design?: PlaybookIntentDesignResponse | null;
   error: string;
   history: IntentSuggestionHistoryEntry[];
   autoApply: boolean;
   onValueChange: (value: string) => void;
   onAutoApplyChange: (value: boolean) => void;
   onSubmit: () => void;
+  onForceGenerate?: (answerText?: string) => void;
   onApplySuggestion: (suggestion: PlaybookIntentSuggestion) => void;
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
@@ -69,12 +71,14 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   loading,
   value,
   suggestions,
+  design,
   error,
   history,
   autoApply,
   onValueChange,
   onAutoApplyChange,
   onSubmit,
+  onForceGenerate,
   onApplySuggestion,
   onRecordHistory,
   onApplyHistorySuggestion,
@@ -90,6 +94,10 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [designStepIndex, setDesignStepIndex] = useState(0);
+  const [designAnswers, setDesignAnswers] = useState<Record<string, string>>({});
+  const [selectedDesignChoice, setSelectedDesignChoice] = useState('');
+  const [designAnswer, setDesignAnswer] = useState('');
   const [pendingHistoryEntry, setPendingHistoryEntry] = useState<IntentSuggestionHistoryEntry | null>(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +111,9 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     moved: boolean;
   } | null>(null);
   const collapsed = collapsedProp ?? uncontrolledCollapsed;
+  const designQuestions = design?.status === 'needs_clarification' ? design.questions : [];
+  const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
+  const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
 
   const setCollapsed = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === 'function' ? next(collapsed) : next;
@@ -146,10 +157,68 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
 
   const handleSubmit = useCallback(() => {
     submittedIntentRef.current = value.trim();
+    setDesignStepIndex(0);
+    setDesignAnswers({});
+    setSelectedDesignChoice('');
+    setDesignAnswer('');
     setHistoryOpen(false);
     setExpandedItems(new Set());
     onSubmit();
   }, [value, onSubmit]);
+
+  const getCapturedRequirements = useCallback((includeCurrent: boolean) => {
+    const answers = { ...designAnswers };
+    if (includeCurrent && currentDesignQuestion) {
+      const currentAnswer = selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
+      if (currentAnswer) answers[currentDesignQuestion.id] = currentAnswer;
+    }
+
+    return designQuestions
+      .map((question) => {
+        const answer = answers[question.id]?.trim();
+        return answer ? `${question.question}: ${answer}` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }, [currentDesignQuestion, designAnswer, designAnswers, designQuestions, selectedDesignChoice]);
+
+  const saveCurrentDesignAnswer = useCallback(() => {
+    if (!currentDesignQuestion) return '';
+    const answer = selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
+    if (answer) {
+      setDesignAnswers((current) => ({ ...current, [currentDesignQuestion.id]: answer }));
+    }
+    return answer;
+  }, [currentDesignQuestion, designAnswer, selectedDesignChoice]);
+
+  const handleContinueDesign = useCallback(() => {
+    const currentAnswer = saveCurrentDesignAnswer();
+    if (!currentAnswer) return;
+    if (!isLastDesignQuestion) {
+      const nextQuestion = designQuestions[designStepIndex + 1];
+      setDesignStepIndex((current) => current + 1);
+      setSelectedDesignChoice(designAnswers[nextQuestion?.id || ''] || '');
+      setDesignAnswer('');
+      return;
+    }
+
+    onForceGenerate?.(getCapturedRequirements(true));
+    setDesignStepIndex(0);
+    setDesignAnswers({});
+    setSelectedDesignChoice('');
+    setDesignAnswer('');
+  }, [designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, onForceGenerate, saveCurrentDesignAnswer]);
+
+  const handleSelectDesignChoice = useCallback((choice: string) => {
+    setSelectedDesignChoice(choice);
+    if (choice !== '__custom__') {
+      setDesignAnswer('');
+    }
+  }, []);
+
+  const handleSkipDesign = useCallback(() => {
+    onForceGenerate?.(getCapturedRequirements(true));
+  }, [getCapturedRequirements, onForceGenerate]);
 
   const handleBarClick = useCallback(() => {
     if (collapsed) {
@@ -279,6 +348,13 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     onPositionChange?.(offset);
   }, [collapsed, offset, onPositionChange]);
 
+  useEffect(() => {
+    setDesignStepIndex(0);
+    setDesignAnswers({});
+    setSelectedDesignChoice('');
+    setDesignAnswer('');
+  }, [design]);
+
   return (
     <div
       ref={setContainerNode}
@@ -377,6 +453,84 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+            {design && !autoApply ? (
+              <div className="space-y-3 rounded-xl border bg-muted/30 p-3 text-sm">
+                <div className="space-y-1">
+                  <p className="font-medium">{design.status === 'needs_clarification' ? t('intentBar.design.clarifyTitle') : t('intentBar.design.reviewTitle')}</p>
+                  <p className="text-muted-foreground">{t('intentBar.design.detectedIntent', { intent: design.detectedIntent })}</p>
+                </div>
+                {design.status === 'needs_clarification' ? (
+                  <div className="space-y-2">
+                    {currentDesignQuestion ? (
+                      <div className="space-y-3 rounded-lg border bg-background/70 p-3">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            {t('intentBar.design.step', { current: designStepIndex + 1, total: designQuestions.length })}
+                          </p>
+                          <p className="font-medium">{currentDesignQuestion.question}</p>
+                          {currentDesignQuestion.reason ? <p className="text-xs text-muted-foreground">{currentDesignQuestion.reason}</p> : null}
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {(currentDesignQuestion.choices ?? []).map((choice) => (
+                            <Button
+                              key={choice}
+                              type="button"
+                              variant={selectedDesignChoice === choice ? 'default' : 'outline'}
+                              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                              onClick={() => handleSelectDesignChoice(choice)}
+                            >
+                              {choice}
+                            </Button>
+                          ))}
+                          <Button
+                            type="button"
+                            variant={selectedDesignChoice === '__custom__' ? 'default' : 'outline'}
+                            className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                            onClick={() => handleSelectDesignChoice('__custom__')}
+                          >
+                            {t('intentBar.design.other')}
+                          </Button>
+                        </div>
+                        {selectedDesignChoice === '__custom__' ? (
+                          <Textarea
+                            value={designAnswer}
+                            onChange={(event) => setDesignAnswer(event.target.value)}
+                            placeholder={t('intentBar.design.answerPlaceholder')}
+                            rows={2}
+                            className="resize-y"
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" onClick={handleContinueDesign} disabled={loading || !selectedDesignChoice || (selectedDesignChoice === '__custom__' && designAnswer.trim().length === 0) || (isLastDesignQuestion && !onForceGenerate)}>
+                        {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={loading || !onForceGenerate}>
+                        {t('intentBar.design.skip')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {'brief' in design ? (
+                      <div className="space-y-1 text-muted-foreground">
+                        <p><span className="font-medium text-foreground">{t('intentBar.design.trigger')}</span> {design.brief.trigger}</p>
+                        {design.brief.datasources.length > 0 ? <p><span className="font-medium text-foreground">{t('intentBar.design.datasources')}</span> {design.brief.datasources.join(', ')}</p> : null}
+                        {design.brief.steps.length > 0 ? <p><span className="font-medium text-foreground">{t('intentBar.design.steps')}</span> {design.brief.steps.join(' → ')}</p> : null}
+                        {design.brief.outputs.length > 0 ? <p><span className="font-medium text-foreground">{t('intentBar.design.outputs')}</span> {design.brief.outputs.join(', ')}</p> : null}
+                      </div>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" onClick={() => onForceGenerate?.()} disabled={loading || !onForceGenerate}>
+                        {t('intentBar.design.generate')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             {constructionActive ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm">

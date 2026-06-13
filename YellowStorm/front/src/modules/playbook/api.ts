@@ -43,6 +43,7 @@ import type {
   PlaybookRepeatabilitySummary,
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
+  PlaybookIntentDesignResponse,
   PlaybookIntentResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
@@ -1293,6 +1294,18 @@ export async function requestPlaybookIntent(
 ): Promise<PlaybookIntentResponse> {
   const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
     API_ENDPOINTS.playbooks.intent(playbookId),
+    data,
+    { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function assessPlaybookIntentDesign(
+  playbookId: string,
+  data: RequestPlaybookIntentData,
+): Promise<PlaybookIntentDesignResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentDesignResponse>>(
+    API_ENDPOINTS.playbooks.intentDesign(playbookId),
     data,
     { timeout: 180000 },
   );

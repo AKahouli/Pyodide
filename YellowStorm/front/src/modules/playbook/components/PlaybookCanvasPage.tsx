@@ -106,6 +106,7 @@ import type {
   PlaybookNodeData,
   PlaybookExecution,
   PlaybookIntentSuggestion,
+  PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
   PlaybookTrigger,
   InterruptType,
@@ -134,6 +135,7 @@ import {
 } from '../utils/playbook-canvas-layout';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
+import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
 import {
   buildCanvasJudgeStateMap,
   buildCanvasStepStatusMap,
@@ -327,6 +329,7 @@ function PlaybookCanvasInner() {
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
   const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
+  const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
   const previewAdvisorRemediation = usePlaybookStore((s) => s.previewAdvisorRemediation);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -339,6 +342,7 @@ function PlaybookCanvasInner() {
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(true);
+  const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
@@ -1805,7 +1809,17 @@ function PlaybookCanvasInner() {
       const sourceOutputPort = sourceTask.outputPorts?.find((p) => p.id === sourcePort);
       if (!targetInputPort || !sourceOutputPort) return;
 
-      if (targetInputPort.artifactKind !== sourceOutputPort.artifactKind) return;
+      if (targetInputPort.artifactKind !== sourceOutputPort.artifactKind) {
+        console.warn('[IntentApply] Dropped data binding with artifact kind mismatch:', {
+          sourceNode: resolvedSourceId,
+          sourcePort,
+          sourceArtifactKind: sourceOutputPort.artifactKind,
+          targetNode: resolvedTargetId,
+          targetPort,
+          targetArtifactKind: targetInputPort.artifactKind,
+        });
+        return;
+      }
 
       nextDataBindings = nextDataBindings.filter(
         (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
@@ -1910,24 +1924,20 @@ function PlaybookCanvasInner() {
     };
 
     const findUnboundRequiredInputs = (): Array<{ taskId: string; portId: string }> => {
-      const unbound: Array<{ taskId: string; portId: string }> = [];
-      for (const task of nextTasks) {
-        if (!changedNodeIds.has(task.id)) continue;
-        for (const port of task.inputPorts || []) {
-          if (!port.required) continue;
-          const hasBinding = nextDataBindings.some((b) => b.targetNode === task.id && b.targetPort === port.id);
-          if (hasBinding) continue;
-          const hasIncomingEdge = nextEdges.some((edge) => {
-            const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
-            const isConditional = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
-            return !isConditional && edge.target === task.id && (edgeData.targetInputPortId || edge.targetHandle || 'default') === port.id;
-          });
-          if (!hasIncomingEdge) {
-            unbound.push({ taskId: task.id, portId: port.id });
-          }
-        }
+      return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds);
+    };
+
+    const shouldAbortInvalidRequiredInputs = () => {
+      const unboundInputs = findUnboundRequiredInputs();
+      if (unboundInputs.length === 0) {
+        return false;
       }
-      return unbound;
+
+      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+      if (shouldSave) {
+        showError(t('intentBar.invalidRequiredBindings'));
+      }
+      return true;
     };
 
     const applyDataBindingChange = (
@@ -2116,10 +2126,8 @@ function PlaybookCanvasInner() {
         null,
       );
       reconcileRequiredNodeOutputBindings();
-
-      const unboundInputs = findUnboundRequiredInputs();
-      if (unboundInputs.length > 0) {
-        console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+      if (shouldAbortInvalidRequiredInputs()) {
+        return;
       }
 
       commitGraph(nextTasks, nextEdges, nextDataBindings);
@@ -2235,9 +2243,8 @@ function PlaybookCanvasInner() {
       console.warn('[IntentApply] Warnings:', applicationWarnings);
     }
 
-    const unboundInputs = findUnboundRequiredInputs();
-    if (unboundInputs.length > 0) {
-      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+    if (shouldAbortInvalidRequiredInputs()) {
+      return;
     }
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
@@ -2264,14 +2271,16 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleForceGenerateIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
     isDirty,
     intentValue,
     intentAutoApply,
+    intentDesign,
     selectStep,
+    assessPlaybookIntentDesign,
     requestPlaybookIntent,
     startPlaybookIntentConstruction,
     streamPlaybookIntentConstruction,
@@ -2280,6 +2289,7 @@ function PlaybookCanvasInner() {
     handleApplyIntentSuggestion,
     setIntentLoading,
     setIntentError,
+    setIntentDesign,
     setIntentSuggestions,
     setLastIntentSuggestions,
     addIntentSuggestionHistoryEntry,
@@ -2804,6 +2814,7 @@ function PlaybookCanvasInner() {
                   loading={intentLoading}
                   value={intentValue}
                   suggestions={intentSuggestions}
+                  design={intentDesign}
                   error={intentError}
                   history={intentHistory}
                   collapsed={intentBarCollapsed}
@@ -2813,6 +2824,7 @@ function PlaybookCanvasInner() {
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntent()}
+                  onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
                     if (playbook) {

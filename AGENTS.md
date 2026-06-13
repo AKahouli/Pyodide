@@ -95,7 +95,7 @@ Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibil
 
 ## Comments
 
-- **Comment the WHY**, never the WHAT. `// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
+- Must always **Comment the WHY**`// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
 - **Public API documentation** (exported services, exported types, controllers, router functions): JSDoc / docstring with purpose, params semantics, return semantics, and any non-obvious invariant. One paragraph max.
 - **Inline comments** 
 - **No banner comments** (`// ===== HELPERS =====`). If a file needs sections, it's two files.

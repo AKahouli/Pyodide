@@ -4452,6 +4452,10 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         return api.requestPlaybookIntent(playbookId, data);
       },
 
+      assessPlaybookIntentDesign: async (playbookId: string, data: RequestPlaybookIntentData) => {
+        return api.assessPlaybookIntentDesign(playbookId, data);
+      },
+
       previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
         return api.previewAdvisorRemediation(playbookId, data);
       },
