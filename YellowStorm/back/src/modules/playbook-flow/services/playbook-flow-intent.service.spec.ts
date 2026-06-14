@@ -6,6 +6,7 @@ import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-render
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import { AgentService } from '@modules/agent/agent.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
+import { DEFAULT_FLOW_PROMPTS } from './playbook-flow-prompt-seed';
 
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 
@@ -84,8 +85,8 @@ describe('PlaybookFlowIntentService normalization', () => {
       status: 'needs_clarification',
       detectedIntent: 'Build invoice workflow',
       questions: [
-        { id: 'q1', question: 'Which datasource?', category: 'datasource', choices: ['SAP', 'SAP', 'SharePoint', 'Email', 'Upload'] },
-        { id: 'q2', question: 'What trigger?', category: 'trigger' },
+        { id: 'q1', question: 'Which datasource?', category: 'datasource', choices: ['SAP', 'SAP', 'SharePoint', 'Email', 'Upload'], resourceSelector: 'workspace_or_document' },
+        { id: 'q2', question: 'What trigger?', category: 'trigger', resourceSelector: 'connector' },
         { id: 'q3', question: 'What output?', category: 'output', choices: ['Report'] },
         { id: 'q4', question: 'Which approval?', category: 'approval', choices: ['Manager'] },
         { id: 'q5', question: 'Which rule?', category: 'business_rule', choices: ['Overdue only'] },
@@ -97,7 +98,9 @@ describe('PlaybookFlowIntentService normalization', () => {
     if (result.status !== 'needs_clarification') return;
     expect(result.questions).toHaveLength(4);
     expect(result.questions[0].choices).toEqual(['SAP', 'SharePoint', 'Email', 'Upload']);
+    expect(result.questions[0].resourceSelector).toBe('workspace_or_document');
     expect(result.questions[1].choices).toEqual([]);
+    expect(result.questions[1].resourceSelector).toBeUndefined();
   });
 
   it('uses the customizable design assessment prompt when available', async () => {
@@ -312,6 +315,67 @@ describe('PlaybookFlowIntentService normalization', () => {
     });
   });
 
+  it('extracts resolved design resources from captured clarification metadata', () => {
+    const result = (service as any).extractResolvedDesignResources([
+      'What is the source?: invoice.xlsx [kind=document, id=doc-1, workspaceId=workspace-1, workspaceName=Finance, path=/Finance/invoice.xlsx, mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]',
+      'Where should it be saved?: Finance [kind=workspace, id=workspace-1, workspaceName=Finance]',
+      'What if file exists?: Overwrite the existing file',
+    ].join('\n'));
+
+    expect(result).toEqual([
+      {
+        question: 'What is the source?',
+        label: 'invoice.xlsx',
+        kind: 'document',
+        id: 'doc-1',
+        workspaceId: 'workspace-1',
+        workspaceName: 'Finance',
+        path: '/Finance/invoice.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+      {
+        question: 'Where should it be saved?',
+        label: 'Finance',
+        kind: 'workspace',
+        id: 'workspace-1',
+        workspaceName: 'Finance',
+      },
+    ]);
+  });
+
+  it('keeps commas inside resolved resource metadata values', () => {
+    const result = (service as any).extractResolvedDesignResources(
+      'What is the source?: invoice.xlsx [kind=document, id=doc-1, workspaceId=workspace-1, workspaceName=Finance, EMEA, path=/Finance, EMEA/invoice.xlsx, mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]',
+    );
+
+    expect(result[0]).toEqual(expect.objectContaining({
+      workspaceName: 'Finance, EMEA',
+      path: '/Finance, EMEA/invoice.xlsx',
+    }));
+  });
+
+  it('adds resolved resources to captured clarification fallback for old custom prompts', () => {
+    const result = (service as any).withClarificationTemplateFallback({
+      intent_text: 'Build workflow',
+      captured_clarifications: 'What is the source?: invoice.xlsx [kind=document, id=doc-1, workspaceId=workspace-1]',
+      resolved_design_resources: JSON.stringify([{ question: 'What is the source?', kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' }], null, 2),
+    }, 'Intent={intent_text}\nClarifications={captured_clarifications}');
+
+    expect(result.captured_clarifications).toContain('<Resolved_Design_Resources>');
+    expect(result.captured_clarifications).toContain('"id": "doc-1"');
+    expect(result.intent_text).toBe('Build workflow');
+  });
+
+  it('includes resolved design resources in the built-in intent analyze prompt', () => {
+    const prompt = DEFAULT_FLOW_PROMPTS.find((entry) => entry.key === 'intent.analyze');
+
+    expect(prompt?.userTemplate).toContain('<Resolved_Design_Resources>');
+    expect(prompt?.userTemplate).toContain('{resolved_design_resources}');
+    expect(prompt?.systemTemplate).toContain('Treat it as authoritative structured input');
+    expect(prompt?.systemTemplate).toContain('sourceKind: "constant"');
+    expect(prompt?.version).toBe(8);
+  });
+
   it('drops duplicate create_node.nodeRef in one plan', () => {
     const ctx = makeContext();
     const raw = JSON.stringify({
@@ -482,6 +546,98 @@ describe('PlaybookFlowIntentService normalization', () => {
     const result = callNormalize(raw, ctx);
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeUndefined();
+  });
+
+  it('keeps constant resource data bindings for selected documents', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      inputPortsByTaskId: [['task-1', [['source_document', 'document']]]],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_data_binding',
+          sourceKind: 'constant',
+          targetTaskId: 'task-1',
+          targetPort: 'source_document',
+          constantValue: {
+            kind: 'document',
+            id: 'doc-1',
+            workspaceId: 'workspace-1',
+            workspaceName: 'Finance',
+            label: 'invoice.xlsx',
+            path: '/Finance/invoice.xlsx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan).toBeDefined();
+    expect(plan.changes[0]).toEqual(expect.objectContaining({
+      sourceKind: 'constant',
+      constantValue: expect.objectContaining({
+        id: 'doc-1',
+        documentId: 'doc-1',
+        workspaceId: 'workspace-1',
+        path: '/Finance/invoice.xlsx',
+      }),
+    }));
+  });
+
+  it('drops malformed constant resource data bindings', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      inputPortsByTaskId: [['task-1', [['source_document', 'document']]]],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_data_binding',
+          sourceKind: 'constant',
+          targetTaskId: 'task-1',
+          targetPort: 'source_document',
+          constantValue: { kind: 'document', id: 'doc-1' },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    expect(result.find((s: any) => s.kind === 'workflow_plan')).toBeUndefined();
+  });
+
+  it('defaults workspace constant binding workspaceId from id', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      inputPortsByTaskId: [['task-1', [['destination_workspace', 'data']]]],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_data_binding',
+          sourceKind: 'constant',
+          targetTaskId: 'task-1',
+          targetPort: 'destination_workspace',
+          constantValue: { kind: 'workspace', id: 'workspace-1', label: 'Finance' },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan?.changes[0].constantValue).toEqual(expect.objectContaining({
+      kind: 'workspace',
+      id: 'workspace-1',
+      workspaceId: 'workspace-1',
+    }));
   });
 
   it('drops exact duplicate title + agent create_node against existing workflow', () => {

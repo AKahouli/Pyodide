@@ -15,6 +15,22 @@ import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
 const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
+const NO_RESOLVED_DESIGN_RESOURCES = '[]';
+
+interface ResolvedDesignResource {
+  question: string;
+  label: string;
+  kind: 'workspace' | 'document';
+  id: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  path?: string;
+  mimeType?: string;
+}
+
+interface ResolvedDesignResourceBindingValue extends ResolvedDesignResource {
+  documentId?: string;
+}
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -137,6 +153,14 @@ type PlaybookIntentWorkflowChange =
     sourceNodeRef: string | null;
     sourcePort: string | null;
     iteration?: 'current' | 'previous';
+  }
+  | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetPort: string;
+    sourceKind: 'constant';
+    constantValue: ResolvedDesignResourceBindingValue;
   }
   | {
     type: 'delete_data_binding';
@@ -278,6 +302,7 @@ export class PlaybookFlowIntentService {
     const nodeTemplates = await this.nodeTemplateService.findEnabled();
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return JSON only with a top-level suggestions array.';
     const intentParts = this.splitIntentClarifications(dto.intent);
+    const resolvedDesignResources = this.extractResolvedDesignResources(intentParts.capturedClarifications);
     const promptVariables = {
       playbook_name: flow.name,
       playbook_description: (flow as any).description || '',
@@ -311,6 +336,7 @@ export class PlaybookFlowIntentService {
       })), null, 2),
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
+      resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -352,19 +378,87 @@ export class PlaybookFlowIntentService {
 
   private withClarificationTemplateFallback(variables: Record<string, unknown>, template: string): Record<string, unknown> {
     const capturedClarifications = this.asString(variables.captured_clarifications);
+    const resolvedDesignResources = this.asString(variables.resolved_design_resources);
     const intentText = this.asString(variables.intent_text);
-    if (!capturedClarifications || capturedClarifications === NO_CAPTURED_CLARIFICATIONS || this.hasClarificationPlaceholder(template)) {
+    const resourceBlock = resolvedDesignResources && resolvedDesignResources !== NO_RESOLVED_DESIGN_RESOURCES && !this.hasResolvedDesignResourcesPlaceholder(template)
+      ? `\n\n<Resolved_Design_Resources>\n${resolvedDesignResources}\n</Resolved_Design_Resources>`
+      : '';
+    if (this.hasClarificationPlaceholder(template)) {
+      return resourceBlock
+        ? { ...variables, captured_clarifications: `${capturedClarifications}${resourceBlock}` }
+        : variables;
+    }
+
+    if (!capturedClarifications || capturedClarifications === NO_CAPTURED_CLARIFICATIONS) {
       return variables;
     }
 
     return {
       ...variables,
-      intent_text: `${intentText}\n\nClarifications:\n${capturedClarifications}`,
+      intent_text: `${intentText}\n\nClarifications:\n${capturedClarifications}${resourceBlock}`,
     };
   }
 
   private hasClarificationPlaceholder(template: string): boolean {
     return /\{captured_clarifications\}|\{\{\s*captured_clarifications\s*\}\}/.test(template);
+  }
+
+  private hasResolvedDesignResourcesPlaceholder(template: string): boolean {
+    return /\{resolved_design_resources\}|\{\{\s*resolved_design_resources\s*\}\}/.test(template);
+  }
+
+  private extractResolvedDesignResources(capturedClarifications: string): ResolvedDesignResource[] {
+    if (!capturedClarifications.trim()) {
+      return [];
+    }
+
+    return capturedClarifications
+      .split('\n')
+      .map((line) => this.extractResolvedDesignResource(line))
+      .filter((resource): resource is ResolvedDesignResource => resource !== null);
+  }
+
+  private extractResolvedDesignResource(line: string): ResolvedDesignResource | null {
+    const match = /^(.*?):\s*(.*?)\s*\[([^\]]+)\]\s*$/.exec(line.trim());
+    if (!match) {
+      return null;
+    }
+
+    const question = match[1]?.trim() || '';
+    const label = match[2]?.trim() || '';
+    const metadata = this.parseResourceMetadata(match[3] || '');
+    const kind = metadata.kind;
+    const id = metadata.id;
+    if ((kind !== 'workspace' && kind !== 'document') || !id) {
+      return null;
+    }
+
+    return {
+      question,
+      label,
+      kind,
+      id,
+      ...(metadata.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
+      ...(metadata.workspaceName ? { workspaceName: metadata.workspaceName } : {}),
+      ...(metadata.path ? { path: metadata.path } : {}),
+      ...(metadata.mimeType ? { mimeType: metadata.mimeType } : {}),
+    };
+  }
+
+  private parseResourceMetadata(metadataText: string): Record<string, string> {
+    const metadata: Record<string, string> = {};
+    const keyPattern = 'kind|id|workspaceId|workspaceName|path|mimeType';
+    const pattern = new RegExp(`(?:^|,\\s*)(${keyPattern})=([\\s\\S]*?)(?=,\\s*(?:${keyPattern})=|$)`, 'g');
+    let match = pattern.exec(metadataText);
+    while (match) {
+      const key = match[1]?.trim() || '';
+      const value = match[2]?.trim() || '';
+      if (key && value) {
+        metadata[key] = value;
+      }
+      match = pattern.exec(metadataText);
+    }
+    return metadata;
   }
 
   normalizeConstructionSuggestions(args: {
@@ -390,11 +484,12 @@ export class PlaybookFlowIntentService {
 Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
 Ask at most 4 concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
 For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
+When a question asks the user to pick a source workspace or document, set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise.
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
 Shape:
-{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."]}],"missingRequirements":["..."],"riskFlags":["..."]}
+{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."],"resourceSelector":"workspace_or_document|destination_workspace"}],"missingRequirements":["..."],"riskFlags":["..."]}
 or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
 or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`;
   }
@@ -461,7 +556,15 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       category: this.asQuestionCategory(category, allowedCategories),
       required: item.required !== false,
       choices: [...new Set(this.asStringArray(item.choices))].slice(0, 4),
+      ...this.buildQuestionResourceSelector(item.resourceSelector),
     };
+  }
+
+  private buildQuestionResourceSelector(value: unknown): Pick<PlaybookIntentClarificationQuestion, 'resourceSelector'> {
+    const resourceSelector = this.asString(value);
+    return resourceSelector === 'workspace_or_document' || resourceSelector === 'destination_workspace'
+      ? { resourceSelector }
+      : {};
   }
 
   private asQuestionCategory(category: string, allowedCategories: string[]): PlaybookIntentClarificationQuestion['category'] {
@@ -493,7 +596,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
 
   private buildFallbackQuestions() {
     return [
-      { id: 'datasource', question: 'Which datasource should this workflow use?', reason: 'Datasource choice affects workflow structure and input bindings.', category: 'datasource' as const, required: true, choices: ['Workspace documents', 'Connected business app', 'Uploaded files'] },
+      { id: 'datasource', question: 'Which datasource should this workflow use?', reason: 'Datasource choice affects workflow structure and input bindings.', category: 'datasource' as const, required: true, choices: ['Workspace documents', 'Connected business app', 'Uploaded files'], resourceSelector: 'workspace_or_document' as const },
       { id: 'output', question: 'What final output should the workflow produce?', reason: 'The output contract determines the final steps.', category: 'output' as const, required: true, choices: ['Summary report', 'Structured table', 'Approval-ready recommendation'] },
     ];
   }
@@ -800,9 +903,23 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     }
 
     if (change.type === 'create_data_binding') {
-      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
       const targetValid = this.resolveTaskRef(change.targetTaskId, change.targetNodeRef, ctx.existingTaskIds, createdNodeRefs);
-      if (!sourceValid || !targetValid) {
+      if (!targetValid) {
+        return null;
+      }
+
+      if (change.sourceKind === 'constant') {
+        if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
+          const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
+          if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
+            return null;
+          }
+        }
+        return change;
+      }
+
+      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      if (!sourceValid) {
         return null;
       }
 
@@ -938,6 +1055,18 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
       const sourcePort = this.normalizeText(item.sourcePort);
+      if (item.sourceKind === 'constant') {
+        const constantValue = this.normalizeResolvedDesignResourceBindingValue(item.constantValue);
+        return constantValue ? {
+          type: 'create_data_binding',
+          targetTaskId: targetTaskId || null,
+          targetNodeRef: targetNodeRef || null,
+          targetPort,
+          sourceKind: 'constant',
+          constantValue,
+        } : null;
+      }
+
       if (item.sourceKind !== 'node-output' || !(sourceTaskId || sourceNodeRef) || !sourcePort) {
         return null;
       }
@@ -976,6 +1105,28 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     }
 
     return null;
+  }
+
+  private normalizeResolvedDesignResourceBindingValue(value: unknown): ResolvedDesignResourceBindingValue | null {
+    const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const kind = this.normalizeText(item.kind);
+    const id = this.normalizeText(item.id);
+    const workspaceId = this.normalizeText(item.workspaceId) || (kind === 'workspace' ? id : '');
+    if ((kind !== 'document' && kind !== 'workspace') || !id || !workspaceId) {
+      return null;
+    }
+
+    return {
+      kind,
+      id,
+      workspaceId,
+      ...(kind === 'document' ? { documentId: this.normalizeText(item.documentId) || id } : {}),
+      ...(this.normalizeText(item.question) ? { question: this.normalizeText(item.question) } : { question: '' }),
+      ...(this.normalizeText(item.label) ? { label: this.normalizeText(item.label) } : { label: '' }),
+      ...(this.normalizeText(item.workspaceName) ? { workspaceName: this.normalizeText(item.workspaceName) } : {}),
+      ...(this.normalizeText(item.path) ? { path: this.normalizeText(item.path) } : {}),
+      ...(this.normalizeText(item.mimeType) ? { mimeType: this.normalizeText(item.mimeType) } : {}),
+    };
   }
 
   private normalizeWorkflowAnchor(value: unknown): { mode: 'append' | 'before' | 'after' | 'as_input'; targetTaskId: string | null; nodeRef: string | null; targetTaskIds?: string[]; nodeRefs?: string[]; sourceOutputPortId?: string | null; targetInputPortId?: string | null } {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
 import type { PlaybookTask, IntentSuggestionHistoryEntry, PlaybookIntentSuggestion } from '../types';
@@ -10,6 +10,25 @@ vi.mock('@/modules/localization', () => ({
     }
     return key;
   } }),
+}));
+
+vi.mock('./PlaybookClarificationResourcePicker', () => ({
+  PlaybookClarificationResourcePicker: ({ open, onSelect }: { open: boolean; onSelect: (resource: { kind: 'document'; id: string; name: string; workspaceId: string; workspaceName: string; path: string; mimeType: string }) => void }) => open ? (
+    <button
+      type="button"
+      onClick={() => onSelect({
+        kind: 'document',
+        id: 'document-1',
+        name: 'Q3 Report.pdf',
+        workspaceId: 'workspace-1',
+        workspaceName: 'Finance',
+        path: '/Finance/Q3 Report.pdf',
+        mimeType: 'application/pdf',
+      })}
+    >
+      Q3 Report.pdf
+    </button>
+  ) : null,
 }));
 
 const defaultProps = {
@@ -546,5 +565,42 @@ describe('PlaybookIntentBar', () => {
       'Which datasource should this workflow use?: SAP',
       'What final output should it produce?: Approval-ready CSV export',
     ].join('\n'));
+  });
+
+  it('selects a workspace document for resource clarification questions', async () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Analyze finance report',
+          missingRequirements: [],
+          riskFlags: [],
+          questions: [{
+            id: 'source',
+            question: 'Which source should be analyzed?',
+            reason: 'The workflow needs a concrete source.',
+            category: 'datasource',
+            required: true,
+            choices: [],
+            resourceSelector: 'workspace_or_document',
+          }],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('intentBar.design.resource.workspace_or_document'));
+    await waitFor(() => expect(screen.getByText('Q3 Report.pdf')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Q3 Report.pdf'));
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith(
+      'Which source should be analyzed?: Q3 Report.pdf [kind=document, id=document-1, workspaceId=workspace-1, workspaceName=Finance, path=/Finance/Q3 Report.pdf, mimeType=application/pdf]',
+    );
   });
 });

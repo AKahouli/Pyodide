@@ -5,6 +5,7 @@ export interface PlaybookIntentClarificationQuestion {
   category: 'datasource' | 'trigger' | 'input' | 'output' | 'business_rule' | 'approval' | 'scope';
   required: boolean;
   choices: string[];
+  resourceSelector?: 'workspace_or_document' | 'destination_workspace';
 }
 
 export interface PlaybookIntentWorkflowBrief {

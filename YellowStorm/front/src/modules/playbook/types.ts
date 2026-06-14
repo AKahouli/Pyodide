@@ -566,6 +566,14 @@ export type PlaybookIntentWorkflowChange =
       iteration?: 'current' | 'previous';
     }
   | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
+      sourceKind: 'constant';
+      constantValue: ResolvedDesignResourceBindingValue;
+    }
+  | {
       type: 'delete_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
@@ -574,6 +582,18 @@ export type PlaybookIntentWorkflowChange =
       sourceNodeRef?: string | null;
       sourcePort?: string | null;
     };
+
+export interface ResolvedDesignResourceBindingValue {
+  kind: 'document' | 'workspace';
+  id: string;
+  documentId?: string;
+  workspaceId: string;
+  workspaceName?: string;
+  question?: string;
+  label?: string;
+  path?: string;
+  mimeType?: string;
+}
 
 export interface PlaybookIntentWorkflowImpact {
   nodesToCreate: number;
@@ -622,6 +642,17 @@ export interface PlaybookIntentClarificationQuestion {
   category: 'datasource' | 'trigger' | 'input' | 'output' | 'business_rule' | 'approval' | 'scope';
   required: boolean;
   choices: string[];
+  resourceSelector?: 'workspace_or_document' | 'destination_workspace';
+}
+
+export interface PlaybookIntentClarificationResource {
+  kind: 'workspace' | 'document';
+  id: string;
+  name: string;
+  workspaceId: string;
+  workspaceName?: string;
+  path?: string;
+  mimeType?: string;
 }
 
 export interface PlaybookIntentWorkflowBrief {

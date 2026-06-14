@@ -1847,6 +1847,38 @@ function PlaybookCanvasInner() {
       ];
     };
 
+    const upsertConstantBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      constantValue: unknown,
+    ) => {
+      const targetTask = nextTasks.find((t) => t.id === resolvedTargetId);
+      const targetInputPort = targetTask?.inputPorts?.find((p) => p.id === targetPort);
+      if (!targetTask || !targetInputPort || constantValue === undefined) return;
+
+      nextDataBindings = nextDataBindings.filter(
+        (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
+      );
+
+      nextDataBindings = [
+        ...nextDataBindings,
+        {
+          id: createIntentSuggestionBindingId(
+            suggestionApplicationKey,
+            resolvedTargetId,
+            targetPort,
+            'constant',
+            JSON.stringify(constantValue),
+            'current',
+          ),
+          targetNode: resolvedTargetId,
+          targetPort,
+          sourceKind: 'constant',
+          constantValue,
+        },
+      ];
+    };
+
     const removeNodeOutputBinding = (
       resolvedTargetId: string,
       targetPort: string,
@@ -1923,6 +1955,27 @@ function PlaybookCanvasInner() {
       });
     };
 
+    const reconcileUnboundRequiredInputsByPort = () => {
+      getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds).forEach((unboundInput) => {
+        const targetIndex = nextTasks.findIndex((task) => task.id === unboundInput.taskId);
+        const targetTask = targetIndex >= 0 ? nextTasks[targetIndex] : null;
+        const targetPort = targetTask?.inputPorts?.find((port) => port.id === unboundInput.portId);
+        if (!targetTask || !targetPort) return;
+
+        // Intent-created tasks are appended in execution order, so only earlier tasks are safe sources.
+        const candidates = nextTasks.flatMap((task, taskIndex) => (taskIndex < targetIndex
+          ? (task.outputPorts || [])
+            .filter((port) => port.id === targetPort.id && port.artifactKind === targetPort.artifactKind)
+            .map((port) => ({ taskId: task.id, portId: port.id }))
+          : []));
+
+        if (candidates.length !== 1) return;
+
+        const candidate = candidates[0];
+        upsertNodeOutputBinding(targetTask.id, targetPort.id, candidate.taskId, candidate.portId);
+      });
+    };
+
     const findUnboundRequiredInputs = (): Array<{ taskId: string; portId: string }> => {
       return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds);
     };
@@ -1945,11 +1998,12 @@ function PlaybookCanvasInner() {
       targetTaskId: string | null,
       targetNodeRef: string | null,
       targetPort: string,
-      sourceKind?: 'node-output',
+      sourceKind?: 'node-output' | 'constant',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
       iteration?: 'current' | 'previous',
+      constantValue?: unknown,
     ) => {
       const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
       if (!resolvedTargetId || !targetPort) return;
@@ -1965,6 +2019,11 @@ function PlaybookCanvasInner() {
             (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
           );
         }
+        return;
+      }
+
+      if (sourceKind === 'constant') {
+        upsertConstantBinding(resolvedTargetId, targetPort, constantValue);
         return;
       }
 
@@ -2126,6 +2185,7 @@ function PlaybookCanvasInner() {
         null,
       );
       reconcileRequiredNodeOutputBindings();
+      reconcileUnboundRequiredInputsByPort();
       if (shouldAbortInvalidRequiredInputs()) {
         return;
       }
@@ -2184,17 +2244,32 @@ function PlaybookCanvasInner() {
       }
 
       if (change.type === 'create_data_binding') {
-        applyDataBindingChange(
-          'create_data_binding',
-          change.targetTaskId,
-          change.targetNodeRef,
-          change.targetPort,
-          change.sourceKind,
-          change.sourceTaskId,
-          change.sourceNodeRef,
-          change.sourcePort,
-          change.iteration,
-        );
+        if (change.sourceKind === 'constant') {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.sourceKind,
+            null,
+            null,
+            null,
+            undefined,
+            change.constantValue,
+          );
+        } else {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.sourceKind,
+            change.sourceTaskId,
+            change.sourceNodeRef,
+            change.sourcePort,
+            change.iteration,
+          );
+        }
         continue;
       }
 
@@ -2228,6 +2303,7 @@ function PlaybookCanvasInner() {
     }
 
     reconcileRequiredNodeOutputBindings();
+    reconcileUnboundRequiredInputsByPort();
 
     const tasksChanged = changedNodeIds.size > 0 || changedEdgeIds.size > 0;
     const graphChanged = nextTasks.length !== (options?.replaceAll ? 0 : graphPlaybook.tasks.length) || nextEdges.length !== (options?.replaceAll ? 0 : graphEdges.length) || nextDataBindings.length !== (options?.replaceAll ? 0 : (graphPlaybook.dataBindings ?? []).length);

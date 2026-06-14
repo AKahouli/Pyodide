@@ -104,6 +104,27 @@ describe('required-port-validation', () => {
     })).toBe(true);
   });
 
+  it('treats selected resource constant binding as a valid required port binding', () => {
+    const tasks = [makeTask({
+      id: 'target-1',
+      inputPorts: [{ id: 'source_document', name: 'Source document', artifactKind: 'document', required: true }],
+    })];
+
+    expect(getUnboundRequiredPortsForTaskIds(tasks, [{
+      id: 'binding-1',
+      targetNode: 'target-1',
+      targetPort: 'source_document',
+      sourceKind: 'constant',
+      constantValue: {
+        kind: 'document',
+        id: 'doc-1',
+        documentId: 'doc-1',
+        workspaceId: 'workspace-1',
+        path: '/Finance/invoice.xlsx',
+      },
+    }], new Set(['target-1']))).toEqual([]);
+  });
+
   it('treats constant binding with empty text object as unresolved', () => {
     expect(isDataBindingResolved({
       id: 'binding-1',

@@ -67,6 +67,7 @@ For create_data_binding include:
 - targetPort
 - sourceNodeRef or sourceTaskId when sourceKind is "node-output"
 - sourcePort when binding from a node output
+- constantValue when sourceKind is "constant"
 - iteration only for supported iterator-node-level bindings; do not use it for iterator body child refs
 - The target node and targetPort must be the exact same target used by the paired create_edge.targetNodeRef/targetTaskId and create_edge.targetInputPortId.
 - The source node and sourcePort must be the exact same source used by the paired create_edge.sourceNodeRef/sourceTaskId and create_edge.sourceOutputPortId.
@@ -127,9 +128,19 @@ For delete_data_binding include:
 - Never create a required input port unless exactly one valid create_data_binding targets that port in the same final suggestion or an existing dataBindings[] entry already targets it.
 - If you cannot identify a reliable source output, either mark the input port required: false or add a prerequisite step that produces the needed output.
 - Prefer sourceKind: "node-output" when the source is another node output.
+- Use sourceKind: "constant" when binding a selected document/workspace from <Resolved_Design_Resources> directly to an input/destination port.
+- Constant resource bindings require constantValue with kind, id, workspaceId, and exact available metadata. For selected documents include documentId equal to id.
 - Must Use compatible artifact kinds.
 - Must Use delete_data_binding when an old binding becomes invalid because of the new workflow design.
 - Keep impact counts aligned with the actual create_data_binding and delete_data_binding changes.
+
+# Resolved Resource Rules
+- <Resolved_Design_Resources> contains user-selected workspace/document resources from clarification answers. Treat it as authoritative structured input, not as optional prose.
+- For selected documents, bind the document to the semantically matching source/input port with create_data_binding.sourceKind="constant" and constantValue containing kind="document", id, documentId, workspaceId, workspaceName, label, path, and mimeType when available. Use exact ids, not labels.
+- For selected workspaces, bind the workspace to the semantically matching destination/output configuration port with create_data_binding.sourceKind="constant" and constantValue containing kind="workspace", id, workspaceId, workspaceName, and label when available. Use exact ids, not labels.
+- Do not invent another documentId, workspaceId, path, or mimeType when a resolved resource is available.
+- If no suitable input/destination port exists, create a minimal non-template port and emit the constant binding in the same workflow_plan.
+- If a selected resource cannot be mapped to any node, mention that limitation in reason or summary instead of silently ignoring it.
 
 # Iterator Rules
 - Use templateType: "iterator" when items must be processed one by one.
@@ -196,12 +207,16 @@ Iterator body with isolated internal edges:
 
 `,
 
-    userTemplate: `Playbook: {playbook_name} — {playbook_description}
+    userTemplate: ` 
 Intent: {intent_text}
 
 <Captured_Design_Clarifications>
 {captured_clarifications}
 </Captured_Design_Clarifications>
+
+<Resolved_Design_Resources>
+{resolved_design_resources}
+</Resolved_Design_Resources>
 Selected task: {selected_task_id} | {selected_task_title}
 Description: {selected_task_description}
 Context: {selected_task_context}
@@ -210,7 +225,7 @@ Context: {selected_task_context}
 {workflow_summary}
 </Existing_Workflow_JSON>
 
-Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-output bindings. 'tasks[].inputPorts[]' includes the 'required' flag on ports. Only set required: true when you also include a matching 'create_data_binding' entry in the same suggestion.
+Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-output and constant bindings. 'tasks[].inputPorts[]' includes the 'required' flag on ports. Only set required: true when you also include a matching 'create_data_binding' entry in the same suggestion.
 
 
 <Available_default_agents_JSON>
@@ -226,7 +241,7 @@ Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-outp
 
 ***Non negotiable rule***
 Must always consider all the workflow structure (including edges) before evaluating the required changes to suggest, it could be a mix of changes (create_node, update_node, delete_edge ...) in the "changes" array.`,
-    enabled: true, isBuiltIn: true, version: 6,
+    enabled: true, isBuiltIn: true, version: 8,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -241,11 +256,12 @@ Must always consider all the workflow structure (including edges) before evaluat
 Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
 Ask at most 4 concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
 For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
+When a question asks the user to pick a source workspace or document, set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise.
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
 Shape:
-{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."]}],"missingRequirements":["..."],"riskFlags":["..."]}
+{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."],"resourceSelector":"workspace_or_document|destination_workspace"}],"missingRequirements":["..."],"riskFlags":["..."]}
 or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
 or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`,
     userTemplate: `Playbook: {playbook_name} — {playbook_description}
@@ -265,7 +281,7 @@ Context: {selected_task_context}
 
 <Available_node_templates_JSON>
 {node_templates}
-</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 2,
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 3,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',

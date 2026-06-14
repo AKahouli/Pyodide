@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, Clock, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Clock, FolderOpen, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -16,8 +16,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PlaybookIntentDesignResponse, PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
+import type { PlaybookIntentClarificationResource, PlaybookIntentDesignResponse, PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
 import type { PlaybookIntentConstructionStatus } from '../types';
+import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 
 function releasePointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
   if (typeof target.hasPointerCapture === 'function' && !target.hasPointerCapture(pointerId)) {
@@ -97,6 +98,8 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   const [designStepIndex, setDesignStepIndex] = useState(0);
   const [designAnswers, setDesignAnswers] = useState<Record<string, string>>({});
   const [selectedDesignChoice, setSelectedDesignChoice] = useState('');
+  const [selectedDesignResource, setSelectedDesignResource] = useState<PlaybookIntentClarificationResource | null>(null);
+  const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
   const [designAnswer, setDesignAnswer] = useState('');
   const [pendingHistoryEntry, setPendingHistoryEntry] = useState<IntentSuggestionHistoryEntry | null>(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -114,6 +117,13 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   const designQuestions = design?.status === 'needs_clarification' ? design.questions : [];
   const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
+
+  const getResourceAnswer = useCallback((resource: PlaybookIntentClarificationResource) => {
+    const workspaceName = resource.workspaceName ? `, workspaceName=${resource.workspaceName}` : '';
+    const path = resource.path ? `, path=${resource.path}` : '';
+    const mimeType = resource.mimeType ? `, mimeType=${resource.mimeType}` : '';
+    return `${resource.name} [kind=${resource.kind}, id=${resource.id}, workspaceId=${resource.workspaceId}${workspaceName}${path}${mimeType}]`;
+  }, []);
 
   const setCollapsed = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === 'function' ? next(collapsed) : next;
@@ -160,6 +170,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     setDesignStepIndex(0);
     setDesignAnswers({});
     setSelectedDesignChoice('');
+    setSelectedDesignResource(null);
     setDesignAnswer('');
     setHistoryOpen(false);
     setExpandedItems(new Set());
@@ -169,7 +180,9 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   const getCapturedRequirements = useCallback((includeCurrent: boolean) => {
     const answers = { ...designAnswers };
     if (includeCurrent && currentDesignQuestion) {
-      const currentAnswer = selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
+      const currentAnswer = selectedDesignChoice === '__resource__' && selectedDesignResource
+        ? getResourceAnswer(selectedDesignResource)
+        : selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
       if (currentAnswer) answers[currentDesignQuestion.id] = currentAnswer;
     }
 
@@ -180,16 +193,18 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
       })
       .filter(Boolean)
       .join('\n');
-  }, [currentDesignQuestion, designAnswer, designAnswers, designQuestions, selectedDesignChoice]);
+  }, [currentDesignQuestion, designAnswer, designAnswers, designQuestions, getResourceAnswer, selectedDesignChoice, selectedDesignResource]);
 
   const saveCurrentDesignAnswer = useCallback(() => {
     if (!currentDesignQuestion) return '';
-    const answer = selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
+    const answer = selectedDesignChoice === '__resource__' && selectedDesignResource
+      ? getResourceAnswer(selectedDesignResource)
+      : selectedDesignChoice === '__custom__' ? designAnswer.trim() : selectedDesignChoice.trim();
     if (answer) {
       setDesignAnswers((current) => ({ ...current, [currentDesignQuestion.id]: answer }));
     }
     return answer;
-  }, [currentDesignQuestion, designAnswer, selectedDesignChoice]);
+  }, [currentDesignQuestion, designAnswer, getResourceAnswer, selectedDesignChoice, selectedDesignResource]);
 
   const handleContinueDesign = useCallback(() => {
     const currentAnswer = saveCurrentDesignAnswer();
@@ -198,6 +213,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
       const nextQuestion = designQuestions[designStepIndex + 1];
       setDesignStepIndex((current) => current + 1);
       setSelectedDesignChoice(designAnswers[nextQuestion?.id || ''] || '');
+      setSelectedDesignResource(null);
       setDesignAnswer('');
       return;
     }
@@ -206,6 +222,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     setDesignStepIndex(0);
     setDesignAnswers({});
     setSelectedDesignChoice('');
+    setSelectedDesignResource(null);
     setDesignAnswer('');
   }, [designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, onForceGenerate, saveCurrentDesignAnswer]);
 
@@ -214,6 +231,15 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     if (choice !== '__custom__') {
       setDesignAnswer('');
     }
+    if (choice !== '__resource__') {
+      setSelectedDesignResource(null);
+    }
+  }, []);
+
+  const handleSelectDesignResource = useCallback((resource: PlaybookIntentClarificationResource) => {
+    setSelectedDesignResource(resource);
+    setSelectedDesignChoice('__resource__');
+    setDesignAnswer('');
   }, []);
 
   const handleSkipDesign = useCallback(() => {
@@ -333,6 +359,12 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
 
   const showHistory = historyOpen && history.length > 0;
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const canContinueDesign = Boolean(
+    selectedDesignChoice
+    && (selectedDesignChoice !== '__custom__' || designAnswer.trim().length > 0)
+    && (selectedDesignChoice !== '__resource__' || selectedDesignResource)
+    && (!isLastDesignQuestion || onForceGenerate),
+  );
 
   const setContainerNode = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -352,6 +384,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     setDesignStepIndex(0);
     setDesignAnswers({});
     setSelectedDesignChoice('');
+    setSelectedDesignResource(null);
     setDesignAnswer('');
   }, [design]);
 
@@ -483,6 +516,17 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                               {choice}
                             </Button>
                           ))}
+                          {currentDesignQuestion.resourceSelector ? (
+                            <Button
+                              type="button"
+                              variant={selectedDesignChoice === '__resource__' ? 'default' : 'outline'}
+                              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                              onClick={() => setResourcePickerOpen(true)}
+                            >
+                              <FolderOpen className="mr-2 h-4 w-4 shrink-0" />
+                              {selectedDesignResource ? selectedDesignResource.name : t(`intentBar.design.resource.${currentDesignQuestion.resourceSelector}`)}
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant={selectedDesignChoice === '__custom__' ? 'default' : 'outline'}
@@ -504,7 +548,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                       </div>
                     ) : null}
                     <div className="flex flex-wrap gap-2">
-                      <Button type="button" size="sm" onClick={handleContinueDesign} disabled={loading || !selectedDesignChoice || (selectedDesignChoice === '__custom__' && designAnswer.trim().length === 0) || (isLastDesignQuestion && !onForceGenerate)}>
+                      <Button type="button" size="sm" onClick={handleContinueDesign} disabled={loading || !canContinueDesign}>
                         {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
                       </Button>
                       <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={loading || !onForceGenerate}>
@@ -665,6 +709,14 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {currentDesignQuestion?.resourceSelector ? (
+        <PlaybookClarificationResourcePicker
+          open={resourcePickerOpen}
+          mode={currentDesignQuestion.resourceSelector}
+          onOpenChange={setResourcePickerOpen}
+          onSelect={handleSelectDesignResource}
+        />
+      ) : null}
     </div>
   );
 });
