@@ -89,6 +89,7 @@ import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
+import { SkillSidebar } from './SkillSidebar';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { ReplayMigrationHarnessCard } from './ReplayMigrationHarnessCard';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
@@ -313,10 +314,13 @@ function PlaybookCanvasInner() {
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
   const [outputFormatGenerating, setOutputFormatGenerating] = useState(false);
   const connectorSidebarOpen = usePlaybookStore((s) => s.connectorSidebarOpen);
+  const skillSidebarOpen = usePlaybookStore((s) => s.skillSidebarOpen);
   const setConnectorSidebarOpen = usePlaybookStore((s) => s.setConnectorSidebarOpen);
+  const setSkillSidebarOpen = usePlaybookStore((s) => s.setSkillSidebarOpen);
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
+  const addSkillBindingToTask = usePlaybookStore((s) => s.addSkillBindingToTask);
 
   const [bindingModalState, setBindingModalState] = useState<PlaybookBindingModalState | null>(null);
 
@@ -841,6 +845,8 @@ function PlaybookCanvasInner() {
     handleCloneNode,
     handleConnectorDrop,
     handleConnectorDragStart,
+    handleSkillDrop,
+    handleSkillDragStart,
     handleBindingModalSave,
     handleCanvasDrop,
   } = usePlaybookCanvasNodeHandlers({
@@ -852,8 +858,13 @@ function PlaybookCanvasInner() {
     setEditorOpen,
     setBindingModalState,
     addToolBindingToTask,
+    addSkillBindingToTask,
     routerNodeDefaultTitle: t('routerNode.defaultTitle'),
     humanApprovalNodeDefaultTitle: t('humanApprovalNode.defaultTitle'),
+    showWarning,
+    warnings: {
+      dropSkillOnTask: t('skills.dropOnTaskWarning'),
+    },
   });
 
   const handleExecuteStep = useCallback(
@@ -2397,6 +2408,7 @@ function PlaybookCanvasInner() {
     setDesignerOpen,
     setWorkspaceExplorerOpen,
     setConnectorSidebarOpen,
+    setSkillSidebarOpen,
     setGlobalSidebarOpen,
     showError,
     workspaceRequiredForRunError: t('errors.workspaceRequiredForRun'),
@@ -2827,6 +2839,9 @@ function PlaybookCanvasInner() {
         {/* Connector Sidebar */}
         <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />
 
+        {/* Skill Sidebar */}
+        <SkillSidebar isOpen={skillSidebarOpen} onDragStart={handleSkillDragStart} />
+
         {/* Canvas + Execution split */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
           <div
@@ -2839,7 +2854,7 @@ function PlaybookCanvasInner() {
             }}
           >
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
                   nodes={canvasNodes}
@@ -2921,8 +2936,10 @@ function PlaybookCanvasInner() {
                   onRedo={redo}
                   onToggleExplorer={() => setWorkspaceExplorerOpen(!workspaceExplorerOpen)}
                   onToggleConnectors={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
+                  onToggleSkills={() => setSkillSidebarOpen(!skillSidebarOpen)}
                   explorerOpen={workspaceExplorerOpen}
                   connectorsOpen={connectorSidebarOpen}
+                  skillsOpen={skillSidebarOpen}
                   canUndo={canUndo}
                   canRedo={canRedo}
                   disabled={isSaving}

@@ -359,6 +359,7 @@ export interface PlaybookTask {
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
+  skillBindings?: TaskSkillBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
   iteratorLayout?: PlaybookIteratorLayout | null;
@@ -725,6 +726,13 @@ export interface ToolBinding {
   credentialId?: string | null;
   fixedParams?: Record<string, unknown>;
   disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
+export interface TaskSkillBinding {
+  id: string;
+  skillId: string;
+  skillName?: string;
   isEnabled?: boolean;
 }
 
@@ -2289,6 +2297,7 @@ export interface PlaybookState {
   executionDetailTab: string;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
+  skillSidebarOpen: boolean;
   nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
@@ -2499,6 +2508,10 @@ export interface PlaybookActions {
   setConnectorSidebarOpen: (open: boolean) => void;
   addToolBindingToTask: (taskId: string, binding: ToolBinding) => void;
   removeToolBindingFromTask: (taskId: string, bindingId: string) => void;
+  skillSidebarOpen: boolean;
+  setSkillSidebarOpen: (open: boolean) => void;
+  addSkillBindingToTask: (taskId: string, binding: TaskSkillBinding) => void;
+  removeSkillBindingFromTask: (taskId: string, bindingId: string) => void;
 
   // Cleanup
   reset: () => void;

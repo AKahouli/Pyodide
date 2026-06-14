@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -28,8 +28,10 @@ interface Props {
   onUndo: () => void;
   onRedo: () => void;
   onToggleConnectors: () => void;
+  onToggleSkills: () => void;
   onToggleExplorer: () => void;
   connectorsOpen: boolean;
+  skillsOpen: boolean;
   explorerOpen: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -79,8 +81,10 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   onUndo,
   onRedo,
   onToggleConnectors,
+  onToggleSkills,
   onToggleExplorer,
   connectorsOpen,
+  skillsOpen,
   explorerOpen,
   canUndo,
   canRedo,
@@ -339,6 +343,14 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       onClick: onToggleConnectors,
       disabled,
       active: connectorsOpen,
+    },
+    {
+      key: 'skills',
+      label: skillsOpen ? t('toolbar.hideSkills') : t('toolbar.showSkills'),
+      icon: Sparkles,
+      onClick: onToggleSkills,
+      disabled,
+      active: skillsOpen,
     },
     {
       key: 'bindings',

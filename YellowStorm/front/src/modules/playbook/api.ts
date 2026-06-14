@@ -170,6 +170,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
+      skillBindings: task.skillBindings,
       evaluationConfig: task.evaluationConfig
         ? {
             expectation: task.evaluationConfig.expectation,
@@ -561,6 +562,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     taskType: (meta.taskType as string) ?? undefined,
     templateType: (meta.templateType as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
+    skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
     iteratorLayout: (meta.iteratorLayout as any) ?? undefined,
     containerConfig: (meta.containerConfig as any) ?? null,

@@ -27,6 +27,7 @@ import { updateAdminAgent } from '@/modules/admin/api';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
 import type { Agent } from '@/modules/agent/types';
+import type { SkillDropPayload } from './SkillSidebar';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -35,6 +36,7 @@ import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import { createCompatibleInputPort } from '../utils/port-compatibility';
 import type { ArtifactKind, DataBinding, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
+import { showWarning } from '@/lib/notifications';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -157,6 +159,7 @@ export interface NodeDataActions {
   repackIteratorChildren?: (nodeId: string) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
   onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
+  onSkillDrop?: (taskId: string, payload: SkillDropPayload) => void;
 }
 
 export const NodeDataActionsContext = createContext<NodeDataActions | null>(null);
@@ -477,7 +480,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const canSaveReference = Boolean(actions?.canSaveBaseline(id));
   const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
+  const skillBindings = currentTask?.skillBindings ?? data.skillBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
+  const removeSkillBindingFromTask = usePlaybookStore((s) => s.removeSkillBindingFromTask);
+  const supportsDroppedSkills = !isActionMode && nodeType !== 'router' && nodeType !== 'iterator' && nodeType !== 'human_approval';
 
   const resolveDragPayload = useCallback((e: React.DragEvent): (InputFile & { kind?: string }) | null => {
     try {
@@ -495,6 +501,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       if (!raw) return null;
       const payload = JSON.parse(raw);
       if (payload?.type === 'connector' && payload?.connectorId) return payload as ConnectorDropPayload;
+    } catch { /* noop */ }
+    return null;
+  }, []);
+
+  const resolveSkillDragPayload = useCallback((e: React.DragEvent): SkillDropPayload | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload?.type === 'skill' && payload?.skillId) return payload as SkillDropPayload;
     } catch { /* noop */ }
     return null;
   }, []);
@@ -590,6 +606,23 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const connectorPayload = resolveConnectorDragPayload(e);
     if (connectorPayload) {
       nodeDataActions?.onConnectorDrop?.(id, connectorPayload);
+      return;
+    }
+
+    const skillPayload = resolveSkillDragPayload(e);
+    if (skillPayload) {
+      if (!supportsDroppedSkills) {
+        showWarning(t('skills.dropUnsupported'));
+        return;
+      }
+      if (skillBindings.some((binding) => binding.skillId === skillPayload.skillId)) {
+        showWarning(t('skills.duplicateWarning'));
+        return;
+      }
+      nodeDataActions?.onSkillDrop?.(id, skillPayload);
+      if (!effectiveTask.assignedAgentId) {
+        showWarning(t('skills.needsAgentWarning'));
+      }
       return;
     }
 
@@ -927,7 +960,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             )}
 
-            {toolBindings.length > 0 && (
+            {(toolBindings.length > 0 || skillBindings.length > 0) && (
               <div className="flex flex-wrap items-center gap-1">
                 {toolBindings.filter((b) => b.isEnabled !== false).map((binding) => (
                   <Tooltip key={binding.id}>
@@ -953,6 +986,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     <TooltipContent side="bottom" className="text-xs">
                       <div>{binding.connectorName || binding.connectorId}</div>
                       <div className="text-muted-foreground">{binding.actions.filter((a) => a.isEnabled !== false).length} action(s)</div>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+                {skillBindings.filter((binding) => binding.isEnabled !== false).map((binding) => (
+                  <Tooltip key={binding.id}>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="h-5 cursor-default gap-1 border-violet-500/30 bg-violet-50 px-1.5 py-0 text-[10px] font-medium text-violet-700"
+                      >
+                        <Sparkles className="h-2.5 w-2.5" />
+                        <span className="max-w-[80px] truncate">{binding.skillName || binding.skillId}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 transition-colors hover:text-red-500"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeSkillBindingFromTask(id, binding.id);
+                          }}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div>{binding.skillName || binding.skillId}</div>
+                      {!effectiveTask.assignedAgentId ? (
+                        <div className="text-muted-foreground">{t('skills.badgeNeedsAgent')}</div>
+                      ) : null}
                     </TooltipContent>
                   </Tooltip>
                 ))}

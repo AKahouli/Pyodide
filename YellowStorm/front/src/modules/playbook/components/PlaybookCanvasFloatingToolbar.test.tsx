@@ -121,8 +121,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={onRedo}
         onToggleExplorer={onToggleExplorer}
         onToggleConnectors={onToggleConnectors}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -158,8 +160,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -185,8 +189,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -210,8 +216,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -237,8 +245,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -264,8 +274,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -290,8 +302,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -317,8 +331,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
