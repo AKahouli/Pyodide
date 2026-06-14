@@ -96,6 +96,26 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       }),
       intentValue: 'Build invoice workflow',
       requestPlaybookIntent: vi.fn().mockResolvedValue({ suggestions: [validStepSuggestion] }),
+      getCurrentDefinitionRevision: vi.fn(() => 9),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
+        constructionId: 'construction-clarified',
+        playbookId: 'p1',
+        baseDefinitionRevision: 7,
+      }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({
+          type: 'node_delta',
+          constructionId: 'construction-clarified',
+          playbookId: 'p1',
+          sequence: 1,
+          suggestion: validStepSuggestion,
+        } as any);
+      }),
+      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
     };
     const { result } = renderHook(() => usePlaybookIntentFlow(deps));
 
@@ -104,11 +124,16 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     });
 
     expect(deps.assessPlaybookIntentDesign).not.toHaveBeenCalled();
-    expect(deps.requestPlaybookIntent).toHaveBeenCalledWith('p1', {
+    expect(deps.startPlaybookIntentConstruction).toHaveBeenCalledWith('p1', {
       intent: 'Build invoice workflow\n\nClarifications:\nUse SharePoint invoices.',
       selectedTaskId: 't1',
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({ expectedDefinitionRevision: 7 }));
+    expect(deps.saveConstruction).toHaveBeenCalledWith({
+      expectedDefinitionRevision: 9,
+      clientMutationId: 'intent-construction-construction-clarified',
     });
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, { expectedDefinitionRevision: 7 });
     expect(deps.setIntentSuggestions).toHaveBeenCalledWith([]);
   });
 

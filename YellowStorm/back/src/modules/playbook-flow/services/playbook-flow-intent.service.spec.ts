@@ -663,12 +663,19 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(plan).toBeUndefined();
   });
 
-  it('recalculates impact from accepted changes when no LLM impact provided', () => {
+  it('recalculates impact from accepted changes instead of trusting LLM counts', () => {
     const ctx = makeContext({ existingTaskIds: ['task-1'] });
     const raw = JSON.stringify({
       suggestions: [{
         kind: 'workflow_plan',
         label: 'Plan',
+        impact: {
+          nodesToCreate: 99,
+          nodesToUpdate: 99,
+          edgesToCreate: 99,
+          dataBindingsToCreate: 99,
+          businessOutcome: 'Kept outcome',
+        },
         changes: [
           { type: 'create_node', nodeRef: 'node-a', task: { title: 'A', description: 'A' } },
           { type: 'update_node', targetTaskId: 'task-unknown', task: { title: 'X' } },
@@ -683,6 +690,9 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(plan.changes.length).toBe(2);
     expect(plan.impact.nodesToCreate).toBe(1);
     expect(plan.impact.nodesToUpdate).toBe(1);
+    expect(plan.impact.edgesToCreate).toBe(0);
+    expect(plan.impact.dataBindingsToCreate).toBe(0);
+    expect(plan.impact.businessOutcome).toBe('Kept outcome');
   });
 
   it('allows create_node with same title but different agent', () => {

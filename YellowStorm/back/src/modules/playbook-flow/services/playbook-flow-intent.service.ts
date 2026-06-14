@@ -1278,13 +1278,13 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       ]);
 
     return {
-      nodesToCreate: this.normalizeCount(item.nodesToCreate, changes.filter((change) => change.type === 'create_node').length),
-      nodesToUpdate: this.normalizeCount(item.nodesToUpdate, changes.filter((change) => change.type === 'update_node').length),
-      nodesToDelete: this.normalizeCount(item.nodesToDelete, changes.filter((change) => change.type === 'delete_node').length),
-      edgesToCreate: this.normalizeCount(item.edgesToCreate, changes.filter((change) => change.type === 'create_edge').length),
-      edgesToDelete: this.normalizeCount(item.edgesToDelete, changes.filter((change) => change.type === 'delete_edge').length),
-      dataBindingsToCreate: this.normalizeCount((item as Record<string, unknown>).dataBindingsToCreate, changes.filter((change) => change.type === 'create_data_binding').length),
-      dataBindingsToDelete: this.normalizeCount((item as Record<string, unknown>).dataBindingsToDelete, changes.filter((change) => change.type === 'delete_data_binding').length),
+      nodesToCreate: changes.filter((change) => change.type === 'create_node').length,
+      nodesToUpdate: changes.filter((change) => change.type === 'update_node').length,
+      nodesToDelete: changes.filter((change) => change.type === 'delete_node').length,
+      edgesToCreate: changes.filter((change) => change.type === 'create_edge').length,
+      edgesToDelete: changes.filter((change) => change.type === 'delete_edge').length,
+      dataBindingsToCreate: changes.filter((change) => change.type === 'create_data_binding').length,
+      dataBindingsToDelete: changes.filter((change) => change.type === 'delete_data_binding').length,
       affectedTaskIds: [...new Set(affectedTaskIds)],
       businessOutcome: this.normalizeText(item.businessOutcome),
     };
@@ -1334,10 +1334,6 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       return 0.65;
     }
     return Math.max(0, Math.min(1, value));
-  }
-
-  private normalizeCount(value: unknown, fallback: number): number {
-    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : fallback;
   }
 
   private normalizeTextArray(value: unknown): string[] {

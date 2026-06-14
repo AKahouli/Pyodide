@@ -221,6 +221,23 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setIntentError('');
     setIntentDesign(null);
     try {
+      try {
+        const applied = await runRealtimeConstruction(normalizedIntent, resolveSelectedTaskId());
+        if (applied) {
+          setLastIntentSuggestions([]);
+          setIntentSuggestions([]);
+          return;
+        }
+      } catch (error) {
+        if (constructionAbortRef?.current?.signal.aborted) return;
+        setConstructionStatus?.('failed');
+        setConstructionProgress?.('');
+        if ((error as { appliedDelta?: boolean }).appliedDelta) {
+          throw error;
+        }
+        if (error instanceof Error) setIntentError(error.message);
+      }
+
       await generateIntentSuggestions(normalizedIntent, resolveSelectedTaskId(), { applyBest: true });
     } catch (error) {
       setIntentSuggestions([]);
@@ -229,7 +246,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     } finally {
       setIntentLoading(false);
     }
-  }, [buildIntentWithDesignAnswer, generateIntentSuggestions, id, playbook, resolveSelectedTaskId, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
+  }, [buildIntentWithDesignAnswer, constructionAbortRef, generateIntentSuggestions, id, playbook, resolveSelectedTaskId, runRealtimeConstruction, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
 
   const handleSubmitIntent = useCallback(async () => {
     const normalizedIntent = intentValue.trim();
