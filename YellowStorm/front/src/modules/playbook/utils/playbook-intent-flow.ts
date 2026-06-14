@@ -128,16 +128,27 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
   const runRealtimeConstruction = useCallback(async (intent: string, selectedTaskId?: string) => {
     if (!id || !playbook) return false;
     if (!startPlaybookIntentConstruction || !streamPlaybookIntentConstruction || !saveConstruction || !constructionAbortRef) return false;
-    let expectedDefinitionRevision = playbook.definitionRevision;
-    if (isDirty) {
-      await saveNow();
-      expectedDefinitionRevision = getCurrentDefinitionRevision();
-    }
 
     const abortController = new AbortController();
     constructionAbortRef.current = abortController;
     setConstructionStatus?.('starting');
     setConstructionProgress?.(t('intentBar.construction.starting'));
+
+    let expectedDefinitionRevision = playbook.definitionRevision;
+    if (isDirty) {
+      await saveNow();
+      if (abortController.signal.aborted) {
+        setConstructionStatus?.('cancelled');
+        return true;
+      }
+      expectedDefinitionRevision = getCurrentDefinitionRevision();
+    }
+
+    if (abortController.signal.aborted) {
+      setConstructionStatus?.('cancelled');
+      return true;
+    }
+
     const construction = await startPlaybookIntentConstruction(id, { intent, selectedTaskId }, { signal: abortController.signal });
     const baseDefinitionRevision = construction.baseDefinitionRevision ?? expectedDefinitionRevision;
     setConstructionId?.(construction.constructionId);

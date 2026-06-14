@@ -80,7 +80,7 @@ describe('PlaybookFlowIntentService normalization', () => {
     return (service as any).normalizeDesignAssessment(raw, 'Build invoice workflow');
   };
 
-  it('normalizes design clarification choices and caps questions', () => {
+  it('normalizes design clarification choices without truncating questions', () => {
     const result = callNormalizeDesign(JSON.stringify({
       status: 'needs_clarification',
       detectedIntent: 'Build invoice workflow',
@@ -96,11 +96,12 @@ describe('PlaybookFlowIntentService normalization', () => {
 
     expect(result.status).toBe('needs_clarification');
     if (result.status !== 'needs_clarification') return;
-    expect(result.questions).toHaveLength(4);
+    expect(result.questions).toHaveLength(6);
     expect(result.questions[0].choices).toEqual(['SAP', 'SharePoint', 'Email', 'Upload']);
     expect(result.questions[0].resourceSelector).toBe('workspace_or_document');
     expect(result.questions[1].choices).toEqual([]);
     expect(result.questions[1].resourceSelector).toBeUndefined();
+    expect(result.questions[5].question).toBe('Extra question?');
   });
 
   it('uses the customizable design assessment prompt when available', async () => {
@@ -638,6 +639,37 @@ describe('PlaybookFlowIntentService normalization', () => {
       id: 'workspace-1',
       workspaceId: 'workspace-1',
     }));
+  });
+
+  it('synthesizes missing data binding from a valid workflow edge', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1', 'task-2'],
+      outputPortsByTaskId: [['task-1', [['report', 'document']]]],
+      inputPortsByTaskId: [['task-2', [['report', 'document']]]],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        impact: { edgesToCreate: 99, dataBindingsToCreate: 0 },
+        changes: [{
+          type: 'create_edge',
+          sourceTaskId: 'task-1',
+          targetTaskId: 'task-2',
+          sourceOutputPortId: 'report',
+          targetInputPortId: 'report',
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'create_edge', sourceOutputPortId: 'report', targetInputPortId: 'report' }),
+      expect.objectContaining({ type: 'create_data_binding', sourcePort: 'report', targetPort: 'report' }),
+    ]));
+    expect(plan.impact.edgesToCreate).toBe(1);
+    expect(plan.impact.dataBindingsToCreate).toBe(1);
   });
 
   it('drops exact duplicate title + agent create_node against existing workflow', () => {

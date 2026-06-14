@@ -9,6 +9,7 @@ import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
 import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-template.service';
 import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-renderer.service';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
+import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
 
@@ -53,7 +54,7 @@ export interface IntentWorkflowValidationContext {
   existingBindingTargets: Set<string>;
 }
 
-interface PlaybookIntentTaskDraft {
+export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
@@ -110,7 +111,7 @@ interface PlaybookIntentSingleChangeSuggestion {
   isDirectIntentFallback: boolean;
 }
 
-type PlaybookIntentWorkflowChange =
+export type PlaybookIntentWorkflowChange =
   | {
     type: 'create_node';
     nodeRef: string;
@@ -226,6 +227,7 @@ export class PlaybookFlowIntentService {
     private readonly agentService: AgentService,
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
   ) {}
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
@@ -482,7 +484,7 @@ export class PlaybookFlowIntentService {
   private buildDesignAssessmentSystemPrompt(): string {
     return `You are a strict workflow design reviewer. Before playbook generation, challenge missing requirements that would make the generated workflow unreliable.
 Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
-Ask at most 4 concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
+Ask concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
 For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
 When a question asks the user to pick a source workspace or document, set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise.
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
@@ -507,8 +509,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
     const normalizedQuestions = questions
       .map((question, index) => this.normalizeClarificationQuestion(question, index))
-      .filter((question) => question.question)
-      .slice(0, 4);
+      .filter((question) => question.question);
     return {
       status: 'needs_clarification',
       detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
@@ -823,7 +824,13 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       }
     }
 
-    if (acceptedChanges.length === 0) {
+    const resolvedChanges = this.graphBindingResolver.resolveWorkflowChanges({
+      changes: acceptedChanges,
+      context: ctx,
+      deletedTaskIds,
+    });
+
+    if (resolvedChanges.length === 0) {
       return null;
     }
 
@@ -834,8 +841,8 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       summary: this.normalizeText(item.summary) || '',
       reason: this.normalizeText(item.reason) || '',
       confidence: this.normalizeConfidence(item.confidence),
-      impact: this.normalizeWorkflowImpact(item.impact, acceptedChanges),
-      changes: acceptedChanges,
+      impact: this.normalizeWorkflowImpact(item.impact, resolvedChanges),
+      changes: resolvedChanges,
       isDirectIntentFallback: false,
     };
   }

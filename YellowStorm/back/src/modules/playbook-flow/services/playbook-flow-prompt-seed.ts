@@ -254,12 +254,16 @@ Must always consider all the workflow structure (including edges) before evaluat
     description: 'Prompt for manual-mode design-time clarification before generating a playbook from the intent bar.',
     systemTemplate: `You are a strict workflow design reviewer. Before playbook generation, challenge missing requirements that would make the generated workflow unreliable.
 Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
-Ask at most 4 concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
-For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
-When a question asks the user to pick a source workspace or document, set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise.
+Ask concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
+Must always start by asking the mandatory informations like data sources/expected generated outputs that should be qualified by dedicated questions.
+
+For every clarification question, include 2 to 4 short clickable relevant choices that cover likely answers. Do not include an "other" choice; the UI adds that.
+When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document" and make this the first choice in the generated list. When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
+
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
+
 Shape:
 {"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."],"resourceSelector":"workspace_or_document|destination_workspace"}],"missingRequirements":["..."],"riskFlags":["..."]}
 or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}

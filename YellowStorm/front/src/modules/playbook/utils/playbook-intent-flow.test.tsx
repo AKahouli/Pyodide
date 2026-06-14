@@ -213,6 +213,48 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     });
   });
 
+  it('marks auto-apply construction as starting before dirty-save completes', async () => {
+    const saveNow = vi.fn().mockResolvedValue(undefined);
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      isDirty: true,
+      intentValue: 'Build invoice reconciliation workflow',
+      intentAutoApply: true,
+      saveNow,
+      requestPlaybookIntent: vi.fn().mockResolvedValue({ suggestions: [] }),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
+        constructionId: 'construction-2',
+        playbookId: 'p1',
+        baseDefinitionRevision: 7,
+      }),
+      streamPlaybookIntentConstruction: vi.fn().mockResolvedValue(undefined),
+      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntent();
+    });
+
+    expect(deps.setConstructionStatus).toHaveBeenCalledWith('starting');
+    expect(deps.setConstructionProgress).toHaveBeenCalledWith('intentBar.construction.starting');
+    expect(deps.setConstructionStatus.mock.invocationCallOrder[0]).toBeLessThan(saveNow.mock.invocationCallOrder[0]);
+    expect(deps.startPlaybookIntentConstruction).toHaveBeenCalledWith('p1', {
+      intent: 'Build invoice reconciliation workflow',
+      selectedTaskId: 't1',
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
   it('passes empty selected findings to preview instead of blocking optimize-step', async () => {
     const deps = buildDeps({
       suggestion: validStepSuggestion,
