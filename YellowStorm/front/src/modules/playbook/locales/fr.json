@@ -358,6 +358,7 @@
   "intentBar.design.reviewTitle": "Valider avant de générer",
   "intentBar.design.detectedIntent": "Intention : {{intent}}",
   "intentBar.design.answerPlaceholder": "Répondez aux questions ici. Vous pouvez rester bref.",
+  "intentBar.design.back": "Retour",
   "intentBar.design.next": "Suivant",
   "intentBar.design.other": "Autre réponse",
   "intentBar.design.step": "Question {{current}} sur {{total}}",

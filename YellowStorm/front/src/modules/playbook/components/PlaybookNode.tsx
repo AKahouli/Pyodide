@@ -34,7 +34,7 @@ import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import { createCompatibleInputPort } from '../utils/port-compatibility';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
+import type { ArtifactKind, DataBinding, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -120,6 +120,34 @@ function resolveResourceContent(payload: InputFile): string | undefined {
     return payload.metadata?.folderpath;
   }
   return payload.metadata?.filepath;
+}
+
+function getResourceArtifactKind(payload: InputFile): ArtifactKind {
+  return payload.type === 'workspace' ? 'text' : 'document';
+}
+
+function formatConstantInputLabel(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined;
+  if (Array.isArray(value)) {
+    const labels = value
+      .map(formatConstantInputLabel)
+      .filter((label): label is string => Boolean(label));
+    return labels.length > 0 ? labels.join(', ') : undefined;
+  }
+  if (typeof value !== 'object' || value === null) return undefined;
+
+  const record = value as Record<string, unknown>;
+  const candidate = record.label
+    ?? record.name
+    ?? record.workspaceName
+    ?? record.path
+    ?? record.text;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : undefined;
+}
+
+function getInputConstantLabel(binding: DataBinding | undefined): string | undefined {
+  if (binding?.sourceKind !== 'constant') return undefined;
+  return formatConstantInputLabel(binding.constantValue);
 }
 
 export interface NodeDataActions {
@@ -401,6 +429,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     }
     return map;
   }, [inputFiles]);
+  const bindingByTargetPort = useMemo(
+    () => new Map(dataBindings.filter((b) => b.targetNode === id).map((b) => [b.targetPort, b])),
+    [dataBindings, id],
+  );
   const effectiveTask = currentTask || data;
   const iteratorChildExecutionStatus = useMemo(
     () => resolveIteratorChildExecutionStatus(
@@ -578,10 +610,18 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       return hit?.port.id;
     };
 
+    const resourceArtifactKind = getResourceArtifactKind(payload);
     let portId = resolveHitPortId();
 
+    if (!portId) {
+      const compatiblePorts = inputPorts.filter((port) => port.artifactKind === resourceArtifactKind);
+      if (compatiblePorts.length === 1) {
+        portId = compatiblePorts[0].id;
+      }
+    }
+
     if (workspaceId && isResource && !portId && nodeDataActions?.updateNodeData) {
-      const newPort = createCompatibleInputPort(payload.name || payload.id, 'document');
+      const newPort = createCompatibleInputPort(payload.name || payload.id, resourceArtifactKind);
       const updatedInputPorts = [...inputPorts, newPort];
       nodeDataActions.updateNodeData(id, { inputPorts: updatedInputPorts });
       portId = newPort.id;
@@ -602,6 +642,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         id: payload.id,
         name: payload.name,
         workspaceId,
+        workspaceName: payload.metadata?.workspaceName,
         content,
         path: payload.metadata?.filepath || payload.metadata?.folderpath,
         mimeType: payload.metadata?.mimeType,
@@ -682,6 +723,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             const isPortDragTarget = isDragOver && dragOverPortId === port.id;
             const portColors = PORT_COLORS[port.artifactKind];
             const boundFile = portFileMap[port.id];
+            const boundConstantLabel = getInputConstantLabel(bindingByTargetPort.get(port.id));
             const top = `${getPortTopPercent(idx, inputPorts.length)}%`;
 
             return (
@@ -717,7 +759,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
                 {/* Persistent label */}
                 <PortLabel
-                  name={boundFile?.name || port.name}
+                  name={boundFile?.name || boundConstantLabel || port.name}
                   kind={port.artifactKind}
                   position="left"
                   selected={isSelected}

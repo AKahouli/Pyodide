@@ -218,16 +218,22 @@ function appendEvaluationHistory(
 }
 
 function buildResourceBindingValue(resource: PlaybookResourceReference): Record<string, unknown> {
-  return {
+  const value: Record<string, unknown> = {
     text: resource.content,
     kind: resource.kind,
     id: resource.id,
+    label: resource.name,
     name: resource.name,
     workspaceId: resource.workspaceId,
+    workspaceName: resource.workspaceName ?? (resource.kind === 'workspace' ? resource.name : undefined),
     path: resource.path,
     mimeType: resource.mimeType,
     metadata: resource.metadata,
   };
+  if (resource.kind === 'document') {
+    value.documentId = resource.id;
+  }
+  return value;
 }
 
 // ===== Initial State =====

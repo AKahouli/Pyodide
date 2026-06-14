@@ -145,7 +145,7 @@ import {
   getVisibleExecutionStatus,
   hasPendingJudgeEvaluations,
 } from '../utils/playbook-canvas-status';
-import { showError } from '@/lib/notifications';
+import { showError, showWarning } from '@/lib/notifications';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
@@ -341,7 +341,7 @@ function PlaybookCanvasInner() {
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
-  const [intentAutoApply, setIntentAutoApply] = useState(true);
+  const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
@@ -1980,17 +1980,16 @@ function PlaybookCanvasInner() {
       return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds);
     };
 
-    const shouldAbortInvalidRequiredInputs = () => {
+    const warnInvalidRequiredInputs = () => {
       const unboundInputs = findUnboundRequiredInputs();
       if (unboundInputs.length === 0) {
-        return false;
+        return;
       }
 
       console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
       if (shouldSave) {
-        showError(t('intentBar.invalidRequiredBindings'));
+        showWarning(t('intentBar.invalidRequiredBindings'));
       }
-      return true;
     };
 
     const applyDataBindingChange = (
@@ -2186,9 +2185,7 @@ function PlaybookCanvasInner() {
       );
       reconcileRequiredNodeOutputBindings();
       reconcileUnboundRequiredInputsByPort();
-      if (shouldAbortInvalidRequiredInputs()) {
-        return;
-      }
+      warnInvalidRequiredInputs();
 
       commitGraph(nextTasks, nextEdges, nextDataBindings);
       if (shouldSave) {
@@ -2319,9 +2316,7 @@ function PlaybookCanvasInner() {
       console.warn('[IntentApply] Warnings:', applicationWarnings);
     }
 
-    if (shouldAbortInvalidRequiredInputs()) {
-      return;
-    }
+    warnInvalidRequiredInputs();
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     if (shouldClearSuggestions) setIntentSuggestions([]);

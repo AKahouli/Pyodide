@@ -10,6 +10,7 @@ const storeState = vi.hoisted(() => ({
   },
   selectedStepId: null as string | null,
   addInputFileToTask: vi.fn(),
+  bindResourceToInputPort: vi.fn(),
   removeInputFileFromTask: vi.fn(),
   currentExecution: {
     taskResults: [
@@ -174,6 +175,129 @@ describe('PlaybookNode', () => {
     };
     storeState.executionCache = {};
     storeState.selectedStepId = null;
+  });
+
+  it('binds a dropped workspace to the only compatible text input', () => {
+    const payload = {
+      type: 'workspace',
+      kind: 'workspace',
+      id: 'ws-1',
+      name: 'Workspace',
+      workspaceId: 'ws-1',
+      metadata: { workspaceId: 'ws-1', workspaceName: 'Workspace' },
+    };
+
+    const { container } = render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Save result',
+            description: 'Save to workspace',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [
+              { id: 'input-context', name: 'Context', artifactKind: 'text', required: false },
+              { id: 'input-template', name: 'Template', artifactKind: 'document', required: true },
+            ],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    fireEvent.drop(container.firstChild as Element, {
+      dataTransfer: {
+        getData: (type: string) => (type === 'application/json' ? JSON.stringify(payload) : ''),
+        dropEffect: 'copy',
+      },
+    });
+
+    expect(storeState.bindResourceToInputPort).toHaveBeenCalledWith('node-1', 'input-context', expect.objectContaining({
+      kind: 'workspace',
+      id: 'ws-1',
+      workspaceId: 'ws-1',
+      workspaceName: 'Workspace',
+      content: 'ws-1',
+    }));
+  });
+
+  it('renders a constant document binding label on the input port', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [],
+      dataBindings: [
+        {
+          id: 'binding-1',
+          targetNode: 'node-1',
+          targetPort: 'input-file',
+          sourceKind: 'constant',
+          constantValue: {
+            kind: 'document',
+            id: 'doc-1',
+            documentId: 'doc-1',
+            workspaceId: 'workspace-1',
+            workspaceName: 'ClientTest',
+            label: 'jeu_donnees_workflow_copilote_ia.xlsx',
+            path: 'clienttest/jeu_donnees_workflow_copilote_ia.xlsx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          },
+        },
+      ],
+    };
+
+    render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Load Excel',
+            description: 'Load a spreadsheet',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [
+              { id: 'input-file', name: 'Fichiers source', artifactKind: 'document', required: true },
+            ],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByText('jeu_donnees_workflow_copilote_ia.xlsx')).toBeInTheDocument();
+    expect(screen.queryByText('Fichiers source')).not.toBeInTheDocument();
   });
 
   it('only uses the canvas selected prop for node highlight state', () => {

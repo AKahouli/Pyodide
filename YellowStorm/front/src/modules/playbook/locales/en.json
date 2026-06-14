@@ -358,6 +358,7 @@
   "intentBar.design.reviewTitle": "Review before generating",
   "intentBar.design.detectedIntent": "Intent: {{intent}}",
   "intentBar.design.answerPlaceholder": "Answer the questions here. You can be brief.",
+  "intentBar.design.back": "Back",
   "intentBar.design.next": "Next",
   "intentBar.design.other": "Other answer",
   "intentBar.design.step": "Question {{current}} of {{total}}",

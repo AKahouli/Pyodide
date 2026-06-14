@@ -37,7 +37,7 @@ const defaultProps = {
   suggestions: [] as PlaybookIntentSuggestion[],
   error: '',
   history: [] as IntentSuggestionHistoryEntry[],
-  autoApply: true,
+  autoApply: false,
   onValueChange: vi.fn(),
   onAutoApplyChange: vi.fn(),
   onSubmit: vi.fn(),
@@ -81,15 +81,21 @@ describe('PlaybookIntentBar', () => {
     expect(onSubmit).toHaveBeenCalled();
   });
 
-  it('renders auto-apply enabled by default', () => {
+  it('renders auto-apply off by default and allows toggling', () => {
+    const onAutoApplyChange = vi.fn();
+
     render(
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={null}
+        onAutoApplyChange={onAutoApplyChange}
       />,
     );
 
-    expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
+    const autoApplySwitch = screen.getByRole('switch', { name: 'intentBar.actions.autoApply' });
+    expect(autoApplySwitch).toHaveAttribute('data-state', 'unchecked');
+    fireEvent.click(autoApplySwitch);
+    expect(onAutoApplyChange).toHaveBeenCalledWith(true);
   });
 
   it('does not render the helper hint line under the title', () => {
@@ -134,6 +140,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply
         suggestions={[
           {
             id: 's1',
@@ -513,6 +520,8 @@ describe('PlaybookIntentBar', () => {
     );
 
     expect(screen.getByText('Which datasource should this workflow use?')).toBeInTheDocument();
+    expect(screen.getByText('1.')).toBeInTheDocument();
+    expect(screen.getByText('2.')).toBeInTheDocument();
     expect(screen.getByText('SharePoint')).toBeInTheDocument();
     fireEvent.click(screen.getByText('SharePoint'));
     fireEvent.click(screen.getByText('intentBar.design.skip'));
@@ -567,6 +576,57 @@ describe('PlaybookIntentBar', () => {
     ].join('\n'));
   });
 
+  it('navigates back through clarification questions and preserves answers', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource', 'Output'],
+          riskFlags: [],
+          questions: [
+            {
+              id: 'q1',
+              question: 'Which datasource should this workflow use?',
+              reason: 'Datasource affects bindings.',
+              category: 'datasource',
+              required: true,
+              choices: ['SharePoint', 'SAP'],
+            },
+            {
+              id: 'q2',
+              question: 'What final output should it produce?',
+              reason: 'Output affects final steps.',
+              category: 'output',
+              required: true,
+              choices: ['Summary report'],
+            },
+          ],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    expect(screen.getByText('intentBar.design.back')).toBeDisabled();
+    fireEvent.click(screen.getByText('SAP'));
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('Summary report'));
+    fireEvent.click(screen.getByText('intentBar.design.back'));
+
+    expect(screen.getByText('Which datasource should this workflow use?')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith([
+      'Which datasource should this workflow use?: SAP',
+      'What final output should it produce?: Summary report',
+    ].join('\n'));
+  });
+
   it('selects a workspace document for resource clarification questions', async () => {
     const onForceGenerate = vi.fn();
 
@@ -594,6 +654,8 @@ describe('PlaybookIntentBar', () => {
       />,
     );
 
+    expect(screen.getByText('1.')).toBeInTheDocument();
+    expect(screen.getByText('2.')).toBeInTheDocument();
     fireEvent.click(screen.getByText('intentBar.design.resource.workspace_or_document'));
     await waitFor(() => expect(screen.getByText('Q3 Report.pdf')).toBeInTheDocument());
     fireEvent.click(screen.getByText('Q3 Report.pdf'));

@@ -70,6 +70,7 @@ export interface PlaybookResourceReference {
   id: string;
   name: string;
   workspaceId: string;
+  workspaceName?: string;
   content: string;
   path?: string;
   mimeType?: string;
@@ -85,6 +86,7 @@ export interface InputFile {
   artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
+    workspaceName?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;

@@ -195,6 +195,28 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
       .join('\n');
   }, [currentDesignQuestion, designAnswer, designAnswers, designQuestions, getResourceAnswer, selectedDesignChoice, selectedDesignResource]);
 
+  const loadDesignAnswer = useCallback((questionId: string | undefined, answers: Record<string, string>) => {
+    const question = designQuestions.find((item) => item.id === questionId);
+    const answer = questionId ? answers[questionId] || '' : '';
+    if (!answer) {
+      setSelectedDesignChoice('');
+      setSelectedDesignResource(null);
+      setDesignAnswer('');
+      return;
+    }
+
+    if (question?.choices?.includes(answer)) {
+      setSelectedDesignChoice(answer);
+      setSelectedDesignResource(null);
+      setDesignAnswer('');
+      return;
+    }
+
+    setSelectedDesignChoice('__custom__');
+    setSelectedDesignResource(null);
+    setDesignAnswer(answer);
+  }, [designQuestions]);
+
   const saveCurrentDesignAnswer = useCallback(() => {
     if (!currentDesignQuestion) return '';
     const answer = selectedDesignChoice === '__resource__' && selectedDesignResource
@@ -206,15 +228,29 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     return answer;
   }, [currentDesignQuestion, designAnswer, getResourceAnswer, selectedDesignChoice, selectedDesignResource]);
 
+  const handleBackDesign = useCallback(() => {
+    if (designStepIndex <= 0) return;
+    const currentAnswer = saveCurrentDesignAnswer();
+    const nextAnswers = currentDesignQuestion && currentAnswer
+      ? { ...designAnswers, [currentDesignQuestion.id]: currentAnswer }
+      : designAnswers;
+    const previousQuestion = designQuestions[designStepIndex - 1];
+    setDesignAnswers(nextAnswers);
+    setDesignStepIndex((current) => Math.max(0, current - 1));
+    loadDesignAnswer(previousQuestion?.id, nextAnswers);
+  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, loadDesignAnswer, saveCurrentDesignAnswer]);
+
   const handleContinueDesign = useCallback(() => {
     const currentAnswer = saveCurrentDesignAnswer();
     if (!currentAnswer) return;
     if (!isLastDesignQuestion) {
       const nextQuestion = designQuestions[designStepIndex + 1];
+      const nextAnswers = currentDesignQuestion
+        ? { ...designAnswers, [currentDesignQuestion.id]: currentAnswer }
+        : designAnswers;
       setDesignStepIndex((current) => current + 1);
-      setSelectedDesignChoice(designAnswers[nextQuestion?.id || ''] || '');
-      setSelectedDesignResource(null);
-      setDesignAnswer('');
+      setDesignAnswers(nextAnswers);
+      loadDesignAnswer(nextQuestion?.id, nextAnswers);
       return;
     }
 
@@ -224,7 +260,7 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
     setSelectedDesignChoice('');
     setSelectedDesignResource(null);
     setDesignAnswer('');
-  }, [designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, onForceGenerate, saveCurrentDesignAnswer]);
+  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onForceGenerate, saveCurrentDesignAnswer]);
 
   const handleSelectDesignChoice = useCallback((choice: string) => {
     setSelectedDesignChoice(choice);
@@ -489,10 +525,6 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
 
             {design && !autoApply ? (
               <div className="space-y-3 rounded-xl border bg-muted/30 p-3 text-sm">
-                <div className="space-y-1">
-                  <p className="font-medium">{design.status === 'needs_clarification' ? t('intentBar.design.clarifyTitle') : t('intentBar.design.reviewTitle')}</p>
-                  <p className="text-muted-foreground">{t('intentBar.design.detectedIntent', { intent: design.detectedIntent })}</p>
-                </div>
                 {design.status === 'needs_clarification' ? (
                   <div className="space-y-2">
                     {currentDesignQuestion ? (
@@ -504,8 +536,8 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                           <p className="font-medium">{currentDesignQuestion.question}</p>
                           {currentDesignQuestion.reason ? <p className="text-xs text-muted-foreground">{currentDesignQuestion.reason}</p> : null}
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {(currentDesignQuestion.choices ?? []).map((choice) => (
+                        <div className="flex flex-col gap-2">
+                          {(currentDesignQuestion.choices ?? []).map((choice, index) => (
                             <Button
                               key={choice}
                               type="button"
@@ -513,7 +545,8 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                               className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
                               onClick={() => handleSelectDesignChoice(choice)}
                             >
-                              {choice}
+                              <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{index + 1}.</span>
+                              <span>{choice}</span>
                             </Button>
                           ))}
                           {currentDesignQuestion.resourceSelector ? (
@@ -523,8 +556,9 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                               className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
                               onClick={() => setResourcePickerOpen(true)}
                             >
+                              <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + 1}.</span>
                               <FolderOpen className="mr-2 h-4 w-4 shrink-0" />
-                              {selectedDesignResource ? selectedDesignResource.name : t(`intentBar.design.resource.${currentDesignQuestion.resourceSelector}`)}
+                              <span>{selectedDesignResource ? selectedDesignResource.name : t(`intentBar.design.resource.${currentDesignQuestion.resourceSelector}`)}</span>
                             </Button>
                           ) : null}
                           <Button
@@ -533,7 +567,8 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                             className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
                             onClick={() => handleSelectDesignChoice('__custom__')}
                           >
-                            {t('intentBar.design.other')}
+                            <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + (currentDesignQuestion.resourceSelector ? 2 : 1)}.</span>
+                            <span>{t('intentBar.design.other')}</span>
                           </Button>
                         </div>
                         {selectedDesignChoice === '__custom__' ? (
@@ -548,6 +583,9 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                       </div>
                     ) : null}
                     <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={handleBackDesign} disabled={loading || designStepIndex === 0}>
+                        {t('intentBar.design.back')}
+                      </Button>
                       <Button type="button" size="sm" onClick={handleContinueDesign} disabled={loading || !canContinueDesign}>
                         {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
                       </Button>
