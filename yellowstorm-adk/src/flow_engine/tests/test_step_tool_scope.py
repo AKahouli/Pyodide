@@ -36,6 +36,7 @@ def test_build_step_tool_scope_prefers_display_name_for_mounted_filename() -> No
             "workspace_id": "workspace-1",
             "workspace_name": "workspace-1",
             "workspace_path": "user/workspace/doc-1",
+            "kind": "document",
         }
     ]
     assert scope.mounted_filenames == ["CV_Kevin_Diallo.pdf"]

@@ -1048,6 +1048,7 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
             "workspace_id": "workspace-1",
             "workspace_name": "workspace-1",
             "workspace_path": "user/workspace/doc-1",
+            "kind": "document",
         }
     ]
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
