@@ -5,16 +5,11 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from elasticsearch import Elasticsearch
 
-try:
-    from elasticsearch import Elasticsearch
-except Exception:  # pragma: no cover - optional dependency
-    Elasticsearch = Any  # type: ignore[misc,assignment]
-
 
 def elastic_search_logging(
     record: logging.LogRecord,
     log_source: str,
-    es_connection: Elasticsearch,
+    es_connection: "Elasticsearch",
     index_name: str,
 ):
     """
