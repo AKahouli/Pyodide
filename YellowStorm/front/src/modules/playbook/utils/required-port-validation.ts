@@ -60,3 +60,14 @@ export function getUnboundRequiredPorts(
 
   return result;
 }
+
+export function getUnboundRequiredPortsForTaskIds(
+  tasks: PlaybookTask[],
+  dataBindings: DataBinding[],
+  taskIds: Set<string>,
+): UnboundPort[] {
+  return getUnboundRequiredPorts(
+    tasks.filter((task) => taskIds.has(task.id)),
+    dataBindings,
+  );
+}
