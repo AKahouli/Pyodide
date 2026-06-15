@@ -162,7 +162,11 @@
       "Bash(echo \"committed: $?\")",
       "Bash(python3 -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('✅ valid JSON'\\)\")",
       "Bash(xargs ls -1)",
-      "Bash(awk '/selectWorkspace: async/{f=1} f{print NR\": \"$0} /^      },/{if\\(f\\)c++; if\\(c>=1 && f\\){exit}}' store.ts)"
+      "Bash(awk '/selectWorkspace: async/{f=1} f{print NR\": \"$0} /^      },/{if\\(f\\)c++; if\\(c>=1 && f\\){exit}}' store.ts)",
+      "Bash(findstr /i \"elastic ddtrace\")",
+      "Bash(Select-String -Pattern \"elastic|ddtrace\")",
+      "PowerShell(Copy-Item *)",
+      "PowerShell(New-Item *)"
     ]
   },
   "disabledMcpjsonServers": [
