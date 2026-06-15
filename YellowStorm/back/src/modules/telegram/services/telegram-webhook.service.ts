@@ -213,18 +213,15 @@ export class TelegramWebhookService {
       requestId: `telegram-ai-${Date.now()}`,
     });
 
-    await this.streamService.startStream(
+    await this.streamService.runSingleAgentStream({
       userId,
+      username: userEmail,
       conversationId,
-      aiMessage.id,
-      {
-        content: messageText,
-        agentIds: [binding.agentId.toString()],
-      },
-      undefined,
-      userEmail,
-      telegramUserId,
-    );
+      messageId: aiMessage.id,
+      agentId: binding.agentId.toString(),
+      query: messageText,
+      requestId: aiMessage.requestId,
+    });
 
     const completedMessage = await this.messageService.findById(aiMessage.id);
     const reply = this.truncateReply(this.extractReplyText(completedMessage.components));
