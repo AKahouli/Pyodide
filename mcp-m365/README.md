@@ -20,12 +20,7 @@ mcp-m365/
 │   ├── requirements.txt
 │   └── README.md
 │
-├── teams-mcp/                    # Microsoft Teams Connector (3 tools)
-│   ├── server.py
-│   ├── requirements.txt
-│   └── README.md
-│
-└── excel-mcp/                    # Excel Connector (placeholder - to be implemented)
+└── teams-mcp/                    # Microsoft Teams Connector (3 tools)
     ├── server.py
     ├── requirements.txt
     └── README.md
@@ -62,15 +57,6 @@ pip install -r requirements.txt
 python server.py
 ```
 
-### Excel MCP (Port 8004)
-```bash
-cd excel-mcp
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python server.py
-```
-
 ## Tools Overview
 
 ### SharePoint MCP (12 tools)
@@ -96,12 +82,6 @@ Microsoft Teams operations:
 - `list_channels` - List channels in a team
 - `send_teams_message` - Send messages to users or channels
 
-### Excel MCP (0 tools - placeholder)
-Excel operations (yet to be implemented):
-- Read/write Excel workbooks
-- Query Excel ranges
-- Create Excel files
-
 ## Authentication
 
 All MCP servers use the same authentication mechanism:
@@ -116,7 +96,7 @@ Each MCP server supports these environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `{MCP}_TRANSPORT` | Transport type: `sse`, `http`, `streamable-http` | `sse` |
-| `{MCP}_PORT` / `PORT` | Server port | Varies (8001-8004) |
+| `{MCP}_PORT` / `PORT` | Server port | Varies (8001-8003) |
 | `ALLOWED_ORIGINS` | CORS origins | `*` |
 | `M365_ACCESS_TOKEN` | Fallback access token | - |
 
@@ -147,10 +127,6 @@ Configure these delegated permissions in your Azure AD app:
 - `Chat.ReadWrite` - Read and send chat messages
 - `Team.ReadBasic.All` - Read teams
 - `ChannelMessage.Send` - Send channel messages
-
-### Excel MCP (Future)
-- `Files.ReadWrite.All` - Read and write Excel files
-- `Sites.ReadWrite.All` - Access Excel files in SharePoint
 
 ## Migration from Original MCP
 
