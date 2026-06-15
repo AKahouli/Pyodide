@@ -100,7 +100,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
   }, [open, workspaceId, loadGraph]);
 
   const buildGraph = useCallback(() => {
-    if (!data || !svgRef.current || !containerRef.current) return;
+    if (!data || !data.documents || !svgRef.current || !containerRef.current) return;
 
     if (simulationRef.current) {
       simulationRef.current.stop();
@@ -302,13 +302,13 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const stats = data ? {
+  const stats = data && data.documents ? {
     docs: data.documents.length,
-    comms: data.communities.length,
-    concepts: data.concepts.length,
-    explicit: data.edges.length,
-    cites: data.edges.filter((e) => e.relationship_type === 'CITES').length,
-    shared: data.shared_concept_edges.length,
+    comms: (data.communities ?? []).length,
+    concepts: (data.concepts ?? []).length,
+    explicit: (data.edges ?? []).length,
+    cites: (data.edges ?? []).filter((e) => e.relationship_type === 'CITES').length,
+    shared: (data.shared_concept_edges ?? []).length,
   } : null;
 
   return (

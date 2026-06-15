@@ -259,10 +259,10 @@ export interface CommunityGraphData {
 }
 
 export async function fetchCommunityGraph(workspaceId: string): Promise<CommunityGraphData> {
-  const response = await apiClient.get<CommunityGraphData>(
+  const response = await apiClient.get<ApiResponse<CommunityGraphData>>(
     API_ENDPOINTS.workspaceDocuments.graphData(workspaceId),
   );
-  return response.data;
+  return response.data.data;
 }
 
 // ===== Folder APIs =====
