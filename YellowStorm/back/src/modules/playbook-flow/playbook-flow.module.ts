@@ -6,6 +6,8 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { LoggerModule, LoggerService } from '@modules/logger';
 import { AgentModule } from '@modules/agent/agent.module';
+import { SkillModule } from '@modules/skill/skill.module';
+import { ConnectorModule } from '@modules/connector/connector.module';
 import { ModelsModule } from '@modules/models/models.module';
 import { UsageModule } from '@modules/usage/usage.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
@@ -157,6 +159,8 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     AuthorizationModule,
     LoggerModule,
     AgentModule,
+    SkillModule,
+    ConnectorModule,
     ModelsModule,
     UsageModule,
     WorkspaceModule,

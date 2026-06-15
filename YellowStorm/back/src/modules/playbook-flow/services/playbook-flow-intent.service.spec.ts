@@ -19,17 +19,31 @@ const DEFAULT_LIMITS: EffectiveFlowDesignSettings['intentNormalizationLimits'] =
 };
 
 function createService(overrides: Partial<{
+  flowService: PlaybookFlowService;
+  settingsService: PlaybookFlowSettingsService;
   promptService: PlaybookFlowPromptTemplateService;
   promptRenderer: PlaybookFlowPromptRendererService;
+  agentService: AgentService;
+  nodeTemplateService: PlaybookFlowNodeTemplateService;
+  liteLLMConnectionService: LiteLLMConnectionService;
+  skillService: any;
+  connectorService: any;
+  workspaceService: any;
+  workspaceDocumentService: any;
 }> = {}): PlaybookFlowIntentService {
   return new PlaybookFlowIntentService(
-    {} as PlaybookFlowService,
-    {} as PlaybookFlowSettingsService,
+    overrides.flowService || {} as PlaybookFlowService,
+    overrides.settingsService || {} as PlaybookFlowSettingsService,
     overrides.promptService || {} as PlaybookFlowPromptTemplateService,
     overrides.promptRenderer || {} as PlaybookFlowPromptRendererService,
-    {} as AgentService,
-    {} as PlaybookFlowNodeTemplateService,
-    {} as LiteLLMConnectionService,
+    overrides.agentService || {} as AgentService,
+    overrides.nodeTemplateService || {} as PlaybookFlowNodeTemplateService,
+    overrides.liteLLMConnectionService || {} as LiteLLMConnectionService,
+    undefined,
+    overrides.skillService,
+    overrides.connectorService,
+    overrides.workspaceService,
+    overrides.workspaceDocumentService,
   );
 }
 
@@ -216,6 +230,89 @@ describe('PlaybookFlowIntentService normalization', () => {
     }), { timeout: 180000 });
   });
 
+  it('adds the available design catalog to intent prompt variables without documents', async () => {
+    const promptRenderer = new PlaybookFlowPromptRendererService();
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Return JSON only',
+        userTemplate: 'Catalog={available_design_catalog}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      promptService,
+      promptRenderer,
+      flowService: {
+        findOne: jest.fn().mockResolvedValue({ name: 'Flow', nodes: [], controlEdges: [], dataBindings: [] }),
+      } as unknown as PlaybookFlowService,
+      settingsService: {
+        resolveEffectiveSettings: jest.fn().mockResolvedValue({ intentNormalizationLimits: DEFAULT_LIMITS }),
+        resolveInferenceModel: jest.fn().mockResolvedValue('model-1'),
+      } as unknown as PlaybookFlowSettingsService,
+      liteLLMConnectionService: {
+        getHttpClient: jest.fn().mockReturnValue({ post: jest.fn() }),
+      } as unknown as LiteLLMConnectionService,
+      agentService: {
+        findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
+      } as unknown as AgentService,
+      nodeTemplateService: {
+        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+      } as unknown as PlaybookFlowNodeTemplateService,
+      skillService: {
+        findAllActive: jest.fn().mockResolvedValue([
+          { id: 'skill-1', name: 'Summarize', description: 'Summarize documents', categoryName: 'Writing' },
+        ]),
+      },
+      connectorService: {
+        findAllActive: jest.fn().mockResolvedValue([
+          {
+            id: 'connector-1',
+            name: 'Google Drive',
+            description: 'Drive access',
+            categoryName: 'Storage',
+            actions: [
+              { key: 'search', label: 'Search files', description: 'Find files', isEnabled: true },
+              { key: 'delete', label: 'Delete files', description: 'Remove files', isEnabled: false },
+            ],
+          },
+        ]),
+      },
+      workspaceService: {
+        findAllByUser: jest.fn().mockResolvedValue({
+          workspaces: [{ id: 'workspace-1', name: 'Finance', description: 'Finance docs' }],
+        }),
+      },
+      workspaceDocumentService: {
+        getAllFolders: jest.fn().mockResolvedValue([
+          { id: 'folder-1', folderName: 'Invoices', originalName: 'Invoices', parentId: null },
+        ]),
+      },
+    });
+
+    const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
+    const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
+
+    expect(catalog).toEqual({
+      availableSkills: [{ id: 'skill-1', name: 'Summarize', description: 'Summarize documents', category: 'Writing' }],
+      availableConnectors: [{ id: 'connector-1', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableConnectorActions: [{
+        connectorId: 'connector-1',
+        connectorName: 'Google Drive',
+        actionKey: 'search',
+        label: 'Search files',
+        description: 'Find files',
+      }],
+      availableWorkspaces: [{
+        id: 'workspace-1',
+        name: 'Finance',
+        description: 'Finance docs',
+        folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
+      }],
+    });
+    expect(context.userPrompt).toContain('"availableWorkspaces"');
+    expect(context.userPrompt).not.toContain('document-1');
+    expect(context.userPrompt).not.toContain('originalName');
+  });
+
   it('does not treat unsupported spaced single-brace placeholders as clarification placeholders', async () => {
     const httpClient = {
       post: jest.fn().mockResolvedValue({
@@ -372,9 +469,12 @@ describe('PlaybookFlowIntentService normalization', () => {
 
     expect(prompt?.userTemplate).toContain('<Resolved_Design_Resources>');
     expect(prompt?.userTemplate).toContain('{resolved_design_resources}');
+    expect(prompt?.userTemplate).toContain('<Available_Design_Catalog_JSON>');
+    expect(prompt?.userTemplate).toContain('{available_design_catalog}');
     expect(prompt?.systemTemplate).toContain('Treat it as authoritative structured input');
+    expect(prompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
     expect(prompt?.systemTemplate).toContain('sourceKind: "constant"');
-    expect(prompt?.version).toBe(8);
+    expect(prompt?.version).toBe(9);
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {

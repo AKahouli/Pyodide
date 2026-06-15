@@ -3,6 +3,10 @@ import { NotFoundException, ServiceUnavailableException } from '@modules/excepti
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { AgentService } from '@modules/agent/agent.service';
+import { SkillService } from '@modules/skill/skill.service';
+import { ConnectorService } from '@modules/connector/connector.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
@@ -17,6 +21,7 @@ export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNorma
 
 const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
 const NO_RESOLVED_DESIGN_RESOURCES = '[]';
+const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
 
 interface ResolvedDesignResource {
   question: string;
@@ -31,6 +36,38 @@ interface ResolvedDesignResource {
 
 interface ResolvedDesignResourceBindingValue extends ResolvedDesignResource {
   documentId?: string;
+}
+
+interface AvailableDesignCatalog {
+  availableSkills: Array<{
+    id: string;
+    name: string;
+    description: string;
+    category?: string | null;
+  }>;
+  availableConnectors: Array<{
+    id: string;
+    name: string;
+    description: string;
+    category?: string | null;
+  }>;
+  availableConnectorActions: Array<{
+    connectorId: string;
+    connectorName: string;
+    actionKey: string;
+    label: string;
+    description: string;
+  }>;
+  availableWorkspaces: Array<{
+    id: string;
+    name: string;
+    description: string;
+    folders: Array<{
+      id: string;
+      name: string;
+      parentId: string | null;
+    }>;
+  }>;
 }
 
 type PlaybookIntentOperationType =
@@ -228,6 +265,10 @@ export class PlaybookFlowIntentService {
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
+    private readonly skillService?: SkillService,
+    private readonly connectorService?: ConnectorService,
+    private readonly workspaceService?: WorkspaceService,
+    private readonly workspaceDocumentService?: WorkspaceDocumentService,
   ) {}
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
@@ -302,6 +343,7 @@ export class PlaybookFlowIntentService {
     const prompt = await this.promptService.findByKey('intent.analyze');
     const defaultAgents = await this.agentService.findDefaultAgents({ page: 1, limit: 100, isActive: true });
     const nodeTemplates = await this.nodeTemplateService.findEnabled();
+    const availableDesignCatalog = await this.buildAvailableDesignCatalog(ownerId);
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return JSON only with a top-level suggestions array.';
     const intentParts = this.splitIntentClarifications(dto.intent);
     const resolvedDesignResources = this.extractResolvedDesignResources(intentParts.capturedClarifications);
@@ -339,6 +381,7 @@ export class PlaybookFlowIntentService {
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
+      available_design_catalog: JSON.stringify(availableDesignCatalog, null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -362,6 +405,69 @@ export class PlaybookFlowIntentService {
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
     };
+  }
+
+  private async buildAvailableDesignCatalog(ownerId: string): Promise<AvailableDesignCatalog> {
+    const [skills, connectors, workspaces] = await Promise.all([
+      this.skillService?.findAllActive() ?? Promise.resolve([]),
+      this.connectorService?.findAllActive() ?? Promise.resolve([]),
+      this.workspaceService?.findAllByUser(ownerId, { page: 1, limit: 100 }) ?? Promise.resolve({
+        workspaces: [],
+        pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
+      }),
+    ]);
+
+    return {
+      availableSkills: skills.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description || '',
+        category: skill.categoryName ?? null,
+      })),
+      availableConnectors: connectors.map((connector) => ({
+        id: connector.id,
+        name: connector.name,
+        description: connector.description || '',
+        category: connector.categoryName ?? null,
+      })),
+      availableConnectorActions: connectors.flatMap((connector) =>
+        (connector.actions || [])
+          .filter((action) => action.isEnabled !== false)
+          .map((action) => ({
+            connectorId: connector.id,
+            connectorName: connector.name,
+            actionKey: action.key,
+            label: action.label || action.key,
+            description: action.description || '',
+          })),
+      ),
+      availableWorkspaces: await this.buildAvailableWorkspaceCatalog(workspaces.workspaces || []),
+    };
+  }
+
+  private async buildAvailableWorkspaceCatalog(workspaces: Array<{ id: string; name: string; description?: string }>) {
+    if (!this.workspaceDocumentService) {
+      return workspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        description: workspace.description || '',
+        folders: [],
+      }));
+    }
+
+    return Promise.all(workspaces.map(async (workspace) => {
+      const folders = await this.workspaceDocumentService!.getAllFolders(workspace.id);
+      return {
+        id: workspace.id,
+        name: workspace.name,
+        description: workspace.description || '',
+        folders: folders.slice(0, MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE).map((folder) => ({
+          id: folder.id,
+          name: folder.folderName || folder.originalName,
+          parentId: folder.parentId || null,
+        })),
+      };
+    }));
   }
 
   private splitIntentClarifications(intent: string): { intentText: string; capturedClarifications: string } {

@@ -136,6 +136,9 @@ For delete_data_binding include:
 
 # Resolved Resource Rules
 - <Resolved_Design_Resources> contains user-selected workspace/document resources from clarification answers. Treat it as authoritative structured input, not as optional prose.
+- <Available_Design_Catalog_JSON> contains availableSkills, availableConnectors, availableConnectorActions, and availableWorkspaces. Use it as read-only design context.
+- Use only ids and action keys from <Available_Design_Catalog_JSON> when referencing skills, connectors, connector actions, workspaces, or workspace folders. Never invent them.
+- availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. Ask for clarification when a specific document is needed but only workspace/folder context is available.
 - For selected documents, bind the document to the semantically matching source/input port with create_data_binding.sourceKind="constant" and constantValue containing kind="document", id, documentId, workspaceId, workspaceName, label, path, and mimeType when available. Use exact ids, not labels.
 - For selected workspaces, bind the workspace to the semantically matching destination/output configuration port with create_data_binding.sourceKind="constant" and constantValue containing kind="workspace", id, workspaceId, workspaceName, and label when available. Use exact ids, not labels.
 - Do not invent another documentId, workspaceId, path, or mimeType when a resolved resource is available.
@@ -217,6 +220,10 @@ Intent: {intent_text}
 <Resolved_Design_Resources>
 {resolved_design_resources}
 </Resolved_Design_Resources>
+
+<Available_Design_Catalog_JSON>
+{available_design_catalog}
+</Available_Design_Catalog_JSON>
 Selected task: {selected_task_id} | {selected_task_title}
 Description: {selected_task_description}
 Context: {selected_task_context}
@@ -241,7 +248,7 @@ Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-outp
 
 ***Non negotiable rule***
 Must always consider all the workflow structure (including edges) before evaluating the required changes to suggest, it could be a mix of changes (create_node, update_node, delete_edge ...) in the "changes" array.`,
-    enabled: true, isBuiltIn: true, version: 8,
+    enabled: true, isBuiltIn: true, version: 9,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -260,6 +267,8 @@ Must always start by asking the mandatory informations like data sources/expecte
 For every clarification question, include 2 to 4 short clickable relevant choices that cover likely answers. Do not include an "other" choice; the UI adds that.
 When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document" and make this the first choice in the generated list. When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
 
+Use <Available_Design_Catalog_JSON> as read-only context for available skills, connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. Never invent skill ids, connector ids, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
+
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
@@ -274,6 +283,9 @@ Intent: {intent_text}
 <Captured_Design_Clarifications>
 {captured_clarifications}
 </Captured_Design_Clarifications>
+<Available_Design_Catalog_JSON>
+{available_design_catalog}
+</Available_Design_Catalog_JSON>
 Selected task: {selected_task_id} | {selected_task_title}
 Description: {selected_task_description}
 Context: {selected_task_context}
@@ -285,7 +297,7 @@ Context: {selected_task_context}
 
 <Available_node_templates_JSON>
 {node_templates}
-</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 3,
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 4,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',
