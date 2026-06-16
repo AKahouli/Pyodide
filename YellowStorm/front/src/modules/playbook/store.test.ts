@@ -1372,7 +1372,11 @@ describe('playbook store', () => {
         sourceKind: 'constant',
         constantValue: expect.objectContaining({
           text: 'ws-1',
+          id: 'ws-1',
+          label: 'Workspace',
+          name: 'Workspace',
           workspaceId: 'ws-1',
+          workspaceName: 'Workspace',
           kind: 'workspace',
         }),
       }),
@@ -1448,6 +1452,10 @@ describe('playbook store', () => {
       expect.objectContaining({
         constantValue: expect.objectContaining({
           text: '/docs/spec.md',
+          id: 'doc-1',
+          documentId: 'doc-1',
+          label: 'Spec',
+          name: 'Spec',
           workspaceId: 'ws-1',
           path: '/docs/spec.md',
           kind: 'document',
@@ -2382,6 +2390,35 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     usePlaybookStore.getState().setExecutionPanelOpen(false);
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
+  });
+
+  it('openPortInspection opens the execution detail results tab for the inspected node', () => {
+    usePlaybookStore.setState({ executionDetailTab: 'judge' });
+    usePlaybookUiStore.setState({ executionDetailTab: 'judge' });
+
+    usePlaybookStore.getState().openPortInspection({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.portInspection).toEqual({
+      nodeId: 'task-1',
+      portId: 'output-1',
+      portName: 'Output',
+      portKind: 'text',
+      isInput: false,
+    });
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.executionDetailTab).toBe('results');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(state.pageMode).toBe('run');
+    expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(true);
+    expect(usePlaybookUiStore.getState().executionDetailTab).toBe('results');
+    expect(usePlaybookUiStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('updates page mode directly', () => {

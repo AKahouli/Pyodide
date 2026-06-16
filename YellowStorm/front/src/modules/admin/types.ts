@@ -1539,3 +1539,20 @@ export interface ConnectorOAuthStatusResponse {
   disconnectedAt?: string;
   providerEmail?: string;
 }
+
+// ===== Team Auto-Builder =====
+
+export interface TeamAutoBuilderConfigResponse {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface UpsertTeamAutoBuilderConfigRequest {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
+}

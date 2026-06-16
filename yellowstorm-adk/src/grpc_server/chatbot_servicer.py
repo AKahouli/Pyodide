@@ -9,10 +9,8 @@ import json
 import base64
 import os
 import mimetypes
-import time
 import tempfile
 import shutil
-from datetime import timedelta
 from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
@@ -24,7 +22,6 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
-from src.routers.authentification import create_access_token
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
 from src.middleware.correlation import UserContext, user_ctx
@@ -46,6 +43,22 @@ logger = get_logger(__name__)
 app_settings = get_settings()
 
 
+def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
+    summaries = []
+    for skill in skills or []:
+        summaries.append(
+            {
+                "id": getattr(skill, "id", ""),
+                "name": getattr(skill, "name", ""),
+                "has_description": bool(getattr(skill, "description", "")),
+                "has_instructions": bool(getattr(skill, "instructions", "")),
+                "allowed_tool_count": len(getattr(skill, "allowed_tools", []) or []),
+                "file_count": len(getattr(skill, "files", []) or []),
+            }
+        )
+    return summaries
+
+
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -62,8 +75,6 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
-        self._access_token: Optional[str] = None
-        self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
     async def AdvisePlaybookNode(
@@ -664,6 +675,15 @@ class ChatbotServicer(
         Returns:
             AgentSuggestion: Internal V1 Pydantic model (for backward compatibility)
         """
+        skill_summaries = _grpc_skill_summaries(getattr(pb_agent, "skills", []))
+        logger.info(
+            "gRPC agent skills received",
+            agent_id=pb_agent.id if pb_agent.id else "no_id",
+            agent_name=pb_agent.name,
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+
         # Extract workspace_names and brain_documents from repeated WorkspaceContext
         workspace_names = []
         workspace_ids = []
@@ -968,7 +988,15 @@ class ChatbotServicer(
     @staticmethod
     def _build_skills(pb_request: Any) -> Optional[List[Dict[str, Any]]]:
         """Extract conversation-level skills selected by the user in the composer."""
-        if not getattr(pb_request, "skills", None):
+        skill_summaries = _grpc_skill_summaries(getattr(pb_request, "skills", []))
+        logger.info(
+            "gRPC conversation skills received",
+            request_type=type(pb_request).__name__,
+            conversation_id=getattr(pb_request, "conversation_id", ""),
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+        if not skill_summaries:
             return None
         return [
             {
@@ -1332,26 +1360,6 @@ class ChatbotServicer(
             skills=skills,
         )
 
-    def _get_vectorstores_token(self) -> str:
-        """Generate an access token using create_access_token directly.
-
-        Uses a locally generated JWT (no network call), cached with 60s safety margin.
-        Thread-safe for concurrent requests since token generation is atomic.
-
-        Returns:
-            Access token string.
-        """
-        if self._access_token and time.time() < self._token_expires_at - 60:
-            return self._access_token
-
-        expire_minutes = app_settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        self._access_token = create_access_token(
-            data={"sub": app_settings.AUTH_USERNAME},
-            expires_delta=timedelta(minutes=expire_minutes),
-        )
-        self._token_expires_at = time.time() + (expire_minutes * 60)
-        return self._access_token
-
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
@@ -1460,11 +1468,16 @@ class ChatbotServicer(
             )
             return
 
-        token = self._get_vectorstores_token()
+        vectorstore_api_key = getattr(app_settings, "VECTORSTORE_API_KEY", "") or ""
+        if not vectorstore_api_key:
+            logger.error(
+                "[gRPC] VECTORSTORE_API_KEY not configured - skipping document indexing"
+            )
+            return
 
         index_url = f"{vectorstores_url.rstrip('/')}/vectorstores/indexDocumentFromAzureDatalake"
         headers = {
-            "Authorization": f"Bearer {token}",
+            "x-api-key": vectorstore_api_key,
             "Content-Type": "application/json",
             "correlation-id": conversation_id,
         }

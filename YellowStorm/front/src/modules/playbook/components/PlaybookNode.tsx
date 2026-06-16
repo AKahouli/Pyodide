@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -22,9 +23,11 @@ import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
+import { updateAdminAgent } from '@/modules/admin/api';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
 import type { Agent } from '@/modules/agent/types';
+import type { SkillDropPayload } from './SkillSidebar';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -32,7 +35,8 @@ import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import { createCompatibleInputPort } from '../utils/port-compatibility';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
+import type { ArtifactKind, DataBinding, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
+import { showWarning } from '@/lib/notifications';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -120,6 +124,34 @@ function resolveResourceContent(payload: InputFile): string | undefined {
   return payload.metadata?.filepath;
 }
 
+function getResourceArtifactKind(payload: InputFile): ArtifactKind {
+  return payload.type === 'workspace' ? 'text' : 'document';
+}
+
+function formatConstantInputLabel(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined;
+  if (Array.isArray(value)) {
+    const labels = value
+      .map(formatConstantInputLabel)
+      .filter((label): label is string => Boolean(label));
+    return labels.length > 0 ? labels.join(', ') : undefined;
+  }
+  if (typeof value !== 'object' || value === null) return undefined;
+
+  const record = value as Record<string, unknown>;
+  const candidate = record.label
+    ?? record.name
+    ?? record.workspaceName
+    ?? record.path
+    ?? record.text;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : undefined;
+}
+
+function getInputConstantLabel(binding: DataBinding | undefined): string | undefined {
+  if (binding?.sourceKind !== 'constant') return undefined;
+  return formatConstantInputLabel(binding.constantValue);
+}
+
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
@@ -127,6 +159,7 @@ export interface NodeDataActions {
   repackIteratorChildren?: (nodeId: string) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
   onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
+  onSkillDrop?: (taskId: string, payload: SkillDropPayload) => void;
 }
 
 export const NodeDataActionsContext = createContext<NodeDataActions | null>(null);
@@ -399,6 +432,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     }
     return map;
   }, [inputFiles]);
+  const bindingByTargetPort = useMemo(
+    () => new Map(dataBindings.filter((b) => b.targetNode === id).map((b) => [b.targetPort, b])),
+    [dataBindings, id],
+  );
   const effectiveTask = currentTask || data;
   const iteratorChildExecutionStatus = useMemo(
     () => resolveIteratorChildExecutionStatus(
@@ -443,7 +480,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const canSaveReference = Boolean(actions?.canSaveBaseline(id));
   const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
+  const skillBindings = currentTask?.skillBindings ?? data.skillBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
+  const removeSkillBindingFromTask = usePlaybookStore((s) => s.removeSkillBindingFromTask);
+  const supportsDroppedSkills = !isActionMode && nodeType !== 'router' && nodeType !== 'iterator' && nodeType !== 'human_approval';
 
   const resolveDragPayload = useCallback((e: React.DragEvent): (InputFile & { kind?: string }) | null => {
     try {
@@ -461,6 +501,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       if (!raw) return null;
       const payload = JSON.parse(raw);
       if (payload?.type === 'connector' && payload?.connectorId) return payload as ConnectorDropPayload;
+    } catch { /* noop */ }
+    return null;
+  }, []);
+
+  const resolveSkillDragPayload = useCallback((e: React.DragEvent): SkillDropPayload | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload?.type === 'skill' && payload?.skillId) return payload as SkillDropPayload;
     } catch { /* noop */ }
     return null;
   }, []);
@@ -489,18 +539,22 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       };
 
       if (agent.isDefault) {
-        const cloned = await createAgent(payload);
-        nodeDataActions?.updateNodeData(id, { assignedAgentId: cloned.id });
+        const updated = await updateAdminAgent(agent.id, payload);
+        useAgentStore.setState((state) => ({
+          agents: state.agents.map((item) => (item.id === updated.id ? updated : item)),
+        }));
       } else {
         await updateAgent(agent.id, payload);
       }
       setAgentDialogOpen(false);
-    } catch {
-      // handled by store toast
+    } catch (error) {
+      if (agent.isDefault) {
+        toast.error(error instanceof Error ? error.message : t('node.agentBadge.editFailed'));
+      }
     } finally {
       setAgentDialogSaving(false);
     }
-  }, [agent, id, createAgent, updateAgent, nodeDataActions]);
+  }, [agent, t, updateAgent]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -555,6 +609,23 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       return;
     }
 
+    const skillPayload = resolveSkillDragPayload(e);
+    if (skillPayload) {
+      if (!supportsDroppedSkills) {
+        showWarning(t('skills.dropUnsupported'));
+        return;
+      }
+      if (skillBindings.some((binding) => binding.skillId === skillPayload.skillId)) {
+        showWarning(t('skills.duplicateWarning'));
+        return;
+      }
+      nodeDataActions?.onSkillDrop?.(id, skillPayload);
+      if (!effectiveTask.assignedAgentId) {
+        showWarning(t('skills.needsAgentWarning'));
+      }
+      return;
+    }
+
     const payload = resolveDragPayload(e);
     if (!payload) return;
 
@@ -572,10 +643,18 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       return hit?.port.id;
     };
 
+    const resourceArtifactKind = getResourceArtifactKind(payload);
     let portId = resolveHitPortId();
 
+    if (!portId) {
+      const compatiblePorts = inputPorts.filter((port) => port.artifactKind === resourceArtifactKind);
+      if (compatiblePorts.length === 1) {
+        portId = compatiblePorts[0].id;
+      }
+    }
+
     if (workspaceId && isResource && !portId && nodeDataActions?.updateNodeData) {
-      const newPort = createCompatibleInputPort(payload.name || payload.id, 'document');
+      const newPort = createCompatibleInputPort(payload.name || payload.id, resourceArtifactKind);
       const updatedInputPorts = [...inputPorts, newPort];
       nodeDataActions.updateNodeData(id, { inputPorts: updatedInputPorts });
       portId = newPort.id;
@@ -596,6 +675,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         id: payload.id,
         name: payload.name,
         workspaceId,
+        workspaceName: payload.metadata?.workspaceName,
         content,
         path: payload.metadata?.filepath || payload.metadata?.folderpath,
         mimeType: payload.metadata?.mimeType,
@@ -676,6 +756,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             const isPortDragTarget = isDragOver && dragOverPortId === port.id;
             const portColors = PORT_COLORS[port.artifactKind];
             const boundFile = portFileMap[port.id];
+            const boundConstantLabel = getInputConstantLabel(bindingByTargetPort.get(port.id));
             const top = `${getPortTopPercent(idx, inputPorts.length)}%`;
 
             return (
@@ -711,7 +792,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
                 {/* Persistent label */}
                 <PortLabel
-                  name={boundFile?.name || port.name}
+                  name={boundFile?.name || boundConstantLabel || port.name}
                   kind={port.artifactKind}
                   position="left"
                   selected={isSelected}
@@ -879,7 +960,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             )}
 
-            {toolBindings.length > 0 && (
+            {(toolBindings.length > 0 || skillBindings.length > 0) && (
               <div className="flex flex-wrap items-center gap-1">
                 {toolBindings.filter((b) => b.isEnabled !== false).map((binding) => (
                   <Tooltip key={binding.id}>
@@ -905,6 +986,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     <TooltipContent side="bottom" className="text-xs">
                       <div>{binding.connectorName || binding.connectorId}</div>
                       <div className="text-muted-foreground">{binding.actions.filter((a) => a.isEnabled !== false).length} action(s)</div>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+                {skillBindings.filter((binding) => binding.isEnabled !== false).map((binding) => (
+                  <Tooltip key={binding.id}>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="h-5 cursor-default gap-1 border-violet-500/30 bg-violet-50 px-1.5 py-0 text-[10px] font-medium text-violet-700"
+                      >
+                        <Sparkles className="h-2.5 w-2.5" />
+                        <span className="max-w-[80px] truncate">{binding.skillName || binding.skillId}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 transition-colors hover:text-red-500"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeSkillBindingFromTask(id, binding.id);
+                          }}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div>{binding.skillName || binding.skillId}</div>
+                      {!effectiveTask.assignedAgentId ? (
+                        <div className="text-muted-foreground">{t('skills.badgeNeedsAgent')}</div>
+                      ) : null}
                     </TooltipContent>
                   </Tooltip>
                 ))}

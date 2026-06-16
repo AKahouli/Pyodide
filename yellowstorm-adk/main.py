@@ -34,7 +34,7 @@ from src.smart_rag.infrastructure.session.manager import (
     dispose_shared_engine,
 )
 from src.routers.evaluation_batch import router as evaluation_batch_router
-from google.adk.sessions.database_session_service import Base
+
 from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
 from src.a2a_gateway.repository import A2AAgentRepository, dispose_a2a_engine
 from src.a2a_gateway.router import serving_router as a2a_serving_router

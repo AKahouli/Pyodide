@@ -116,6 +116,7 @@ def create_team_config(user_request: RunAgentTeamRequest) -> AgentTeamConfig:
         doc_tree=documents_tree,
         brain_tree=brain_tree,
         brain_ids=user_request.brain_ids or [],
+        brain_documents=user_request.brain_documents,
         vectorstore_name=user_request.vectorstore_name,
         attached_files=user_request.attached_files,
         attached_images=user_request.attached_images,

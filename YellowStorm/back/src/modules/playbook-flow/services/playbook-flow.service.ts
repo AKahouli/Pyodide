@@ -23,7 +23,6 @@ import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.serv
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
-import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
 import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 
 @Injectable()
@@ -214,9 +213,7 @@ export class PlaybookFlowService {
   }
 
   private buildDefaultHitlBlockers(): Array<Record<string, unknown>> {
-    if (!this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) return [];
-    const now = new Date();
-    return DEFAULT_HITL_BLOCKERS.map((blocker) => ({ ...blocker, createdAt: now, updatedAt: now }));
+    return [];
   }
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {

@@ -24,8 +24,10 @@ const RUNTIME_AGENT_METADATA_KEYS = [
   'agent_prompt',
   'agent_type',
   'agent_tools',
+  'skills',
   'agent_params',
   'connector_bindings',
+  'connector_ids',
   'brain_context',
 ] as const;
 

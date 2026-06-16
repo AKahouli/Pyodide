@@ -92,7 +92,12 @@ def _snapshot_hitl_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
 def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     blockers = snapshot.get("hitl_blockers") or snapshot.get("hitlBlockers")
     if isinstance(blockers, list):
-        return [blocker for blocker in blockers if isinstance(blocker, dict)]
+        return [
+            blocker for blocker in blockers
+            if isinstance(blocker, dict)
+            and blocker.get("enabled", True)
+            and str(blocker.get("createdBy") or blocker.get("created_by") or "") == "user"
+        ]
     by_id: dict[str, dict[str, Any]] = {}
     for node in snapshot.get("nodes", []) if isinstance(snapshot.get("nodes"), list) else []:
         metadata = node.get("metadata") if isinstance(node, dict) else None
@@ -102,7 +107,11 @@ def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(node_blockers, list):
             continue
         for blocker in node_blockers:
-            if isinstance(blocker, dict):
+            if (
+                isinstance(blocker, dict)
+                and blocker.get("enabled", True)
+                and str(blocker.get("createdBy") or blocker.get("created_by") or "") == "user"
+            ):
                 key = str(blocker.get("id") or len(by_id))
                 by_id[key] = blocker
     return list(by_id.values())

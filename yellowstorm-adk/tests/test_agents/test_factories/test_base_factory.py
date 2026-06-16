@@ -125,6 +125,41 @@ class TestAgentFactory:
         # render_chart is always added before the MCP toolset
         assert agent.tools == [render_chart, mock_mcp_toolset]
 
+    def test_create_agent_with_connectors_wires_image_callbacks(
+        self, agent_factory, mock_llm_factory
+    ):
+        """Test connector-enabled agents inject buffered tool images."""
+        connector_bindings = [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "Workspace MCP",
+                "connector_slug": "workspace",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "auth_headers": {},
+                "actions": [
+                    {
+                        "action_key": "read_section",
+                        "description": "Read a section",
+                        "parameter_schema": {},
+                    }
+                ],
+            }
+        ]
+
+        agent = agent_factory.create_agent(
+            name="TestAgent",
+            prompt="Test prompt",
+            chatbot_name="test-chatbot",
+            connector_bindings=connector_bindings,
+        )
+
+        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with(
+            "test-chatbot", 0.0, max_completion_tokens=20000
+        )
+        assert agent.before_model_callback is not None
+        assert agent.after_tool_callback
+
     def test_create_agent_validation_error(self, agent_factory):
         """Test creating an agent with invalid parameters raises error."""
         # Test that search_tool=True without required parameters raises ValueError

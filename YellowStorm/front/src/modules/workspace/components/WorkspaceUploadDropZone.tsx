@@ -3,11 +3,12 @@ import { Upload } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
-import { useWorkspaceStore } from '../store';
+import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import { ACCEPT_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 
 export function WorkspaceUploadDropZone() {
+  const canWrite = useCanWriteWorkspace();
   const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
   const { enabled: autoIndex } = useAutoIndexation();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +56,9 @@ export function WorkspaceUploadDropZone() {
     },
     [pushFiles],
   );
+
+  // Read-only (shared) workspace: uploading is not permitted, hide the drop zone.
+  if (!canWrite) return null;
 
   return (
     <button

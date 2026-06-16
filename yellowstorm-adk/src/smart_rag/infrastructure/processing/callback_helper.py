@@ -16,6 +16,11 @@ import uuid
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from src.logger.logging import get_logger
+
+logger = get_logger("api.smart_rag.infrastructure.processing.callback_helper")
+
 try:
     from google.genai import types
 except Exception:  # pragma: no cover - optional dependency
@@ -423,6 +428,7 @@ def inject_images_before_model(
 
     # Find all keys that start with the prefixes
     image_keys = [key for key in state_dict.keys() if key.startswith(IMAGE_KEY_PREFIX)]
+    injected_count = 0
 
     # Process each set of images with their corresponding filenames
     for image_key in image_keys:
@@ -441,22 +447,58 @@ def inject_images_before_model(
         if images:
             # Unwrap the images
             unwrapped_images = unwrap_images(images)
+            forwarded_images = []
 
             # Inject each image with its filename
             for i, image in enumerate(unwrapped_images):
                 # Use filename if available, otherwise use a default
-                filename = f"source_reference: {file_names[i]} \n\n, below is the retrieved image context: \n"
+                filename = file_names[i] if i < len(file_names) else "retrieved-image"
+                image_prompt = (
+                    f"Retrieved connector image source_reference: {filename}\n"
+                    "Inspect this image visually. If the user's answer is present in "
+                    "the image, use the image content as available evidence."
+                )
                 llm_request.contents.append(
                     types.Content(
                         role="user",
-                        parts=[types.Part(text=filename)] + [image]
+                        parts=[types.Part(text=image_prompt)] + [image]
                     )
                 )
+                injected_count += 1
+                source_image = images[i] if i < len(images) and isinstance(images[i], dict) else {}
+                raw_data = source_image.get("data", "")
+                try:
+                    decoded_size = len(base64.b64decode(raw_data))
+                except Exception:
+                    decoded_size = 0
+                forwarded_images.append(
+                    {
+                        "mimeType": source_image.get("mime"),
+                        "decodedByteSize": decoded_size,
+                        "forwardedToProvider": True,
+                    }
+                )
+
+            logger.info(
+                "CONVERSATION_MCP_IMAGE_BRIDGE_FORWARDED response_id=%s total_content_parts=%s text_parts=%s image_parts=%s images=%s",
+                response_id,
+                len(images),
+                0,
+                len(images),
+                forwarded_images,
+            )
 
             # Clear the buffer for this response_id
             callback_context.state[image_key] = []
             if filename_key in state_dict:
                 callback_context.state[filename_key] = []
+
+    if injected_count:
+        logger.info(
+            "CONVERSATION_MCP_IMAGES_INJECTED image_count=%s request_content_count=%s",
+            injected_count,
+            len(getattr(llm_request, "contents", []) or []),
+        )
 
     return None
 

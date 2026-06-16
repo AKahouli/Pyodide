@@ -22,6 +22,17 @@ export interface DataLayerEdge {
   status: 'ok' | 'warning';
 }
 
+interface ComparableEdge {
+  source: string;
+  sourceHandle?: string | null;
+  target: string;
+  targetHandle?: string | null;
+}
+
+function getEdgeSignature(edge: ComparableEdge): string {
+  return `${edge.source}:${edge.sourceHandle ?? 'default'}->${edge.target}:${edge.targetHandle ?? 'default'}`;
+}
+
 function getTaskPort(task: PlaybookTask | undefined, portId: string, direction: 'input' | 'output') {
   return direction === 'input'
     ? task?.inputPorts?.find((port) => port.id === portId)
@@ -35,15 +46,20 @@ function getFallbackSourceHandle(task: PlaybookTask | undefined): string {
 function formatConstantValue(value: unknown): string {
   if (!value) return 'constant';
   if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const names = value
+      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      .map((item) => item.label || item.name)
+      .filter((name): name is string => typeof name === 'string')
+      .filter((name) => name.trim());
+    return names.length > 0 ? names.join(', ') : 'constant';
+  }
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
     if (typeof obj.text === 'string') return obj.text;
-    if ('kind' in obj && 'name' in obj) {
-      const items = Array.isArray(value) ? value : [value];
-      const names = items
-        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-        .map((item) => `${item.name}`);
-      return names.length > 0 ? names.join(', ') : 'constant';
+    if ('kind' in obj && (typeof obj.name === 'string' || typeof obj.label === 'string')) {
+      const name = obj.label || obj.name;
+      return name ? `${name}` : 'constant';
     }
   }
   return 'constant';
@@ -102,11 +118,17 @@ export function dataBindingsToLayerEdges(bindings: DataBinding[], tasks: Playboo
       targetHandle: db.targetPort,
       kind: db.sourceKind,
       iteration: db.iteration ?? null,
-      label: `${db.sourceKind === 'trigger' ? 'trigger' : db.sourcePort || db.sourceKind} -> ${db.targetPort}`,
+      label: `${db.sourceKind === 'constant' ? sourceLabel : db.sourceKind === 'trigger' ? 'trigger' : db.sourcePort || db.sourceKind} -> ${db.targetPort}`,
       details,
       status: hasMissingPort || hasTypeMismatch ? 'warning' : 'ok',
     };
   });
 }
 
-
+export function filterMirroredDataLayerEdges(
+  dataLayerEdges: DataLayerEdge[],
+  controlEdges: ComparableEdge[],
+): DataLayerEdge[] {
+  const controlEdgeSignatures = new Set(controlEdges.map(getEdgeSignature));
+  return dataLayerEdges.filter((edge) => !controlEdgeSignatures.has(getEdgeSignature(edge)));
+}

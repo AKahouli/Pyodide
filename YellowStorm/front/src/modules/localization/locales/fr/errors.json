@@ -112,5 +112,19 @@
   "ERR_2811": "Vous n'avez pas accès à ce fichier.",
   "ERR_2820": "Run de classification introuvable.",
   "ERR_2821": "Vous n'avez pas accès à ce run de classification.",
-  "ERR_2822": "Le playbook sélectionné est invalide ou inaccessible."
+  "ERR_2822": "Le playbook sélectionné est invalide ou inaccessible.",
+  "ERR_3300": "Équipe introuvable.",
+  "ERR_3301": "Une équipe portant ce nom existe déjà.",
+  "ERR_3302": "Vous n'avez pas accès à cette équipe.",
+  "ERR_3303": "Un agent ne peut apparaître qu'une seule fois dans une équipe.",
+  "ERR_3304": "Un agent ne peut pas être son propre parent.",
+  "ERR_3305": "Cette relation créerait un cycle dans la hiérarchie.",
+  "ERR_3306": "Un ou plusieurs agents sont introuvables ou ne vous appartiennent pas.",
+  "ERR_3307": "Partage d'équipe introuvable.",
+  "ERR_3308": "Impossible de partager une équipe avec vous-même.",
+  "ERR_3309": "L'équipe est déjà partagée avec cet utilisateur.",
+  "ERR_3310": "Vous n'avez pas la permission de gérer ce partage d'équipe.",
+  "ERR_3311": "Aucun utilisateur trouvé pour l'adresse e-mail fournie.",
+  "ERR_3312": "Échec de la génération de la hiérarchie de l'équipe.",
+  "ERR_3313": "L'auto-builder d'équipe n'est pas configuré. Veuillez contacter un administrateur."
 }

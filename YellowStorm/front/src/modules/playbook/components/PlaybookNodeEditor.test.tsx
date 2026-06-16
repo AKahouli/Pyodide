@@ -5,6 +5,7 @@ import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import type { PlaybookTask } from '../types';
 
 const fetchAgents = vi.fn();
+const fetchModels = vi.fn();
 const fetchTaskReplays = vi.fn().mockResolvedValue([]);
 const activateTaskReplay = vi.fn();
 const fetchEvaluationBaseline = vi.fn();
@@ -46,6 +47,12 @@ vi.mock('@/modules/agent/store', () => ({
 
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({ user: null }),
+}));
+
+vi.mock('@/modules/models', () => ({
+  useModels: () => [],
+  useModelsStore: (selector: (state: { fetchModels: typeof fetchModels }) => unknown) =>
+    selector({ fetchModels }),
 }));
 
 vi.mock('../store', () => ({
@@ -301,6 +308,46 @@ describe('PlaybookNodeEditor', () => {
     await waitFor(() => {
       expect(within(container).queryAllByText(/exec-1/).length).toBe(0);
     });
+  });
+
+  it('keeps in-progress description text when the same task rerenders while open', async () => {
+    vi.useFakeTimers();
+
+    const { container, rerender } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    const descriptionField = Array.from(container.querySelectorAll('textarea')).find(
+      (element) => (element as HTMLTextAreaElement).value === genericTask.description,
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(descriptionField, {
+      target: { value: `${genericTask.description} Extra typing that should stay.` },
+    });
+
+    rerender(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...genericTask, description: genericTask.description }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(descriptionField.value).toBe(`${genericTask.description} Extra typing that should stay.`);
+
+    vi.useRealTimers();
   });
 
   it('does not render expected result placeholder for evaluation tasks', async () => {
