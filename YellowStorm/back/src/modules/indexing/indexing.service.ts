@@ -266,8 +266,7 @@ export class IndexingService {
         'Document is already being indexed',
       );
     }
-    // Delete existing index before re-indexing
-    await this.deleteDocumentIndex(documentId, workspaceId);
+
 
     // Reset to pending for re-indexing
     document.indexingStatus = IndexingStatus.PENDING;
