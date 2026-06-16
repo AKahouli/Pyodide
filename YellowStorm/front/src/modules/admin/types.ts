@@ -4,6 +4,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import type { ModuleTranslationKey } from '@/modules/localization';
+import type { AgentConnectorActionSelection } from '@/modules/agent/types';
 
 export interface AdminMenuItem {
   id: string;
@@ -1129,6 +1130,7 @@ export interface AgentResponse {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1162,6 +1164,7 @@ export interface CreateAgentRequest {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1181,6 +1184,7 @@ export interface UpdateAgentRequest {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

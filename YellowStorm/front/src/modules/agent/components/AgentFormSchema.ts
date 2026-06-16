@@ -31,6 +31,12 @@ export const userAgentFormSchema = z.object({
   skills: z.array(z.string()).default([]),
   disabledSkills: z.array(z.string()).default([]),
   connectors: z.array(z.string()).default([]),
+  connectorActionSelections: z.array(
+    z.object({
+      connectorId: z.string().min(1),
+      actionKeys: z.array(z.string().min(1)).min(1),
+    }),
+  ).default([]),
   isActive: z.boolean().default(true),
   isDefaultForType: z.boolean().default(false),
 });
@@ -52,6 +58,7 @@ export const defaultFormValues: UserAgentFormValues = {
   skills: [],
   disabledSkills: [],
   connectors: [],
+  connectorActionSelections: [],
   isActive: true,
   isDefaultForType: false,
 };

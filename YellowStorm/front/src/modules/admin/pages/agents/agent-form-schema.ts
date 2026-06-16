@@ -17,6 +17,7 @@ export interface AgentFormValues {
   skills: string[];
   disabledSkills: string[];
   connectors: string[];
+  connectorActionSelections: Array<{ connectorId: string; actionKeys: string[] }>;
   isActive: boolean;
   isDefaultForType: boolean;
 }
@@ -44,6 +45,12 @@ export function createAgentFormSchema(t: Translator) {
     skills: z.array(z.string()).default([]),
     disabledSkills: z.array(z.string()).default([]),
     connectors: z.array(z.string()).default([]),
+    connectorActionSelections: z.array(
+      z.object({
+        connectorId: z.string().min(1),
+        actionKeys: z.array(z.string().min(1)).min(1),
+      }),
+    ).default([]),
     isActive: z.boolean().default(true),
     isDefaultForType: z.boolean().default(false),
   });
@@ -63,6 +70,7 @@ export const defaultFormValues: AgentFormValues = {
   skills: [],
   disabledSkills: [],
   connectors: [],
+  connectorActionSelections: [],
   isActive: true,
   isDefaultForType: false,
 };

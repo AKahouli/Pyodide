@@ -104,6 +104,7 @@ describe('AgentService connector skill inheritance', () => {
       knowledgeBases: [],
       toolIds: [],
       connectorIds: ['connector-1'],
+      connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],
       disabledSkillIds: ['disabled-skill'],
       agentTypeSkillIds: ['type-skill'],
@@ -118,7 +119,10 @@ describe('AgentService connector skill inheritance', () => {
       {
         id: 'connector-1',
         name: 'Connector 1',
-        actions: [],
+        actions: [
+          { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
+          { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
+        ],
         referencedSkillIds: ['connector-skill', 'disabled-skill'],
       },
     ]);
@@ -136,6 +140,7 @@ describe('AgentService connector skill inheritance', () => {
       'disabled-skill',
     ]);
     expect(result).toHaveLength(1);
+    expect(result[0].tools.map((tool) => tool.name)).toEqual(['connector_connector-1_run_code']);
     expect(result[0].skills?.map((skill) => skill.id as string)).toEqual([
       'type-skill',
       'agent-skill',
@@ -178,11 +183,14 @@ describe('AgentService connector skill inheritance', () => {
       }),
     });
 
-    connectorService.findByIds.mockResolvedValue([
+      connectorService.findByIds.mockResolvedValue([
       {
         id: '222222222222222222222222',
         name: 'Connector 1',
-        actions: [],
+        actions: [
+          { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
+          { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
+        ],
         referencedSkillIds: ['connector-skill'],
       },
     ]);
@@ -198,6 +206,10 @@ describe('AgentService connector skill inheritance', () => {
       'connector-skill',
     ]);
     expect(result).toHaveLength(1);
+    expect(result[0].tools.map((tool) => tool.name)).toEqual([
+      'connector_222222222222222222222222_run_code',
+      'connector_222222222222222222222222_upload_file',
+    ]);
     expect(result[0].skills?.map((skill) => skill.id as string)).toEqual([
       '444444444444444444444444',
       '111111111111111111111111',
