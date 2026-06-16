@@ -118,6 +118,7 @@ export function ProjectPage() {
       repoName: string;
       repoUrl?: string;
     },
+    teamIds?: string[],
   ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
@@ -149,6 +150,7 @@ export function ProjectPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         connectorRepo,
       });
 

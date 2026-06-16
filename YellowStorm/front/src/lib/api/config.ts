@@ -64,6 +64,9 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminTeamAutoBuilder: {
+    config: '/admin/teams/auto-builder-config',
+  },
   usage: {
     status: '/usage/status',
     plan: '/usage/plan',
@@ -270,6 +273,16 @@ export const API_ENDPOINTS = {
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
+  },
+  teams: {
+    list: '/teams',
+    all: '/teams/all',
+    byId: (id: string) => `/teams/${id}`,
+    generate: '/teams/generate',
+    hierarchy: (id: string) => `/teams/${id}/hierarchy`,
+    shares: (id: string) => `/teams/${id}/shares`,
+    shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
+    unshare: (id: string) => `/teams/${id}/unshare`,
   },
   tools: {
     active: '/tools/active',
