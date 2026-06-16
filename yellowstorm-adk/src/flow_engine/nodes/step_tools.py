@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any
 
 import litellm
 from langgraph.types import interrupt
@@ -21,8 +21,7 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 MAX_TOOL_ITERATIONS = 50
-MAX_IMAGES_PER_ITERATION = 50
-MAX_IMAGES_TOTAL = 50
+MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
 @dataclass(frozen=True)
@@ -44,31 +43,10 @@ def _parse_tool_result(result: Any) -> Any:
     return result
 
 
-def _extract_images_from_result(result: Any) -> List[str]:
-    images = []
-    if isinstance(result, dict):
-        for k, v in result.items():
-            if k == "image_base64" and isinstance(v, str) and v:
-                images.append(v)
-            else:
-                images.extend(_extract_images_from_result(v))
-    elif isinstance(result, list):
-        for item in result:
-            images.extend(_extract_images_from_result(item))
-    return images
-
-
-def _strip_images_from_tool_result(result: Any) -> Any:
-    if isinstance(result, dict):
-        return {k: _strip_images_from_tool_result(v) for k, v in result.items() if k != "image_base64"}
-    if isinstance(result, list):
-        return [_strip_images_from_tool_result(item) for item in result]
-    return result
-
-
 def _compress_tool_json(data: Any) -> Any:
     """Remove redundant blocks array when a content summary string is already present."""
     if isinstance(data, dict):
+        data = {k: v for k, v in data.items() if k != MCP_CONTENT_PARTS_KEY}
         if isinstance(data.get("blocks"), list) and isinstance(data.get("content"), str):
             data = {k: v for k, v in data.items() if k != "blocks"}
         return {k: _compress_tool_json(v) for k, v in data.items()}
@@ -79,53 +57,62 @@ def _compress_tool_json(data: Any) -> Any:
 
 def _build_tool_text_content(result: Any) -> str:
     parsed = _parse_tool_result(result)
-    cleaned = _compress_tool_json(_strip_images_from_tool_result(parsed))
+    cleaned = _compress_tool_json(parsed)
     return cleaned if isinstance(cleaned, str) else json.dumps(cleaned, default=str)
 
 
-def _image_url_from_base64(image_base64: str) -> str:
-    value = image_base64.strip()
-    if value.startswith("data:image/"):
-        return value
-    return f"data:image/jpeg;base64,{value}"
+def _extract_mcp_content_parts(result: Any) -> list[dict[str, Any]]:
+    parsed = _parse_tool_result(result)
+    if not isinstance(parsed, dict):
+        return []
+    parts = parsed.get(MCP_CONTENT_PARTS_KEY)
+    if not isinstance(parts, list):
+        return []
+    return [part for part in parts if isinstance(part, dict)]
 
 
-def _cap_images_in_messages(messages: list[dict[str, Any]], max_images: int = MAX_IMAGES_TOTAL) -> list[dict[str, Any]]:
-    """Keep the most recent images, replace older ones with a text note when over the limit."""
-    def _count_images(msg: dict) -> int:
-        content = msg.get("content")
-        if isinstance(content, list):
-            return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image_url")
-        return 0
+def _image_url_from_mcp_part(part: dict[str, Any]) -> str:
+    image_data = str(part.get("data") or "").strip()
+    mime_type = str(part.get("mimeType") or "image/jpeg").strip() or "image/jpeg"
+    if image_data.startswith("data:image/"):
+        return image_data
+    return f"data:{mime_type};base64,{image_data}"
 
-    counts = [_count_images(m) for m in messages]
-    if sum(counts) <= max_images:
-        return messages
 
-    budget = max_images
-    keep_flags = []
-    for count in reversed(counts):
-        if budget >= count:
-            keep_flags.append(True)
-            budget -= count
-        else:
-            keep_flags.append(False)
-    keep_flags.reverse()
-
-    result = list(messages)
-    dropped = 0
-    for i, (msg, should_keep, count) in enumerate(zip(messages, keep_flags, counts)):
-        if should_keep or count == 0:
+def _build_mcp_vision_message(tool_name: str, tool_content: str, parts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": tool_content}]
+    image_count = 0
+    image_log: list[dict[str, Any]] = []
+    for part in parts:
+        if part.get("type") != "image" or not part.get("data"):
             continue
-        content = msg.get("content")
-        if isinstance(content, list):
-            text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-            text_blocks.append({"type": "text", "text": f"[{count} image(s) removed — global {max_images}-image limit reached]"})
-            result[i] = {**msg, "content": text_blocks}
-        dropped += count
+        image_count += 1
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_url_from_mcp_part(part)},
+            }
+        )
+        image_log.append(
+            {
+                "mimeType": part.get("mimeType"),
+                "decodedByteSize": part.get("decodedByteSize"),
+                "forwardedToProvider": True,
+            }
+        )
 
-    logger.warning("Global image cap applied", total=sum(counts), kept=sum(counts) - dropped, dropped=dropped)
-    return result
+    if image_count == 0:
+        return None
+
+    logger.info(
+        "MCP image bridge forwarding",
+        tool=tool_name,
+        total_content_parts=len(parts),
+        text_parts=sum(1 for part in parts if part.get("type") == "text"),
+        image_parts=image_count,
+        images=image_log,
+    )
+    return {"role": "user", "content": blocks}
 
 
 def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -137,10 +124,15 @@ def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(agent_tools, list):
         agent_tools = []
 
+    agent_skills = metadata.get("skills")
+    if not isinstance(agent_skills, list):
+        agent_skills = []
+
     return {
         "name": str(metadata.get("agent_name") or ""),
         "type": str(metadata.get("agent_type") or metadata.get("type") or ""),
         "tools": [tool for tool in agent_tools if isinstance(tool, dict)],
+        "skills": [skill for skill in agent_skills if isinstance(skill, dict)],
         "agent_params": agent_params,
         "brain_ids": _extract_brain_ids(metadata.get("brain_context")),
     }
@@ -199,6 +191,7 @@ async def run_step_with_tools(
             max_tokens=32000,
             tools=tool_definitions,
             tool_choice="auto",
+            parallel_tool_calls=False,
         )
         if trace_collector is not None:
             from src.flow_engine.observability.usage_extractor import extract_usage
@@ -215,7 +208,7 @@ async def run_step_with_tools(
         if not tool_calls:
             return str(message.get("content") or "")
 
-        iteration_images: List[str] = []
+        vision_messages: list[dict[str, Any]] = []
         for tool_call in tool_calls:
             function_payload = tool_call.get("function") or {}
             tool_name = str(function_payload.get("name") or "")
@@ -275,22 +268,15 @@ async def run_step_with_tools(
                 "name": tool_name,
                 "content": tool_content,
             })
-            parsed = _parse_tool_result(tool_result)
-            iteration_images.extend(_extract_images_from_result(parsed))
-
-        if iteration_images:
-            capped = iteration_images[:MAX_IMAGES_PER_ITERATION]
-            if len(iteration_images) > MAX_IMAGES_PER_ITERATION:
-                logger.warning("Images capped per iteration", total=len(iteration_images), kept=MAX_IMAGES_PER_ITERATION)
-            vision_blocks: List[dict[str, Any]] = [
-                {"type": "text", "text": f"Images from tool results ({len(capped)} image(s)):"}
-            ]
-            for b64 in capped:
-                vision_blocks.append({"type": "image_url", "image_url": {"url": _image_url_from_base64(b64)}})
-            messages.append({"role": "user", "content": vision_blocks})
-            logger.info("Vision images injected", image_count=len(capped))
-
-        messages = _cap_images_in_messages(messages)
+            mcp_parts = _extract_mcp_content_parts(tool_result)
+            vision_message = _build_mcp_vision_message(
+                tool_name,
+                tool_content,
+                mcp_parts,
+            )
+            if vision_message is not None:
+                vision_messages.append(vision_message)
+        messages.extend(vision_messages)
 
     raise RuntimeError("Max tool iterations reached without a final response")
 

@@ -601,6 +601,7 @@ def create_langchain_tools(
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
     workspace_ceph_paths: Optional[List[str]] = None,
+    binding_workspace_ids: Optional[List[str]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -636,10 +637,16 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        # Use raw workspace IDs directly (brain_ids), with fallback to output_workspace_id
+        # Prefer workspace IDs harvested from files wired into this step's input
+        # ports (so dropping a file from workspace A on a node whose playbook
+        # default is workspace B scopes the connector MCP call to A, where the
+        # file actually lives). Fall back to the agent's configured brain_ids,
+        # then the playbook workspace_context, then the output workspace.
+        binding_ids = [wid for wid in (binding_workspace_ids or []) if wid]
         raw_ids = agent_config.get("brain_ids") or []
         connector_workspace_ids = (
-            raw_ids
+            binding_ids
+            or raw_ids
             or [
                 wc.get("workspace_id")
                 for wc in (workspace_context or [])

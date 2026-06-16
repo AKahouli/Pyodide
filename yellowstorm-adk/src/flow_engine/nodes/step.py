@@ -46,6 +46,7 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -274,6 +275,7 @@ async def run_step(
     if agent_description:
         fallback_system_prompt = f"{agent_description}\n\n{fallback_system_prompt}"
     system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or fallback_system_prompt)
+    system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
     has_agent = bool(agent_name)
 
     logger.info(
@@ -568,6 +570,7 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
+        binding_workspace_ids=tool_scope.binding_workspace_ids,
     )
     components: list[dict[str, Any]] = []
     should_stream_tokens = (

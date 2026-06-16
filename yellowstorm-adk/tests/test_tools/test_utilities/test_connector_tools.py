@@ -362,7 +362,7 @@ def test_connector_tool_injects_single_file_name_header(
     assert captured["auth_headers"]["file_name"] == "report.pdf"
 
 
-def test_read_section_tool_buffers_images_with_runtime_tool_context(
+def test_read_section_tool_passes_images_through_with_runtime_tool_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
@@ -393,12 +393,53 @@ def test_read_section_tool_buffers_images_with_runtime_tool_context(
     response = asyncio.run(tool.func(query="recipe", tool_context=tool_context))
 
     assert "tool_context" in signature.parameters
-    assert "image_base64" not in str(response)
-    assert response["images"][0]["image_attached"] is True
+    assert response["images"][0]["image_base64"] == "abc123"
+    assert tool_context.state == {}
+
+
+def test_connector_tool_buffers_mcp_image_parts_for_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_mcp_tool(*args, **kwargs):
+        return {
+            "text": "section text",
+            "images": [
+                {
+                    "image_id": "img-1",
+                    "image_content_index": 1,
+                }
+            ],
+            "__mcp_content_parts": [
+                {"type": "text", "text": "section text"},
+                {
+                    "type": "image",
+                    "data": "YWJjMTIz",
+                    "mimeType": "image/png",
+                    "decodedByteSize": 6,
+                },
+            ],
+        }
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool({}, action_key="read_content")
+    tool_context = SimpleNamespace(state={})
+
+    response = asyncio.run(tool.func(query="recipe", tool_context=tool_context))
+
+    assert "__mcp_content_parts" not in response
+    assert response["images"][0]["image_content_index"] == 1
     image_keys = [
         key for key in tool_context.state if key.startswith("_pending_tool_images_")
     ]
     assert len(image_keys) == 1
+    response_id = image_keys[0].replace("_pending_tool_images_", "")
     assert tool_context.state[image_keys[0]] == [
-        {"mime": "image/png", "data": "abc123"}
+        {"mime": "image/png", "data": "YWJjMTIz"}
+    ]
+    assert tool_context.state[f"_list_of_filenames_{response_id}"] == [
+        "image_id=img-1, image_content_index=1"
     ]

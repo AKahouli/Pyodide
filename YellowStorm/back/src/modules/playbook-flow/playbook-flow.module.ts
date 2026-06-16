@@ -6,6 +6,8 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { LoggerModule, LoggerService } from '@modules/logger';
 import { AgentModule } from '@modules/agent/agent.module';
+import { SkillModule } from '@modules/skill/skill.module';
+import { ConnectorModule } from '@modules/connector/connector.module';
 import { ModelsModule } from '@modules/models/models.module';
 import { UsageModule } from '@modules/usage/usage.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
@@ -92,6 +94,7 @@ import { PlaybookFlowExecutionLeaseService } from './services/playbook-flow-exec
 import { PlaybookFlowTokenBufferService } from './services/playbook-flow-token-buffer.service';
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowIntentConstructionService } from './services/playbook-flow-intent-construction.service';
+import { PlaybookIntentGraphBindingResolverService } from './services/playbook-intent-graph-binding-resolver.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -156,6 +159,8 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     AuthorizationModule,
     LoggerModule,
     AgentModule,
+    SkillModule,
+    ConnectorModule,
     ModelsModule,
     UsageModule,
     WorkspaceModule,
@@ -233,6 +238,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowTokenBufferService,
     PlaybookFlowIntentService,
     PlaybookFlowIntentConstructionService,
+    PlaybookIntentGraphBindingResolverService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
     PlaybookFlowPublicReasoningParserService,

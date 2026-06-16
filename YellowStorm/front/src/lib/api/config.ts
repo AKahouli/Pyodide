@@ -313,6 +313,7 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,

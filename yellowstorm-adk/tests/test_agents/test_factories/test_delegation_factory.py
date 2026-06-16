@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from src.smart_rag.agents.factories.delegation_factory import AgentDelegationFactory
 from src.smart_rag.agents.factories.delegation_factory_helper import (
     _append_connector_repo_context,
+    _append_workspace_document_context,
     _inject_connector_repo_into_bindings,
 )
 
@@ -203,3 +204,22 @@ class TestAgentDelegationFactory:
         assert "Connector: GitHub" in prompt
         assert "Repository: org-name/repo-name" in prompt
         assert "Do not ask the user which repository to use." in prompt
+
+    def test_append_workspace_document_context_exposes_mcp_identifiers(self):
+        prompt = _append_workspace_document_context(
+            "Base prompt",
+            [
+                {
+                    "filename": "30-recettes.pdf",
+                    "file_name": "30-recettes.pdf",
+                    "workspace_id": "workspace-1",
+                    "workspace_name": "Recipes",
+                }
+            ],
+        )
+
+        assert "Base prompt" in prompt
+        assert "<workspace_documents>" in prompt
+        assert "30-recettes.pdf" in prompt
+        assert "workspace-1" in prompt
+        assert "Use these exact file names and workspace IDs" in prompt

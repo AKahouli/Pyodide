@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -28,8 +28,10 @@ interface Props {
   onUndo: () => void;
   onRedo: () => void;
   onToggleConnectors: () => void;
+  onToggleSkills: () => void;
   onToggleExplorer: () => void;
   connectorsOpen: boolean;
+  skillsOpen: boolean;
   explorerOpen: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -63,7 +65,6 @@ type Position = { x: number; y: number };
 
 const DEFAULT_POSITION: Position = { x: 16, y: 16 };
 const VIEWPORT_PADDING = 16;
-const STORAGE_KEY = 'playbook-canvas-floating-toolbar-position-v2';
 
 function positionsMatch(a: Position, b: Position): boolean {
   return a.x === b.x && a.y === b.y;
@@ -80,8 +81,10 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   onUndo,
   onRedo,
   onToggleConnectors,
+  onToggleSkills,
   onToggleExplorer,
   connectorsOpen,
+  skillsOpen,
   explorerOpen,
   canUndo,
   canRedo,
@@ -113,7 +116,6 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragOffsetRef = useRef<Position>({ x: 0, y: 0 });
-  const hasRestoredPersistedPositionRef = useRef(false);
   const initialPosition = {
     x: Math.max(DEFAULT_POSITION.x, minLeftOffset),
     y: Math.max(DEFAULT_POSITION.y, Math.max(0, minTopOffset)),
@@ -229,29 +231,6 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   }, [fetchFlowNodeTemplates]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-
-    try {
-      const parsed = JSON.parse(raw) as Partial<Position>;
-      const next = {
-        x: Number.isFinite(parsed.x) ? Number(parsed.x) : Math.max(DEFAULT_POSITION.x, minLeftOffset),
-        y: Number.isFinite(parsed.y) ? Number(parsed.y) : Math.max(DEFAULT_POSITION.y, Math.max(0, minTopOffset)),
-      };
-      const clamped = clampPosition({
-        x: Math.max(next.x, minLeftOffset),
-        y: Math.max(next.y, minTopOffset),
-      });
-      hasRestoredPersistedPositionRef.current = true;
-      positionRef.current = clamped;
-      setPosition(clamped);
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-  }, [clampPosition, minLeftOffset, minTopOffset]);
-
-  useEffect(() => {
     positionRef.current = position;
   }, [position]);
 
@@ -268,9 +247,6 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   };
 
   const stopDragging = () => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(positionRef.current));
-    }
     dragPointerIdRef.current = null;
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', stopDragging);
@@ -280,10 +256,6 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   useEffect(() => stopDragging, []);
 
   useLayoutEffect(() => {
-    if (hasRestoredPersistedPositionRef.current) {
-      return;
-    }
-
     const next = clampPosition(getBottomAnchoredPosition());
     if (!positionsMatch(positionRef.current, next)) {
       positionRef.current = next;
@@ -293,11 +265,6 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
 
   useLayoutEffect(() => {
     const syncPosition = () => {
-      if (hasRestoredPersistedPositionRef.current) {
-        reclampPosition();
-        return;
-      }
-
       const next = clampPosition(getBottomAnchoredPosition());
       if (!positionsMatch(positionRef.current, next)) {
         positionRef.current = next;
@@ -308,7 +275,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
     window.addEventListener('resize', syncPosition);
     syncPosition();
     return () => window.removeEventListener('resize', syncPosition);
-  }, [clampPosition, getBottomAnchoredPosition, reclampPosition]);
+  }, [clampPosition, getBottomAnchoredPosition]);
 
   useLayoutEffect(() => {
     reclampPosition();
@@ -376,6 +343,14 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       onClick: onToggleConnectors,
       disabled,
       active: connectorsOpen,
+    },
+    {
+      key: 'skills',
+      label: skillsOpen ? t('toolbar.hideSkills') : t('toolbar.showSkills'),
+      icon: Sparkles,
+      onClick: onToggleSkills,
+      disabled,
+      active: skillsOpen,
     },
     {
       key: 'bindings',
