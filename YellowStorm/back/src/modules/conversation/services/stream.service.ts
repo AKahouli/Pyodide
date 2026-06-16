@@ -1570,4 +1570,181 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const parts = String(filePath || '').split('/').filter(Boolean);
     return parts.length >= 2 ? parts[1] : fallback;
   }
+
+  /**
+   * Runs a single linked agent via gRPC RunSingleAgent (agent_mode=mono on ADK side).
+   * Used by WhatsApp inbound replies — no manager orchestration, no SSE gateway.
+   */
+  async runSingleAgentStream(params: {
+    userId: string;
+    username: string;
+    conversationId: string;
+    messageId: string;
+    agentId: string;
+    query: string;
+    requestId?: string;
+  }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+    if (!this.isGrpcAvailable) {
+      throw new ServiceUnavailableException(
+        ErrorCode.CHAT_GRPC_UNAVAILABLE,
+        'gRPC service is not available for single-agent streaming',
+      );
+    }
+
+    const logOpts: LogOptions = { requestId: params.requestId };
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const fallbackModelId = this.modelsService.getModelIdentifier(defaultModel) || '';
+
+    const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(
+      params.userId,
+      [params.agentId],
+      fallbackModelId,
+      params.conversationId,
+    );
+    if (grpcAgents.length === 0) {
+      throw new ServiceUnavailableException(
+        ErrorCode.AGENT_NOT_FOUND,
+        'Linked agent not found for single-agent stream',
+      );
+    }
+
+    await this.resolveAgentBrainContexts(grpcAgents);
+
+    const conversation = await this.conversationService.getConversationDocument(params.conversationId);
+    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
+    const [workspaceContexts, previousAttachedFiles] = await Promise.all([
+      this.buildWorkspaceContexts(params.conversationId, logOpts, conversation),
+      this.buildPreviousAttachedFiles(systemWorkspaceId, []),
+    ]);
+
+    const grpcRequest = {
+      user_context: { user_id: params.userId, username: params.username || '' },
+      conversation_id: params.conversationId,
+      query: params.query,
+      agent: grpcAgents[0],
+      workspace_context: workspaceContexts.length
+        ? workspaceContexts
+        : [
+            {
+              workspace_id: params.conversationId,
+              workspace_name: params.conversationId,
+              workspace_documents: [],
+            },
+          ],
+      attached_files: [],
+      previous_attached_files: previousAttachedFiles,
+    };
+
+    const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
+    this.logger.log('RunSingleAgent gRPC request prepared', {
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      agentId: params.agentId,
+      agentName: grpcAgents[0].name,
+      model: grpcAgents[0].chatbot?.model,
+      toolCount: grpcAgents[0].tools?.length ?? 0,
+      workspaceCount: grpcRequest.workspace_context.length,
+      requestId: params.requestId,
+    }, logOpts);
+
+    return this.executeSingleAgentGrpcStream(params.messageId, grpcRequest, timeoutMs, logOpts);
+  }
+
+  private executeSingleAgentGrpcStream(
+    messageId: string,
+    grpcRequest: Record<string, unknown>,
+    timeoutMs: number,
+    logOpts?: LogOptions,
+  ): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+    return new Promise((resolve, reject) => {
+      const metadata = new grpc.Metadata();
+      const username =
+        (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
+      metadata.set('user', username);
+
+      const call = this.chatbotClient.RunSingleAgent(grpcRequest, { metadata });
+      const buffer = new Map<string, MessageComponent>();
+      const startTime = Date.now();
+      let chunkCount = 0;
+      let timeoutHandle: NodeJS.Timeout | null = null;
+
+      const resetIdleTimeout = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        timeoutHandle = setTimeout(() => {
+          this.logger.error('RunSingleAgent idle timeout', {
+            messageId,
+            chunkCount,
+            timeoutMs,
+            requestId: logOpts?.requestId,
+          });
+          call.cancel();
+          void this.messageService.markStreamFailed(messageId).catch((err) => {
+            this.logger.error('Failed to mark single-agent stream as failed', {
+              messageId,
+              error: (err as Error).message,
+            });
+          });
+          reject(new Error('RunSingleAgent idle timeout'));
+        }, timeoutMs);
+      };
+
+      resetIdleTimeout();
+
+      call.on('data', (chunk: { action?: string; component?: Record<string, unknown> }) => {
+        resetIdleTimeout();
+        chunkCount++;
+
+        const action = chunk.action;
+        const comp = chunk.component;
+        if (!comp?.id || !action) {
+          return;
+        }
+        if (action === 'delete') {
+          buffer.delete(comp.id as string);
+          return;
+        }
+        if (action === 'add' || action === 'update') {
+          this.applyChunkToBuffer(buffer, action, comp);
+        }
+      });
+
+      call.on('error', (error: Error) => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        this.logger.error('RunSingleAgent gRPC stream error', {
+          messageId,
+          error: error.message,
+          chunkCount,
+          requestId: logOpts?.requestId,
+        });
+        void this.messageService.markStreamFailed(messageId).catch((err) => {
+          this.logger.error('Failed to mark single-agent stream as failed', {
+            messageId,
+            error: (err as Error).message,
+          });
+        });
+        reject(error);
+      });
+
+      call.on('end', () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        const durationMs = Date.now() - startTime;
+        const components = Array.from(buffer.values());
+
+        void this.messageService
+          .completeAIMessage({ messageId, components, durationMs })
+          .then(() => {
+            resolve({ durationMs, componentCount: components.length, chunkCount });
+          })
+          .catch((error) => {
+            reject(error);
+          });
+      });
+    });
+  }
 }

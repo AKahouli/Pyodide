@@ -264,6 +264,18 @@ export enum ErrorCode {
   TELEGRAM_USER_INACTIVE = 'ERR_3207',
   TELEGRAM_DUPLICATE_UPDATE = 'ERR_3208',
 
+  // WhatsApp integration errors (3210-3219)
+  WHATSAPP_INTEGRATION_NOT_FOUND = 'ERR_3210',
+  WHATSAPP_SESSION_NOT_FOUND = 'ERR_3211',
+  WHATSAPP_SESSION_NOT_PAIRING = 'ERR_3212',
+  WHATSAPP_ALREADY_CONNECTED = 'ERR_3213',
+  WHATSAPP_DISABLED = 'ERR_3214',
+  WHATSAPP_SEND_FAILED = 'ERR_3215',
+  WHATSAPP_PAIRING_FAILED = 'ERR_3216',
+  WHATSAPP_AUTH_INVALID = 'ERR_3217',
+  WHATSAPP_USER_INACTIVE = 'ERR_3218',
+  WHATSAPP_NETWORK_UNREACHABLE = 'ERR_3219',
+
   // Team errors (3300-3399)
   TEAM_NOT_FOUND = 'ERR_3300',
   TEAM_ALREADY_EXISTS = 'ERR_3301',
@@ -529,6 +541,18 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TELEGRAM_INTEGRATION_DISABLED]: 'Telegram integration is disabled for this agent.',
   [ErrorCode.TELEGRAM_USER_INACTIVE]: 'The linked platform user is inactive.',
   [ErrorCode.TELEGRAM_DUPLICATE_UPDATE]: 'Telegram update already processed.',
+
+  [ErrorCode.WHATSAPP_INTEGRATION_NOT_FOUND]: 'WhatsApp integration not found for this agent.',
+  [ErrorCode.WHATSAPP_SESSION_NOT_FOUND]: 'WhatsApp session not found.',
+  [ErrorCode.WHATSAPP_SESSION_NOT_PAIRING]: 'WhatsApp session is not waiting for pairing.',
+  [ErrorCode.WHATSAPP_ALREADY_CONNECTED]: 'WhatsApp is already connected for this agent.',
+  [ErrorCode.WHATSAPP_DISABLED]: 'WhatsApp integration is disabled.',
+  [ErrorCode.WHATSAPP_SEND_FAILED]: 'Failed to send message to WhatsApp.',
+  [ErrorCode.WHATSAPP_PAIRING_FAILED]: 'WhatsApp pairing failed.',
+  [ErrorCode.WHATSAPP_AUTH_INVALID]: 'WhatsApp authentication data is invalid.',
+  [ErrorCode.WHATSAPP_USER_INACTIVE]: 'The linked platform user is inactive.',
+  [ErrorCode.WHATSAPP_NETWORK_UNREACHABLE]:
+    'Cannot reach web.whatsapp.com from this server. Check firewall, VPN, or network policy.',
 
   [ErrorCode.TEAM_NOT_FOUND]: 'Team not found.',
   [ErrorCode.TEAM_ALREADY_EXISTS]: 'A team with this name already exists.',
