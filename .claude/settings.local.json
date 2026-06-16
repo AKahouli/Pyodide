@@ -162,7 +162,17 @@
       "Bash(echo \"committed: $?\")",
       "Bash(python3 -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('✅ valid JSON'\\)\")",
       "Bash(xargs ls -1)",
-      "Bash(awk '/selectWorkspace: async/{f=1} f{print NR\": \"$0} /^      },/{if\\(f\\)c++; if\\(c>=1 && f\\){exit}}' store.ts)"
+      "Bash(awk '/selectWorkspace: async/{f=1} f{print NR\": \"$0} /^      },/{if\\(f\\)c++; if\\(c>=1 && f\\){exit}}' store.ts)",
+      "Bash(grep -E \"\\\\.tsx?$\")",
+      "Bash(sed -n '120,175p' schemas/agent.schema.ts)",
+      "Bash(sed -n '1,40p' interfaces/agent.interface.ts)",
+      "Bash(sed -n '300,320p' controllers/message.controller.ts)",
+      "Bash(sed -n '40,44p' ../exceptions/constants/error-codes.ts)",
+      "Bash(sort -t_ -k2 -n)",
+      "Bash(grep -rln \"from '@/components/ai-elements/input'\\\\|ai-elements/input'\" modules components)",
+      "Bash(grep -rln \"agentIds?: string\\\\[\\\\], memberIds?: string\\\\[\\\\]\" modules)",
+      "Bash(grep -nE \"[A-Za-z]{3,}\" src/modules/team/components/TeamsPage.tsx)",
+      "Bash(echo \"TSC exit code: $?\")"
     ]
   },
   "disabledMcpjsonServers": [

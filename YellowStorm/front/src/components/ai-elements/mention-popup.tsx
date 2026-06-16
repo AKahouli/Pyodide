@@ -8,16 +8,17 @@ import { useModuleTranslation } from '@/modules/localization';
 
 interface MentionPopupProps {
   open: boolean;
-  onSelect: (item: { id: string; name: string; isMember?: boolean }) => void;
+  onSelect: (item: { id: string; name: string; isMember?: boolean; isTeam?: boolean }) => void;
   onClose: () => void;
   filter: string;
   anchorPosition: { top: number; left: number };
   agents: Agent[];
   sharedAgents?: Agent[];
   members?: Array<{ id: string; name: string }>;
+  teams?: Array<{ id: string; name: string; agentCount?: number }>;
 }
 
-export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, agents, sharedAgents, members }: MentionPopupProps) {
+export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, agents, sharedAgents, members, teams }: MentionPopupProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [adjustedPos, setAdjustedPos] = useState<{ top?: number; bottom?: number; left: number }>({ left: 0 });
@@ -33,15 +34,17 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
   const filteredPersonalAgents = useMemo(() => personalAgents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter)), [personalAgents, normalizedFilter]);
   const filteredDefaultAgents = useMemo(() => defaultAgents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter)), [defaultAgents, normalizedFilter]);
   const filteredMembers = useMemo(() => (members || []).filter((m) => m.name.toLowerCase().includes(normalizedFilter)), [members, normalizedFilter]);
+  const filteredTeams = useMemo(() => (teams || []).filter((tm) => tm.name.toLowerCase().includes(normalizedFilter)), [teams, normalizedFilter]);
 
   const combinedItems = useMemo(() => {
     return [
+      ...filteredTeams.map((tm) => ({ ...tm, isTeam: true })),
       ...filteredMembers.map((m) => ({ ...m, isMember: true })),
       ...filteredSharedAgents,
       ...filteredPersonalAgents,
       ...filteredDefaultAgents,
-    ] as Array<{ id: string; name: string; isMember?: boolean; agentType?: { name?: string } }>;
-  }, [filteredMembers, filteredSharedAgents, filteredPersonalAgents, filteredDefaultAgents]);
+    ] as Array<{ id: string; name: string; isMember?: boolean; isTeam?: boolean; agentCount?: number; agentType?: { name?: string } }>;
+  }, [filteredTeams, filteredMembers, filteredSharedAgents, filteredPersonalAgents, filteredDefaultAgents]);
 
   // Adjust position after render to avoid going off-screen
   useEffect(() => {
@@ -169,11 +172,40 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
         <CommandInput placeholder={tCommon('mention.searchPlaceholder')} value={filter} className='h-8 text-sm' readOnly />
         <CommandList className='max-h-48'>
           {combinedItems.length === 0 && <div className='py-6 text-center text-sm text-muted-foreground'>{tCommon('mention.empty')}</div>}
-          
+
+          {filteredTeams.length > 0 && (
+            <CommandGroup heading={tCommon('mention.teamsHeading' as any) || 'Teams'}>
+              {filteredTeams.map((team, idx) => {
+                const globalIndex = idx;
+                const isHighlighted = highlightedIndex === globalIndex;
+                return (
+                  <CommandItem
+                    key={team.id}
+                    ref={(el) => {
+                      if (el) itemRefs.current.set(team.id, el);
+                      else itemRefs.current.delete(team.id);
+                    }}
+                    value={team.name}
+                    onMouseEnter={() => setHighlightedIndex(globalIndex)}
+                    onSelect={() => onSelect({ id: team.id, name: team.name, isTeam: true })}
+                    className={cn('flex items-center gap-2 cursor-pointer data-[selected=true]:bg-transparent data-[selected=true]:text-inherit', isHighlighted && '!bg-accent !text-accent-foreground')}
+                  >
+                    <span className='truncate'>{team.name}</span>
+                    {typeof team.agentCount === 'number' && (
+                      <Badge variant='secondary' className='text-[10px] px-1 py-0 ml-auto shrink-0'>
+                        {team.agentCount}
+                      </Badge>
+                    )}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          )}
+
           {filteredMembers.length > 0 && (
             <CommandGroup heading={tCommon('mention.membersHeading' as any) || 'Membres'}>
               {filteredMembers.map((member, idx) => {
-                const globalIndex = idx;
+                const globalIndex = filteredTeams.length + idx;
                 const isHighlighted = highlightedIndex === globalIndex;
                 return (
                   <CommandItem
@@ -197,7 +229,7 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
           {filteredSharedAgents.length > 0 && (
             <CommandGroup heading={tCommon('mention.sharedHeading')}>
               {filteredSharedAgents.map((agent, idx) => {
-                const globalIndex = filteredMembers.length + idx;
+                const globalIndex = filteredTeams.length + filteredMembers.length + idx;
                 const isHighlighted = highlightedIndex === globalIndex;
                 return (
                   <CommandItem
@@ -224,7 +256,7 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
           {[filteredPersonalAgents, filteredDefaultAgents].map((group, groupIndex) => {
             if (!group.length) return null;
             const heading = groupIndex === 0 ? tCommon('mention.personalHeading') : tCommon('mention.defaultHeading');
-            const offset = filteredMembers.length + filteredSharedAgents.length + (groupIndex === 0 ? 0 : filteredPersonalAgents.length);
+            const offset = filteredTeams.length + filteredMembers.length + filteredSharedAgents.length + (groupIndex === 0 ? 0 : filteredPersonalAgents.length);
             return (
               <CommandGroup heading={heading} key={heading}>
                 {group.map((agent, idx) => {

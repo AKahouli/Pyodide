@@ -17,3 +17,4 @@ export { PlaybookPromptsPage } from './PlaybookPromptsPage';
 export { PlaybookSettingsPage } from './PlaybookSettingsPage';
 export { AuthProvidersPage } from './AuthProvidersPage';
 export { ConnectedAppsAdminPage } from './ConnectedAppsAdminPage';
+export { TeamAutoBuilderPage } from './TeamAutoBuilderPage';

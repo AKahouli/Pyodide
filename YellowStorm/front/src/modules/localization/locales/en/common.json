@@ -59,6 +59,7 @@
   "mention.personalHeading": "My agents",
   "mention.defaultHeading": "Default agents",
   "mention.membersHeading": "Members",
+  "mention.teamsHeading": "Teams",
   "message.action.tooltip": "Message action",
   "message.branch.previous": "Previous branch",
   "message.branch.next": "Next branch",

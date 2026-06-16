@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
@@ -16,6 +16,7 @@ import { ModelsModule } from '../models/models.module';
 import { SkillModule } from '../skill/skill.module';
 import { ConnectorModule } from '../connector/connector.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
+import { TeamModule } from '../team/team.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ConnectedAppModule } from '../connected-app/connected-app.module';
     SkillModule,
     ConnectorModule,
     ConnectedAppModule,
+    forwardRef(() => TeamModule),
   ],
   controllers: [AgentController, AdminAgentController, AgentA2AController],
   providers: [AgentService, A2AAdminGrpcClientService, A2APublishService],

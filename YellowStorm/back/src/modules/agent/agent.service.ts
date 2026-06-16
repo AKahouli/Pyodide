@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
@@ -22,6 +22,7 @@ import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
+import { TeamService } from '../team/team.service';
 
 @Injectable()
 export class AgentService {
@@ -38,6 +39,8 @@ export class AgentService {
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => TeamService))
+    private readonly teamService: TeamService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -279,6 +282,9 @@ export class AgentService {
     }
 
     await this.agentModel.findByIdAndDelete(agentId).exec();
+
+    // Keep teams consistent: drop this agent from any team that referenced it.
+    await this.teamService.removeAgentFromAllTeams(agentId);
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -1088,6 +1094,25 @@ export class AgentService {
           { createdBy: new Types.ObjectId(userId), isDefault: false },
           { isDefault: true },
         ],
+      })
+      .populate('agentType', 'name skills')
+      .lean()
+      .exec();
+
+    return agents.map((a) => this.toResponse(a));
+  }
+
+  /**
+   * Fetch agents by id WITHOUT an ownership filter. Used to populate agent
+   * details on a team the caller has verified team-level access to (e.g. a
+   * shared team) but whose agents they may not own. Callers must enforce that
+   * team-level access themselves before calling this.
+   */
+  async findByIdsUnrestricted(ids: string[]): Promise<IAgentResponse[]> {
+    const agents = await this.agentModel
+      .find({
+        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+        isActive: true,
       })
       .populate('agentType', 'name skills')
       .lean()

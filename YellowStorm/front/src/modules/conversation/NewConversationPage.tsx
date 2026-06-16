@@ -179,6 +179,7 @@ export function NewConversationPage() {
       repoName: string;
       repoUrl?: string;
     },
+    teamIds?: string[],
   ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
@@ -215,6 +216,7 @@ export function NewConversationPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
         skillIds: useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds

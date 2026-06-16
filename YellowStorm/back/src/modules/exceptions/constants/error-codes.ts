@@ -264,6 +264,22 @@ export enum ErrorCode {
   TELEGRAM_USER_INACTIVE = 'ERR_3207',
   TELEGRAM_DUPLICATE_UPDATE = 'ERR_3208',
 
+  // Team errors (3300-3399)
+  TEAM_NOT_FOUND = 'ERR_3300',
+  TEAM_ALREADY_EXISTS = 'ERR_3301',
+  TEAM_FORBIDDEN = 'ERR_3302',
+  TEAM_DUPLICATE_AGENT = 'ERR_3303',
+  TEAM_SELF_REFERENCE = 'ERR_3304',
+  TEAM_CYCLE_DETECTED = 'ERR_3305',
+  TEAM_AGENT_NOT_FOUND = 'ERR_3306',
+  TEAM_SHARE_NOT_FOUND = 'ERR_3307',
+  TEAM_SHARE_SELF = 'ERR_3308',
+  TEAM_SHARE_EXISTS = 'ERR_3309',
+  TEAM_SHARE_FORBIDDEN = 'ERR_3310',
+  TEAM_SHARE_USER_NOT_FOUND = 'ERR_3311',
+  TEAM_GENERATE_FAILED = 'ERR_3312',
+  TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
+
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
   CONNECTED_APP_ALREADY_EXISTS = 'ERR_3001',
@@ -513,4 +529,20 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TELEGRAM_INTEGRATION_DISABLED]: 'Telegram integration is disabled for this agent.',
   [ErrorCode.TELEGRAM_USER_INACTIVE]: 'The linked platform user is inactive.',
   [ErrorCode.TELEGRAM_DUPLICATE_UPDATE]: 'Telegram update already processed.',
+
+  [ErrorCode.TEAM_NOT_FOUND]: 'Team not found.',
+  [ErrorCode.TEAM_ALREADY_EXISTS]: 'A team with this name already exists.',
+  [ErrorCode.TEAM_FORBIDDEN]: 'You do not have access to this team.',
+  [ErrorCode.TEAM_DUPLICATE_AGENT]: 'An agent can only appear once in a team.',
+  [ErrorCode.TEAM_SELF_REFERENCE]: 'An agent cannot be its own parent.',
+  [ErrorCode.TEAM_CYCLE_DETECTED]: 'This relationship would create a cycle in the hierarchy.',
+  [ErrorCode.TEAM_AGENT_NOT_FOUND]: 'One or more agents were not found or do not belong to you.',
+  [ErrorCode.TEAM_SHARE_NOT_FOUND]: 'Team share not found.',
+  [ErrorCode.TEAM_SHARE_SELF]: 'Cannot share a team with yourself.',
+  [ErrorCode.TEAM_SHARE_EXISTS]: 'Team is already shared with this user.',
+  [ErrorCode.TEAM_SHARE_FORBIDDEN]: 'You do not have permission to manage this team share.',
+  [ErrorCode.TEAM_SHARE_USER_NOT_FOUND]: 'No user found for the provided email.',
+  [ErrorCode.TEAM_GENERATE_FAILED]: 'Failed to generate team hierarchy.',
+  [ErrorCode.TEAM_AUTO_BUILDER_NOT_CONFIGURED]:
+    'Team auto-builder is not configured. Please contact an administrator.',
 };

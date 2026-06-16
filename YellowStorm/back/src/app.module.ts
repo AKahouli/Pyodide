@@ -44,6 +44,7 @@ import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
+import { TeamModule } from './modules/team/team.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
@@ -98,6 +99,7 @@ import { TelegramModule } from './modules/telegram';
     SkillModule,
     AgentTypeModule,
     AgentModule,
+    TeamModule,
     PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,
