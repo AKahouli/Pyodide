@@ -3,6 +3,8 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { AgentService } from '@modules/agent/agent.service';
 import { LoggerService } from '@modules/logger';
+import { ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
 import { AgentWhatsAppIntegration } from '../schemas/agent-whatsapp-integration.schema';
 import { WhatsAppChatBinding } from '../schemas/whatsapp-chat-binding.schema';
@@ -104,5 +106,136 @@ describe('WhatsAppIntegrationService', () => {
 
     expect(result).toBe(doc);
     expect(integrationModel.findOneAndUpdate).toHaveBeenCalled();
+  });
+
+  it('throws ForbiddenException when agent ownership check fails', async () => {
+    agentService.findUserAgentById.mockRejectedValue(new Error('not found'));
+
+    await expect(service.getByAgentForUser(userId, agentId)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('returns integration document for owned agent', async () => {
+    const doc = { _id: new Types.ObjectId(), sessionId: 'sess-1' };
+    integrationModel.findOne.mockReturnValue({ exec: async () => doc });
+
+    const result = await service.getDocumentByAgentForUser(userId, agentId);
+
+    expect(result).toBe(doc);
+  });
+
+  it('throws NotFoundException when integration document is missing', async () => {
+    integrationModel.findOne.mockReturnValue({ exec: async () => null });
+
+    await expect(service.getDocumentByAgentForUser(userId, agentId)).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_INTEGRATION_NOT_FOUND,
+    });
+  });
+
+  it('throws NotFoundException when session id does not match', async () => {
+    const doc = { _id: new Types.ObjectId(), sessionId: 'other-session' };
+    integrationModel.findOne.mockReturnValue({ exec: async () => doc });
+
+    await expect(
+      service.getDocumentBySessionForUser(userId, agentId, 'sess-1'),
+    ).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_SESSION_NOT_FOUND,
+    });
+  });
+
+  it('returns integration when session id matches', async () => {
+    const doc = { _id: new Types.ObjectId(), sessionId: 'sess-1' };
+    integrationModel.findOne.mockReturnValue({ exec: async () => doc });
+
+    const result = await service.getDocumentBySessionForUser(userId, agentId, 'sess-1');
+
+    expect(result).toBe(doc);
+  });
+
+  it('returns integration by id', async () => {
+    const integrationId = new Types.ObjectId();
+    const doc = { _id: integrationId };
+    integrationModel.findById.mockReturnValue({ exec: async () => doc });
+
+    const result = await service.getDocumentById(integrationId);
+
+    expect(result).toBe(doc);
+  });
+
+  it('throws NotFoundException when integration id is unknown', async () => {
+    integrationModel.findById.mockReturnValue({ exec: async () => null });
+
+    await expect(service.getDocumentById(new Types.ObjectId())).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('updates integration status patch', async () => {
+    const integrationId = new Types.ObjectId();
+    integrationModel.updateOne.mockReturnValue({ exec: async () => ({ modifiedCount: 1 }) });
+
+    await service.updateStatus(integrationId, {
+      status: WhatsAppIntegrationStatus.CONNECTED,
+      phoneNumber: '+123',
+    });
+
+    expect(integrationModel.updateOne).toHaveBeenCalledWith(
+      { _id: integrationId },
+      {
+        $set: {
+          status: WhatsAppIntegrationStatus.CONNECTED,
+          phoneNumber: '+123',
+        },
+      },
+    );
+  });
+
+  it('deletes bindings and integration for agent', async () => {
+    const integrationId = new Types.ObjectId();
+    const doc = { _id: integrationId, sessionId: 'sess-1' };
+    integrationModel.findOne.mockReturnValue({ exec: async () => doc });
+    bindingModel.deleteMany.mockReturnValue({ exec: async () => ({ deletedCount: 1 }) });
+    integrationModel.deleteOne.mockReturnValue({ exec: async () => ({ deletedCount: 1 }) });
+
+    await service.deleteIntegrationForAgent(userId, agentId);
+
+    expect(bindingModel.deleteMany).toHaveBeenCalledWith({ integrationId });
+    expect(integrationModel.deleteOne).toHaveBeenCalledWith({ _id: integrationId });
+  });
+
+  it('finds connected enabled integrations', async () => {
+    const docs = [{ status: WhatsAppIntegrationStatus.CONNECTED, enabled: true }];
+    integrationModel.find.mockReturnValue({ exec: async () => docs });
+
+    const result = await service.findConnectedIntegrations();
+
+    expect(result).toBe(docs);
+    expect(integrationModel.find).toHaveBeenCalledWith({
+      status: WhatsAppIntegrationStatus.CONNECTED,
+      enabled: true,
+    });
+  });
+
+  it('maps optional date fields in toResponse', () => {
+    const lastActivityAt = new Date('2026-06-04T11:00:00.000Z');
+    const updatedAt = new Date('2026-06-04T12:00:00.000Z');
+
+    const result = service.toResponse({
+      status: WhatsAppIntegrationStatus.FAILED,
+      errorMessage: 'pairing failed',
+      lastActivityAt,
+      updatedAt,
+    });
+
+    expect(result).toEqual({
+      status: WhatsAppIntegrationStatus.FAILED,
+      sessionId: undefined,
+      phoneNumber: undefined,
+      displayName: undefined,
+      errorMessage: 'pairing failed',
+      lastActivityAt: lastActivityAt.toISOString(),
+      updatedAt: updatedAt.toISOString(),
+    });
   });
 });
