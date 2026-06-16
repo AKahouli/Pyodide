@@ -24,6 +24,11 @@ import { ConnectorAuthService } from '../connector/interfaces/connector-auth.int
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
 
+/** Agent-type slug of the orchestrating manager agent. */
+const MANAGER_SLUG = 'manager';
+/** Agent-type slug of the single default agent sent when no agent is tagged. */
+const MONO_AGENT_SLUG = 'mono-agent';
+
 @Injectable()
 export class AgentService {
   constructor(
@@ -619,29 +624,31 @@ export class AgentService {
       pingedAgents = [];
     }
 
-    // Resolve exactly one manager (priority: pinged > personal default > first personal > admin default > first admin)
-    const isManager = (a: IAgentForStream) => a.agentTypeSlug === 'manager';
-    const manager = this.resolveManager(finalUserAgents, pingedAgents);
-
-    const hasGroupMembers = groupMembers && groupMembers.length > 0;
+    // Resolve the roster based on how many agents the user tagged:
+    //   - 0 tagged  → send only the mono-agent (the default-available agent of type "mono-agent")
+    //   - 1 tagged  → send only that agent (no manager, even if the agent itself is a manager)
+    //   - 2+ tagged → send those agents + the default available manager
     let filteredAgents: IAgentForStream[];
+    let selectedManager: IAgentForStream | undefined;
 
-    if (pingedAgents.length > 0) {
-      // User tagged specific agents: send pinged non-managers + the resolved manager
-      filteredAgents = pingedAgents.filter((a) => !isManager(a));
-      if (manager) {
-        filteredAgents.push(manager);
-      }
+    if (pingedAgents.length === 0) {
+      // No agents tagged: send the single mono-agent
+      const monoAgent = this.resolveDefaultAgentBySlug(MONO_AGENT_SLUG, finalUserAgents);
+      filteredAgents = monoAgent ? [monoAgent] : [];
+    } else if (pingedAgents.length === 1) {
+      // Exactly one agent tagged: send only that agent
+      filteredAgents = [...pingedAgents];
     } else {
-      // No agents tagged: send all admin default agents + the resolved manager
-      const adminAgents = finalUserAgents.filter((a) => a.isDefault && !isManager(a));
-      filteredAgents = [...adminAgents];
-      if (manager) {
+      // More than one agent tagged: send those agents + the default available manager
+      filteredAgents = [...pingedAgents];
+      const manager = this.resolveManager(finalUserAgents, pingedAgents);
+      if (manager && !filteredAgents.some((a) => a.id === manager.id)) {
         filteredAgents.push(manager);
       }
+      selectedManager = manager;
     }
 
-    // Safety net: if still empty (no admin agents and no manager found), send all
+    // Safety net: if nothing resolved (e.g. no mono-agent configured), send all available agents
     if (filteredAgents.length === 0) {
       filteredAgents = finalUserAgents;
     }
@@ -649,9 +656,10 @@ export class AgentService {
     this.logger.log('Agents filtered for stream', {
       userId,
       filteredCount: filteredAgents.length,
+      taggedCount: pingedAgents.length,
       mentionedIds: agentIds,
-      managerId: manager?.id,
-      managerName: manager?.name,
+      managerId: selectedManager?.id,
+      managerName: selectedManager?.name,
     });
 
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
@@ -1194,40 +1202,52 @@ export class AgentService {
 
   /**
    * Resolve exactly ONE manager agent to include in the stream.
-   * Priority (highest → lowest):
-   *   1. A manager explicitly pinged by the user (from mentionedAgentIds)
-   *   2. User's personal default-for-type manager
-   *   3. First personal manager in the list
-   *   4. Admin default-for-type manager
-   *   5. First admin manager in the list
+   * See {@link resolveDefaultAgentBySlug} for the resolution priority.
    */
   private resolveManager(
     allAgents: IAgentForStream[],
     pingedAgents: IAgentForStream[],
   ): IAgentForStream | undefined {
-    const isManager = (a: IAgentForStream) => a.agentTypeSlug === 'manager';
+    return this.resolveDefaultAgentBySlug(MANAGER_SLUG, allAgents, pingedAgents);
+  }
 
-    // 1. If the user pinged a manager, use it (first one if multiple)
-    const pingedManager = pingedAgents.find(isManager);
-    if (pingedManager) return pingedManager;
+  /**
+   * Resolve exactly ONE agent of a given agent-type slug to include in the stream.
+   * Priority (highest → lowest):
+   *   1. An agent of this type explicitly pinged by the user (from mentionedAgentIds)
+   *   2. User's personal default-for-type agent of this type
+   *   3. First personal agent of this type in the list
+   *   4. Admin default-for-type agent of this type
+   *   5. First admin agent of this type in the list
+   */
+  private resolveDefaultAgentBySlug(
+    slug: string,
+    allAgents: IAgentForStream[],
+    pingedAgents: IAgentForStream[] = [],
+  ): IAgentForStream | undefined {
+    const matches = (a: IAgentForStream) => a.agentTypeSlug === slug;
 
-    // Separate all managers into personal vs admin
-    const personalManagers = allAgents.filter((a) => isManager(a) && !a.isDefault);
-    const adminManagers = allAgents.filter((a) => isManager(a) && a.isDefault);
+    // 1. If the user pinged an agent of this type, use it (first one if multiple)
+    const pinged = pingedAgents.find(matches);
+    if (pinged) return pinged;
 
-    // 2. User's personal default-for-type manager
-    const personalDefault = personalManagers.find((a) => a.isDefaultForType);
+    // Separate all matching agents into personal vs admin
+    const personal = allAgents.filter((a) => matches(a) && !a.isDefault);
+    const admin = allAgents.filter((a) => matches(a) && a.isDefault);
+
+    // 2. User's personal default-for-type agent
+    const personalDefault = personal.find((a) => a.isDefaultForType);
     if (personalDefault) return personalDefault;
 
-    // 3. First personal manager
-    if (personalManagers.length > 0) return personalManagers[0];
+    // 3. First personal agent
+    if (personal.length > 0) return personal[0];
 
-    // 4. Admin default-for-type manager
-    const adminDefault = adminManagers.find((a) => a.isDefaultForType);
+    // 4. Admin default-for-type agent
+    const adminDefault = admin.find((a) => a.isDefaultForType);
     if (adminDefault) return adminDefault;
 
-    // 5. First admin manager
-    if (adminManagers.length > 0) return adminManagers[0];
+    // 5. First admin agent
+    if (admin.length > 0) return admin[0];
 
     return undefined;
   }
