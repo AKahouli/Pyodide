@@ -43,6 +43,7 @@ import type {
   PlaybookRepeatabilitySummary,
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
+  PlaybookIntentDesignResponse,
   PlaybookIntentResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
@@ -169,6 +170,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
+      skillBindings: task.skillBindings,
       evaluationConfig: task.evaluationConfig
         ? {
             expectation: task.evaluationConfig.expectation,
@@ -562,6 +564,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     taskType: (meta.taskType as string) ?? undefined,
     templateType: (meta.templateType as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
+    skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
     iteratorLayout: (meta.iteratorLayout as any) ?? undefined,
     containerConfig: (meta.containerConfig as any) ?? null,
@@ -1295,6 +1298,18 @@ export async function requestPlaybookIntent(
 ): Promise<PlaybookIntentResponse> {
   const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
     API_ENDPOINTS.playbooks.intent(playbookId),
+    data,
+    { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function assessPlaybookIntentDesign(
+  playbookId: string,
+  data: RequestPlaybookIntentData,
+): Promise<PlaybookIntentDesignResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentDesignResponse>>(
+    API_ENDPOINTS.playbooks.intentDesign(playbookId),
     data,
     { timeout: 180000 },
   );

@@ -90,6 +90,7 @@ import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
+import { SkillSidebar } from './SkillSidebar';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { ReplayMigrationHarnessCard } from './ReplayMigrationHarnessCard';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
@@ -107,6 +108,7 @@ import type {
   PlaybookNodeData,
   PlaybookExecution,
   PlaybookIntentSuggestion,
+  PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
   PlaybookTrigger,
   InterruptType,
@@ -135,6 +137,7 @@ import {
 } from '../utils/playbook-canvas-layout';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
+import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
 import {
   buildCanvasJudgeStateMap,
   buildCanvasStepStatusMap,
@@ -144,7 +147,7 @@ import {
   getVisibleExecutionStatus,
   hasPendingJudgeEvaluations,
 } from '../utils/playbook-canvas-status';
-import { showError } from '@/lib/notifications';
+import { showError, showWarning } from '@/lib/notifications';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
@@ -314,10 +317,13 @@ function PlaybookCanvasInner() {
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
   const [outputFormatGenerating, setOutputFormatGenerating] = useState(false);
   const connectorSidebarOpen = usePlaybookStore((s) => s.connectorSidebarOpen);
+  const skillSidebarOpen = usePlaybookStore((s) => s.skillSidebarOpen);
   const setConnectorSidebarOpen = usePlaybookStore((s) => s.setConnectorSidebarOpen);
+  const setSkillSidebarOpen = usePlaybookStore((s) => s.setSkillSidebarOpen);
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
+  const addSkillBindingToTask = usePlaybookStore((s) => s.addSkillBindingToTask);
 
   const [bindingModalState, setBindingModalState] = useState<PlaybookBindingModalState | null>(null);
 
@@ -330,6 +336,7 @@ function PlaybookCanvasInner() {
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
   const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
+  const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
   const previewAdvisorRemediation = usePlaybookStore((s) => s.previewAdvisorRemediation);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -341,7 +348,8 @@ function PlaybookCanvasInner() {
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
-  const [intentAutoApply, setIntentAutoApply] = useState(true);
+  const [intentAutoApply, setIntentAutoApply] = useState(false);
+  const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
@@ -840,6 +848,8 @@ function PlaybookCanvasInner() {
     handleCloneNode,
     handleConnectorDrop,
     handleConnectorDragStart,
+    handleSkillDrop,
+    handleSkillDragStart,
     handleBindingModalSave,
     handleCanvasDrop,
   } = usePlaybookCanvasNodeHandlers({
@@ -851,8 +861,13 @@ function PlaybookCanvasInner() {
     setEditorOpen,
     setBindingModalState,
     addToolBindingToTask,
+    addSkillBindingToTask,
     routerNodeDefaultTitle: t('routerNode.defaultTitle'),
     humanApprovalNodeDefaultTitle: t('humanApprovalNode.defaultTitle'),
+    showWarning,
+    warnings: {
+      dropSkillOnTask: t('skills.dropOnTaskWarning'),
+    },
   });
 
   const handleExecuteStep = useCallback(
@@ -1808,7 +1823,17 @@ function PlaybookCanvasInner() {
       const sourceOutputPort = sourceTask.outputPorts?.find((p) => p.id === sourcePort);
       if (!targetInputPort || !sourceOutputPort) return;
 
-      if (targetInputPort.artifactKind !== sourceOutputPort.artifactKind) return;
+      if (targetInputPort.artifactKind !== sourceOutputPort.artifactKind) {
+        console.warn('[IntentApply] Dropped data binding with artifact kind mismatch:', {
+          sourceNode: resolvedSourceId,
+          sourcePort,
+          sourceArtifactKind: sourceOutputPort.artifactKind,
+          targetNode: resolvedTargetId,
+          targetPort,
+          targetArtifactKind: targetInputPort.artifactKind,
+        });
+        return;
+      }
 
       nextDataBindings = nextDataBindings.filter(
         (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
@@ -1832,6 +1857,38 @@ function PlaybookCanvasInner() {
           sourceNode: resolvedSourceId,
           sourcePort,
           iteration,
+        },
+      ];
+    };
+
+    const upsertConstantBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      constantValue: unknown,
+    ) => {
+      const targetTask = nextTasks.find((t) => t.id === resolvedTargetId);
+      const targetInputPort = targetTask?.inputPorts?.find((p) => p.id === targetPort);
+      if (!targetTask || !targetInputPort || constantValue === undefined) return;
+
+      nextDataBindings = nextDataBindings.filter(
+        (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
+      );
+
+      nextDataBindings = [
+        ...nextDataBindings,
+        {
+          id: createIntentSuggestionBindingId(
+            suggestionApplicationKey,
+            resolvedTargetId,
+            targetPort,
+            'constant',
+            JSON.stringify(constantValue),
+            'current',
+          ),
+          targetNode: resolvedTargetId,
+          targetPort,
+          sourceKind: 'constant',
+          constantValue,
         },
       ];
     };
@@ -1912,25 +1969,41 @@ function PlaybookCanvasInner() {
       });
     };
 
+    const reconcileUnboundRequiredInputsByPort = () => {
+      getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds).forEach((unboundInput) => {
+        const targetIndex = nextTasks.findIndex((task) => task.id === unboundInput.taskId);
+        const targetTask = targetIndex >= 0 ? nextTasks[targetIndex] : null;
+        const targetPort = targetTask?.inputPorts?.find((port) => port.id === unboundInput.portId);
+        if (!targetTask || !targetPort) return;
+
+        // Intent-created tasks are appended in execution order, so only earlier tasks are safe sources.
+        const candidates = nextTasks.flatMap((task, taskIndex) => (taskIndex < targetIndex
+          ? (task.outputPorts || [])
+            .filter((port) => port.id === targetPort.id && port.artifactKind === targetPort.artifactKind)
+            .map((port) => ({ taskId: task.id, portId: port.id }))
+          : []));
+
+        if (candidates.length !== 1) return;
+
+        const candidate = candidates[0];
+        upsertNodeOutputBinding(targetTask.id, targetPort.id, candidate.taskId, candidate.portId);
+      });
+    };
+
     const findUnboundRequiredInputs = (): Array<{ taskId: string; portId: string }> => {
-      const unbound: Array<{ taskId: string; portId: string }> = [];
-      for (const task of nextTasks) {
-        if (!changedNodeIds.has(task.id)) continue;
-        for (const port of task.inputPorts || []) {
-          if (!port.required) continue;
-          const hasBinding = nextDataBindings.some((b) => b.targetNode === task.id && b.targetPort === port.id);
-          if (hasBinding) continue;
-          const hasIncomingEdge = nextEdges.some((edge) => {
-            const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
-            const isConditional = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
-            return !isConditional && edge.target === task.id && (edgeData.targetInputPortId || edge.targetHandle || 'default') === port.id;
-          });
-          if (!hasIncomingEdge) {
-            unbound.push({ taskId: task.id, portId: port.id });
-          }
-        }
+      return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds);
+    };
+
+    const warnInvalidRequiredInputs = () => {
+      const unboundInputs = findUnboundRequiredInputs();
+      if (unboundInputs.length === 0) {
+        return;
       }
-      return unbound;
+
+      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+      if (shouldSave) {
+        showWarning(t('intentBar.invalidRequiredBindings'));
+      }
     };
 
     const applyDataBindingChange = (
@@ -1938,11 +2011,12 @@ function PlaybookCanvasInner() {
       targetTaskId: string | null,
       targetNodeRef: string | null,
       targetPort: string,
-      sourceKind?: 'node-output',
+      sourceKind?: 'node-output' | 'constant',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
       iteration?: 'current' | 'previous',
+      constantValue?: unknown,
     ) => {
       const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
       if (!resolvedTargetId || !targetPort) return;
@@ -1958,6 +2032,11 @@ function PlaybookCanvasInner() {
             (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
           );
         }
+        return;
+      }
+
+      if (sourceKind === 'constant') {
+        upsertConstantBinding(resolvedTargetId, targetPort, constantValue);
         return;
       }
 
@@ -2119,11 +2198,8 @@ function PlaybookCanvasInner() {
         null,
       );
       reconcileRequiredNodeOutputBindings();
-
-      const unboundInputs = findUnboundRequiredInputs();
-      if (unboundInputs.length > 0) {
-        console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
-      }
+      reconcileUnboundRequiredInputsByPort();
+      warnInvalidRequiredInputs();
 
       commitGraph(nextTasks, nextEdges, nextDataBindings);
       if (shouldSave) {
@@ -2179,17 +2255,32 @@ function PlaybookCanvasInner() {
       }
 
       if (change.type === 'create_data_binding') {
-        applyDataBindingChange(
-          'create_data_binding',
-          change.targetTaskId,
-          change.targetNodeRef,
-          change.targetPort,
-          change.sourceKind,
-          change.sourceTaskId,
-          change.sourceNodeRef,
-          change.sourcePort,
-          change.iteration,
-        );
+        if (change.sourceKind === 'constant') {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.sourceKind,
+            null,
+            null,
+            null,
+            undefined,
+            change.constantValue,
+          );
+        } else {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.sourceKind,
+            change.sourceTaskId,
+            change.sourceNodeRef,
+            change.sourcePort,
+            change.iteration,
+          );
+        }
         continue;
       }
 
@@ -2223,6 +2314,7 @@ function PlaybookCanvasInner() {
     }
 
     reconcileRequiredNodeOutputBindings();
+    reconcileUnboundRequiredInputsByPort();
 
     const tasksChanged = changedNodeIds.size > 0 || changedEdgeIds.size > 0;
     const graphChanged = nextTasks.length !== (options?.replaceAll ? 0 : graphPlaybook.tasks.length) || nextEdges.length !== (options?.replaceAll ? 0 : graphEdges.length) || nextDataBindings.length !== (options?.replaceAll ? 0 : (graphPlaybook.dataBindings ?? []).length);
@@ -2238,10 +2330,7 @@ function PlaybookCanvasInner() {
       console.warn('[IntentApply] Warnings:', applicationWarnings);
     }
 
-    const unboundInputs = findUnboundRequiredInputs();
-    if (unboundInputs.length > 0) {
-      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
-    }
+    warnInvalidRequiredInputs();
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     if (shouldClearSuggestions) setIntentSuggestions([]);
@@ -2267,14 +2356,16 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleForceGenerateIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
     isDirty,
     intentValue,
     intentAutoApply,
+    intentDesign,
     selectStep,
+    assessPlaybookIntentDesign,
     requestPlaybookIntent,
     startPlaybookIntentConstruction,
     streamPlaybookIntentConstruction,
@@ -2283,6 +2374,7 @@ function PlaybookCanvasInner() {
     handleApplyIntentSuggestion,
     setIntentLoading,
     setIntentError,
+    setIntentDesign,
     setIntentSuggestions,
     setLastIntentSuggestions,
     addIntentSuggestionHistoryEntry,
@@ -2319,6 +2411,7 @@ function PlaybookCanvasInner() {
     setDesignerOpen,
     setWorkspaceExplorerOpen,
     setConnectorSidebarOpen,
+    setSkillSidebarOpen,
     setGlobalSidebarOpen,
     showError,
     workspaceRequiredForRunError: t('errors.workspaceRequiredForRun'),
@@ -2764,6 +2857,9 @@ function PlaybookCanvasInner() {
         {/* Connector Sidebar */}
         <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />
 
+        {/* Skill Sidebar */}
+        <SkillSidebar isOpen={skillSidebarOpen} onDragStart={handleSkillDragStart} />
+
         {/* Canvas + Execution split */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
           <div
@@ -2776,7 +2872,7 @@ function PlaybookCanvasInner() {
             }}
           >
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
                   nodes={canvasNodes}
@@ -2822,6 +2918,7 @@ function PlaybookCanvasInner() {
                   loading={intentLoading}
                   value={intentValue}
                   suggestions={intentSuggestions}
+                  design={intentDesign}
                   error={intentError}
                   history={intentHistory}
                   collapsed={intentBarCollapsed}
@@ -2831,6 +2928,7 @@ function PlaybookCanvasInner() {
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntent()}
+                  onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
                     if (playbook) {
@@ -2856,8 +2954,10 @@ function PlaybookCanvasInner() {
                   onRedo={redo}
                   onToggleExplorer={() => setWorkspaceExplorerOpen(!workspaceExplorerOpen)}
                   onToggleConnectors={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
+                  onToggleSkills={() => setSkillSidebarOpen(!skillSidebarOpen)}
                   explorerOpen={workspaceExplorerOpen}
                   connectorsOpen={connectorSidebarOpen}
+                  skillsOpen={skillSidebarOpen}
                   canUndo={canUndo}
                   canRedo={canRedo}
                   disabled={isSaving}

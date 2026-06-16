@@ -77,6 +77,7 @@ export function mapFlowNodeToPlaybookTask(
     taskType: (meta.taskType as string) ?? undefined,
     templateType: (meta.templateType as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
+    skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
     iteratorLayout: (meta.iteratorLayout as any) ?? undefined,
     containerConfig: (meta.containerConfig as any) ?? null,
@@ -357,6 +358,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   if (task.taskType) meta.taskType = task.taskType;
   if (task.templateType) meta.templateType = task.templateType;
   if (task.toolBindings) meta.toolBindings = task.toolBindings;
+  if (task.skillBindings) meta.skillBindings = task.skillBindings;
   if (task.evaluationConfig) meta.evaluationConfig = task.evaluationConfig;
   if (task.iteratorLayout) meta.iteratorLayout = task.iteratorLayout;
   if (task.containerConfig) meta.containerConfig = task.containerConfig;

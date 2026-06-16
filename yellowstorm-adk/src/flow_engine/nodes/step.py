@@ -46,6 +46,7 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -293,6 +294,7 @@ async def run_step(
             "then dive deep into those specific documents for detailed answers.\n"
             "</deep_search_mode>"
         )
+    system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
     has_agent = bool(agent_name)
 
     logger.info(

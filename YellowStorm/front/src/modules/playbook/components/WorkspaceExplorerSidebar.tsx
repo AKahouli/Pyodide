@@ -59,6 +59,7 @@ interface DragPayload {
   artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
+    workspaceName?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
@@ -382,6 +383,7 @@ export function WorkspaceExplorerSidebar() {
   // Drag handlers
   const handleDragStart = useCallback(
     (e: React.DragEvent, document: WorkspaceDocument) => {
+      const workspaceName = workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name;
       const artifactKind = !document.isFolder
         ? inferArtifactKind(document.filename, document.mimeType)
         : undefined;
@@ -398,10 +400,12 @@ export function WorkspaceExplorerSidebar() {
         metadata: document.isFolder
           ? {
               workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
               folderpath: document.path,
             }
           : {
               workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
               documentId: document.id,
               filename: document.filename,
               filepath: document.path,
@@ -412,7 +416,7 @@ export function WorkspaceExplorerSidebar() {
       e.dataTransfer.setData('application/json', JSON.stringify(payload));
       e.dataTransfer.effectAllowed = 'copy';
     },
-    [activeWorkspaceId],
+    [activeWorkspaceId, workspaces],
   );
 
   const handleWorkspaceDragStart = useCallback(
@@ -425,6 +429,7 @@ export function WorkspaceExplorerSidebar() {
         workspaceId: workspace.id,
         metadata: {
           workspaceId: workspace.id,
+          workspaceName: workspace.name,
         },
       };
       e.dataTransfer.setData('application/json', JSON.stringify(payload));

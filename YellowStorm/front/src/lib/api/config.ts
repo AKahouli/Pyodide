@@ -10,6 +10,20 @@ export const API_CONFIG = {
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
+/** Origin for Socket.IO (strips `/api/v1` from the REST base URL). */
+export function getSocketBaseUrl(): string {
+  const base = API_CONFIG.baseURL;
+  if (base === 'MY_APP_VITE_API_URL') {
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  }
+  try {
+    const url = new URL(base);
+    return url.origin;
+  } catch {
+    return 'http://localhost:3000';
+  }
+}
+
 export const AUTH_STORAGE_KEYS = {
   accessToken: 'yellostorm_access_token',
   user: 'yellostorm_user',
@@ -247,6 +261,14 @@ export const API_ENDPOINTS = {
     all: '/agents/all',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
+    whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+    whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
+    whatsappPairing: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
+    whatsappReconnect: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
+    whatsappSession: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}`,
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
@@ -293,6 +315,7 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,

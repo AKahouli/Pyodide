@@ -156,6 +156,7 @@ function syncUiStoreForRun(taskId?: string | null) {
     executionPanelOpen: true,
     workspaceExplorerOpen: false,
     connectorSidebarOpen: false,
+    skillSidebarOpen: false,
     nodeEditorOpen: false,
     graphPanelOpen: false,
     pageMode: 'run',
@@ -173,6 +174,7 @@ function syncUiStoreForInterrupt(taskId: string) {
     executionPanelOpen: true,
     workspaceExplorerOpen: false,
     connectorSidebarOpen: false,
+    skillSidebarOpen: false,
     nodeEditorOpen: false,
     graphPanelOpen: false,
     pageMode: 'run',
@@ -220,16 +222,22 @@ function appendEvaluationHistory(
 }
 
 function buildResourceBindingValue(resource: PlaybookResourceReference): Record<string, unknown> {
-  return {
+  const value: Record<string, unknown> = {
     text: resource.content,
     kind: resource.kind,
     id: resource.id,
+    label: resource.name,
     name: resource.name,
     workspaceId: resource.workspaceId,
+    workspaceName: resource.workspaceName ?? (resource.kind === 'workspace' ? resource.name : undefined),
     path: resource.path,
     mimeType: resource.mimeType,
     metadata: resource.metadata,
   };
+  if (resource.kind === 'document') {
+    value.documentId = resource.id;
+  }
+  return value;
 }
 
 // ===== Initial State =====
@@ -275,6 +283,7 @@ const initialState: PlaybookState = {
   executionDetailTab: 'results',
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
+  skillSidebarOpen: false,
   nodeEditorOpen: false,
   graphPanelOpen: false,
   pageMode: 'design',
@@ -4055,6 +4064,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               executionPanelOpen: true,
               workspaceExplorerOpen: false,
               connectorSidebarOpen: false,
+              skillSidebarOpen: false,
               nodeEditorOpen: false,
             };
           }
@@ -4165,6 +4175,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             executionPanelOpen: true,
             workspaceExplorerOpen: false,
             connectorSidebarOpen: false,
+            skillSidebarOpen: false,
             nodeEditorOpen: false,
           };
         });
@@ -4455,6 +4466,10 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         return api.requestPlaybookIntent(playbookId, data);
       },
 
+      assessPlaybookIntentDesign: async (playbookId: string, data: RequestPlaybookIntentData) => {
+        return api.assessPlaybookIntentDesign(playbookId, data);
+      },
+
       previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
         return api.previewAdvisorRemediation(playbookId, data);
       },
@@ -4501,7 +4516,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       setExecutionPanelOpen: (open) => {
         usePlaybookUiStore.getState().setExecutionPanelOpen(open);
         if (open) {
-          set({ executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, nodeEditorOpen: false });
+          set({ executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, skillSidebarOpen: false, nodeEditorOpen: false });
         } else {
           set({ executionPanelOpen: false });
         }
@@ -4520,6 +4535,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           executionPanelOpen: true,
           workspaceExplorerOpen: false,
           connectorSidebarOpen: false,
+          skillSidebarOpen: false,
           nodeEditorOpen: false,
           pageMode: 'run',
         };
@@ -4540,6 +4556,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             executionPanelOpen: true,
             workspaceExplorerOpen: false,
             connectorSidebarOpen: false,
+            skillSidebarOpen: false,
             nodeEditorOpen: false,
             selectedStepId,
             pageMode: 'run',
@@ -4553,6 +4570,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             executionPanelOpen: true,
             workspaceExplorerOpen: false,
             connectorSidebarOpen: false,
+            skillSidebarOpen: false,
             nodeEditorOpen: false,
             pageMode: 'run',
           });
@@ -4565,7 +4583,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       setWorkspaceExplorerOpen: (open) => {
         usePlaybookUiStore.getState().setWorkspaceExplorerOpen(open);
         if (open) {
-          set({ workspaceExplorerOpen: true, connectorSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+          set({ workspaceExplorerOpen: true, connectorSidebarOpen: false, skillSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
         } else {
           set({ workspaceExplorerOpen: false });
         }
@@ -4731,6 +4749,25 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }));
       },
 
+      addSkillBindingToTask: (taskId, binding) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const existing = task.skillBindings ?? [];
+          const replaced = existing.filter((item) => item.skillId !== binding.skillId);
+          return { ...task, skillBindings: [...replaced, binding] };
+        });
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       removeToolBindingFromTask: (taskId: string, bindingId: string) => {
         const { currentPlaybook } = get();
         if (!currentPlaybook) return;
@@ -4748,14 +4785,40 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }));
       },
 
+      removeSkillBindingFromTask: (taskId, bindingId) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          return { ...task, skillBindings: (task.skillBindings ?? []).filter((binding) => binding.id !== bindingId) };
+        });
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       // ===== Connector Sidebar =====
 
       setConnectorSidebarOpen: (open) => {
         usePlaybookUiStore.getState().setConnectorSidebarOpen(open);
         if (open) {
-          set({ connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+          set({ connectorSidebarOpen: true, skillSidebarOpen: false, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
         } else {
           set({ connectorSidebarOpen: false });
+        }
+      },
+
+      setSkillSidebarOpen: (open) => {
+        usePlaybookUiStore.getState().setSkillSidebarOpen(open);
+        if (open) {
+          set({ skillSidebarOpen: true, connectorSidebarOpen: false, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ skillSidebarOpen: false });
         }
       },
 
@@ -4764,7 +4827,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       setNodeEditorOpen: (open) => {
         usePlaybookUiStore.getState().setNodeEditorOpen(open);
         if (open) {
-          set({ nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false });
+          set({ nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, skillSidebarOpen: false, executionPanelOpen: false });
         } else {
           set({ nodeEditorOpen: false });
         }
@@ -5453,6 +5516,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           executionPanelOpen: true,
           workspaceExplorerOpen: false,
           connectorSidebarOpen: false,
+          skillSidebarOpen: false,
           nodeEditorOpen: false,
           graphPanelOpen: false,
           selectedStepId: inspection.nodeId,

@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     NESTJS_JWT_SECRET: Optional[str] = None
+    ADK_API_KEY: str
+    VECTORSTORE_API_KEY: str
     # Ollama
     OLLAMA_API_BASE_URL: Optional[str] = None
     OLLAMA_API_KEY: Optional[str] = None

@@ -23,6 +23,7 @@ interface UsePlaybookCanvasExecutionHandlersParams {
   setDesignerOpen: (isOpen: boolean) => void;
   setWorkspaceExplorerOpen: (isOpen: boolean) => void;
   setConnectorSidebarOpen: (isOpen: boolean) => void;
+  setSkillSidebarOpen: (isOpen: boolean) => void;
   setGlobalSidebarOpen: (isOpen: boolean) => void;
   showError: (message: string) => void;
   workspaceRequiredForRunError: string;
@@ -52,6 +53,7 @@ export const usePlaybookCanvasExecutionHandlers = ({
   setDesignerOpen,
   setWorkspaceExplorerOpen,
   setConnectorSidebarOpen,
+  setSkillSidebarOpen,
   setGlobalSidebarOpen,
   showError,
   workspaceRequiredForRunError,
@@ -73,6 +75,7 @@ export const usePlaybookCanvasExecutionHandlers = ({
     setDesignerOpen(false);
     setWorkspaceExplorerOpen(false);
     setConnectorSidebarOpen(false);
+    setSkillSidebarOpen(false);
     setGlobalSidebarOpen(false);
 
     const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
@@ -103,6 +106,7 @@ export const usePlaybookCanvasExecutionHandlers = ({
     setGlobalSidebarOpen,
     setIntentBarCollapsed,
     setPageMode,
+    setSkillSidebarOpen,
     setWorkspaceExplorerOpen,
     showError,
     executePlaybook,
