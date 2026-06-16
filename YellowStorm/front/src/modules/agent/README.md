@@ -13,9 +13,12 @@ The agent module provides complete agent management for users, allowing them to 
 - [Selector Hooks](#selector-hooks)
 - [Components](#components)
 - [Widget Deployment (Embed)](#widget-deployment-embed)
+- [Channel Integrations](#channel-integrations)
 - [Form Validation](#form-validation)
 - [Data Flow](#data-flow)
 - [Usage Examples](#usage-examples)
+- [Testing](#testing)
+- [Related Documentation](#related-documentation)
 
 ---
 
@@ -33,6 +36,7 @@ The agent module provides:
 - **Agent Hub**: Grid view with filters, bulk actions, and rich cards
 - **Telegram Integration**: Optional per-agent Telegram bot configuration
 - **Zustand Store**: Centralized state with 5-minute caching and toast notifications
+- **Channel Integrations**: Connect personal agents to **WhatsApp** (QR pairing) and **Telegram** (bot token) from the Connectors tab
 
 ---
 
@@ -52,18 +56,19 @@ The agent module provides:
 │  │                                      └── Deployment tab      │  │
 │  │                                           AgentDeploymentSection│
 │  │                                           widget-template.ts │  │
+│  │  AgentButton ──► AgentHubPage / AgentList                   │  │
+│  │       (sidebar)      └── CreateEditAgentDialog              │  │
+│  │                            ├── Identity / Behaviour / …    │  │
+│  │                            └── Connectors tab               │  │
+│  │                                 ├── MCP MultiSelect         │  │
+│  │                                 ├── AgentTelegramIntegration  │  │
+│  │                                 └── AgentWhatsAppIntegration  │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                              │                                     │
 │                              ▼                                     │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │                      ZUSTAND STORE                           │  │
-│  │                                                              │  │
-│  │  agents: Agent[]          agentTypes: AgentType[]            │  │
-│  │  isLoading: boolean       isInitialized: boolean             │  │
-│  │  lastFetchedAt: Date      error: string | null               │  │
-│  │                                                              │  │
-│  │  Actions: fetchAgents, fetchAgentTypes, createAgent,         │  │
-│  │           updateAgent, deleteAgent, refreshAgents            │  │
+│  │  agents, agentTypes, caching, CRUD actions                   │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                              │                                     │
 │                              ▼                                     │
@@ -84,6 +89,14 @@ The agent module provides:
 │  │  /agents/all          /tools/active                          │  │
 │  │  /admin/agents/:id/widget-tokens  /widget/chat|stream       │  │
 │  └─────────────────────────────────────────────────────────────┘  │
+│  │  Agents CRUD  │  Telegram integration  │  WhatsApp integration│  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│              ┌───────────────┴───────────────┐                     │
+│              ▼                               ▼                     │
+│  ┌──────────────────────┐    ┌──────────────────────────────┐   │
+│  │ REST /api/v1/agents  │    │ Socket.IO /whatsapp (pairing)  │   │
+│  └──────────────────────┘    └──────────────────────────────┘   │
 │                                                                    │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -121,7 +134,33 @@ agent/
 │   ├── EvaluationTab.tsx
 │   └── hub/                          # Hub grid, filters, bulk bar
 └── README.md
+├── index.ts                          # Public exports (store hooks, hub components, types)
+├── types.ts                          # Agent, integrations, evaluation types
+├── api.ts                            # REST wrappers (agents + Telegram + WhatsApp)
+├── api.test.ts
+├── store.ts                          # Zustand store with caching
+├── evaluation-api.ts
+├── components/
+│   ├── CreateEditAgentDialog.tsx     # Create/edit modal (Connectors tab)
+│   ├── AgentWhatsAppIntegrationSection.tsx
+│   ├── AgentTelegramIntegrationSection.tsx
+│   ├── whatsapp-integration-utils.ts
+│   ├── AgentHubPage.tsx              # Agent hub grid
+│   ├── AgentList.tsx / AgentCard.tsx / AgentButton.tsx
+│   ├── EvaluationTab.tsx
+│   └── hub/                          # Hub filters, cards, bulk actions
+├── hooks/
+│   ├── useWhatsAppPairingSocket.ts   # Socket.IO client for QR pairing
+│   ├── useAgentOperations.ts
+│   ├── useAgentBulkDelete.ts
+│   └── useAgentHubFilters.ts
+├── locales/
+│   ├── en.json                       # createEdit.fields.whatsapp* keys
+│   └── fr.json
+└── README.md                         # This file
 ```
+
+WhatsApp UI lives inside the agent module (not a separate route). Backend logic is in [`YellowStorm/back/src/modules/whatsapp/README.md`](../../../../back/src/modules/whatsapp/README.md).
 
 ---
 
@@ -182,6 +221,44 @@ interface CreateAgentData {
 // UpdateAgentData: same fields, all optional
 ```
 
+### AgentWhatsAppIntegration
+
+Returned by `getAgentWhatsAppIntegration()` and reconnect endpoints:
+
+```typescript
+type AgentWhatsAppIntegrationStatus =
+  | 'PAIRING'
+  | 'CONNECTED'
+  | 'DISCONNECTED'
+  | 'FAILED';
+
+interface AgentWhatsAppIntegration {
+  status: AgentWhatsAppIntegrationStatus;
+  sessionId?: string;
+  phoneNumber?: string;       // E.164 after successful pairing
+  displayName?: string;       // WhatsApp profile name
+  lastActivityAt?: string;
+  errorMessage?: string;
+  updatedAt?: string;
+}
+
+interface AgentWhatsAppConnectResponse {
+  sessionId: string;
+  status: 'PAIRING';
+  qrCode?: string;            // data URL or base64 PNG
+  pairingCode?: string;
+}
+
+interface AgentWhatsAppPairingResponse {
+  qrCode?: string;
+  pairingCode?: string;
+}
+```
+
+### AgentTelegramIntegration
+
+See `AgentTelegramIntegrationSection` — bot token is never returned; `hasToken` indicates stored credentials.
+
 ---
 
 ## API Layer
@@ -205,6 +282,27 @@ interface WidgetTokenResponse {
   agentId: string;
 }
 ```
+
+### WhatsApp integration API
+
+| Function | Method | Endpoint | Description |
+|----------|--------|----------|-------------|
+| `getAgentWhatsAppIntegration(agentId)` | GET | `/agents/:id/whatsapp-integration` | Current status |
+| `connectAgentWhatsApp(agentId)` | POST | `/agents/:id/whatsapp-integration/connect` | Start QR pairing |
+| `getAgentWhatsAppPairing(agentId, sessionId)` | GET | `/agents/:id/whatsapp-integration/:sessionId/pairing` | Poll QR / pairing code |
+| `reconnectAgentWhatsApp(agentId, sessionId)` | POST | `/agents/:id/whatsapp-integration/:sessionId/reconnect` | Reconnect session |
+| `disconnectAgentWhatsAppSession(agentId, sessionId)` | DELETE | `/agents/:id/whatsapp-integration/:sessionId` | Disconnect session |
+| `deleteAgentWhatsAppIntegration(agentId)` | DELETE | `/agents/:id/whatsapp-integration` | Remove integration |
+
+Endpoint builders live in `@/lib/api/config.ts` under `API_ENDPOINTS.agents.whatsapp*`.
+
+### Telegram integration API
+
+| Function | Method | Endpoint |
+|----------|--------|----------|
+| `getAgentTelegramIntegration(agentId)` | GET | `/agents/:id/telegram-integration` |
+| `upsertAgentTelegramIntegration(agentId, payload)` | PUT | `/agents/:id/telegram-integration` |
+| `deleteAgentTelegramIntegration(agentId)` | DELETE | `/agents/:id/telegram-integration` |
 
 ### ToolOption (from API)
 
@@ -359,7 +457,107 @@ Displays a single agent with name, type badge, description (2-line truncated), t
 | Ignore Pre-prompt | Checkbox | Skip agent type prompt |
 | Active | Switch | Toggle active status |
 
+**Connectors tab** (edit mode only for channel sections — agent must be saved first):
+
+| Section | Component | Description |
+|---------|-----------|-------------|
+| MCP Connectors | `MultiSelect` | Assign connector IDs from `/connectors/active` |
+| Telegram | `AgentTelegramIntegrationSection` | Bot token + webhook status |
+| WhatsApp | `AgentWhatsAppIntegrationSection` | QR / pairing-code flow via REST + Socket.IO |
+
+Tab label: `createEdit.tabs.connectors`. WhatsApp and Telegram render below the connectors multi-select inside `TabsContent value="connectors"`.
+
 **Tool Auto-Selection**: When creating a new agent and changing the agent type, tools whose `defaultAgentTypes` include the selected type name are automatically checked. This does not happen when editing (preserves existing selections).
+
+### AgentWhatsAppIntegrationSection
+
+Connectors-tab UI for linking a personal agent to WhatsApp. Props: `{ agentId: string | null }`.
+
+**UI states**
+
+| Status | Banner | Actions |
+|--------|--------|---------|
+| Not connected / disconnected | Neutral | Connect WhatsApp |
+| `PAIRING` | Neutral | QR image, optional 8-digit pairing code, Refresh Code, Cancel |
+| `CONNECTED` | Green | Phone number, display name, Disconnect, Reconnect |
+| `FAILED` | Amber | Error message (network errors mapped to friendly copy), Disconnect, Reconnect |
+
+**Behaviour**
+
+1. On mount (when `agentId` is set): `GET /agents/:id/whatsapp-integration`.
+2. **Connect**: `POST …/connect` → stores `sessionId`, shows QR/code, enables socket + HTTP poll.
+3. **Realtime**: `useWhatsAppPairingSocket` joins room `{ agentId, sessionId }` on namespace `/whatsapp`.
+4. **Fallback poll**: every 2.5s `GET …/:sessionId/pairing` while status is `PAIRING`.
+5. **Connected**: socket `whatsapp.connected` or refreshed integration → toast, clear QR.
+6. **Cancel pairing**: `DELETE …/:sessionId` (disconnect session).
+7. **Disconnect**: session DELETE or full integration DELETE if no session id.
+8. **Reconnect**: `POST …/:sessionId/reconnect` or new connect if disconnected.
+
+**Test IDs**: `whatsapp-integration-section`, `whatsapp-connect`, `whatsapp-qr`, `whatsapp-pairing-code`, `whatsapp-refresh`, `whatsapp-cancel`, `whatsapp-disconnect`, `whatsapp-reconnect`.
+
+### useWhatsAppPairingSocket
+
+Hook in `hooks/useWhatsAppPairingSocket.ts`. Connects with JWT from `localStorage` (`AUTH_STORAGE_KEYS.accessToken`) to `${getSocketBaseUrl()}/whatsapp`.
+
+| Socket event | Handler |
+|--------------|---------|
+| `connect` | Emits `join` with `{ agentId, sessionId }` |
+| `whatsapp.qr.generated` | Updates QR / pairing code |
+| `whatsapp.connected` | Refreshes integration, success toast |
+| `whatsapp.disconnected` | Clears session, sets `DISCONNECTED` |
+| `whatsapp.session.failed` | Sets `FAILED`, shows mapped error |
+
+Enabled only when `agentId`, `sessionId`, and integration status is `PAIRING`.
+
+### whatsapp-integration-utils
+
+Pure helpers in `components/whatsapp-integration-utils.ts`:
+
+| Function | Purpose |
+|----------|---------|
+| `normalizeQrDataUrl` | Ensures QR string is a valid `data:image/png;base64,…` URL |
+| `formatPairingCodeDisplay` | Formats 8-digit code as `XXXX-XXXX` |
+| `isWhatsAppConnected` / `isWhatsAppPairing` / `isWhatsAppFailed` / `isWhatsAppNotConnected` | Status guards |
+| `isWhatsAppNetworkError` | Detects `ERR_3219` or connectivity strings |
+| `resolveWhatsAppErrorMessage` | Maps network errors to `whatsappNetworkUnreachable` i18n label |
+
+### AgentTelegramIntegrationSection
+
+Same Connectors tab pattern: save agent first, then configure bot token via REST (`get` / `upsert` / `delete` on `/telegram-integration`). See component and `api.ts` for details.
+
+---
+
+## Channel Integrations
+
+External messaging channels are configured per **personal agent** from the **Connectors** tab in `CreateEditAgentDialog`. The frontend does not run Baileys or Telegram bots — it calls NestJS REST APIs and, for WhatsApp pairing, a Socket.IO gateway.
+
+### WhatsApp (front ↔ back)
+
+```
+CreateEditAgentDialog (Connectors tab)
+        │
+        ▼
+AgentWhatsAppIntegrationSection
+        │
+        ├── REST  /api/v1/agents/:agentId/whatsapp-integration/*
+        │         (api.ts + API_ENDPOINTS.agents.whatsapp*)
+        │
+        └── Socket.IO  /whatsapp  (useWhatsAppPairingSocket)
+                  join { agentId, sessionId }
+                  ← whatsapp.qr.generated | connected | disconnected | session.failed
+```
+
+Backend module: [`YellowStorm/back/src/modules/whatsapp/README.md`](../../../../back/src/modules/whatsapp/README.md). Agent ownership and stream payloads: [`YellowStorm/back/src/modules/agent/README.md`](../../../../back/src/modules/agent/README.md) (Channel Integrations).
+
+**Dependencies**: `socket.io-client` (pairing events). QR rendering uses a plain `<img src={dataUrl}>` — no extra QR library on the front.
+
+**i18n** (`locales/en.json`, `locales/fr.json`): all user-visible strings under `createEdit.fields.whatsapp*`. Use `useModuleTranslation('agent')` and literal keys such as `t('createEdit.fields.whatsappConnect')`.
+
+**Prerequisites for end-to-end messaging** (not configured in this UI): backend must reach `web.whatsapp.com`, ADK/gRPC (`CONVERSATION_GRPC_URL`) must be up for inbound auto-replies. Network failures surface as `ERR_3219` or mapped copy via `resolveWhatsAppErrorMessage`.
+
+### Telegram (summary)
+
+`AgentTelegramIntegrationSection` on the same tab. Token is write-only from the UI; `hasToken` indicates stored credentials. No Socket.IO — status from REST only.
 
 ---
 
@@ -485,6 +683,20 @@ Zod schema (`userAgentFormSchema`):
 6. Visitor chats via /widget/chat + /widget/stream (see backend README)
 ```
 
+### WhatsApp Connect & Pair
+
+```
+1. User opens agent → Connectors tab → AgentWhatsAppIntegrationSection
+2. Connect → POST /agents/:id/whatsapp-integration/connect
+3. Section stores sessionId, shows QR and/or pairing code
+4. useWhatsAppPairingSocket joins /whatsapp; poll GET …/pairing every 2.5s as fallback
+5. User scans QR in WhatsApp mobile app
+6. Backend emits whatsapp.connected → section refreshes GET integration
+7. UI shows phone (E.164), display name, Disconnect / Reconnect actions
+```
+
+Inbound messages after connect are handled entirely on the backend (Baileys → StreamService → reply). The front only manages pairing lifecycle.
+
 ---
 
 ## Usage Examples
@@ -529,3 +741,45 @@ const agent = await createAgent({
   tools: ['tool-id-1', 'tool-id-2'],
 });
 ```
+
+---
+
+## Testing
+
+WhatsApp-related tests (Vitest + jsdom):
+
+| File | Coverage |
+|------|----------|
+| `components/whatsapp-integration-utils.test.ts` | QR normalization, status helpers, network error mapping |
+| `components/AgentWhatsAppIntegrationSection.test.tsx` | Connect / pairing / connected / disconnect UI flows (mocked API + socket) |
+| `api.test.ts` | WhatsApp REST helpers and endpoint paths |
+
+Run focused suite:
+
+```bash
+cd YellowStorm/front
+npx vitest run src/modules/agent/components/whatsapp-integration-utils.test.ts \
+  src/modules/agent/components/AgentWhatsAppIntegrationSection.test.ts \
+  src/modules/agent/api.test.ts
+```
+
+---
+
+## Related Documentation
+
+| Document | Description |
+|----------|-------------|
+| [`YellowStorm/back/src/modules/whatsapp/README.md`](../../../../back/src/modules/whatsapp/README.md) | Baileys, REST API, Socket.IO gateway, env vars, inbound routing |
+| [`YellowStorm/back/src/modules/agent/README.md`](../../../../back/src/modules/agent/README.md) | Agent CRUD, stream payloads, channel integration boundaries |
+| [`YellowStorm/WhatsApp-GIT-README.md`](../../../../WhatsApp-GIT-README.md) | GitLab issue ↔ commit plan for WhatsApp feature branches |
+
+---
+
+## Module Dependencies
+
+| Package | Used for |
+|---------|----------|
+| `zustand` | Agent list store |
+| `react-hook-form` + `zod` | Create/edit form |
+| `socket.io-client` | WhatsApp pairing realtime events |
+| `@radix-ui/*` + shadcn/ui | Dialog, tabs, buttons |

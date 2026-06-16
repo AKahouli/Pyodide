@@ -9,12 +9,16 @@ import type {
   AgentType,
   AgentTelegramIntegration,
   AgentTelegramIntegrationInput,
+  AgentWhatsAppConnectResponse,
+  AgentWhatsAppIntegration,
+  AgentWhatsAppPairingResponse,
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
   A2APublishResult,
   A2ARotateKeyResult,
   A2ARevokeResult,
+  WidgetTokenResponse,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -154,10 +158,53 @@ export async function deleteAgentTelegramIntegration(agentId: string): Promise<v
   await apiClient.delete(API_ENDPOINTS.agents.telegramIntegration(agentId));
 }
 
-export interface WidgetTokenResponse {
-  id: string;
-  token: string;
-  agentId: string;
+export async function getAgentWhatsAppIntegration(
+  agentId: string,
+): Promise<AgentWhatsAppIntegration | null> {
+  const response = await apiClient.get<ApiResponse<AgentWhatsAppIntegration | null>>(
+    API_ENDPOINTS.agents.whatsappIntegration(agentId),
+  );
+  return response.data.data;
+}
+
+export async function connectAgentWhatsApp(
+  agentId: string,
+): Promise<AgentWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<AgentWhatsAppConnectResponse>>(
+    API_ENDPOINTS.agents.whatsappConnect(agentId),
+  );
+  return response.data.data;
+}
+
+export async function getAgentWhatsAppPairing(
+  agentId: string,
+  sessionId: string,
+): Promise<AgentWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<AgentWhatsAppPairingResponse>>(
+    API_ENDPOINTS.agents.whatsappPairing(agentId, sessionId),
+  );
+  return response.data.data;
+}
+
+export async function reconnectAgentWhatsApp(
+  agentId: string,
+  sessionId: string,
+): Promise<AgentWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<AgentWhatsAppIntegration>>(
+    API_ENDPOINTS.agents.whatsappReconnect(agentId, sessionId),
+  );
+  return response.data.data;
+}
+
+export async function disconnectAgentWhatsAppSession(
+  agentId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.whatsappSession(agentId, sessionId));
+}
+
+export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.whatsappIntegration(agentId));
 }
 
 export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
@@ -166,7 +213,6 @@ export async function createWidgetToken(agentId: string): Promise<WidgetTokenRes
   );
   return response.data.data;
 }
-
 
 // Re-export evaluation API functions
 export * from './evaluation-api';

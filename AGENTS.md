@@ -95,7 +95,7 @@ Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibil
 
 ## Comments
 
-- **Comment the WHY**, never the WHAT. `// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
+- Must always **Comment the WHY**`// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
 - **Public API documentation** (exported services, exported types, controllers, router functions): JSDoc / docstring with purpose, params semantics, return semantics, and any non-obvious invariant. One paragraph max.
 - **Inline comments** 
 - **No banner comments** (`// ===== HELPERS =====`). If a file needs sections, it's two files.
@@ -521,7 +521,7 @@ npx ctx7@latest docs <libraryId> "<question>"
 ---
 
 ## Code Patterns
-
+- when a feature require SYSTEM PROMPT settings then must always let the user customize this setting system prompt via Admin UI settings, ask him for clarification if you don't know where to store this setting. 
 - **Python prompts:** Use f-strings (interpolation) over concatenation or `.format()`. Wrap variables in `{}`, prefix with `f`. Lets users edit prompt templates from the UI without breaking the code.
 - **gRPC Struct fields (NestJS):** Always wrap with `toGrpcStruct()` before assigning. See §5.
 - **Filters/sanitizers:** Log every drop at WARN with item id and rule. See §6.

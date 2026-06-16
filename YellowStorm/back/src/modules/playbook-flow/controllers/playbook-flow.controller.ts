@@ -324,6 +324,17 @@ export class PlaybookFlowController {
     return this.playbookFlowIntentService.analyze(id, userId, dto);
   }
 
+  @Post(':id/intent-design')
+  @ApiOperation({ summary: 'Assess playbook intent requirements before manual generation' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async assessIntentDesign(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: RequestPlaybookFlowIntentDto,
+  ) {
+    return this.playbookFlowIntentService.assessDesign(id, userId, dto);
+  }
+
   @Post(':id/intent-constructions')
   @ApiOperation({ summary: 'Start realtime playbook intent construction' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)

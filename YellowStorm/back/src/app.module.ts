@@ -16,6 +16,7 @@ import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import playbookFlowConfig from './config/playbook-flow.config';
 import telegramConfig from './config/telegram.config';
+import whatsappConfig from './config/whatsapp.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -55,6 +56,7 @@ import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
+import { WhatsAppModule } from './modules/whatsapp';
 
 @Module({
   imports: [
@@ -62,7 +64,7 @@ import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, telegramConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, telegramConfig, whatsappConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -105,6 +107,7 @@ import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
     ConnectedAppModule,
     ConnectorModule,
     TelegramModule,
+    WhatsAppModule,
     ProjectModule,
     ClassifierModule,
     HealthModule,

@@ -19,6 +19,7 @@ import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
+import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
@@ -666,15 +667,6 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
-    const allSkillIds = [
-      ...new Set(filteredAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
-    ];
-    const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
-      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
-    }
-
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
       filteredAgents
@@ -702,8 +694,29 @@ export class AgentService {
       ),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    const agentsWithConnectorSkills = filteredAgents.map((agent) => ({
+      ...agent,
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, [
+        ...(agent.connectorIds || []),
+        ...(selectedConnectorId ? [selectedConnectorId] : []),
+      ]),
+    }));
+    const allSkillIds = [
+      ...new Set(
+        agentsWithConnectorSkills.flatMap((a) => [
+          ...(a.agentTypeSkillIds ?? []),
+          ...(a.skillIds ?? []),
+          ...(a.connectorSkillIds ?? []),
+        ]),
+      ),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
 
-    const grpcAgents = await Promise.all(filteredAgents.map(async (agent) => {
+    const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
         .filter(Boolean) as IToolResponse[];
@@ -848,15 +861,6 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
-    const allSkillIds = [
-      ...new Set(streamAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
-    ];
-    const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
-      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
-    }
-
     // Batch-resolve models
     const allModelIds = [...new Set(
       streamAgents
@@ -877,9 +881,27 @@ export class AgentService {
       ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    const agentsWithConnectorSkills = streamAgents.map((agent) => ({
+      ...agent,
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
+    }));
+    const allSkillIds = [
+      ...new Set(
+        agentsWithConnectorSkills.flatMap((a) => [
+          ...(a.agentTypeSkillIds ?? []),
+          ...(a.skillIds ?? []),
+          ...(a.connectorSkillIds ?? []),
+        ]),
+      ),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
 
     const grpcAgents = await Promise.all(
-      streamAgents.map(async (agent) => {
+      agentsWithConnectorSkills.map(async (agent) => {
         const agentTools = agent.toolIds
           .map((id) => toolsMap.get(id))
           .filter(Boolean) as IToolResponse[];
@@ -947,6 +969,97 @@ export class AgentService {
     });
 
     return grpcAgents;
+  }
+
+  async buildGrpcConnectorRuntimeForPlaybook(
+    userId: string,
+    toolBindings: Record<string, unknown>[],
+  ): Promise<{
+    connectorIds: string[];
+    connector_bindings: Record<string, unknown>[];
+    tools: Record<string, unknown>[];
+    skills: Record<string, unknown>[];
+  }> {
+    const normalizedBindings = toolBindings
+      .filter((binding) => binding && typeof binding === 'object')
+      .map((binding) => binding as Record<string, unknown>);
+
+    if (normalizedBindings.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorIds: string[] = [];
+    const actionKeysByConnectorId = new Map<string, Set<string>>();
+    const fixedParamsByConnectorId = new Map<string, Record<string, unknown>>();
+
+    for (const binding of normalizedBindings) {
+      if (binding.isEnabled === false) {
+        continue;
+      }
+
+      const connectorId = String(binding.connectorId || '').trim();
+      if (!connectorId) {
+        this.logger.warn('Skipping playbook connector binding without connector id', { userId });
+        continue;
+      }
+
+      const enabledActionKeys = new Set(
+        (Array.isArray(binding.actions) ? binding.actions : [])
+          .filter((action) => action && typeof action === 'object' && (action as Record<string, unknown>).isEnabled !== false)
+          .map((action) => String((action as Record<string, unknown>).actionKey || '').trim())
+          .filter(Boolean),
+      );
+
+      if (enabledActionKeys.size === 0) {
+        this.logger.warn('Skipping playbook connector binding without enabled actions', { userId, connectorId });
+        continue;
+      }
+
+      connectorIds.push(connectorId);
+      actionKeysByConnectorId.set(connectorId, enabledActionKeys);
+
+      if (binding.fixedParams && typeof binding.fixedParams === 'object' && !Array.isArray(binding.fixedParams)) {
+        fixedParamsByConnectorId.set(connectorId, binding.fixedParams as Record<string, unknown>);
+      }
+    }
+
+    const uniqueConnectorIds = [...new Set(connectorIds)];
+    if (uniqueConnectorIds.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
+    const connectorBindings = await this.buildConnectorBindings(
+      connectorsMap,
+      uniqueConnectorIds,
+      userId,
+      actionKeysByConnectorId,
+      fixedParamsByConnectorId,
+    );
+    const connectorSkillIds = this.getConnectorSkillIds(connectorsMap, uniqueConnectorIds);
+    const skills = await this.buildGrpcSkillsForPlaybook(connectorSkillIds);
+
+    return {
+      connectorIds: uniqueConnectorIds,
+      connector_bindings: connectorBindings,
+      tools: this.buildConnectorToolDefs(connectorBindings),
+      skills,
+    };
+  }
+
+  async buildGrpcSkillsForPlaybook(skillIds: string[]): Promise<Record<string, unknown>[]> {
+    const uniqueSkillIds = [...new Set(skillIds.map((skillId) => skillId.trim()).filter(Boolean))];
+    if (uniqueSkillIds.length === 0) {
+      return [];
+    }
+
+    const skills = await this.skillService.findByIds(uniqueSkillIds);
+    const resolvedSkillIds = new Set(skills.map((skill) => skill.id));
+    const missingSkillIds = uniqueSkillIds.filter((skillId) => !resolvedSkillIds.has(skillId));
+    if (missingSkillIds.length > 0) {
+      this.logger.warn('Missing playbook runtime skills', { skillIds: missingSkillIds });
+    }
+    return skills.map((skill) => this.toGrpcSkill(skill));
   }
 
   async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
@@ -1211,12 +1324,26 @@ export class AgentService {
     skillsMap: Map<string, ISkillResponse>,
   ): ISkillResponse[] {
     const disabled = new Set(agent.disabledSkillIds ?? []);
-    const skillIds = [...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? [])])];
+    const skillIds = [
+      ...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? []), ...(agent.connectorSkillIds ?? [])]),
+    ];
 
     return skillIds
       .filter((id) => !disabled.has(id))
       .map((id) => skillsMap.get(id))
       .filter(Boolean) as ISkillResponse[];
+  }
+
+  private getConnectorSkillIds(
+    connectorsMap: Map<string, IConnectorResponse>,
+    connectorIds: string[],
+  ): string[] {
+    return [...new Set(
+      connectorIds
+        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
+        .flat()
+        .filter(Boolean) as string[],
+    )];
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
@@ -1273,8 +1400,8 @@ export class AgentService {
     );
   }
 
-  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, any>> {
-    const connectorsMap = new Map<string, any>();
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
+    const connectorsMap = new Map<string, IConnectorResponse>();
     if (connectorIds.length === 0) {
       return connectorsMap;
     }
@@ -1284,13 +1411,20 @@ export class AgentService {
       connectorsMap.set(connector.id, connector);
     }
 
+    const missingConnectorIds = connectorIds.filter((connectorId) => !connectorsMap.has(connectorId));
+    if (missingConnectorIds.length > 0) {
+      this.logger.warn('Missing playbook runtime connectors', { connectorIds: missingConnectorIds });
+    }
+
     return connectorsMap;
   }
 
   private async buildConnectorBindings(
-    connectorsMap: Map<string, any>,
+    connectorsMap: Map<string, IConnectorResponse>,
     connectorIds: string[] = [],
     userId?: string,
+    actionKeysByConnectorId?: Map<string, Set<string>>,
+    fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
   ): Promise<Record<string, unknown>[]> {
     const bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
@@ -1300,12 +1434,17 @@ export class AgentService {
         connector_name: connector.name,
         actions: (connector.actions || [])
           .filter((action: any) => action.isEnabled !== false)
+          .filter((action: any) => {
+            const allowedActionKeys = actionKeysByConnectorId?.get(connector.id);
+            return !allowedActionKeys || allowedActionKeys.has(action.key);
+          })
           .map((action: any) => ({
             action_key: action.key,
             label: action.label || action.key,
             description: action.description || '',
             parameter_schema: action.parameterSchema || {},
           })),
+        fixed_params: fixedParamsByConnectorId?.get(connector.id) || {},
         mcp_transport_type: connector.mcpTransportType || '',
         mcp_server_url: connector.mcpServerUrl || '',
         mcp_server_config: connector.mcpServerConfig || {},

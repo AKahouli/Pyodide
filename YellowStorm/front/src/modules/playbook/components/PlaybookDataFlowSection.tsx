@@ -140,6 +140,25 @@ function getBindingPatchForSourceKind(
   }
 }
 
+function formatConstantSourceLabel(value: unknown, fallback: string): string {
+  if (typeof value === 'string') return value || fallback;
+  if (Array.isArray(value)) {
+    const labels = value
+      .map((item) => formatConstantSourceLabel(item, ''))
+      .filter(Boolean);
+    return labels.length > 0 ? labels.join(', ') : fallback;
+  }
+  if (typeof value !== 'object' || value === null) return fallback;
+
+  const record = value as Record<string, unknown>;
+  const candidate = record.label
+    ?? record.name
+    ?? record.workspaceName
+    ?? record.path
+    ?? record.text;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : fallback;
+}
+
 function KindBadge({ kind }: { kind: ArtifactKind }) {
   const colors = PORT_COLORS[kind];
   if (!colors) return null;
@@ -652,9 +671,7 @@ function SourceCell({
         <>
           <div className="h-2 w-2 rounded-full bg-emerald-500" />
           <span className="font-medium text-foreground">
-            {typeof binding.constantValue === 'string'
-              ? binding.constantValue
-              : (binding.constantValue as Record<string, unknown>)?.text?.toString() ?? t('dataFlow.constantValue')}
+            {formatConstantSourceLabel(binding.constantValue, t('dataFlow.constantValue'))}
           </span>
         </>
       )}
@@ -741,7 +758,7 @@ function SourcePicker({
   const [constantValue, setConstantValue] = useState(
     binding && typeof binding.constantValue === 'string'
       ? binding.constantValue
-      : (binding?.constantValue as Record<string, unknown>)?.text?.toString() ?? '',
+      : formatConstantSourceLabel(binding?.constantValue, ''),
   );
   const [expressionValue, setExpressionValue] = useState(binding?.expression ?? '');
   const [pathValue, setPathValue] = useState(
@@ -750,9 +767,14 @@ function SourcePicker({
 
   const handleConstantSave = () => {
     if (binding) {
+      const existingLabel = formatConstantSourceLabel(binding.constantValue, '');
+      const shouldKeepStructuredValue = binding.sourceKind === 'constant'
+        && typeof binding.constantValue === 'object'
+        && binding.constantValue !== null
+        && constantValue === existingLabel;
       const patch: Partial<DataBinding> = {
         sourceKind: 'constant',
-        constantValue: constantValue ? { text: constantValue } : undefined,
+        constantValue: shouldKeepStructuredValue ? binding.constantValue : constantValue ? { text: constantValue } : undefined,
         sourceNode: undefined,
         sourcePort: undefined,
         triggerPath: undefined,

@@ -41,6 +41,7 @@ export interface IAgentForStream {
   knowledgeBases: string[];
   toolIds: string[];
   connectorIds?: string[];
+  connectorSkillIds?: string[];
   skillIds?: string[];
   disabledSkillIds?: string[];
   agentTypeSkillIds?: string[];

@@ -1372,7 +1372,11 @@ describe('playbook store', () => {
         sourceKind: 'constant',
         constantValue: expect.objectContaining({
           text: 'ws-1',
+          id: 'ws-1',
+          label: 'Workspace',
+          name: 'Workspace',
           workspaceId: 'ws-1',
+          workspaceName: 'Workspace',
           kind: 'workspace',
         }),
       }),
@@ -1448,6 +1452,10 @@ describe('playbook store', () => {
       expect.objectContaining({
         constantValue: expect.objectContaining({
           text: '/docs/spec.md',
+          id: 'doc-1',
+          documentId: 'doc-1',
+          label: 'Spec',
+          name: 'Spec',
           workspaceId: 'ws-1',
           path: '/docs/spec.md',
           kind: 'document',

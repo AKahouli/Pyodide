@@ -39,6 +39,7 @@ import {
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
 import { AgentDeploymentSection } from "./AgentDeploymentSection";
+import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -522,6 +523,7 @@ export function CreateEditAgentDialog({
                     </div>
 
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
 

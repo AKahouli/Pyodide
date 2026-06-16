@@ -121,8 +121,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={onRedo}
         onToggleExplorer={onToggleExplorer}
         onToggleConnectors={onToggleConnectors}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -158,8 +160,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -185,8 +189,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -210,8 +216,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -226,33 +234,6 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
   });
 
-  it('respects the minimum left offset when restoring position', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 8, y: 16 }));
-
-    render(
-      <PlaybookCanvasFloatingToolbar
-        containerRef={containerRef}
-        onAddStep={vi.fn()}
-        onAddStepFromTemplate={vi.fn()}
-        onAutoLayout={vi.fn()}
-        onUndo={vi.fn()}
-        onRedo={vi.fn()}
-        onToggleExplorer={vi.fn()}
-        onToggleConnectors={vi.fn()}
-        explorerOpen={false}
-        connectorsOpen={false}
-        canUndo
-        canRedo
-        waitingForHumanInput={false}
-        interruptType={null}
-        minLeftOffset={40}
-      />,
-    );
-
-    const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '40px', top: '16px' });
-  });
-
   it('defaults to the bottom left when there is no stored position', () => {
     render(
       <PlaybookCanvasFloatingToolbar
@@ -264,8 +245,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -278,8 +261,8 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(toolbar).toHaveStyle({ left: '16px', top: '584px' });
   });
 
-  it('allows restoring position at the top edge', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 0 }));
+  it('ignores stored positions and anchors to the bottom left', () => {
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 40, y: 0 }));
 
     render(
       <PlaybookCanvasFloatingToolbar
@@ -291,8 +274,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -302,12 +287,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '40px', top: '0px' });
+    expect(toolbar).toHaveStyle({ left: '40px', top: '584px' });
   });
 
-  it('moves restored position to the right of the avoid rect when they overlap', () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 16, y: 16 }));
-
+  it('keeps the bottom-left default when the avoid rect is at the top', () => {
     render(
       <PlaybookCanvasFloatingToolbar
         containerRef={containerRef}
@@ -319,8 +302,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -329,11 +314,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '32px', top: '16px' });
+    expect(toolbar).toHaveStyle({ left: '16px', top: '584px' });
   });
 
   it('reclamps after expand changes the toolbar size', async () => {
-    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 92 }));
     avoidRect = { x: 300, y: 0, left: 300, top: 0, right: 780, bottom: 200, width: 480, height: 200, toJSON: () => ({}) };
 
     render(
@@ -347,8 +331,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         onRedo={vi.fn()}
         onToggleExplorer={vi.fn()}
         onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
         explorerOpen={false}
         connectorsOpen={false}
+        skillsOpen={false}
         canUndo
         canRedo
         waitingForHumanInput={false}
@@ -371,6 +357,6 @@ describe('PlaybookCanvasFloatingToolbar', () => {
       window.dispatchEvent(new Event('resize'));
     });
 
-    expect(wrapper).toHaveStyle({ top: '212px' });
+    expect(wrapper).toHaveStyle({ top: '530px' });
   });
 });
