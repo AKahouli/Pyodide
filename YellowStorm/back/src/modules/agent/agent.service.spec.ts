@@ -62,6 +62,9 @@ describe('AgentService connector skill inheritance', () => {
     const configService = {
       get: jest.fn((key: string, fallback?: string) => fallback ?? ''),
     };
+    const teamService = {
+      removeAgentFromAllTeams: jest.fn().mockResolvedValue(undefined),
+    };
 
     const service = new AgentService(
       agentModel as any,
@@ -74,6 +77,7 @@ describe('AgentService connector skill inheritance', () => {
       connectorAuthService as any,
       connectedAppTokenService as any,
       configService as unknown as ConfigService,
+      teamService as any,
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);

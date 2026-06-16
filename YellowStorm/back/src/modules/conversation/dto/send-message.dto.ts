@@ -64,6 +64,12 @@ export class SendMessageDto {
   @IsMongoId({ each: true })
   memberIds?: string[];
 
+  @ApiPropertyOptional({ description: 'Mentioned team IDs; expanded into their agents at send time', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  teamIds?: string[];
+
   @ApiPropertyOptional({ description: 'ID of the message being replied to' })
   @IsOptional()
   @IsMongoId()

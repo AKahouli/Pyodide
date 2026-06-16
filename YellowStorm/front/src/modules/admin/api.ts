@@ -87,6 +87,8 @@ import type {
   ConnectorCategoryResponse,
   CreateConnectorCategoryRequest,
   UpdateConnectorCategoryRequest,
+  TeamAutoBuilderConfigResponse,
+  UpsertTeamAutoBuilderConfigRequest,
 } from './types';
 
 // Helper to build query string
@@ -1056,4 +1058,23 @@ export async function updateAdminAgent(
 
 export async function deleteAdminAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+// ===== Team Auto-Builder config =====
+
+export async function getTeamAutoBuilderConfig(): Promise<TeamAutoBuilderConfigResponse | null> {
+  const response = await apiClient.get<ApiResponse<TeamAutoBuilderConfigResponse | null>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
+  );
+  return response.data.data;
+}
+
+export async function upsertTeamAutoBuilderConfig(
+  data: UpsertTeamAutoBuilderConfigRequest,
+): Promise<TeamAutoBuilderConfigResponse> {
+  const response = await apiClient.put<ApiResponse<TeamAutoBuilderConfigResponse>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
+    data,
+  );
+  return response.data.data;
 }

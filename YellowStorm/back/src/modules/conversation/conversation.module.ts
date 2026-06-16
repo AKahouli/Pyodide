@@ -40,6 +40,7 @@ import { ModelsModule } from '../models/models.module';
 import { LoggerModule } from '../logger';
 import { UsageModule } from '../usage';
 import { AgentModule } from '../agent/agent.module';
+import { TeamModule } from '../team/team.module';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
@@ -63,6 +64,7 @@ import conversationConfig from '../../config/conversation.config';
     LoggerModule,
     UsageModule,
     AgentModule,
+    TeamModule,
     AgentTypeModule,
     SkillModule,
     EmailModule,
