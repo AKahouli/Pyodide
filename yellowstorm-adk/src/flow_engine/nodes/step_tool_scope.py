@@ -75,7 +75,8 @@ def build_step_tool_scope(
                 seen_binding_workspace_ids.add(ref_workspace_id)
                 binding_workspace_ids.append(ref_workspace_id)
             document_id = ref.get("document_id", "")
-            file_name = ref.get("file_name") or ref.get("filename", "")
+            file_name = _search_file_name(ref, workspace_context)
+
             search_file_name = file_name or document_id
             if search_file_name:
                 port_key = document_id or search_file_name
@@ -299,6 +300,34 @@ def _hydrate_file_ref(
             }
 
     return ref
+
+
+def _search_file_name(
+    ref: dict[str, str],
+    workspace_context: list[dict[str, Any]],
+) -> str:
+    file_name = str(ref.get("file_name") or ref.get("filename") or "").strip()
+    if not file_name:
+        return ""
+
+    for workspace in workspace_context:
+        for document in workspace.get("documents", []):
+            candidate_id = str(
+                document.get("document_id")
+                or document.get("id")
+                or document.get("_id")
+                or ""
+            ).strip()
+            if candidate_id != file_name:
+                continue
+
+            resolved_name = str(
+                document.get("file_name") or document.get("filename") or ""
+            ).strip()
+            if resolved_name:
+                return resolved_name
+
+    return file_name
 
 
 def _storage_filepath(value: dict[str, Any]) -> str:

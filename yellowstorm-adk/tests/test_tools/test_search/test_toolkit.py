@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.smart_rag.tools.search.toolkit import SearchToolkit
+from src.smart_rag.tools.utilities.core_utils import build_tree, construct_json
 
 
 class TestSearchToolkit:
@@ -23,6 +24,25 @@ class TestSearchToolkit:
         assert toolkit.sources_image == []
         # order_text attribute doesn't exist, remove this check
         assert toolkit.ids == set()
+
+    def test_construct_json_maps_document_ids_to_file_names(self):
+        """Test search schema mapping preserves Qdrant metadata file names."""
+        document_tree, _ = build_tree(
+            [
+                {
+                    "_id": "6a3153efd7d4c01f4ab2e4f6",
+                    "filename": "display.md",
+                    "file_name": "02-annexe-1-cahier-des-charges-techniques-logistiques.md",
+                }
+            ],
+            {},
+        )
+
+        _, attribute_mapping, _ = construct_json(document_tree)
+
+        assert attribute_mapping["_file_name_by_id"] == {
+            "6a3153efd7d4c01f4ab2e4f6": "02-annexe-1-cahier-des-charges-techniques-logistiques.md"
+        }
 
     def test_init_with_custom_values(self):
         """Test toolkit initialization with custom values."""
@@ -213,6 +233,7 @@ class TestSearchToolkitAsync:
 
         assert captured_payloads[0]["workspace_id"] == ["workspace-1"]
         assert captured_payloads[0]["user_id"] == "user-1"
+        assert "ids" not in captured_payloads[0]
         assert "workspace_name" not in captured_payloads[0]
 
     async def test_filtered_image_search_filters_by_workspace_id(self):
@@ -238,7 +259,65 @@ class TestSearchToolkitAsync:
 
         assert captured_payloads[0]["workspace_id"] == ["workspace-1"]
         assert captured_payloads[0]["user_id"] == "user-1"
+        assert "ids" not in captured_payloads[0]
         assert "workspace_name" not in captured_payloads[0]
+
+    async def test_filtered_search_resolves_document_id_to_file_name(self):
+        """Test filtered search sends Qdrant metadata file names, not document ids."""
+        captured_payloads = []
+        document_id = "6a3153efd7d4c01f4ab2e4f6"
+        file_name = "02-annexe-1-cahier-des-charges-techniques-logistiques.md"
+        toolkit = SearchToolkit(
+            task_order="test",
+            workspace_name=["6a314fdad7d4c01f4ab2d25d"],
+            attribute_mapping={"_file_name_by_id": {document_id: file_name}},
+            user_id="6992fc709968567dc766a12d",
+        )
+
+        def capture_payload(query, filter_params, vectorstore, top_k, search_type, user_id=None):
+            captured_payloads.append(filter_params)
+            return {"filter": filter_params}
+
+        async def post_vectorstore(token, payload):
+            return []
+
+        toolkit.common_helpers.create_search_payload = capture_payload
+        toolkit.common_helpers.post_vectorstore = post_vectorstore
+
+        await toolkit.perform_filtered_search("logistics", [document_id])
+
+        assert captured_payloads[0]["file_name"] == file_name
+        assert captured_payloads[1]["file_name"] == file_name
+        assert "ids" not in captured_payloads[0]
+        assert "ids" not in captured_payloads[1]
+
+    async def test_filtered_search_skips_unresolved_document_id_filter(self):
+        """Test unresolved document ids fall back to workspace-only Qdrant search."""
+        captured_payloads = []
+        document_id = "6a3153efd7d4c01f4ab2e4f6"
+        toolkit = SearchToolkit(
+            task_order="test",
+            workspace_name=["6a314fdad7d4c01f4ab2d25d"],
+            user_id="6992fc709968567dc766a12d",
+        )
+
+        def capture_payload(query, filter_params, vectorstore, top_k, search_type, user_id=None):
+            captured_payloads.append(filter_params)
+            return {"filter": filter_params}
+
+        async def post_vectorstore(token, payload):
+            return []
+
+        toolkit.common_helpers.create_search_payload = capture_payload
+        toolkit.common_helpers.post_vectorstore = post_vectorstore
+
+        await toolkit.perform_filtered_search("logistics", [document_id])
+
+        assert "file_name" not in captured_payloads[0]
+        assert "file_name" not in captured_payloads[1]
+        assert "ids" not in captured_payloads[0]
+        assert "ids" not in captured_payloads[1]
+        assert captured_payloads[0]["workspace_id"] == ["6a314fdad7d4c01f4ab2d25d"]
 
     async def test_perform_in_memory_extraction_no_filename(self):
         """Test in-memory extraction with no filename."""
