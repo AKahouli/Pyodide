@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import type { TeamStore, TeamState } from './types';
 import * as api from './api';
 import { translateTeam } from './translation';
+import { useAgentStore } from '@/modules/agent';
 
 const initialState: TeamState = {
   teams: [],
@@ -84,6 +85,13 @@ export const useTeamStore = create<TeamStore>()(
         set({ isGenerating: true, currentTeam: null, error: null });
         try {
           const team = await api.generateTeam(data);
+          // Generation creates brand-new agents on the backend. Force-refresh the
+          // global agent store so they're available to the org chart (double-click
+          // edit / ownership check) and the agents page without a manual reload.
+          // Done before flipping isGenerating to false, since that transition is
+          // what triggers navigation to the org chart. Failure here must not abort
+          // the (already successful) team generation.
+          await useAgentStore.getState().refreshAgents().catch(() => {});
           set((state) => ({
             isGenerating: false,
             currentTeam: team,
