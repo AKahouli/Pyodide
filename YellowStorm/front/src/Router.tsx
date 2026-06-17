@@ -29,6 +29,12 @@ const PlaybookExecutionPage = React.lazy(() =>
 const AgentHubPage = React.lazy(() =>
   import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
 );
+const TeamsPage = React.lazy(() =>
+  import("./modules/team").then((m) => ({ default: m.TeamsPage }))
+);
+const TeamOrgChartPage = React.lazy(() =>
+  import("./modules/team").then((m) => ({ default: m.TeamOrgChartPage }))
+);
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
@@ -57,6 +63,7 @@ import {
   PlaybookPromptsPage,
   PlaybookSettingsPage,
   WorkspaceSettingsPage,
+  TeamAutoBuilderPage,
   PermissionGuard,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
@@ -156,6 +163,22 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'teams',
+        element: (
+          <Suspense fallback={null}>
+            <TeamsPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'teams/:id',
+        element: (
+          <Suspense fallback={null}>
+            <TeamOrgChartPage />
+          </Suspense>
+        ),
+      },
+      {
         path: 'projet/:id',
         element: (
           <Suspense fallback={null}>
@@ -227,6 +250,14 @@ export const router = createHashRouter([
             element: (
               <PermissionGuard permissions={['workspaces.*', '*']}>
                 <WorkspaceSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'team-auto-builder',
+            element: (
+              <PermissionGuard permissions={['team_auto_builder.read', 'team_auto_builder.*', '*']}>
+                <TeamAutoBuilderPage />
               </PermissionGuard>
             ),
           },

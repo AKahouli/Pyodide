@@ -2,26 +2,7 @@
  * Admin Module Constants
  */
 
-import {
-  Users,
-  Shield,
-  FileText,
-  CreditCard,
-  BarChart3,
-  Settings,
-  ScrollText,
-  Flag,
-  Cpu,
-  Wrench,
-  Puzzle,
-  Bot,
-  KeyRound,
-  Plug,
-  Cable,
-  Palette,
-  Sparkles,
-  FolderCog,
-} from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
 // Admin menu items with their required permissions
@@ -217,6 +198,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.analytics.description',
   },
   {
+    id: 'team-auto-builder',
+    label: 'Team Auto-Builder',
+    labelKey: 'menu.teamAutoBuilder.label',
+    path: '/admin/team-auto-builder',
+    icon: Wand2,
+    permissions: ['team_auto_builder.read', 'team_auto_builder.*', '*'],
+    description: 'Configure AI team generation',
+    descriptionKey: 'menu.teamAutoBuilder.description',
+  },
+  {
     id: 'system',
     label: 'System',
     labelKey: 'menu.system.label',
@@ -230,6 +221,4 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
 
 // Permissions that grant admin panel access — derived from menu items
 // Any permission that grants access to a menu item also grants admin panel entry
-export const ADMIN_ACCESS_PERMISSIONS = [
-  ...new Set(ADMIN_MENU_ITEMS.flatMap((item) => item.permissions)),
-];
+export const ADMIN_ACCESS_PERMISSIONS = [...new Set(ADMIN_MENU_ITEMS.flatMap((item) => item.permissions))];

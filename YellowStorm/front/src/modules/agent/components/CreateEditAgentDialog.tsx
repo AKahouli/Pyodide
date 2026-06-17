@@ -509,6 +509,7 @@ export function CreateEditAgentDialog({
                     />
 
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
                   {/* Evaluation Tab */}

@@ -79,7 +79,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
       // Update conversation workspaces if workspaces are selected
@@ -105,6 +105,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         parentMessageId: replyingToMessage?.id,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
         skillIds: useConversationStore.getState().selectedSkillIds.length

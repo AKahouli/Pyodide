@@ -1555,3 +1555,20 @@ export interface WorkspaceUploadSettingsResponse {
 export interface UpdateWorkspaceUploadSettingsRequest {
   allowedExtensions: string[];
 }
+
+// ===== Team Auto-Builder =====
+
+export interface TeamAutoBuilderConfigResponse {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface UpsertTeamAutoBuilderConfigRequest {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
+}

@@ -16,6 +16,7 @@ import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import playbookFlowConfig from './config/playbook-flow.config';
 import telegramConfig from './config/telegram.config';
+import whatsappConfig from './config/whatsapp.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -44,6 +45,7 @@ import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
+import { TeamModule } from './modules/team/team.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
@@ -54,6 +56,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
 import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
+import { WhatsAppModule } from './modules/whatsapp';
 
 @Module({
   imports: [
@@ -61,7 +64,7 @@ import { TelegramModule } from './modules/telegram';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, telegramConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, telegramConfig, whatsappConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -98,12 +101,14 @@ import { TelegramModule } from './modules/telegram';
     SkillModule,
     AgentTypeModule,
     AgentModule,
+    TeamModule,
     PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,
     ConnectedAppModule,
     ConnectorModule,
     TelegramModule,
+    WhatsAppModule,
     ProjectModule,
     ClassifierModule,
     HealthModule,

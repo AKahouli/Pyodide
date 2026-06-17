@@ -29,6 +29,7 @@ export {
   WorkspaceSettingsPage,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
+  TeamAutoBuilderPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
 export type {

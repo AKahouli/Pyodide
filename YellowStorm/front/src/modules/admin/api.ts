@@ -89,6 +89,8 @@ import type {
   UpdateConnectorCategoryRequest,
   WorkspaceUploadSettingsResponse,
   UpdateWorkspaceUploadSettingsRequest,
+  TeamAutoBuilderConfigResponse,
+  UpsertTeamAutoBuilderConfigRequest,
 } from './types';
 
 // Helper to build query string
@@ -1069,11 +1071,30 @@ export async function getAdminWorkspaceUploadSettings(): Promise<WorkspaceUpload
   return response.data.data;
 }
 
+// ===== Team Auto-Builder config =====
+
+export async function getTeamAutoBuilderConfig(): Promise<TeamAutoBuilderConfigResponse | null> {
+  const response = await apiClient.get<ApiResponse<TeamAutoBuilderConfigResponse | null>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
+  );
+  return response.data.data;
+}
+
 export async function updateAdminWorkspaceUploadSettings(
   data: UpdateWorkspaceUploadSettingsRequest,
 ): Promise<WorkspaceUploadSettingsResponse> {
   const response = await apiClient.put<ApiResponse<WorkspaceUploadSettingsResponse>>(
     API_ENDPOINTS.adminWorkspaceUploadSettings.base,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function upsertTeamAutoBuilderConfig(
+  data: UpsertTeamAutoBuilderConfigRequest,
+): Promise<TeamAutoBuilderConfigResponse> {
+  const response = await apiClient.put<ApiResponse<TeamAutoBuilderConfigResponse>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
     data,
   );
   return response.data.data;

@@ -9,10 +9,8 @@ import json
 import base64
 import os
 import mimetypes
-import time
 import tempfile
 import shutil
-from datetime import timedelta
 from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
@@ -24,7 +22,6 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
-from src.routers.authentification import create_access_token
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
 from src.middleware.correlation import UserContext, user_ctx
@@ -78,8 +75,6 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
-        self._access_token: Optional[str] = None
-        self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
     async def AdvisePlaybookNode(
@@ -1365,26 +1360,6 @@ class ChatbotServicer(
             skills=skills,
         )
 
-    def _get_vectorstores_token(self) -> str:
-        """Generate an access token using create_access_token directly.
-
-        Uses a locally generated JWT (no network call), cached with 60s safety margin.
-        Thread-safe for concurrent requests since token generation is atomic.
-
-        Returns:
-            Access token string.
-        """
-        if self._access_token and time.time() < self._token_expires_at - 60:
-            return self._access_token
-
-        expire_minutes = app_settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        self._access_token = create_access_token(
-            data={"sub": app_settings.AUTH_USERNAME},
-            expires_delta=timedelta(minutes=expire_minutes),
-        )
-        self._token_expires_at = time.time() + (expire_minutes * 60)
-        return self._access_token
-
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
@@ -1493,11 +1468,16 @@ class ChatbotServicer(
             )
             return
 
-        token = self._get_vectorstores_token()
+        vectorstore_api_key = getattr(app_settings, "VECTORSTORE_API_KEY", "") or ""
+        if not vectorstore_api_key:
+            logger.error(
+                "[gRPC] VECTORSTORE_API_KEY not configured - skipping document indexing"
+            )
+            return
 
         index_url = f"{vectorstores_url.rstrip('/')}/vectorstores/indexDocumentFromAzureDatalake"
         headers = {
-            "Authorization": f"Bearer {token}",
+            "x-api-key": vectorstore_api_key,
             "Content-Type": "application/json",
             "correlation-id": conversation_id,
         }
