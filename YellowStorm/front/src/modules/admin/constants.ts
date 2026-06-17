@@ -20,6 +20,7 @@ import {
   Cable,
   Palette,
   Sparkles,
+  FolderCog,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
@@ -164,6 +165,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['system.maintenance', 'system.*', '*'],
     description: 'Manage playbook AI inference settings',
     descriptionKey: 'menu.playbookSettings.description',
+  },
+  {
+    id: 'workspace-settings',
+    label: 'Workspace Settings',
+    labelKey: 'menu.workspaceSettings.label',
+    path: '/admin/workspace-settings',
+    icon: FolderCog,
+    permissions: ['workspaces.*', '*'],
+    description: 'Manage workspace upload policies',
+    descriptionKey: 'menu.workspaceSettings.description',
   },
   {
     id: 'tools',

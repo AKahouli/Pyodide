@@ -45,6 +45,9 @@ describe('AgentService connector skill inheritance', () => {
     };
     const modelsService = {
       findById: jest.fn(),
+      getDefaultModel: jest.fn().mockResolvedValue(null),
+      getModelIdentifier: jest.fn((model: { id?: string; litellmModel?: string } | null | undefined) =>
+        model?.id || model?.litellmModel || ''),
     };
     const skillService = {
       findByIds: jest.fn(),
@@ -84,6 +87,7 @@ describe('AgentService connector skill inheritance', () => {
       skillService,
       connectorService,
       agentTypeService,
+      modelsService,
     };
   };
 
@@ -215,5 +219,97 @@ describe('AgentService connector skill inheritance', () => {
       '111111111111111111111111',
       'connector-skill',
     ]);
+  });
+
+  it('falls back to the admin default model when the agent has no model set', async () => {
+    const { service, agentModel, modelsService } = createService();
+    modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'admin-default-id' } as any);
+
+    const objectId = new Types.ObjectId();
+    agentModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([
+            {
+              _id: objectId,
+              name: 'Agent NoModel',
+              role: 'Role',
+              description: '',
+              temperature: 0,
+              instruction: 'Follow instructions',
+              ignorePrePrompt: true,
+              knowledgeBases: [],
+              tools: [],
+              skills: [],
+              disabledSkills: [],
+              connectors: [],
+              isDefault: false,
+              isDefaultForType: false,
+              agentType: {
+                _id: new Types.ObjectId('333333333333333222222222'),
+                name: 'Worker',
+                slug: 'worker',
+                skills: [],
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.buildGrpcAgentsForPlaybook(userId, [objectId.toString()]);
+
+    expect(modelsService.getDefaultModel).toHaveBeenCalled();
+    expect(result).toHaveLength(1);
+    expect(result[0].chatbot.model).toBe('admin-default-id');
+  });
+
+  it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
+    const { service, agentModel, modelsService } = createService();
+    modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback' } as any);
+
+    const objectId = new Types.ObjectId();
+    agentModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([
+            {
+              _id: objectId,
+              name: 'Agent NoModel',
+              role: 'Role',
+              description: '',
+              temperature: 0,
+              instruction: 'Follow instructions',
+              ignorePrePrompt: true,
+              knowledgeBases: [],
+              tools: [],
+              skills: [],
+              disabledSkills: [],
+              connectors: [],
+              isDefault: false,
+              isDefaultForType: false,
+              agentType: {
+                _id: new Types.ObjectId('333333333333333222222222'),
+                name: 'Worker',
+                slug: 'worker',
+                skills: [],
+              },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.buildGrpcAgentsForPlaybook(
+      userId,
+      [objectId.toString()],
+      'explicit-fallback',
+    );
+
+    expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
+    expect(result).toHaveLength(1);
+    expect(result[0].chatbot.model).toBe('explicit-fallback');
   });
 });

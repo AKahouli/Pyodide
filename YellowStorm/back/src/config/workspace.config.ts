@@ -23,7 +23,11 @@ export default registerAs('workspace', () => ({
     10,
   ),
 
-  // Allowed file types (comma-separated in env, or uses centralized defaults)
+  // @deprecated Allowed file types are now managed through the admin
+  // workspace settings page and read from the `system_settings` collection
+  // (key: 'workspace_uploads'). The env var is retained so existing
+  // deployments keep their schema entry until they remove it; the upload
+  // service no longer consults this value.
   allowedMimeTypes: process.env.WORKSPACE_ALLOWED_MIME_TYPES
     ? process.env.WORKSPACE_ALLOWED_MIME_TYPES.split(',').map((t) => t.trim())
     : [...DEFAULT_ALLOWED_MIME_TYPES],

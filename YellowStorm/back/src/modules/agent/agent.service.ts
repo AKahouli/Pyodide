@@ -869,12 +869,18 @@ export class AgentService {
 
     const streamAgents = agents.map((agent) => this.toStreamAgent(agent));
 
+    // Resolve the admin's default model once so inherited (empty) agent.model
+    // values fall back to it instead of becoming a hardcoded "gpt-4o-mini"
+    // on the ADK side (which 400s on the current Azure deployment).
+    const inheritedDefaultModelId = fallbackModelId
+      || this.modelsService.getModelIdentifier(await this.modelsService.getDefaultModel());
+
     // Batch-resolve prompts
     const promptPairs = streamAgents
       .filter((a) => !a.ignorePrePrompt && a.agentTypeId)
       .map((a) => ({
         agentTypeId: a.agentTypeId,
-        modelId: a.model || fallbackModelId || '',
+        modelId: a.model || inheritedDefaultModelId,
       }));
     const promptMap = await this.agentTypeService.resolvePromptsInBatch(promptPairs);
 
@@ -889,7 +895,7 @@ export class AgentService {
     // Batch-resolve models
     const allModelIds = [...new Set(
       streamAgents
-        .map((a) => a.model || fallbackModelId)
+        .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
     const modelMap = new Map<string, string>();
@@ -938,7 +944,7 @@ export class AgentService {
         );
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
-        const effectiveModelId = agent.model || fallbackModelId || '';
+        const effectiveModelId = agent.model || inheritedDefaultModelId;
         const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 

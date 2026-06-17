@@ -27,7 +27,7 @@ import {
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '@/modules/conversation/hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import {
   useConversationStore,
   useConversationsByProject,
@@ -45,6 +45,7 @@ export function ProjectPage() {
   const { id: projectId = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useModuleTranslation('sidebar');
+  const { accept } = useAllowedUploadExtensions();
 
   const projects = useProjects();
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
@@ -240,7 +241,7 @@ export function ProjectPage() {
               onFilesAdded={(rawFiles, ids) => addFiles(rawFiles, ids)}
               onFileRemoved={(id) => removeFile(id)}
               uploadingFiles={uploadFiles}
-              accept={ACCEPT_EXTENSIONS}
+              accept={accept}
               maxFiles={5}
               showWorkspaceSelect={true}
             />

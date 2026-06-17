@@ -15,5 +15,6 @@ export { AgentTypesPage } from './AgentTypesPage';
 export { DefaultAgentsPage } from './DefaultAgentsPage';
 export { PlaybookPromptsPage } from './PlaybookPromptsPage';
 export { PlaybookSettingsPage } from './PlaybookSettingsPage';
+export { WorkspaceSettingsPage } from './WorkspaceSettingsPage';
 export { AuthProvidersPage } from './AuthProvidersPage';
 export { ConnectedAppsAdminPage } from './ConnectedAppsAdminPage';

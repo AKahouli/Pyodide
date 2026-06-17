@@ -87,6 +87,8 @@ import type {
   ConnectorCategoryResponse,
   CreateConnectorCategoryRequest,
   UpdateConnectorCategoryRequest,
+  WorkspaceUploadSettingsResponse,
+  UpdateWorkspaceUploadSettingsRequest,
 } from './types';
 
 // Helper to build query string
@@ -1056,4 +1058,23 @@ export async function updateAdminAgent(
 
 export async function deleteAdminAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+// Workspace Upload Settings API
+
+export async function getAdminWorkspaceUploadSettings(): Promise<WorkspaceUploadSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceUploadSettingsResponse>>(
+    API_ENDPOINTS.adminWorkspaceUploadSettings.base,
+  );
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceUploadSettings(
+  data: UpdateWorkspaceUploadSettingsRequest,
+): Promise<WorkspaceUploadSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceUploadSettingsResponse>>(
+    API_ENDPOINTS.adminWorkspaceUploadSettings.base,
+    data,
+  );
+  return response.data.data;
 }

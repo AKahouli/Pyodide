@@ -1543,3 +1543,15 @@ export interface ConnectorOAuthStatusResponse {
   disconnectedAt?: string;
   providerEmail?: string;
 }
+
+// Workspace Upload Settings Types
+
+export interface WorkspaceUploadSettingsResponse {
+  allowedExtensions: string[];
+  supportedExtensions: string[];
+  updatedAt?: string;
+}
+
+export interface UpdateWorkspaceUploadSettingsRequest {
+  allowedExtensions: string[];
+}

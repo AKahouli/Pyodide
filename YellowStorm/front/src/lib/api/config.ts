@@ -47,6 +47,12 @@ export const API_ENDPOINTS = {
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
   },
+  workspaceUploadSettings: {
+    current: '/workspace-settings/uploads',
+  },
+  adminWorkspaceUploadSettings: {
+    base: '/admin/workspace-settings/uploads',
+  },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },

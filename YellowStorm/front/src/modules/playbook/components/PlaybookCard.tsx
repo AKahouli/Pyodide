@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarClock, Check, Copy, Eye, Link2, Loader2, Trash2, Star } from 'lucide-react';
+import { CalendarClock, Check, Copy, Eye, Link2, Loader2, Pencil, Trash2, Star } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -18,12 +18,13 @@ type Props = Readonly<{
   onDelete: (id: string) => void;
   onClone: (id: string) => void;
   onToggleFavorite: (id: string) => void;
+  onEditDetails?: (id: string) => void;
   selectable?: boolean;
   selected?: boolean;
   onSelect?: (id: string, selected: boolean) => void;
 }>;
 
-export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, selectable, selected, onSelect }: Props) {
+export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, onEditDetails, selectable, selected, onSelect }: Props) {
   const navigate = useNavigate();
   const [copyingIntegrationLink, setCopyingIntegrationLink] = useState(false);
   const [integrationLinkCopied, setIntegrationLinkCopied] = useState(false);
@@ -165,6 +166,19 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
           title='Clone playbook'>
           <Copy className='h-3.5 w-3.5' />
         </Button>
+        {onEditDetails ? (
+          <Button
+            variant='ghost'
+            size='icon'
+            className='h-7 w-7'
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditDetails(playbook.id);
+            }}
+            title={t('card.edit')}>
+            <Pencil className='h-3.5 w-3.5' />
+          </Button>
+        ) : null}
         <Button
           variant='ghost'
           size='icon'
