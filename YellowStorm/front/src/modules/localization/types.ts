@@ -13,6 +13,7 @@ import type notifications from '../notifications/locales/en.json';
 import type playbook from '../playbook/locales/en.json';
 import type profile from '../profile/locales/en.json';
 import type sidebar from '../sidebar/locales/en.json';
+import type team from '../team/locales/en.json';
 import type usage from '../usage/locales/en.json';
 import type workspace from '../workspace/locales/en.json';
 
@@ -34,6 +35,7 @@ export type NamespaceResourceMap = {
   playbook: typeof playbook;
   profile: typeof profile;
   sidebar: typeof sidebar;
+  team: typeof team;
   usage: typeof usage;
   workspace: typeof workspace;
 };

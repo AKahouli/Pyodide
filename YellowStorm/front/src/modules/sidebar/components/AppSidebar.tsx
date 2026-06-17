@@ -38,6 +38,7 @@ import {
 } from '@/modules/conversation-v2/store';
 import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
+import { TeamButton } from '@/modules/team';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
@@ -273,6 +274,8 @@ export const AppSidebar = memo(function AppSidebar() {
             <WorkspaceButton />
 
             <AgentButton />
+
+            <TeamButton />
 
             <PlaybookButton />
 

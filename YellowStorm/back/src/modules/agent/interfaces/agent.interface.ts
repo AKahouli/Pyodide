@@ -1,3 +1,8 @@
+export interface IAgentConnectorActionSelectionResponse {
+  connectorId: string;
+  actionKeys: string[];
+}
+
 export interface IAgentResponse {
   id: string;
   name: string;
@@ -12,6 +17,7 @@ export interface IAgentResponse {
   knowledgeBases: string[];
   tools: string[];
   connectors?: string[];
+  connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
   skills?: string[];
   disabledSkills?: string[];
   isDefault: boolean;
@@ -41,6 +47,8 @@ export interface IAgentForStream {
   knowledgeBases: string[];
   toolIds: string[];
   connectorIds?: string[];
+  connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
+  connectorSkillIds?: string[];
   skillIds?: string[];
   disabledSkillIds?: string[];
   agentTypeSkillIds?: string[];

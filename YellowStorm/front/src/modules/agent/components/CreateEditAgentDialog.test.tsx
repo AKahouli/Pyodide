@@ -122,6 +122,12 @@ vi.mock('./AgentTelegramIntegrationSection', () => ({
   ),
 }));
 
+vi.mock('./AgentWhatsAppIntegrationSection', () => ({
+  AgentWhatsAppIntegrationSection: ({ agentId }: { agentId: string | null }) => (
+    <div data-testid="whatsapp-section">whatsapp-section-{String(agentId)}</div>
+  ),
+}));
+
 vi.mock('@/lib/form-utils', () => ({
   scrollToFirstError: vi.fn(),
 }));

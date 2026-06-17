@@ -8,7 +8,7 @@ import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useRep
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
@@ -21,6 +21,7 @@ interface ConversationInputProps {
 
 export function ConversationInput({ conversationId, onWorkspaceUpdate }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const { accept } = useAllowedUploadExtensions();
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
   const clearReplyingTo = useConversationStore((s) => s.clearReplyingTo);
@@ -78,7 +79,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
       // Update conversation workspaces if workspaces are selected
@@ -104,6 +105,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         parentMessageId: replyingToMessage?.id,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
         skillIds: useConversationStore.getState().selectedSkillIds.length
@@ -188,7 +190,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         onFilesAdded={handleFilesAdded}
         onFileRemoved={handleFileRemoved}
         uploadingFiles={uploadFiles}
-        accept={ACCEPT_EXTENSIONS}
+        accept={accept}
         maxFiles={5}
         members={membersToTag}
         autoMention={autoMention}

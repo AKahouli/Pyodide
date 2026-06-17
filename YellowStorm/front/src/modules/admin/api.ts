@@ -27,6 +27,8 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  CorsSettings,
+  SetCorsSettingsRequest,
   AppearanceSettings,
   PlanResponse,
   CreatePlanRequest,
@@ -87,6 +89,10 @@ import type {
   ConnectorCategoryResponse,
   CreateConnectorCategoryRequest,
   UpdateConnectorCategoryRequest,
+  WorkspaceUploadSettingsResponse,
+  UpdateWorkspaceUploadSettingsRequest,
+  TeamAutoBuilderConfigResponse,
+  UpsertTeamAutoBuilderConfigRequest,
 } from './types';
 
 // Helper to build query string
@@ -178,6 +184,19 @@ export async function setRegistrationStatus(
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
     data
+  );
+  return response.data.data;
+}
+
+export async function getCorsSettings(): Promise<CorsSettings> {
+  const response = await apiClient.get<ApiResponse<CorsSettings>>(API_ENDPOINTS.system.cors);
+  return response.data.data;
+}
+
+export async function setCorsSettings(data: SetCorsSettingsRequest): Promise<CorsSettings> {
+  const response = await apiClient.post<ApiResponse<CorsSettings>>(
+    API_ENDPOINTS.system.cors,
+    data,
   );
   return response.data.data;
 }
@@ -1056,4 +1075,42 @@ export async function updateAdminAgent(
 
 export async function deleteAdminAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+// Workspace Upload Settings API
+
+export async function getAdminWorkspaceUploadSettings(): Promise<WorkspaceUploadSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceUploadSettingsResponse>>(
+    API_ENDPOINTS.adminWorkspaceUploadSettings.base,
+  );
+  return response.data.data;
+}
+
+// ===== Team Auto-Builder config =====
+
+export async function getTeamAutoBuilderConfig(): Promise<TeamAutoBuilderConfigResponse | null> {
+  const response = await apiClient.get<ApiResponse<TeamAutoBuilderConfigResponse | null>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
+  );
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceUploadSettings(
+  data: UpdateWorkspaceUploadSettingsRequest,
+): Promise<WorkspaceUploadSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceUploadSettingsResponse>>(
+    API_ENDPOINTS.adminWorkspaceUploadSettings.base,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function upsertTeamAutoBuilderConfig(
+  data: UpsertTeamAutoBuilderConfigRequest,
+): Promise<TeamAutoBuilderConfigResponse> {
+  const response = await apiClient.put<ApiResponse<TeamAutoBuilderConfigResponse>>(
+    API_ENDPOINTS.adminTeamAutoBuilder.config,
+    data,
+  );
+  return response.data.data;
 }

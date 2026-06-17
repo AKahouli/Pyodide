@@ -120,5 +120,18 @@
   "ERR_3004": "OAuth authentication with the app failed.",
   "ERR_3005": "Failed to refresh app token. Please reconnect.",
   "ERR_3007": "This connected app is currently disabled.",
-  "ERR_2808": "Team auto-builder is not configured. Please contact an administrator."
+  "ERR_3300": "Team not found.",
+  "ERR_3301": "A team with this name already exists.",
+  "ERR_3302": "You do not have access to this team.",
+  "ERR_3303": "An agent can only appear once in a team.",
+  "ERR_3304": "An agent cannot be its own parent.",
+  "ERR_3305": "This relationship would create a cycle in the hierarchy.",
+  "ERR_3306": "One or more agents were not found or do not belong to you.",
+  "ERR_3307": "Team share not found.",
+  "ERR_3308": "Cannot share a team with yourself.",
+  "ERR_3309": "Team is already shared with this user.",
+  "ERR_3310": "You do not have permission to manage this team share.",
+  "ERR_3311": "No user found for the provided email.",
+  "ERR_3312": "Failed to generate team hierarchy.",
+  "ERR_3313": "Team auto-builder is not configured. Please contact an administrator."
 }

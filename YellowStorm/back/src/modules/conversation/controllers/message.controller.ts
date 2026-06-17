@@ -13,6 +13,7 @@ import { MessageService } from '../services/message.service';
 import { StreamService } from '../services/stream.service';
 import { ConversationService } from '../services/conversation.service';
 import { ModelsService } from '../../models/models.service';
+import { TeamService } from '../../team/team.service';
 import { SendMessageDto } from '../dto/send-message.dto';
 import { MessageQueryDto } from '../dto/message-query.dto';
 import { MessageFeedbackDto } from '../dto/message-feedback.dto';
@@ -36,10 +37,29 @@ export class MessageController {
     private readonly streamService: StreamService,
     private readonly conversationService: ConversationService,
     private readonly modelsService: ModelsService,
+    private readonly teamService: TeamService,
     private readonly requestContext: RequestContextService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('MessageController');
+  }
+
+  /**
+   * Merge directly-mentioned agents with the agents of any mentioned teams,
+   * deduped. Returns undefined when nothing is mentioned, so downstream behaviour
+   * is identical to a plain agent mention with no teams.
+   */
+  private async resolveAgentIds(
+    userId: string,
+    agentIds?: string[],
+    teamIds?: string[],
+  ): Promise<string[] | undefined> {
+    const merged = new Set<string>(agentIds || []);
+    if (teamIds?.length) {
+      const teamAgentIds = await this.teamService.resolveAgentIds(teamIds, userId);
+      teamAgentIds.forEach((id) => merged.add(id));
+    }
+    return merged.size > 0 ? [...merged] : undefined;
   }
 
   @Post()
@@ -124,6 +144,16 @@ export class MessageController {
       senderId: user._id.toString(),
     });
 
+    // Expand any mentioned teams into their agents and merge with directly
+    // mentioned agents. We resolve once here (capturing the team's membership at
+    // send time) and persist the flattened agentIds on the message, so the rest
+    // of the pipeline — and regenerate — keep working purely off agentIds.
+    const resolvedAgentIds = await this.resolveAgentIds(
+      user._id.toString(),
+      dto.agentIds,
+      dto.teamIds,
+    );
+
     // Create user message
     const userMessage = await this.messageService.createUserMessage({
       conversationId,
@@ -132,7 +162,7 @@ export class MessageController {
       attachedFileIds: dto.attachedFileIds,
       webSearchEnabled: dto.webSearchEnabled,
       modelId: dto.modelId,
-      agentIds: dto.agentIds,
+      agentIds: resolvedAgentIds,
       memberIds: dto.memberIds,
       requestId,
       parentMessageId: dto.parentMessageId,
@@ -181,7 +211,7 @@ export class MessageController {
            attachedFileIds: dto.attachedFileIds,
            webSearchEnabled: dto.webSearchEnabled,
            modelId: dto.modelId,
-           agentIds: dto.agentIds,
+           agentIds: resolvedAgentIds,
            connectorRepo: dto.connectorRepo,
            skillIds: dto.skillIds,
          }, requestId, undefined, user.email)

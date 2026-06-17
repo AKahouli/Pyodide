@@ -5,6 +5,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SystemService } from './system.service';
 import { SystemController } from './system.controller';
+import { WorkspaceUploadSettingsService } from './workspace-upload-settings.service';
+import { AdminWorkspaceUploadSettingsController } from './controllers/admin-workspace-upload-settings.controller';
+import { WorkspaceUploadSettingsController } from './controllers/workspace-upload-settings.controller';
 import { MaintenanceGuard } from './guards/maintenance.guard';
 import { SystemSetting, SystemSettingSchema } from './schemas/system-setting.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -30,14 +33,19 @@ import { User, UserSchema } from '../user/schemas/user.schema';
     }),
     forwardRef(() => AuthorizationModule),
   ],
-  controllers: [SystemController],
+  controllers: [
+    SystemController,
+    AdminWorkspaceUploadSettingsController,
+    WorkspaceUploadSettingsController,
+  ],
   providers: [
     SystemService,
+    WorkspaceUploadSettingsService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService],
+  exports: [SystemService, WorkspaceUploadSettingsService],
 })
 export class SystemModule {}

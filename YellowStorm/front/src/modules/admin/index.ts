@@ -26,8 +26,10 @@ export {
   DefaultAgentsPage,
   PlaybookPromptsPage,
   PlaybookSettingsPage,
+  WorkspaceSettingsPage,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
+  TeamAutoBuilderPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
 export type {
@@ -88,6 +90,8 @@ export type {
   SyncModelsResponse,
   AdminPlaybookSettings,
   UpdateAdminPlaybookSettingsRequest,
+  WorkspaceUploadSettingsResponse,
+  UpdateWorkspaceUploadSettingsRequest,
   PlaybookPromptResponse,
   PlaybookPromptListResponse,
   UpsertPlaybookPromptRequest,
@@ -161,6 +165,8 @@ export {
   getDefaultModel,
   getAdminPlaybookSettings,
   updateAdminPlaybookSettings,
+  getAdminWorkspaceUploadSettings,
+  updateAdminWorkspaceUploadSettings,
   getPlaybookPrompts,
   getPlaybookPrompt,
   updatePlaybookPrompt,

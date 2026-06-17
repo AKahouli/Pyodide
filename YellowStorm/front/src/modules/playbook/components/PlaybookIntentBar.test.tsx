@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
 import type { PlaybookTask, IntentSuggestionHistoryEntry, PlaybookIntentSuggestion } from '../types';
@@ -12,13 +12,32 @@ vi.mock('@/modules/localization', () => ({
   } }),
 }));
 
+vi.mock('./PlaybookClarificationResourcePicker', () => ({
+  PlaybookClarificationResourcePicker: ({ open, onSelect }: { open: boolean; onSelect: (resource: { kind: 'document'; id: string; name: string; workspaceId: string; workspaceName: string; path: string; mimeType: string }) => void }) => open ? (
+    <button
+      type="button"
+      onClick={() => onSelect({
+        kind: 'document',
+        id: 'document-1',
+        name: 'Q3 Report.pdf',
+        workspaceId: 'workspace-1',
+        workspaceName: 'Finance',
+        path: '/Finance/Q3 Report.pdf',
+        mimeType: 'application/pdf',
+      })}
+    >
+      Q3 Report.pdf
+    </button>
+  ) : null,
+}));
+
 const defaultProps = {
   loading: false,
   value: 'Add a review step',
   suggestions: [] as PlaybookIntentSuggestion[],
   error: '',
   history: [] as IntentSuggestionHistoryEntry[],
-  autoApply: true,
+  autoApply: false,
   onValueChange: vi.fn(),
   onAutoApplyChange: vi.fn(),
   onSubmit: vi.fn(),
@@ -62,15 +81,21 @@ describe('PlaybookIntentBar', () => {
     expect(onSubmit).toHaveBeenCalled();
   });
 
-  it('renders auto-apply enabled by default', () => {
+  it('renders auto-apply off by default and allows toggling', () => {
+    const onAutoApplyChange = vi.fn();
+
     render(
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={null}
+        onAutoApplyChange={onAutoApplyChange}
       />,
     );
 
-    expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
+    const autoApplySwitch = screen.getByRole('switch', { name: 'intentBar.actions.autoApply' });
+    expect(autoApplySwitch).toHaveAttribute('data-state', 'unchecked');
+    fireEvent.click(autoApplySwitch);
+    expect(onAutoApplyChange).toHaveBeenCalledWith(true);
   });
 
   it('does not render the helper hint line under the title', () => {
@@ -115,6 +140,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply
         suggestions={[
           {
             id: 's1',
@@ -465,5 +491,178 @@ describe('PlaybookIntentBar', () => {
     );
 
     expect(screen.getByText('intentBar.emptyState')).toBeInTheDocument();
+  });
+
+  it('shows stepped clarification choices and forwards captured answers on skip', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource'],
+          riskFlags: [],
+          questions: [{
+            id: 'q1',
+            question: 'Which datasource should this workflow use?',
+            reason: 'Datasource affects bindings.',
+            category: 'datasource',
+            required: true,
+            choices: ['SharePoint', 'SAP'],
+          }],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    expect(screen.getByText('Which datasource should this workflow use?')).toBeInTheDocument();
+    expect(screen.getByText('1.')).toBeInTheDocument();
+    expect(screen.getByText('2.')).toBeInTheDocument();
+    expect(screen.getByText('SharePoint')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('SharePoint'));
+    fireEvent.click(screen.getByText('intentBar.design.skip'));
+    expect(onForceGenerate).toHaveBeenCalledWith('Which datasource should this workflow use?: SharePoint');
+  });
+
+  it('steps through choice questions and generates with a custom final answer', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource', 'Output'],
+          riskFlags: [],
+          questions: [
+            {
+              id: 'q1',
+              question: 'Which datasource should this workflow use?',
+              reason: 'Datasource affects bindings.',
+              category: 'datasource',
+              required: true,
+              choices: ['SharePoint', 'SAP'],
+            },
+            {
+              id: 'q2',
+              question: 'What final output should it produce?',
+              reason: 'Output affects final steps.',
+              category: 'output',
+              required: true,
+              choices: ['Summary report'],
+            },
+          ],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('SAP'));
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('intentBar.design.other'));
+    fireEvent.change(screen.getAllByRole('textbox')[1], { target: { value: 'Approval-ready CSV export' } });
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith([
+      'Which datasource should this workflow use?: SAP',
+      'What final output should it produce?: Approval-ready CSV export',
+    ].join('\n'));
+  });
+
+  it('navigates back through clarification questions and preserves answers', () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Process invoices',
+          missingRequirements: ['Datasource', 'Output'],
+          riskFlags: [],
+          questions: [
+            {
+              id: 'q1',
+              question: 'Which datasource should this workflow use?',
+              reason: 'Datasource affects bindings.',
+              category: 'datasource',
+              required: true,
+              choices: ['SharePoint', 'SAP'],
+            },
+            {
+              id: 'q2',
+              question: 'What final output should it produce?',
+              reason: 'Output affects final steps.',
+              category: 'output',
+              required: true,
+              choices: ['Summary report'],
+            },
+          ],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    expect(screen.getByText('intentBar.design.back')).toBeDisabled();
+    fireEvent.click(screen.getByText('SAP'));
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('Summary report'));
+    fireEvent.click(screen.getByText('intentBar.design.back'));
+
+    expect(screen.getByText('Which datasource should this workflow use?')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('intentBar.design.next'));
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith([
+      'Which datasource should this workflow use?: SAP',
+      'What final output should it produce?: Summary report',
+    ].join('\n'));
+  });
+
+  it('selects a workspace document for resource clarification questions', async () => {
+    const onForceGenerate = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        autoApply={false}
+        design={{
+          status: 'needs_clarification',
+          detectedIntent: 'Analyze finance report',
+          missingRequirements: [],
+          riskFlags: [],
+          questions: [{
+            id: 'source',
+            question: 'Which source should be analyzed?',
+            reason: 'The workflow needs a concrete source.',
+            category: 'datasource',
+            required: true,
+            choices: [],
+            resourceSelector: 'workspace_or_document',
+          }],
+        }}
+        onForceGenerate={onForceGenerate}
+      />,
+    );
+
+    expect(screen.getByText('1.')).toBeInTheDocument();
+    expect(screen.getByText('2.')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('intentBar.design.resource.workspace_or_document'));
+    await waitFor(() => expect(screen.getByText('Q3 Report.pdf')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Q3 Report.pdf'));
+    fireEvent.click(screen.getByText('intentBar.design.generate'));
+
+    expect(onForceGenerate).toHaveBeenCalledWith(
+      'Which source should be analyzed?: Q3 Report.pdf [kind=document, id=document-1, workspaceId=workspace-1, workspaceName=Finance, path=/Finance/Q3 Report.pdf, mimeType=application/pdf]',
+    );
   });
 });

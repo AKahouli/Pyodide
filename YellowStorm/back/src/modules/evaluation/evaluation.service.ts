@@ -12,6 +12,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 export class EvaluationService {
     private readonly logger = new Logger(EvaluationService.name);
     private readonly adkUrl: string;
+    private readonly adkApiKey: string;
 
     constructor(
         @InjectModel(Evaluation.name)
@@ -22,6 +23,7 @@ export class EvaluationService {
         private readonly configService: ConfigService,
     ) {
         this.adkUrl = this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8000';
+        this.adkApiKey = this.configService.get<string>('indexing.adkApiKey') || '';
     }
 
     // ==========================================
@@ -111,7 +113,8 @@ export class EvaluationService {
         const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
         const dataset = await this.findDatasetById(datasetId);
 
-        const idToken = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${authHeader}`;
+        // authHeader is no longer forwarded to ADK — service-to-service auth uses x-api-key.
+        void authHeader;
 
         const selectedJudgeModel = (() => {
             const jm = (judgeModel || '').trim();
@@ -144,7 +147,7 @@ export class EvaluationService {
             `${this.adkUrl}/evaluation-batch/execute_agent_evaluator`,
             adkRequest,
             {
-                headers: { 'Content-Type': 'application/json', Authorization: idToken },
+                headers: { 'Content-Type': 'application/json', 'x-api-key': this.adkApiKey },
                 responseType: 'stream',
                 timeout: 900000, // 15 minutes
             },

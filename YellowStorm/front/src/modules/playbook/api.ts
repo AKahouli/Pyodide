@@ -43,6 +43,7 @@ import type {
   PlaybookRepeatabilitySummary,
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
+  PlaybookIntentDesignResponse,
   PlaybookIntentResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
@@ -169,6 +170,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
+      skillBindings: task.skillBindings,
       evaluationConfig: task.evaluationConfig
         ? {
             expectation: task.evaluationConfig.expectation,
@@ -560,6 +562,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     taskType: (meta.taskType as string) ?? undefined,
     templateType: (meta.templateType as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
+    skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
     iteratorLayout: (meta.iteratorLayout as any) ?? undefined,
     containerConfig: (meta.containerConfig as any) ?? null,
@@ -1256,22 +1259,28 @@ export async function rewritePlaybookPromptStream(
     throw new Error(`Request failed with status ${response.status}`);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
+  // The endpoint returns a single JSON envelope { prompt: "..." }. The caller
+  // treats this as a stream, so we read the full body, unwrap the prompt value,
+  // and forward it as a single chunk. This keeps the textarea free of the raw
+  // JSON envelope.
+  const raw = await response.text();
+  const prompt = unwrapRewritePromptPayload(raw);
+  onChunk(prompt);
+  return { prompt };
+}
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
+function unwrapRewritePromptPayload(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return trimmed;
 
-    const chunk = decoder.decode(value, { stream: true });
-    if (!chunk) continue;
-    fullText += chunk;
-    onChunk(chunk);
+  try {
+    const parsed = JSON.parse(trimmed) as { prompt?: unknown };
+    if (typeof parsed.prompt === 'string') return parsed.prompt;
+  } catch {
+    // Fall through to the trimmed raw body if the payload is not valid JSON.
   }
 
-  fullText += decoder.decode();
-  return { prompt: fullText.trim() };
+  return trimmed;
 }
 
 export async function updatePlaybook(
@@ -1293,6 +1302,18 @@ export async function requestPlaybookIntent(
 ): Promise<PlaybookIntentResponse> {
   const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
     API_ENDPOINTS.playbooks.intent(playbookId),
+    data,
+    { timeout: 180000 },
+  );
+  return response.data.data;
+}
+
+export async function assessPlaybookIntentDesign(
+  playbookId: string,
+  data: RequestPlaybookIntentData,
+): Promise<PlaybookIntentDesignResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentDesignResponse>>(
+    API_ENDPOINTS.playbooks.intentDesign(playbookId),
     data,
     { timeout: 180000 },
   );
