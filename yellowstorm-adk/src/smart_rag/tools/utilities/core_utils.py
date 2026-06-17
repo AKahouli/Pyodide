@@ -167,6 +167,7 @@ def build_tree(brain_documents, brain_relations):
             doc_node = {
                 "id": doc.get('_id', doc.get('id')),
                 "nom": doc.get('filename', doc.get('name', 'Unknown')),
+                "file_name": doc.get('file_name') or doc.get('filename', doc.get('name', 'Unknown')),
                 "in_memory": doc.get('in_memory', False),
                 "children": []
             }
@@ -254,6 +255,9 @@ def construct_json(documents):
             if transformed_id not in attribute_mapping["id"]:
                 attribute_mapping["id"][transformed_id] = []
             attribute_mapping["id"][transformed_id].append(original_id)
+            search_file_name = doc.get("file_name") or doc.get("nom")
+            if original_id and search_file_name:
+                attribute_mapping.setdefault("_file_name_by_id", {})[original_id] = search_file_name
 
             doc["id"] = transformed_id
 
