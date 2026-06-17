@@ -37,6 +37,7 @@ import {
 } from "./AgentFormSchema";
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
+import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
 import { AgentConnectorFields } from './AgentConnectorFields';
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
