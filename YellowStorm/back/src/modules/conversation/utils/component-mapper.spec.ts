@@ -1,6 +1,53 @@
 /// <reference types="jest" />
 
-import { extractComponentData } from './component-mapper';
+import { aggregateTextFromComponents, extractComponentData, getComponentType } from './component-mapper';
+
+describe('component-mapper text extraction', () => {
+  it('extracts text content from proto oneof text field', () => {
+    const result = extractComponentData({
+      id: 'comp-1',
+      text: { content: 'Hello from agent' },
+    });
+
+    expect(result).toEqual({
+      type: 'text',
+      data: { content: 'Hello from agent', outputPortId: '', output_port_id: '' },
+    });
+  });
+
+  it('prefers reasoning over empty default text oneof (proto-loader defaults)', () => {
+    const comp = {
+      id: 'comp-2',
+      text: { content: '' },
+      reasoning: { content: 'Thinking step' },
+    };
+
+    expect(getComponentType(comp)).toBe('reasoning');
+    expect(extractComponentData(comp).data.content).toBe('Thinking step');
+  });
+
+  it('supports legacy component.type + component.data shape from ADK formatter', () => {
+    const result = extractComponentData({
+      id: 'comp-3',
+      type: 'text',
+      data: { content: 'Legacy stream chunk' },
+    });
+
+    expect(result).toEqual({
+      type: 'text',
+      data: { content: 'Legacy stream chunk' },
+    });
+  });
+
+  it('aggregates text and reasoning for plain-text reply', () => {
+    const reply = aggregateTextFromComponents([
+      { type: 'reasoning', data: { content: 'Plan: ' } },
+      { type: 'text', data: { content: 'Answer.' } },
+    ]);
+
+    expect(reply).toBe('Plan: Answer.');
+  });
+});
 
 describe('component-mapper chart extraction', () => {
   it('maps extended chart fields from grpc chart components', () => {

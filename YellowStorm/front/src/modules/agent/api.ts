@@ -19,6 +19,7 @@ import type {
   A2APublishResult,
   A2ARotateKeyResult,
   A2ARevokeResult,
+  WidgetTokenResponse,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -208,6 +209,12 @@ export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<v
   await apiClient.delete(API_ENDPOINTS.agents.whatsappIntegration(agentId));
 }
 
+export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.widgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
 
 // Re-export evaluation API functions
 export * from './evaluation-api';

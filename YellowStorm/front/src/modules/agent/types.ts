@@ -54,6 +54,13 @@ export interface A2ARevokeResult {
   revoked: boolean;
 }
 
+/** Plain widget token returned once on creation for embed deployment. */
+export interface WidgetTokenResponse {
+  id: string;
+  token: string;
+  agentId: string;
+}
+
 /**
  * Read-side representation of a Telegram integration for an agent.
  * The bot token is never returned by the backend; `hasToken` only signals

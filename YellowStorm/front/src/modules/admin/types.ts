@@ -156,6 +156,21 @@ export interface SetRegistrationRequest {
   enabled: boolean;
 }
 
+export interface CorsOriginEntry {
+  origin: string;
+  enabled: boolean;
+}
+
+export interface CorsSettings {
+  origins: CorsOriginEntry[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface SetCorsSettingsRequest {
+  origins: CorsOriginEntry[];
+}
+
 export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
 
 export type AdminThemeLogo = 'yellowmind' | 'kpmg';
@@ -398,6 +413,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         value: 'system.registration',
         labelKey: 'roles.permissions.items.system.registration.label',
         descriptionKey: 'roles.permissions.items.system.registration.description',
+      },
+      {
+        value: 'system.cors',
+        labelKey: 'roles.permissions.items.system.cors.label',
+        descriptionKey: 'roles.permissions.items.system.cors.description',
       },
       {
         value: 'system.*',

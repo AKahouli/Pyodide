@@ -191,7 +191,7 @@ describe('AgentService connector skill inheritance', () => {
       }),
     });
 
-      connectorService.findByIds.mockResolvedValue([
+    connectorService.findByIds.mockResolvedValue([
       {
         id: '222222222222222222222222',
         name: 'Connector 1',

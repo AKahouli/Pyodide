@@ -12,6 +12,7 @@ The agent module provides complete agent management for users, allowing them to 
 - [State Management](#state-management)
 - [Selector Hooks](#selector-hooks)
 - [Components](#components)
+- [Widget Deployment (Embed)](#widget-deployment-embed)
 - [Channel Integrations](#channel-integrations)
 - [Form Validation](#form-validation)
 - [Data Flow](#data-flow)
@@ -31,6 +32,9 @@ The agent module provides:
 - **Tool Auto-Selection**: Automatically selects default tools based on agent type
 - **Knowledge Base Assignment**: Attach workspaces for RAG context
 - **Model Override**: Optionally override the model used by a specific agent
+- **Widget Deployment**: Generate an embeddable chat widget snippet (token + self-contained script) for external sites
+- **Agent Hub**: Grid view with filters, bulk actions, and rich cards
+- **Telegram Integration**: Optional per-agent Telegram bot configuration
 - **Zustand Store**: Centralized state with 5-minute caching and toast notifications
 - **Channel Integrations**: Connect personal agents to **WhatsApp** (QR pairing) and **Telegram** (bot token) from the Connectors tab
 
@@ -46,6 +50,12 @@ The agent module provides:
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │                         UI LAYER                             │  │
 │  │                                                              │  │
+│  │  AgentButton / AgentHubPage ──► CreateEditAgentDialog        │  │
+│  │       (sidebar / route)              │                       │  │
+│  │                                      ├── General / Tools / … │  │
+│  │                                      └── Deployment tab      │  │
+│  │                                           AgentDeploymentSection│
+│  │                                           widget-template.ts │  │
 │  │  AgentButton ──► AgentHubPage / AgentList                   │  │
 │  │       (sidebar)      └── CreateEditAgentDialog              │  │
 │  │                            ├── Identity / Behaviour / …    │  │
@@ -64,6 +74,24 @@ The agent module provides:
 │                              ▼                                     │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │                        API LAYER                             │  │
+│  │                                                              │  │
+│  │  Agents: getAllAgents, createAgent, updateAgent, deleteAgent │  │
+│  │  Widget: createWidgetToken (deployment embed)               │  │
+│  │  Types:  getAgentTypes                                      │  │
+│  │  Tools:  getActiveTools                                     │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                      BACKEND APIs                            │  │
+│  │                                                              │  │
+│  │  /agents              /admin/agent-types/active              │  │
+│  │  /agents/all          /tools/active                          │  │
+│  │  /admin/agents/:id/widget-tokens  /widget/chat|stream       │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│  │  Agents CRUD  │  Telegram integration  │  WhatsApp integration│  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
 │  │  Agents CRUD  │  Telegram integration  │  WhatsApp integration│  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                              │                                     │
@@ -82,6 +110,40 @@ The agent module provides:
 
 ```
 agent/
+├── index.ts                          # Public exports (store hooks, components, types)
+├── types.ts                          # TypeScript interfaces
+├── api.ts                            # REST API (agents, widget tokens, Telegram)
+├── evaluation-api.ts                 # Agent evaluation endpoints
+├── store.ts                          # Zustand store with caching
+├── constants/
+│   └── widget-template.ts            # Embed HTML/CSS/JS + buildWidgetSnippet()
+├── locales/
+│   ├── en.json
+│   └── fr.json
+├── hooks/
+│   ├── useAgentOperations.ts
+│   ├── useAgentHubFilters.ts
+│   └── useAgentBulkDelete.ts
+├── components/
+│   ├── index.ts
+│   ├── AgentButton.tsx               # Sidebar entry
+│   ├── AgentList.tsx                 # List view (legacy dialog flow)
+│   ├── AgentCard.tsx
+│   ├── AgentHubPage.tsx              # Hub route page
+│   ├── AgentFormSchema.ts            # Zod schema
+│   ├── CreateEditAgentDialog.tsx     # Create/edit tabs (incl. Deployment)
+│   ├── AgentDeploymentSection.tsx    # Generate + copy embed snippet
+│   ├── AgentTelegramIntegrationSection.tsx
+│   ├── EvaluationTab.tsx
+│   └── hub/                          # Hub grid, filters, bulk bar
+└── README.md
+├── index.ts                          # Public exports (store hooks, hub components, types)
+├── types.ts                          # Agent, integrations, evaluation types
+├── api.ts                            # REST wrappers (agents + Telegram + WhatsApp)
+├── api.test.ts
+├── store.ts                          # Zustand store with caching
+├── evaluation-api.ts
+├── components/
 ├── index.ts                          # Public exports (store hooks, hub components, types)
 ├── types.ts                          # Agent, integrations, evaluation types
 ├── api.ts                            # REST wrappers (agents + Telegram + WhatsApp)
@@ -219,6 +281,38 @@ See `AgentTelegramIntegrationSection` — bot token is never returned; `hasToken
 | `updateAgent(id, data)` | PATCH | `/agents/:id` | Update personal agent |
 | `deleteAgent(id)` | DELETE | `/agents/:id` | Delete personal agent |
 | `getActiveTools()` | GET | `/tools/active` | Get available tools for assignment |
+| `createWidgetToken(agentId)` | POST | `/admin/agents/:agentId/widget-tokens` | Create widget token for embed (requires `agents.update`) |
+
+### WidgetTokenResponse
+
+```typescript
+interface WidgetTokenResponse {
+  id: string;
+  token: string;   // Plain UUID — shown only once in API response
+  agentId: string;
+}
+```
+
+### WhatsApp integration API
+
+| Function | Method | Endpoint | Description |
+|----------|--------|----------|-------------|
+| `getAgentWhatsAppIntegration(agentId)` | GET | `/agents/:id/whatsapp-integration` | Current status |
+| `connectAgentWhatsApp(agentId)` | POST | `/agents/:id/whatsapp-integration/connect` | Start QR pairing |
+| `getAgentWhatsAppPairing(agentId, sessionId)` | GET | `/agents/:id/whatsapp-integration/:sessionId/pairing` | Poll QR / pairing code |
+| `reconnectAgentWhatsApp(agentId, sessionId)` | POST | `/agents/:id/whatsapp-integration/:sessionId/reconnect` | Reconnect session |
+| `disconnectAgentWhatsAppSession(agentId, sessionId)` | DELETE | `/agents/:id/whatsapp-integration/:sessionId` | Disconnect session |
+| `deleteAgentWhatsAppIntegration(agentId)` | DELETE | `/agents/:id/whatsapp-integration` | Remove integration |
+
+Endpoint builders live in `@/lib/api/config.ts` under `API_ENDPOINTS.agents.whatsapp*`.
+
+### Telegram integration API
+
+| Function | Method | Endpoint |
+|----------|--------|----------|
+| `getAgentTelegramIntegration(agentId)` | GET | `/agents/:id/telegram-integration` |
+| `upsertAgentTelegramIntegration(agentId, payload)` | PUT | `/agents/:id/telegram-integration` |
+| `deleteAgentTelegramIntegration(agentId)` | DELETE | `/agents/:id/telegram-integration` |
 
 ### WhatsApp integration API
 
@@ -314,13 +408,39 @@ Optimized hooks for accessing store state:
 
 ### AgentButton
 
-Sidebar entry point. Shows "Agents" button with a "Manage Agents" dropdown action. Opens AgentDialog on click.
+Sidebar entry point for agent management.
 
-### AgentDialog
+### AgentHubPage
 
-Modal container wrapping AgentList. Header: "Agents" with description. Max width 2xl, max height 85vh.
+Primary hub UI: filters, grid of agents (`hub/AgentHubGrid`, `AgentCardRich`), bulk delete, opens `CreateEditAgentDialog`.
 
 ### AgentList
+
+List-based management (used where the modal list pattern is still wired). Fetches agents and types on mount.
+
+### AgentDeploymentSection
+
+Shown on the **Deployment** tab inside `CreateEditAgentDialog`.
+
+| Step | Behavior |
+|------|----------|
+| Prerequisite | Agent must be saved (`agentId` required); otherwise shows “Save the agent first…” |
+| Generate | `createWidgetToken(agentId)` → `buildWidgetSnippet(...)` with `VITE_API_URL` |
+| Copy | Clipboard copy of full `<script>…</script>` block |
+
+Snippet endpoints baked into the script:
+
+- `CHAT_API_URL` → `{apiBase}/widget/chat`
+- `STREAM_URL` → `{apiBase}/widget/stream`
+- `SESSION_RESET_URL` → `{apiBase}/widget/session/reset`
+
+Uses i18n keys under `createEdit.fields.deployment*` and `createEdit.tabs.deployment`.
+
+### CreateEditAgentDialog
+
+Tabbed create/edit form. Tabs typically include general fields, tools/knowledge, evaluation, Telegram, and **Deployment** (`AgentDeploymentSection`). Passes `agentId` and `agentName` (from form watch) into deployment for branding in the embed.
+
+### AgentList (detail)
 
 Main management interface. Fetches agents and types on mount.
 
@@ -352,9 +472,7 @@ Main management interface. Fetches agents and types on mount.
 
 Displays a single agent with name, type badge, description (2-line truncated), temperature, and model. Edit/delete buttons hidden for default agents.
 
-### CreateEditAgentDialog
-
-Full form dialog for creating/editing agents:
+### CreateEditAgentDialog — form fields
 
 | Field | Input Type | Notes |
 |-------|-----------|-------|
@@ -474,6 +592,64 @@ Backend module: [`YellowStorm/back/src/modules/whatsapp/README.md`](../../../../
 
 ---
 
+## Widget Deployment (Embed)
+
+Embeds a floating chat widget on any website that talks to the **widget-chat** backend module. No YellowStorm login for site visitors.
+
+### Architecture (embed)
+
+```
+┌──────────────────┐     POST /widget/chat      ┌─────────────────────┐
+│  Host website    │ ─────────────────────────► │  Widget Chat (API)   │
+│  <script> snippet│     GET /widget/stream SSE │  + gRPC / ADK        │
+└──────────────────┘ ◄───────────────────────── └─────────────────────┘
+        ▲
+        │ Generated in YellowStorm UI
+        │ constants/widget-template.ts → buildWidgetSnippet()
+```
+
+### `buildWidgetSnippet(agentId, agentName, token, chatApiUrl, streamApiUrl)`
+
+Returns a single self-contained `<script>` block that:
+
+1. Injects scoped CSS and DOM (`#ys-widget-root`) — toggle button, panel, messages, form.
+2. Sets config: `AGENT_ID`, `AGENT_NAME`, `WIDGET_TOKEN`, API URLs, `SESSION_ID`.
+3. Persists `visitorId` in `localStorage` (`ys_visitor_id`).
+4. On send: `POST /widget/chat` with `Authorization: Bearer <token>`, then opens `EventSource` on `STREAM_URL`.
+5. Handles SSE: `stream_start`, `stream_chunk` (text components), `stream_complete`, `stream_error`.
+
+### Widget UI features (embed script)
+
+| Feature | Description |
+|---------|-------------|
+| Branding | Title, avatar initials, placeholder use agent display name |
+| Empty state | No default bot greeting; “Chat with {name}” until first message |
+| Streaming | Incremental text bubbles via `stream_chunk`; fallback to `reply` on `stream_complete` |
+| Options menu | New conversation (`POST /widget/session/reset`), copy transcript, download `.txt` |
+| Unread badge | Count when panel closed and assistant message arrives |
+
+Widget strings in the embed are **English** (hardcoded in template); the YellowStorm Deployment tab uses **i18n** (`agent` namespace).
+
+### Operator workflow
+
+1. Create or edit an agent in YellowStorm; save it.
+2. Open **Deployment** tab → **Generate deployment snippet**.
+3. Copy the script and paste before `</body>` on the target site.
+4. Ensure API **CORS** allows the host origin (Admin → System → CORS if using dynamic whitelist).
+5. Optionally set `allowedOrigins` on the widget token via admin API (backend) to restrict embed domains.
+6. Backend must have ADK gRPC running (`CONVERSATION_GRPC_URL`) and a **Manager** agent for the agent owner.
+
+### Local testing
+
+Use a static HTML page (e.g. repo `widget.html`) with the generated snippet. Point `VITE_API_URL` at your API (or `?apiBase=` override if your test page supports it). Regenerate the snippet after any change to `widget-template.ts`.
+
+### Backend reference
+
+Full API, schemas, SSE events, and streaming rules:  
+`YellowStorm/back/src/modules/widget-chat/README.md`
+
+---
+
 ## Form Validation
 
 Zod schema (`userAgentFormSchema`):
@@ -527,6 +703,17 @@ Zod schema (`userAgentFormSchema`):
 4. Agent removed from state, toast shown
 ```
 
+### Generate widget deployment snippet
+
+```
+1. User saves agent → agentId available
+2. Deployment tab → AgentDeploymentSection.handleGenerate()
+3. POST /admin/agents/:agentId/widget-tokens → { token }
+4. buildWidgetSnippet(id, name, token, chatUrl, streamUrl)
+5. User copies <script> block into external site
+6. Visitor chats via /widget/chat + /widget/stream (see backend README)
+```
+
 ### WhatsApp Connect & Pair
 
 ```
@@ -545,13 +732,14 @@ Inbound messages after connect are handled entirely on the backend (Baileys → 
 
 ## Usage Examples
 
-### Opening the Agent Dialog
+### Opening the Agent Hub
 
 ```tsx
-import { AgentButton } from '@/modules/agent';
+import { AgentButton, AgentHubPage } from '@/modules/agent';
 
-// In sidebar
+// Sidebar trigger or route
 <AgentButton />
+// Router: <AgentHubPage />
 ```
 
 ### Accessing Agent Data
