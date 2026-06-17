@@ -221,6 +221,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.chatbotClient;
   }
 
+  /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
+  async resolveAgentsBrainContext(agents: IGrpcAgent[]): Promise<void> {
+    await this.resolveAgentBrainContexts(agents);
+  }
+
   /**
    * Build workspace contexts for the gRPC request from the conversation's linked workspaces.
    * Returns an array of WorkspaceContext objects matching the proto schema.
@@ -653,15 +658,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         : Promise.resolve([]),
     ]);
 
-    const grpcRequest = {
+    // Decide which RPC to use based on the resolved roster (see
+    // AgentService.buildAgentsForStream): the roster contains exactly one agent
+    // when the user tagged no agent (the default mono-agent) or tagged a single
+    // agent of any type — both run through RunSingleAgent. When the user tagged
+    // multiple agents the roster carries those agents plus the manager and runs
+    // through RunAgentTeam.
+    const useSingleAgent = agents.length === 1;
+
+    const baseRequest = {
       user_context: { user_id: userId, username: username || '' },
       conversation_id: conversationId,
       query: request.content,
-      agents,
       workspace_context: workspaceContexts?.length
         ? workspaceContexts
         : [{ workspace_id: conversationId, workspace_name: conversationId, workspace_documents: [] }],
-      agent_mode: 'manual',
       attached_files: attachedFiles,
       previous_attached_files: previousAttachedFiles,
       ...(request.connectorRepo
@@ -678,9 +689,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       ...(grpcSkills.length ? { skills: grpcSkills } : {}),
     };
 
+    // RunSingleAgentRequest carries a single `agent` and no `agent_mode`;
+    // RunAgentTeamRequest carries the `agents` roster and an `agent_mode`.
+    const grpcRequest = useSingleAgent
+      ? { ...baseRequest, agent: agents[0] }
+      : { ...baseRequest, agents, agent_mode: 'manual' };
+
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
     this.logger.debug(
-      `GRPC request Prepared with an idle timeout of ${timeoutMs}ms`,
+      `GRPC request Prepared with an idle timeout of ${timeoutMs}ms (rpc=${useSingleAgent ? 'RunSingleAgent' : 'RunAgentTeam'})`,
       grpcRequest,
       logOpts,
     );
@@ -695,6 +712,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         memberIds,
         requestId,
         username,
+        useSingleAgent,
       );
     } catch (error) {
       this.logger.error(
@@ -818,6 +836,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     memberIds: string[],
     requestId?: string,
     username?: string,
+    useSingleAgent = false,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -839,8 +858,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
-      // No absolute deadline - we use idle timeout instead
-      const call = this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
+      // No absolute deadline - we use idle timeout instead.
+      // RunSingleAgent for the mono-agent / single-tagged-agent case,
+      // RunAgentTeam when multiple agents were tagged.
+      const call = useSingleAgent
+        ? this.chatbotClient.RunSingleAgent(grpcRequest, { metadata })
+        : this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;

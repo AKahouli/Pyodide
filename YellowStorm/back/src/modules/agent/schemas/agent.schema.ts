@@ -3,6 +3,17 @@ import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type AgentDocument = HydratedDocument<Agent>;
 
+@Schema({ _id: false })
+export class AgentConnectorActionSelection {
+  @Prop({ type: Types.ObjectId, ref: 'Connector', required: true })
+  connector!: Types.ObjectId;
+
+  @Prop({ type: [String], default: [] })
+  actionKeys!: string[];
+}
+
+const AgentConnectorActionSelectionSchema = SchemaFactory.createForClass(AgentConnectorActionSelection);
+
 function deriveAgentSlug(value: string): string {
   return value
     .normalize('NFD')
@@ -61,6 +72,9 @@ export class Agent extends Document {
 
   @Prop({ type: [Types.ObjectId], ref: 'Connector', default: [] })
   connectors!: Types.ObjectId[];
+
+  @Prop({ type: [AgentConnectorActionSelectionSchema], default: [] })
+  connectorActionSelections!: AgentConnectorActionSelection[];
 
   @Prop({ default: false, index: true })
   isDefault!: boolean;

@@ -65,6 +65,9 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminTeamAutoBuilder: {
+    config: '/admin/teams/auto-builder-config',
+  },
   usage: {
     status: '/usage/status',
     plan: '/usage/plan',
@@ -277,6 +280,16 @@ export const API_ENDPOINTS = {
     list: (agentId: string) => `/agents/${agentId}/widget-tokens`,
     update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
     revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+  },
+  teams: {
+    list: '/teams',
+    all: '/teams/all',
+    byId: (id: string) => `/teams/${id}`,
+    generate: '/teams/generate',
+    hierarchy: (id: string) => `/teams/${id}/hierarchy`,
+    shares: (id: string) => `/teams/${id}/shares`,
+    shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
+    unshare: (id: string) => `/teams/${id}/unshare`,
   },
   tools: {
     active: '/tools/active',

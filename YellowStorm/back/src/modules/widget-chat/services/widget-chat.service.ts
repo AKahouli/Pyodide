@@ -7,6 +7,8 @@ import { randomUUID, createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import * as grpc from '@grpc/grpc-js';
 import { Observable } from 'rxjs';
+import { ServiceUnavailableException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { StreamService } from '@modules/conversation/services/stream.service';
 import { WidgetSseStreamRegistry } from './widget-sse-stream.registry';
 import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
@@ -225,7 +227,20 @@ export class WidgetChatService {
       visitorId,
     });
 
-    const replyText = streamResult.reply || 'No response generated.';
+    if (!streamResult.reply.trim()) {
+      this.logger.warn('Integration message returned empty reply', {
+        sessionId,
+        agentId,
+        chunkCount: streamResult.chunkCount,
+        model: streamResult.usage.model,
+      });
+      throw new ServiceUnavailableException(
+        ErrorCode.WIDGET_AI_UNAVAILABLE,
+        'The agent returned no response. Check the agent model, ADK logs, and CONVERSATION_GRPC_URL.',
+      );
+    }
+
+    const replyText = streamResult.reply;
     await this.widgetMessageModel.create({
       sessionId,
       tokenHash,
@@ -342,6 +357,7 @@ export class WidgetChatService {
     reply: string;
     usage: { inputTokens: number; outputTokens: number; model?: string };
     components: MessageComponent[];
+    chunkCount: number;
   }> {
     const { sessionId, agentId, query, agentDoc, channel, visitorId, onChunk, onUsage } = params;
     const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
@@ -363,6 +379,8 @@ export class WidgetChatService {
       throw new Error('Agent configuration is invalid or inactive for widget chat.');
     }
 
+    await this.streamService.resolveAgentsBrainContext([grpcAgent]);
+
     const defaultWorkspaceName = channel === 'integration' ? 'integration' : 'widget';
     const workspaceContext = grpcAgent.brain_context?.length
       ? grpcAgent.brain_context
@@ -370,15 +388,25 @@ export class WidgetChatService {
 
     const username = channel === 'integration' ? (visitorId || 'IntegrationClient') : 'WidgetVisitor';
     const grpcRequest = {
-      user_context: { user_id: `${channel}-${sessionId}`, username },
+      user_context: { user_id: ownerUserId, username },
       conversation_id: sessionId,
       query,
       agent: grpcAgent,
       workspace_context: workspaceContext,
       attached_files: [],
       previous_attached_files: [],
-      ...(grpcAgent.skills?.length ? { skills: grpcAgent.skills } : {}),
     };
+
+    this.logger.log('RunSingleAgent gRPC request prepared', {
+      sessionId,
+      channel,
+      agentId,
+      agentName: grpcAgent.name,
+      model: grpcAgent.chatbot?.model,
+      ownerUserId,
+      workspaceCount: workspaceContext.length,
+      toolCount: grpcAgent.tools?.length ?? 0,
+    });
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
     const componentBuffer = new Map<string, MessageComponent>();
@@ -458,9 +486,11 @@ export class WidgetChatService {
           replyLength: reply.length,
           inputTokens: totalInput,
           outputTokens: totalOutput,
+          model: grpcAgent.chatbot?.model,
+          ownerUserId,
         });
 
-        resolve({ reply, usage, components: allComponents });
+        resolve({ reply, usage, components: allComponents, chunkCount });
       });
 
       call.on('error', (error: Error) => {

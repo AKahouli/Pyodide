@@ -15,6 +15,7 @@ import type {
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
+  ConnectorActionOption,
   A2APublishResult,
   A2ARotateKeyResult,
   A2ARevokeResult,
@@ -125,6 +126,7 @@ export interface ConnectorOption {
   categoryId?: string | null;
   /** Resolved category name; used to exclude "System" connectors. */
   categoryName?: string | null;
+  actions?: ConnectorActionOption[];
 }
 
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {

@@ -92,6 +92,9 @@ The agent module provides:
 │  │  Agents CRUD  │  Telegram integration  │  WhatsApp integration│  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                              │                                     │
+│  │  Agents CRUD  │  Telegram integration  │  WhatsApp integration│  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
 │              ┌───────────────┴───────────────┐                     │
 │              ▼                               ▼                     │
 │  ┌──────────────────────┐    ┌──────────────────────────────┐   │
@@ -134,6 +137,13 @@ agent/
 │   ├── EvaluationTab.tsx
 │   └── hub/                          # Hub grid, filters, bulk bar
 └── README.md
+├── index.ts                          # Public exports (store hooks, hub components, types)
+├── types.ts                          # Agent, integrations, evaluation types
+├── api.ts                            # REST wrappers (agents + Telegram + WhatsApp)
+├── api.test.ts
+├── store.ts                          # Zustand store with caching
+├── evaluation-api.ts
+├── components/
 ├── index.ts                          # Public exports (store hooks, hub components, types)
 ├── types.ts                          # Agent, integrations, evaluation types
 ├── api.ts                            # REST wrappers (agents + Telegram + WhatsApp)
@@ -282,6 +292,27 @@ interface WidgetTokenResponse {
   agentId: string;
 }
 ```
+
+### WhatsApp integration API
+
+| Function | Method | Endpoint | Description |
+|----------|--------|----------|-------------|
+| `getAgentWhatsAppIntegration(agentId)` | GET | `/agents/:id/whatsapp-integration` | Current status |
+| `connectAgentWhatsApp(agentId)` | POST | `/agents/:id/whatsapp-integration/connect` | Start QR pairing |
+| `getAgentWhatsAppPairing(agentId, sessionId)` | GET | `/agents/:id/whatsapp-integration/:sessionId/pairing` | Poll QR / pairing code |
+| `reconnectAgentWhatsApp(agentId, sessionId)` | POST | `/agents/:id/whatsapp-integration/:sessionId/reconnect` | Reconnect session |
+| `disconnectAgentWhatsAppSession(agentId, sessionId)` | DELETE | `/agents/:id/whatsapp-integration/:sessionId` | Disconnect session |
+| `deleteAgentWhatsAppIntegration(agentId)` | DELETE | `/agents/:id/whatsapp-integration` | Remove integration |
+
+Endpoint builders live in `@/lib/api/config.ts` under `API_ENDPOINTS.agents.whatsapp*`.
+
+### Telegram integration API
+
+| Function | Method | Endpoint |
+|----------|--------|----------|
+| `getAgentTelegramIntegration(agentId)` | GET | `/agents/:id/telegram-integration` |
+| `upsertAgentTelegramIntegration(agentId, payload)` | PUT | `/agents/:id/telegram-integration` |
+| `deleteAgentTelegramIntegration(agentId)` | DELETE | `/agents/:id/telegram-integration` |
 
 ### WhatsApp integration API
 

@@ -18,6 +18,7 @@ export interface Agent {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -131,6 +132,18 @@ export interface SkillOption {
   categoryId?: string | null;
   /** Resolved category name; used to exclude "System" skills. */
   categoryName?: string | null;
+}
+
+export interface ConnectorActionOption {
+  key: string;
+  label: string;
+  description: string;
+  isEnabled: boolean;
+}
+
+export interface AgentConnectorActionSelection {
+  connectorId: string;
+  actionKeys: string[];
 }
 
 export interface AgentState {
@@ -281,6 +294,7 @@ export interface CreateAgentData {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -300,6 +314,7 @@ export interface UpdateAgentData {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

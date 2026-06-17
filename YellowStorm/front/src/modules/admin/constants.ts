@@ -20,6 +20,7 @@ import {
   Cable,
   Palette,
   Sparkles,
+  Wand2,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
@@ -204,6 +205,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['analytics.read', 'analytics.*', '*'],
     description: 'View platform analytics',
     descriptionKey: 'menu.analytics.description',
+  },
+  {
+    id: 'team-auto-builder',
+    label: 'Team Auto-Builder',
+    labelKey: 'menu.teamAutoBuilder.label',
+    path: '/admin/team-auto-builder',
+    icon: Wand2,
+    permissions: ['team_auto_builder.read', 'team_auto_builder.*', '*'],
+    description: 'Configure AI team generation',
+    descriptionKey: 'menu.teamAutoBuilder.description',
   },
   {
     id: 'system',

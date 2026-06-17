@@ -5,6 +5,7 @@ describe('AgentFormSchema', () => {
   it('accepts valid data and applies defaults', () => {
     const parsed = userAgentFormSchema.parse({
       name: 'Agent One',
+      slug: 'agent-one',
       agentType: 'type-1',
       role: 'Do helpful things',
     });
@@ -14,12 +15,27 @@ describe('AgentFormSchema', () => {
     expect(parsed.temperature).toBe(0);
     expect(parsed.tools).toEqual([]);
     expect(parsed.knowledgeBases).toEqual([]);
+    expect(parsed.connectorActionSelections).toEqual([]);
+  });
+
+  it('rejects connector action selections without selected tools', () => {
+    expect(() =>
+      userAgentFormSchema.parse({
+        name: 'Agent One',
+        slug: 'agent-one',
+        agentType: 'type-1',
+        role: 'Do helpful things',
+        connectors: ['connector-1'],
+        connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: [] }],
+      }),
+    ).toThrow();
   });
 
   it('rejects invalid names with non-alphanumeric characters', () => {
     expect(() =>
       userAgentFormSchema.parse({
         name: 'Agent@#',
+        slug: 'agent',
         agentType: 'type-1',
         role: 'role',
       }),
