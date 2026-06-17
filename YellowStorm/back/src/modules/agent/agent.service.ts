@@ -96,6 +96,10 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
+      connectorActionSelections: this.normalizeConnectorActionSelections(
+        dto.connectors,
+        dto.connectorActionSelections,
+      ),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -251,6 +255,12 @@ export class AgentService {
     if (dto.connectors) {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
     }
+    if (dto.connectorActionSelections) {
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
+        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+        dto.connectorActionSelections,
+      );
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -343,6 +353,10 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
+      connectorActionSelections: this.normalizeConnectorActionSelections(
+        dto.connectors,
+        dto.connectorActionSelections,
+      ),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -503,6 +517,12 @@ export class AgentService {
     }
     if (dto.connectors) {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.connectorActionSelections) {
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
+        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+        dto.connectorActionSelections,
+      );
     }
 
     const updated = await this.agentModel
@@ -749,7 +769,12 @@ export class AgentService {
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
       ];
-      const connectorBindings = await this.buildConnectorBindings(connectorsMap, effectiveConnectorIds, userId);
+      const connectorBindings = await this.buildConnectorBindings(
+        connectorsMap,
+        effectiveConnectorIds,
+        userId,
+        this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+      );
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
@@ -919,7 +944,12 @@ export class AgentService {
         const agentTools = agent.toolIds
           .map((id) => toolsMap.get(id))
           .filter(Boolean) as IToolResponse[];
-        const connectorBindings = await this.buildConnectorBindings(connectorsMap, agent.connectorIds || [], userId);
+        const connectorBindings = await this.buildConnectorBindings(
+          connectorsMap,
+          agent.connectorIds || [],
+          userId,
+          this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+        );
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || fallbackModelId || '';
@@ -1302,6 +1332,7 @@ export class AgentService {
       connectors: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
@@ -1358,6 +1389,7 @@ export class AgentService {
       connectorIds: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
       agentTypeSkillIds,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
@@ -1389,6 +1421,90 @@ export class AgentService {
         .flat()
         .filter(Boolean) as string[],
     )];
+  }
+
+  private toConnectorActionSelectionResponses(
+    value: unknown,
+  ): Array<{ connectorId: string; actionKeys: string[] }> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return null;
+        }
+
+        const record = entry as {
+          connector?: { toString(): string } | string;
+          connectorId?: string;
+          actionKeys?: unknown;
+        };
+        const connectorId = record.connectorId || record.connector?.toString() || '';
+        const actionKeys = Array.isArray(record.actionKeys)
+          ? [...new Set(record.actionKeys.filter((key): key is string => typeof key === 'string' && key.trim().length > 0))]
+          : [];
+
+        if (!connectorId || actionKeys.length === 0) {
+          this.logger.warn('Dropping invalid connector action selection response', {
+            connectorId: connectorId || '<missing-connector-id>',
+            reason: !connectorId ? 'missing_connector_id' : 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return { connectorId, actionKeys };
+      })
+      .filter(Boolean) as Array<{ connectorId: string; actionKeys: string[] }>;
+  }
+
+  private normalizeConnectorActionSelections(
+    connectorIds: string[] | undefined,
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+    if (!connectorIds?.length || !selections?.length) {
+      return [];
+    }
+
+    const allowedConnectorIds = new Set(connectorIds);
+    return selections
+      .map((selection) => {
+        if (!allowedConnectorIds.has(selection.connectorId)) {
+          this.logger.warn('Dropping connector action selection outside attached connectors', {
+            connectorId: selection.connectorId,
+            reason: 'connector_not_attached',
+          });
+          return null;
+        }
+
+        const actionKeys = [...new Set((selection.actionKeys || []).filter((key) => key?.trim()))];
+        if (actionKeys.length === 0) {
+          this.logger.warn('Dropping connector action selection without action keys', {
+            connectorId: selection.connectorId,
+            reason: 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return {
+          connector: new Types.ObjectId(selection.connectorId),
+          actionKeys,
+        };
+      })
+      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+  }
+
+  private buildConnectorActionKeysByConnectorId(
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Map<string, Set<string>> | undefined {
+    if (!selections?.length) {
+      return undefined;
+    }
+
+    return new Map(
+      selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
+    );
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {

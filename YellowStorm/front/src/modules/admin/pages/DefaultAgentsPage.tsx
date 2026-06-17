@@ -89,6 +89,7 @@ export function DefaultAgentsPage() {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });
@@ -110,6 +111,7 @@ export function DefaultAgentsPage() {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });

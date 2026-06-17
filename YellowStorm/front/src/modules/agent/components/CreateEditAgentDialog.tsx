@@ -37,7 +37,7 @@ import {
 } from "./AgentFormSchema";
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
-import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
+import { AgentConnectorFields } from './AgentConnectorFields';
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -133,6 +133,7 @@ export function CreateEditAgentDialog({
             skills: agent.skills || [],
             disabledSkills: agent.disabledSkills || [],
             connectors: agent.connectors || [],
+            connectorActionSelections: agent.connectorActionSelections || [],
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
           });
@@ -168,6 +169,7 @@ export function CreateEditAgentDialog({
   const watchedSkills = watch('skills');
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
+  const watchedConnectorActionSelections = watch('connectorActionSelections');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
@@ -181,6 +183,26 @@ export function CreateEditAgentDialog({
       setValue('disabledSkills', validDisabledSkills);
     }
   }, [inheritedSkillIds, setValue, watchedDisabledSkills]);
+
+  useEffect(() => {
+    const validSelections = watchedConnectorActionSelections
+      .filter((selection) => watchedConnectors.includes(selection.connectorId))
+      .map((selection) => {
+        const connector = availableConnectors.find((item) => item.id === selection.connectorId);
+        const enabledActionKeys = new Set((connector?.actions || [])
+          .filter((action) => action.isEnabled !== false)
+          .map((action) => action.key));
+        return {
+          connectorId: selection.connectorId,
+          actionKeys: selection.actionKeys.filter((key) => enabledActionKeys.has(key)),
+        };
+      })
+      .filter((selection) => selection.actionKeys.length > 0);
+
+    if (JSON.stringify(validSelections) !== JSON.stringify(watchedConnectorActionSelections)) {
+      setValue('connectorActionSelections', validSelections);
+    }
+  }, [availableConnectors, setValue, watchedConnectorActionSelections, watchedConnectors]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -478,24 +500,13 @@ export function CreateEditAgentDialog({
 
                 <TabsContent value="connectors" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
-                    <div className="space-y-2">
-                        <Label>{t('createEdit.fields.connectors')}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t('createEdit.fields.connectorsDescription')}
-                        </p>
-                      <MultiSelect
-                        options={availableConnectors.map((connector) => ({
-                          value: connector.id,
-                          label: connector.name,
-                          description: connector.description,
-                        }))}
-                        value={watchedConnectors}
-                        onValueChange={(val) => setValue('connectors', val)}
-                        placeholder={t('createEdit.fields.selectConnectors')}
-                        searchPlaceholder={t('createEdit.fields.searchConnectors')}
-                        emptyText={t('createEdit.fields.noConnectorsFound')}
-                      />
-                    </div>
+                    <AgentConnectorFields
+                      availableConnectors={availableConnectors}
+                      connectors={watchedConnectors}
+                      connectorActionSelections={watchedConnectorActionSelections}
+                      onConnectorsChange={(connectorIds) => setValue('connectors', connectorIds, { shouldDirty: true, shouldValidate: true })}
+                      onConnectorActionSelectionsChange={(selections) => setValue('connectorActionSelections', selections, { shouldDirty: true, shouldValidate: true })}
+                    />
 
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
                     <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
