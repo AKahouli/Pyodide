@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neda Chehlarova — Reconversion professionnelle</title>
+<style>
+  :root {
+    --ink: #1f3a5f;
+    --ink-soft: #2c4a73;
+    --muted: #5a6e8c;
+    --gold: #d4a23a;
+    --gold-soft: #e6c068;
+    --line: #e2d9c5;
+    --bg: #f5f1ea;
+    --card: #ffffff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 32px 64px;
+  }
+
+  /* ---------- HERO ---------- */
+  .hero {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    gap: 40px;
+    align-items: stretch;
+  }
+
+  /* ---------- LEFT CARD ---------- */
+  .intro {
+    background: var(--card);
+    border-radius: 18px;
+    padding: 56px 56px 48px;
+    box-shadow: 0 30px 60px -30px rgba(31, 58, 95, 0.18);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .intro::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 56px; height: 4px;
+    background: var(--gold);
+  }
+
+  .eyebrow {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .name {
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+
+  .role {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    color: var(--ink-soft);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .headline {
+    margin-top: 44px;
+    font-size: 36px;
+    line-height: 1.2;
+    font-weight: 400;
+    color: var(--ink);
+    max-width: 28ch;
+  }
+
+  .headline em {
+    font-style: italic;
+    color: var(--gold);
+  }
+
+  .lede {
+    margin-top: 22px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--muted);
+    max-width: 42ch;
+  }
+
+  /* ---------- STEPS ---------- */
+  .steps {
+    margin-top: 44px;
+    display: grid;
+    grid-template-columns: 1fr 28px 1fr 28px 1fr;
+    align-items: center;
+  }
+
+  .step {
+    background: #faf7f1;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 14px 16px;
+    text-align: center;
+  }
+
+  .step .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #fff;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+
+  .step .label {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .connector {
+    height: 1px;
+    background: var(--line);
+  }
+
+  /* ---------- PRACTICE PILL ---------- */
+  .practice {
+    margin-top: 36px;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--gold);
+    color: #fff;
+    padding: 12px 22px;
+    border-radius: 999px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .practice::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .disclaimer {
+    margin-top: 18px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* ---------- RIGHT SIDE ---------- */
+  .aside {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 12px 8px 12px 12px;
+  }
+
+  .quote-wrap {
+    position: relative;
+    padding-top: 8px;
+  }
+
+  .quote-mark {
+    font-family: Georgia, serif;
+    font-size: 64px;
+    line-height: 0.6;
+    color: var(--gold);
+    opacity: 0.5;
+    margin-bottom: 6px;
+  }
+
+  .aside-title {
+    font-size: 26px;
+    line-height: 1.25;
+    font-weight: 400;
+    color: var(--ink);
+    margin-bottom: 18px;
+  }
+
+  .aside-text {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--muted);
+    max-width: 28ch;
+  }
+
+  .cta-block {
+    margin-top: 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .domain {
+    display: inline-block;
+    background: var(--card);
+    color: var(--ink);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 14px 26px;
+    border-radius: 999px;
+    box-shadow: 0 8px 20px -10px rgba(31, 58, 95, 0.2);
+    letter-spacing: 0.01em;
+  }
+
+  .offer {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--ink);
+    color: #fff;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    padding: 14px 28px;
+    border-radius: 999px;
+    border: 0;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  .offer:hover { background: var(--ink-soft); transform: translateY(-1px); }
+
+  .offer sup {
+    font-size: 10px;
+    color: var(--gold-soft);
+    margin-left: -2px;
+  }
+
+  .aside .accent-line {
+    margin-top: 28px;
+    width: 64px;
+    height: 3px;
+    background: var(--gold);
+    border-radius: 2px;
+  }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; }
+    .intro { padding: 40px 32px; }
+    .headline { font-size: 28px; }
+    .steps { grid-template-columns: 1fr; gap: 10px; }
+    .connector { width: 100%; height: 1px; }
+  }
+</style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+
+      <!-- LEFT -->
+      <article class="intro">
+        <div class="eyebrow">Reconversion professionnelle</div>
+        <h1 class="name">Neda Chehlarova</h1>
+        <div class="role">Hypnose Ericksonienne · PNL</div>
+
+        <h2 class="headline">
+          Et si le besoin de changer <em>était déjà</em> un signal ?
+        </h2>
+
+        <p class="lede">
+          Clarifier ses envies, ses peurs et ses ressources
+          pour avancer avec plus de confiance.
+        </p>
+
+        <div class="steps" aria-label="Méthode en 3 étapes">
+          <div class="step">
+            <span class="num">01</span>
+            <div class="label">Faire le point</div>
+          </div>
+          <div class="connector"></div>
+          <div class="step">
+            <span class="num">02</span>
+            <div class="label">Clarifier</div>
+          </div>
+          <div class="connector"></div>
+          <div class="step">
+            <span class="num">03</span>
+            <div class="label">Avancer</div>
+          </div>
+        </div>
+
+        <div class="practice">Hypnose Ericksonienne &amp; PNL</div>
+        <p class="disclaimer">
+          Un accompagnement ne remplace pas un suivi médical ou psychologique.
+        </p>
+      </article>
+
+      <!-- RIGHT -->
+      <aside class="aside">
+        <div class="quote-wrap">
+          <div class="quote-mark">"</div>
+          <h3 class="aside-title">Besoin<br>d'accompagnement ?</h3>
+          <p class="aside-text">
+            Doutes, stress, confiance, prise de décision.
+          </p>
+        </div>
+
+        <div>
+          <div class="cta-block">
+            <a class="domain" href="https://nedachehlarova.com">nedachehlarova.com</a>
+            <button class="offer" type="button">
+              1<sup>re</sup>&nbsp;séance offerte
+            </button>
+          </div>
+          <div class="accent-line"></div>
+        </div>
+      </aside>
+
+    </section>
+  </main>
+</body>
+</html>
