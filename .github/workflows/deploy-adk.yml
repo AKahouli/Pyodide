@@ -16,6 +16,7 @@ on:
         options:
           - poc
         required: true
+        
 
 env:
   IMAGE_NAME: yscrmetachatbot001.azurecr.io/yellowstorm-adk-poc
