@@ -1,0 +1,83 @@
+name: SonarCloud Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to scan"
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonarscan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # --------------------------
+      # Generate Python coverage
+      # --------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+
+      - name: Install Python dependencies and run tests
+        working-directory: yellowstorm-adk
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          python grpc/generate_proto.py
+          python -m pytest src/flow_engine/tests/ -v
+        continue-on-error: true
+
+      # --------------------------
+      # Generate backend coverage
+      # --------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: YellowStorm/back/package-lock.json
+
+      - name: Install backend dependencies and run tests
+        working-directory: YellowStorm/back
+        run: |
+          npm ci
+          npm test -- --ci --forceExit --detectOpenHandles --coverage --coverageReporters=lcov text
+        continue-on-error: true
+
+      # --------------------------
+      # SonarCloud full scan
+      # --------------------------
+      - name: Run SonarCloud Scan (full — manual dispatch)
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.branch.name=${{ inputs.branch }}
+            -Dsonar.newCode.definition=NUMBER_OF_DAYS
+            -Dsonar.newCode.numberOfDays=365
