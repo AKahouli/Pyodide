@@ -3,6 +3,33 @@ export interface IAgentConnectorActionSelectionResponse {
   actionKeys: string[];
 }
 
+export type AgentPermissionLevel = 'read' | 'write';
+
+/** A single share entry on an agent (owner's view of who it's shared with). */
+export interface IAgentShareEntry {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  user: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  createdAt: Date;
+}
+
+/** Info about an agent shared with the current user (populated for non-owners). */
+export interface ISharedAgentInfo {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  sharedBy: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
 export interface IAgentResponse {
   id: string;
   name: string;
@@ -30,6 +57,8 @@ export interface IAgentResponse {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  // Present when the agent was shared with the current user (non-owner).
+  shareInfo?: ISharedAgentInfo;
 }
 
 export interface IAgentForStream {

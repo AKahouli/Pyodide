@@ -68,6 +68,12 @@ describe('AgentService connector skill inheritance', () => {
     const teamService = {
       removeAgentFromAllTeams: jest.fn().mockResolvedValue(undefined),
     };
+    const agentShareService = {
+      getShareInfoMapForUser: jest.fn().mockResolvedValue(new Map()),
+      getShareInfo: jest.fn().mockResolvedValue(null),
+      getSharePermission: jest.fn().mockResolvedValue(null),
+      removeAllSharesForAgent: jest.fn().mockResolvedValue(undefined),
+    };
 
     const service = new AgentService(
       agentModel as any,
@@ -81,6 +87,7 @@ describe('AgentService connector skill inheritance', () => {
       connectedAppTokenService as any,
       configService as unknown as ConfigService,
       teamService as any,
+      agentShareService as any,
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);

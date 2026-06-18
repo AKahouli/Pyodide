@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { usePersonalAgents, useDefaultAgents } from '../store';
+import { usePersonalAgents, useDefaultAgents, useSharedAgents } from '../store';
 import type { Agent } from '../types';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-export type OwnershipFilter = 'all' | 'mine' | 'default';
+export type OwnershipFilter = 'all' | 'mine' | 'default' | 'shared';
 export type SortKey = 'updated' | 'created' | 'name';
 export type ViewMode = 'grid' | 'list';
 
@@ -21,6 +21,7 @@ export interface AgentHubFilters {
 export interface AgentHubFilteredGroups {
   personal: Agent[];
   defaults: Agent[];
+  shared: Agent[];
 }
 
 export interface UseAgentHubFiltersResult {
@@ -38,7 +39,7 @@ export interface UseAgentHubFiltersResult {
 }
 
 function isOwnership(value: string | null): value is OwnershipFilter {
-  return value === 'all' || value === 'mine' || value === 'default';
+  return value === 'all' || value === 'mine' || value === 'default' || value === 'shared';
 }
 
 function isSortKey(value: string | null): value is SortKey {
@@ -75,6 +76,7 @@ function sortAgents(list: Agent[], sort: SortKey): Agent[] {
 export function useAgentHubFilters(): UseAgentHubFiltersResult {
   const personalAgents = usePersonalAgents();
   const defaultAgents = useDefaultAgents();
+  const sharedAgents = useSharedAgents();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -179,11 +181,18 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
       owner === 'all' || owner === 'default'
         ? sortAgents(defaultAgents.filter((a) => matches(a, rawSearch, type)), sort)
         : [];
-    return { personal, defaults };
-  }, [personalAgents, defaultAgents, rawSearch, type, owner, sort]);
+    const shared =
+      owner === 'all' || owner === 'shared'
+        ? sortAgents(sharedAgents.filter((a) => matches(a, rawSearch, type)), sort)
+        : [];
+    return { personal, defaults, shared };
+  }, [personalAgents, defaultAgents, sharedAgents, rawSearch, type, owner, sort]);
 
   const hasActiveFilters = !!rawSearch || !!type || owner !== 'all' || sort !== 'updated';
-  const isEmpty = filteredGroups.personal.length === 0 && filteredGroups.defaults.length === 0;
+  const isEmpty =
+    filteredGroups.personal.length === 0 &&
+    filteredGroups.defaults.length === 0 &&
+    filteredGroups.shared.length === 0;
 
   return {
     filters,

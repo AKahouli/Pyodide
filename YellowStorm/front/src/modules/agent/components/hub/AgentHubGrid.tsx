@@ -19,6 +19,8 @@ interface AgentHubGridProps {
   onDuplicate: (agent: Agent) => void;
   onPublishA2A: (agent: Agent) => void;
   onRevokeA2A: (agent: Agent) => void;
+  onShare: (agent: Agent) => void;
+  onUnshare: (agent: Agent) => void;
   publishingA2AId: string | null;
 }
 
@@ -34,13 +36,16 @@ export function AgentHubGrid({
   onDuplicate,
   onPublishA2A,
   onRevokeA2A,
+  onShare,
+  onUnshare,
   publishingA2AId,
-}: AgentHubGridProps) {
+}: Readonly<AgentHubGridProps>) {
   const { t } = useModuleTranslation('agent');
 
   const sections: Array<{ key: string; title: string; agents: Agent[] }> = [
     { key: 'personal', title: t('hub.sections.personal'), agents: groups.personal },
     { key: 'defaults', title: t('hub.sections.defaults'), agents: groups.defaults },
+    { key: 'shared', title: t('hub.sections.shared'), agents: groups.shared },
   ];
 
   return (
@@ -80,6 +85,8 @@ export function AgentHubGrid({
                   onDuplicate={onDuplicate}
                   onPublishA2A={onPublishA2A}
                   onRevokeA2A={onRevokeA2A}
+                  onShare={onShare}
+                  onUnshare={onUnshare}
                   publishingA2A={publishingA2AId === agent.id}
                 />
               ))}
