@@ -15,9 +15,11 @@ import type {
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
+  ConnectorActionOption,
   A2APublishResult,
   A2ARotateKeyResult,
   A2ARevokeResult,
+  WidgetTokenResponse,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -124,6 +126,7 @@ export interface ConnectorOption {
   categoryId?: string | null;
   /** Resolved category name; used to exclude "System" connectors. */
   categoryName?: string | null;
+  actions?: ConnectorActionOption[];
 }
 
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {
@@ -206,6 +209,12 @@ export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<v
   await apiClient.delete(API_ENDPOINTS.agents.whatsappIntegration(agentId));
 }
 
+export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.widgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
 
 // Re-export evaluation API functions
 export * from './evaluation-api';

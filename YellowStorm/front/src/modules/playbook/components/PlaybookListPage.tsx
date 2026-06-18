@@ -6,9 +6,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { usePlaybookStore, usePlaybooks, usePlaybooksLoading } from '../store';
-import type { PaginationMeta, PlaybookQueryParams } from '../types';
+import type { PaginationMeta, PlaybookQueryParams, PlaybookSummary } from '../types';
 import { PlaybookCard } from './PlaybookCard';
 import { CreatePlaybookDialog } from './CreatePlaybookDialog';
+import { EditPlaybookDetailsDialog } from './EditPlaybookDetailsDialog';
 import { PlaybookBetaDisclaimer } from './PlaybookBetaDisclaimer';
 import { PlaybookExecutionKpiCards } from './PlaybookExecutionKpiCards';
 import { useModuleTranslation } from '@/modules/localization';
@@ -196,6 +197,33 @@ export function PlaybookListPage() {
     (id: string) => { toggleFavorite(id); },
     [toggleFavorite],
   );
+
+  const [editingPlaybookId, setEditingPlaybookId] = useState<string | null>(null);
+  const editingPlaybook = editingPlaybookId
+    ? playbooks.find((p) => p.id === editingPlaybookId) ?? null
+    : null;
+
+  const handleEditDetails = useCallback((id: string) => {
+    setEditingPlaybookId(id);
+  }, []);
+
+  const handleEditSaved = useCallback(
+    (updated: { name: string; description: string }) => {
+      if (!editingPlaybookId) return;
+      usePlaybookStore.setState((state) => ({
+        playbooks: state.playbooks.map((p): PlaybookSummary =>
+          p.id === editingPlaybookId
+            ? { ...p, name: updated.name, description: updated.description }
+            : p,
+        ),
+      }));
+    },
+    [editingPlaybookId],
+  );
+
+  const handleEditOpenChange = useCallback((open: boolean) => {
+    if (!open) setEditingPlaybookId(null);
+  }, []);
 
   const handleSelect = useCallback((id: string, selected: boolean) => {
     setSelectedIds((prev) => {
@@ -455,6 +483,7 @@ export function PlaybookListPage() {
                 onDelete={handleDelete}
                 onClone={handleClone}
                 onToggleFavorite={handleToggleFavorite}
+                onEditDetails={handleEditDetails}
                 selectable={selectMode}
                 selected={selectedIds.has(playbook.id)}
                   onSelect={handleSelect}
@@ -474,6 +503,12 @@ export function PlaybookListPage() {
       </div>
 
       <CreatePlaybookDialog open={createOpen} onOpenChange={handleCreateOpenChange} retryData={generateRetryData} />
+      <EditPlaybookDetailsDialog
+        open={editingPlaybook !== null}
+        onOpenChange={handleEditOpenChange}
+        playbook={editingPlaybook}
+        onSaved={handleEditSaved}
+      />
       <PlaybookBetaDisclaimer />
     </div>
   );

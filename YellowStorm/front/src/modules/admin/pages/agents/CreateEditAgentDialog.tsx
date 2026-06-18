@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { AgentConnectorFields } from '@/modules/agent/components/AgentConnectorFields';
 
 import { createAgentFormSchema, defaultFormValues, type AgentFormValues } from './agent-form-schema';
 import type { AgentResponse, AgentTypeResponse } from '../../types';
@@ -109,6 +110,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               skills: agent.skills || [],
               disabledSkills: agent.disabledSkills || [],
               connectors: agent.connectors || [],
+              connectorActionSelections: agent.connectorActionSelections || [],
               isActive: agent.isActive,
               isDefaultForType: agent.isDefaultForType || false,
             });
@@ -141,6 +143,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const watchedSkills = watch('skills');
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
+  const watchedConnectorActionSelections = watch('connectorActionSelections');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
@@ -154,6 +157,26 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
       setValue('disabledSkills', validDisabledSkills);
     }
   }, [inheritedSkillIds, setValue, watchedDisabledSkills]);
+
+  useEffect(() => {
+    const validSelections = watchedConnectorActionSelections
+      .filter((selection) => watchedConnectors.includes(selection.connectorId))
+      .map((selection) => {
+        const connector = availableConnectors.find((item) => item.id === selection.connectorId);
+        const enabledActionKeys = new Set((connector?.actions || [])
+          .filter((action) => action.isEnabled !== false)
+          .map((action) => action.key));
+        return {
+          connectorId: selection.connectorId,
+          actionKeys: selection.actionKeys.filter((key) => enabledActionKeys.has(key)),
+        };
+      })
+      .filter((selection) => selection.actionKeys.length > 0);
+
+    if (JSON.stringify(validSelections) !== JSON.stringify(watchedConnectorActionSelections)) {
+      setValue('connectorActionSelections', validSelections);
+    }
+  }, [availableConnectors, setValue, watchedConnectorActionSelections, watchedConnectors]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -320,22 +343,24 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
 
                   <TabsContent value='connectors' forceMount className='mt-0 data-[state=inactive]:hidden'>
                     <div className='grid gap-4'>
-                      <div className='space-y-2'>
-                        <Label>{t('defaultAgents.form.connectors.label')}</Label>
-                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.connectors.helper')}</p>
-                        <MultiSelect
-                          options={availableConnectors.map((connector) => ({
-                            value: connector.id,
-                            label: connector.name,
-                            description: connector.description,
-                          }))}
-                          value={watchedConnectors}
-                          onValueChange={(val) => setValue('connectors', val)}
-                          placeholder={t('defaultAgents.form.connectors.selectPlaceholder')}
-                          searchPlaceholder={t('defaultAgents.form.connectors.searchPlaceholder')}
-                          emptyText={t('defaultAgents.form.connectors.emptyText')}
-                        />
-                      </div>
+                      <AgentConnectorFields
+                        availableConnectors={availableConnectors}
+                        connectors={watchedConnectors}
+                        connectorActionSelections={watchedConnectorActionSelections}
+                        onConnectorsChange={(connectorIds) => setValue('connectors', connectorIds, { shouldDirty: true, shouldValidate: true })}
+                        onConnectorActionSelectionsChange={(selections) => setValue('connectorActionSelections', selections, { shouldDirty: true, shouldValidate: true })}
+                        labels={{
+                          title: t('defaultAgents.form.connectors.label'),
+                          description: t('defaultAgents.form.connectors.helper'),
+                          placeholder: t('defaultAgents.form.connectors.selectPlaceholder'),
+                          searchPlaceholder: t('defaultAgents.form.connectors.searchPlaceholder'),
+                          emptyText: t('defaultAgents.form.connectors.emptyText'),
+                          toolAccessDescription: t('defaultAgents.form.connectors.toolAccessDescription'),
+                          allTools: t('defaultAgents.form.connectors.allTools'),
+                          selectedTools: t('defaultAgents.form.connectors.selectedTools'),
+                          noToolsAvailable: t('defaultAgents.form.connectors.noToolsAvailable'),
+                        }}
+                      />
                     </div>
                   </TabsContent>
 

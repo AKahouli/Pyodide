@@ -36,7 +36,7 @@ import {
   useResetSelectedWorkspaceIds,
 } from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupChatButton } from './components/GroupChatButton';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
@@ -51,6 +51,7 @@ import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect'
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
   const [mode, setMode] = useState<Mode>('chat');
+  const { accept } = useAllowedUploadExtensions();
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
@@ -255,7 +256,7 @@ export function NewConversationPage() {
                   onFilesAdded={handleFilesAdded}
                   onFileRemoved={handleFileRemoved}
                   uploadingFiles={uploadFiles}
-                  accept={ACCEPT_EXTENSIONS}
+                  accept={accept}
                   maxFiles={5}
                   showWorkspaceSelect={true}
                   belowTextarea={

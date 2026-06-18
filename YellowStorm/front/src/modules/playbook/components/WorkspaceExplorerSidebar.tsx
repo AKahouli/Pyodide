@@ -23,7 +23,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import * as workspaceApi from '@/modules/workspace/api';
-import { validateFiles, ACCEPT_EXTENSIONS, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { validateFiles, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import type { Workspace, WorkspaceDocument, IndexingStatus } from '@/modules/workspace/types';
 import type { InputFile, PlaybookResourceKind } from '../types';
 import type { ArtifactKind } from '../types';
@@ -151,6 +152,7 @@ export function WorkspaceExplorerSidebar() {
   const isOpen = useWorkspaceExplorerOpen();
   const setOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
   const { t } = useModuleTranslation('playbook');
+  const { accept } = useAllowedUploadExtensions();
 
   // Workspace state
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -621,7 +623,7 @@ export function WorkspaceExplorerSidebar() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPT_EXTENSIONS}
+            accept={accept}
             multiple
             className="hidden"
             onChange={handleFileChange}

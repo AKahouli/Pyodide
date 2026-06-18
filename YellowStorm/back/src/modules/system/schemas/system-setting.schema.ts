@@ -63,6 +63,12 @@ export class AppearanceValue {
   themes!: Record<string, AppearanceThemeValue>;
 }
 
+@Schema({ _id: false })
+export class CorsSettingsValue {
+  @Prop({ required: true, default: [] })
+  origins!: Array<{ origin: string; enabled: boolean }>;
+}
+
 @Schema({
   timestamps: true,
   collection: 'system_settings',
@@ -72,7 +78,7 @@ export class SystemSetting extends Document {
   key!: string;
 
   @Prop({ type: Object, required: true })
-  value!: MaintenanceValue | RegistrationValue | AppearanceValue | Record<string, unknown>;
+  value!: MaintenanceValue | RegistrationValue | AppearanceValue | CorsSettingsValue | Record<string, unknown>;
 
   createdAt!: Date;
   updatedAt!: Date;

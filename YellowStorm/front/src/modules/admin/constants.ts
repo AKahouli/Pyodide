@@ -2,26 +2,7 @@
  * Admin Module Constants
  */
 
-import {
-  Users,
-  Shield,
-  FileText,
-  CreditCard,
-  BarChart3,
-  Settings,
-  ScrollText,
-  Flag,
-  Cpu,
-  Wrench,
-  Puzzle,
-  Bot,
-  KeyRound,
-  Plug,
-  Cable,
-  Palette,
-  Sparkles,
-  Wand2,
-} from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
 // Admin menu items with their required permissions
@@ -167,6 +148,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.playbookSettings.description',
   },
   {
+    id: 'workspace-settings',
+    label: 'Workspace Settings',
+    labelKey: 'menu.workspaceSettings.label',
+    path: '/admin/workspace-settings',
+    icon: FolderCog,
+    permissions: ['workspaces.*', '*'],
+    description: 'Manage workspace upload policies',
+    descriptionKey: 'menu.workspaceSettings.description',
+  },
+  {
     id: 'tools',
     label: 'Tools',
     labelKey: 'menu.tools.label',
@@ -230,6 +221,4 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
 
 // Permissions that grant admin panel access — derived from menu items
 // Any permission that grants access to a menu item also grants admin panel entry
-export const ADMIN_ACCESS_PERMISSIONS = [
-  ...new Set(ADMIN_MENU_ITEMS.flatMap((item) => item.permissions)),
-];
+export const ADMIN_ACCESS_PERMISSIONS = [...new Set(ADMIN_MENU_ITEMS.flatMap((item) => item.permissions))];

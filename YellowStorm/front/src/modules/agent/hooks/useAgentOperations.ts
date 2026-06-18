@@ -97,6 +97,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         };
@@ -157,6 +158,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           skills: agent.skills,
           disabledSkills: agent.disabledSkills,
           connectors: agent.connectors,
+          connectorActionSelections: agent.connectorActionSelections,
           isActive: agent.isActive,
           isDefaultForType: false,
         });

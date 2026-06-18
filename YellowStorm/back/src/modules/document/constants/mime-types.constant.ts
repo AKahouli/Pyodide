@@ -14,6 +14,7 @@ export const DEFAULT_ALLOWED_MIME_TYPES = [
   'text/csv',
   'text/markdown',
   'text/html',
+  'text/css',
   'application/json',
 
   // Images
@@ -37,6 +38,7 @@ export const MIME_TYPE_EXTENSIONS: Record<string, string> = {
   'text/csv': '.csv',
   'text/markdown': '.md',
   'text/html': '.html',
+  'text/css': '.css',
   'application/json': '.json',
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -59,6 +61,7 @@ export const EXTENSION_MIME_TYPES: Record<string, string> = {
   '.md': 'text/markdown',
   '.html': 'text/html',
   '.htm': 'text/html',
+  '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',

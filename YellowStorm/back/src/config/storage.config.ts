@@ -1,6 +1,21 @@
 import { registerAs } from '@nestjs/config';
 import { DEFAULT_ALLOWED_MIME_TYPES } from '../modules/document/constants/mime-types.constant';
 
+function getAllowedStorageMimeTypes(): string[] {
+  if (!process.env.STORAGE_ALLOWED_MIME_TYPES) {
+    return [...DEFAULT_ALLOWED_MIME_TYPES];
+  }
+
+  const configuredTypes = process.env.STORAGE_ALLOWED_MIME_TYPES
+    .split(',')
+    .map((type) => type.trim())
+    .filter((type) => type.length > 0);
+
+  // Keep existing deployment-specific additions while ensuring newly
+  // supported built-in MIME types remain accepted by the storage layer.
+  return [...new Set([...DEFAULT_ALLOWED_MIME_TYPES, ...configuredTypes])];
+}
+
 export default registerAs('storage', () => ({
   s3: {
     endpoint: process.env.CEPH_S3_ENDPOINT || process.env.CEPH_ENDPOINT || '',
@@ -17,9 +32,7 @@ export default registerAs('storage', () => ({
 
   sasExpiryMinutes: parseInt(process.env.STORAGE_SAS_EXPIRY_MINUTES || '60', 10),
 
-  allowedMimeTypes: process.env.STORAGE_ALLOWED_MIME_TYPES
-    ? process.env.STORAGE_ALLOWED_MIME_TYPES.split(',').map((t) => t.trim())
-    : [...DEFAULT_ALLOWED_MIME_TYPES],
+  allowedMimeTypes: getAllowedStorageMimeTypes(),
 
   healthCheck: {
     enabled: process.env.STORAGE_HEALTH_CHECK_ENABLED !== 'false',

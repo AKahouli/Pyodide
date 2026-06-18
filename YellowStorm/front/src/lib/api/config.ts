@@ -60,6 +60,13 @@ export const API_ENDPOINTS = {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
+    cors: '/experimental/system/cors',
+  },
+  workspaceUploadSettings: {
+    current: '/workspace-settings/uploads',
+  },
+  adminWorkspaceUploadSettings: {
+    base: '/admin/workspace-settings/uploads',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
@@ -275,6 +282,12 @@ export const API_ENDPOINTS = {
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
+  },
+  widgetTokens: {
+    create: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    list: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+    revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
   },
   teams: {
     list: '/teams',

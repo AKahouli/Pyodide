@@ -207,3 +207,37 @@ def test_build_step_tool_scope_prefers_workspace_filename_when_hydrating() -> No
             "workspace_path": "user/workspace/doc-1",
         }
     ]
+
+
+def test_build_step_tool_scope_resolves_bound_file_id_to_search_filename() -> None:
+    scope = build_step_tool_scope(
+        {
+            "report": {
+                "document_id": "6a315401d7d4c01f4ab2e63c",
+                "file_name": "6a315401d7d4c01f4ab2e63c",
+            }
+        },
+        {
+            "brain_context": [
+                {
+                    "workspace_id": "6a314fdad7d4c01f4ab2d25d",
+                    "workspace_name": "testeval2",
+                    "workspace_documents": [
+                        {
+                            "_id": "6a315401d7d4c01f4ab2e63c",
+                            "filename": "02-annexe-1-cahier-des-charges-techniques.md",
+                            "filepath": "6992fc709968567dc766a12d/testeval2/02-annexe-1-cahier-des-charges-techniques.md",
+                            "file_name": "02-annexe-1-cahier-des-charges-techniques.md",
+                            "workspace_id": "6a314fdad7d4c01f4ab2d25d",
+                            "workspace_name": "testeval2",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert scope.file_names == ["02-annexe-1-cahier-des-charges-techniques.md"]
+    assert scope.documents_by_port == {
+        "report": ["02-annexe-1-cahier-des-charges-techniques.md"]
+    }

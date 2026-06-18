@@ -192,6 +192,41 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.isGrpcAvailable;
   }
 
+  /** Re-check gRPC connectivity (e.g. ADK started after NestJS boot). */
+  waitForGrpcReady(timeoutMs = 5000): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.chatbotClient) {
+        resolve(false);
+        return;
+      }
+      const deadline = new Date(Date.now() + timeoutMs);
+      this.chatbotClient.waitForReady(deadline, (err: Error | null) => {
+        this.lastCheckedAt = new Date();
+        if (err) {
+          this.isGrpcAvailable = false;
+          this.lastError = err.message;
+          resolve(false);
+          return;
+        }
+        this.isGrpcAvailable = true;
+        this.lastError = null;
+        resolve(true);
+      });
+    });
+  }
+
+  getChatbotClient(): any | null {
+    if (!this.isGrpcAvailable || !this.chatbotClient) {
+      return null;
+    }
+    return this.chatbotClient;
+  }
+
+  /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
+  async resolveAgentsBrainContext(agents: IGrpcAgent[]): Promise<void> {
+    await this.resolveAgentBrainContexts(agents);
+  }
+
   /**
    * Build workspace contexts for the gRPC request from the conversation's linked workspaces.
    * Returns an array of WorkspaceContext objects matching the proto schema.

@@ -1261,22 +1261,28 @@ export async function rewritePlaybookPromptStream(
     throw new Error(`Request failed with status ${response.status}`);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
+  // The endpoint returns a single JSON envelope { prompt: "..." }. The caller
+  // treats this as a stream, so we read the full body, unwrap the prompt value,
+  // and forward it as a single chunk. This keeps the textarea free of the raw
+  // JSON envelope.
+  const raw = await response.text();
+  const prompt = unwrapRewritePromptPayload(raw);
+  onChunk(prompt);
+  return { prompt };
+}
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
+function unwrapRewritePromptPayload(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return trimmed;
 
-    const chunk = decoder.decode(value, { stream: true });
-    if (!chunk) continue;
-    fullText += chunk;
-    onChunk(chunk);
+  try {
+    const parsed = JSON.parse(trimmed) as { prompt?: unknown };
+    if (typeof parsed.prompt === 'string') return parsed.prompt;
+  } catch {
+    // Fall through to the trimmed raw body if the payload is not valid JSON.
   }
 
-  fullText += decoder.decode();
-  return { prompt: fullText.trim() };
+  return trimmed;
 }
 
 export async function updatePlaybook(

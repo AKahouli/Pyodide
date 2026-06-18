@@ -10,7 +10,7 @@ import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useRep
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
@@ -23,6 +23,7 @@ interface ConversationInputProps {
 
 export function ConversationInput({ conversationId, onWorkspaceUpdate }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const { accept } = useAllowedUploadExtensions();
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
   const clearReplyingTo = useConversationStore((s) => s.clearReplyingTo);
@@ -194,7 +195,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         onFilesAdded={handleFilesAdded}
         onFileRemoved={handleFileRemoved}
         uploadingFiles={uploadFiles}
-        accept={ACCEPT_EXTENSIONS}
+        accept={accept}
         maxFiles={5}
         members={membersToTag}
         autoMention={autoMention}
