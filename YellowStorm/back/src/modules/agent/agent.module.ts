@@ -4,10 +4,14 @@ import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentA2AController } from './controllers/agent-a2a.controller';
+import { AgentShareController } from './controllers/agent-share.controller';
 import { AgentService } from './agent.service';
+import { AgentShareService } from './services/agent-share.service';
+import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
 import { Agent, AgentSchema } from './schemas/agent.schema';
+import { SharedAgent, SharedAgentSchema } from './schemas/shared-agent.schema';
 import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -17,6 +21,7 @@ import { SkillModule } from '../skill/skill.module';
 import { ConnectorModule } from '../connector/connector.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import { TeamModule } from '../team/team.module';
+import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
@@ -24,6 +29,7 @@ import { TeamModule } from '../team/team.module';
     ConfigModule.forFeature(a2aAdminConfig),
     MongooseModule.forFeature([
       { name: Agent.name, schema: AgentSchema },
+      { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     AgentTypeModule,
     AuthorizationModule,
@@ -33,9 +39,10 @@ import { TeamModule } from '../team/team.module';
     ConnectorModule,
     ConnectedAppModule,
     forwardRef(() => TeamModule),
+    UserModule,
   ],
-  controllers: [AgentController, AdminAgentController, AgentA2AController],
-  providers: [AgentService, A2AAdminGrpcClientService, A2APublishService],
-  exports: [AgentService, A2AAdminGrpcClientService, A2APublishService],
+  controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
+  providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService],
+  exports: [AgentService, AgentShareService, A2AAdminGrpcClientService, A2APublishService],
 })
 export class AgentModule {}

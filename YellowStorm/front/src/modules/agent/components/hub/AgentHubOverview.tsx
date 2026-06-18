@@ -1,7 +1,7 @@
-import { Bot, Lock, type LucideIcon } from 'lucide-react';
+import { Bot, Lock, Users, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { usePersonalAgents, useDefaultAgents } from '../../store';
+import { usePersonalAgents, useDefaultAgents, useSharedAgents } from '../../store';
 import { useModuleTranslation } from '@/modules/localization';
 import type { OwnershipFilter } from '../../hooks/useAgentHubFilters';
 
@@ -22,6 +22,7 @@ interface Tile {
 export function AgentHubOverview({ activeOwner, onSelectOwner }: AgentHubOverviewProps) {
   const personal = usePersonalAgents();
   const defaults = useDefaultAgents();
+  const shared = useSharedAgents();
   const { t } = useModuleTranslation('agent');
 
   const tiles: Tile[] = [
@@ -41,6 +42,14 @@ export function AgentHubOverview({ activeOwner, onSelectOwner }: AgentHubOvervie
       owner: 'default',
       accent: 'var(--chart-3)',
     },
+    {
+      key: 'shared',
+      label: t('hub.overview.shared'),
+      count: shared.length,
+      icon: Users,
+      owner: 'shared',
+      accent: 'var(--chart-2)',
+    },
   ];
 
   return (
@@ -51,7 +60,7 @@ export function AgentHubOverview({ activeOwner, onSelectOwner }: AgentHubOvervie
         </span>
         <span className="h-px flex-1 bg-border/60" />
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {tiles.map((tile) => {
           const Icon = tile.icon;
           const active = activeOwner === tile.owner;

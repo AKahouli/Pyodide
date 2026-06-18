@@ -1,4 +1,4 @@
-import { Ban, Copy, Eye, Globe, Loader2, Lock, Pencil, Trash2 } from 'lucide-react';
+import { Ban, Copy, Eye, Globe, Loader2, Lock, LogOut, Pencil, Share2, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -17,6 +17,8 @@ interface AgentCardRichProps {
   onDuplicate?: (agent: Agent) => void;
   onPublishA2A?: (agent: Agent) => void;
   onRevokeA2A?: (agent: Agent) => void;
+  onShare?: (agent: Agent) => void;
+  onUnshare?: (agent: Agent) => void;
   publishingA2A?: boolean;
 }
 
@@ -70,21 +72,37 @@ export function AgentCardRich({
   onDuplicate,
   onPublishA2A,
   onRevokeA2A,
+  onShare,
+  onUnshare,
   publishingA2A = false,
 }: AgentCardRichProps) {
   const { t, language } = useModuleTranslation('agent');
   const { hasPermission } = usePermissions();
 
   const isDefault = agent.isDefault;
-  const isOwned = !isDefault;
-  // Default (admin-created) agents are read-only for regular users, but admins
-  // with the matching permission can manage them straight from the hub.
-  const canEdit = isOwned || (isDefault && hasPermission('agents.update'));
+  const isShared = !!agent.shareInfo;
+  // "Owned" = a personal agent that belongs to the current user.
+  const isOwned = !isDefault && !isShared;
+  // A shared agent can be edited only when granted the 'write' permission.
+  const canWriteShared = isShared && agent.shareInfo?.permission === 'write';
+
+  // Edit: own agents, admins on default agents, or write-shared recipients.
+  const canEdit = isOwned || (isDefault && hasPermission('agents.update')) || canWriteShared;
+  // Delete: own agents or admins on default agents — never shared recipients.
   const canDelete = isOwned || (isDefault && hasPermission('agents.delete'));
-  const isReadOnly = isDefault && !canEdit;
+  const isReadOnly = (isDefault && !canEdit) || (isShared && !canWriteShared);
 
   const color = typeColor(agent.agentType?.id ?? '');
   const ago = formatRelative(agent.updatedAt, language || 'en');
+
+  const sharedByName = agent.shareInfo
+    ? agent.shareInfo.sharedBy.firstName || agent.shareInfo.sharedBy.email
+    : '';
+  const sharedBadge = isShared ? (
+    <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
+      {t('card.sharedBy', { name: sharedByName })}
+    </span>
+  ) : null;
 
   const actions = (
     <div
@@ -134,6 +152,20 @@ export function AgentCardRich({
           title={t('card.duplicate')}
         >
           <Copy className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      {isOwned && onShare && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShare(agent);
+          }}
+          title={t('share.shareAgent')}
+        >
+          <Share2 className="h-3.5 w-3.5" />
         </Button>
       )}
       {isOwned && onPublishA2A && (
@@ -188,6 +220,20 @@ export function AgentCardRich({
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       )}
+      {isShared && onUnshare && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUnshare(agent);
+          }}
+          title={t('share.leaveShared')}
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 
@@ -205,6 +251,7 @@ export function AgentCardRich({
             <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
               {agent.agentType?.name ?? t('card.unknownType')}
             </span>
+            {sharedBadge}
             {isReadOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
             <span
               className={cn(
@@ -250,6 +297,7 @@ export function AgentCardRich({
               {t('card.default')}
             </span>
           )}
+          {sharedBadge}
         </div>
         <div className="flex items-center gap-1.5">
           {isReadOnly && <Lock className="h-3 w-3 text-muted-foreground" />}

@@ -100,6 +100,7 @@ export function AgentHubFilters({
           <SelectItem value="all">{t('hub.filters.ownerAll')}</SelectItem>
           <SelectItem value="mine">{t('hub.filters.ownerMine')}</SelectItem>
           <SelectItem value="default">{t('hub.filters.ownerDefault')}</SelectItem>
+          <SelectItem value="shared">{t('hub.filters.ownerShared')}</SelectItem>
         </SelectContent>
       </Select>
 

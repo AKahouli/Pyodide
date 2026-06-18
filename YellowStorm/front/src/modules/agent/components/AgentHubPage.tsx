@@ -22,6 +22,7 @@ import { AgentHubGrid } from './hub/AgentHubGrid';
 import { AgentHubBulkActionBar } from './hub/AgentHubBulkActionBar';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
 import { A2APublishDialog } from './A2APublishDialog';
+import { ShareAgentDialog } from './ShareAgentDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function AgentHubPage() {
@@ -180,6 +181,8 @@ export function AgentHubPage() {
               onDuplicate={ops.duplicateAgent}
               onPublishA2A={ops.publishOrRotateA2A}
               onRevokeA2A={ops.setRevokingAgent}
+              onShare={ops.setSharingAgent}
+              onUnshare={ops.unshareAgent}
               publishingA2AId={ops.a2aProcessingId}
             />
           )}
@@ -197,6 +200,16 @@ export function AgentHubPage() {
       />
 
       <A2APublishDialog result={ops.a2aResult} onClose={() => ops.setA2aResult(null)} />
+
+      {ops.sharingAgent && (
+        <ShareAgentDialog
+          open={!!ops.sharingAgent}
+          onOpenChange={(open) => {
+            if (!open) ops.setSharingAgent(null);
+          }}
+          agent={ops.sharingAgent}
+        />
+      )}
 
       <AlertDialog
         open={!!ops.revokingAgent}

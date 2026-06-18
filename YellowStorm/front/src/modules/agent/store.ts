@@ -138,6 +138,17 @@ export const useAgentStore = create<AgentStore>()(
         });
       },
 
+      unshareAgent: async (id) => {
+        const agent = get().agents.find((a) => a.id === id);
+        await api.unshareAgent(id);
+        set((state) => ({
+          agents: state.agents.filter((a) => a.id !== id),
+        }));
+        toast.success(tAgent('store.toasts.agentUnshared', 'Removed from your list'), {
+          description: tAgent('store.toasts.agentUnsharedDescription', '{{name}} is no longer shared with you.', { name: agent?.name || tAgent('store.defaults.agentName', 'Agent') }),
+        });
+      },
+
       bulkDeleteAgents: async (ids, onProgress): Promise<BulkDeleteResult> => {
         const errors: BulkDeleteError[] = [];
         const deletedIds: string[] = [];
@@ -416,10 +427,14 @@ export const useAgentStore = create<AgentStore>()(
 export const useAgents = () => useAgentStore(useShallow((state) => state.agents));
 
 export const usePersonalAgents = () =>
-  useAgentStore(useShallow((state) => state.agents.filter((a) => !a.isDefault)));
+  useAgentStore(useShallow((state) => state.agents.filter((a) => !a.isDefault && !a.shareInfo)));
 
 export const useDefaultAgents = () =>
   useAgentStore(useShallow((state) => state.agents.filter((a) => a.isDefault)));
+
+/** Agents shared with the current user by another owner. */
+export const useSharedAgents = () =>
+  useAgentStore(useShallow((state) => state.agents.filter((a) => !!a.shareInfo)));
 
 export const useAgentsLoading = () => useAgentStore((state) => state.isLoading);
 

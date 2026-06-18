@@ -4,7 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from './schemas/agent.schema';
-import { IAgentResponse, IAgentForStream, IGrpcAgent } from './interfaces/agent.interface';
+import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
+import { AgentShareService } from './services/agent-share.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
@@ -46,6 +47,7 @@ export class AgentService {
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => TeamService))
     private readonly teamService: TeamService,
+    private readonly agentShareService: AgentShareService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -172,11 +174,20 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
     }
 
-    if (agent.createdBy.toString() !== userId) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    const isOwner = agent.createdBy.toString() === userId;
+    let shareInfo: ISharedAgentInfo | undefined;
+    if (!isOwner) {
+      // Non-owners may read the agent only if it was shared with them.
+      const info = await this.agentShareService.getShareInfo(userId, agentId);
+      if (!info) {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+      }
+      shareInfo = info;
     }
 
-    return this.toResponse(agent);
+    const response = this.toResponse(agent);
+    if (shareInfo) response.shareInfo = shareInfo;
+    return response;
   }
 
   async updatePersonal(userId: string, agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
@@ -190,8 +201,13 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
     }
 
-    if (agent.createdBy.toString() !== userId) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    // Owner or a user the agent was shared with at the 'write' level may update it.
+    const ownerId = agent.createdBy.toString();
+    if (ownerId !== userId) {
+      const permission = await this.agentShareService.getSharePermission(userId, agentId);
+      if (permission !== 'write') {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+      }
     }
 
     // Validate agent type if changing
@@ -202,10 +218,10 @@ export class AgentService {
       }
     }
 
-    // Check name uniqueness if changing
+    // Uniqueness is scoped to the agent's owner, not the (possibly shared) editor.
     if (dto.name && dto.name !== agent.name) {
       const duplicate = await this.agentModel
-        .findOne({ name: dto.name, createdBy: new Types.ObjectId(userId) })
+        .findOne({ name: dto.name, createdBy: new Types.ObjectId(ownerId) })
         .lean()
         .exec();
       if (duplicate) {
@@ -216,13 +232,13 @@ export class AgentService {
     const normalizedSlug = dto.slug ? this.normalizeSlug(dto.slug) : undefined;
 
     if (normalizedSlug && normalizedSlug !== agent.slug) {
-      await this.ensureSlugUniqueness(normalizedSlug, false, userId, agentId);
+      await this.ensureSlugUniqueness(normalizedSlug, false, ownerId, agentId);
     }
 
     // Ensure only one default-for-type per user per agent type
     if (dto.isDefaultForType === true) {
       const effectiveAgentTypeId = dto.agentType || agent.agentType.toString();
-      await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, userId, agentId);
+      await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, ownerId, agentId);
     }
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
@@ -300,6 +316,9 @@ export class AgentService {
 
     // Keep teams consistent: drop this agent from any team that referenced it.
     await this.teamService.removeAgentFromAllTeams(agentId);
+
+    // Drop any shares pointing at the now-deleted agent.
+    await this.agentShareService.removeAllSharesForAgent(agentId);
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -1113,20 +1132,44 @@ export class AgentService {
   }
 
   async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
-    const agents = await this.agentModel
-      .find({
-        isActive: true,
-        $or: [
-          { createdBy: new Types.ObjectId(userId), isDefault: false },
-          { isDefault: true },
-        ],
-      })
-      .populate('agentType', 'name skills')
-      .sort({ isDefault: -1, createdAt: -1 })
-      .lean()
-      .exec();
+    const [agents, shareMap] = await Promise.all([
+      this.agentModel
+        .find({
+          isActive: true,
+          $or: [
+            { createdBy: new Types.ObjectId(userId), isDefault: false },
+            { isDefault: true },
+          ],
+        })
+        .populate('agentType', 'name skills')
+        .sort({ isDefault: -1, createdAt: -1 })
+        .lean()
+        .exec(),
+      this.agentShareService.getShareInfoMapForUser(userId),
+    ]);
 
-    return agents.map((a) => this.toResponse(a));
+    const owned = agents.map((a) => this.toResponse(a));
+
+    // Append agents shared with the user (active only), tagged with shareInfo.
+    if (shareMap.size > 0) {
+      const sharedAgents = await this.agentModel
+        .find({
+          _id: { $in: Array.from(shareMap.keys()).map((id) => new Types.ObjectId(id)) },
+          isActive: true,
+        })
+        .populate('agentType', 'name skills')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+
+      for (const doc of sharedAgents) {
+        const response = this.toResponse(doc);
+        response.shareInfo = shareMap.get(response.id);
+        owned.push(response);
+      }
+    }
+
+    return owned;
   }
 
   async findByIds(ids: string[], userId: string): Promise<IAgentResponse[]> {

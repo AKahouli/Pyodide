@@ -20,6 +20,10 @@ import type {
   A2ARotateKeyResult,
   A2ARevokeResult,
   WidgetTokenResponse,
+  ShareAgentData,
+  AgentShareEntry,
+  AgentPermissionLevel,
+  UserSearchResult,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -77,6 +81,57 @@ export async function updateDefaultAgent(id: string, data: UpdateAgentData): Pro
  */
 export async function deleteDefaultAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+// ===== Agent sharing =====
+
+/** Share an agent with one or more users by email, at one permission level. */
+export async function shareAgent(agentId: string, data: ShareAgentData): Promise<AgentShareEntry[]> {
+  const response = await apiClient.post<ApiResponse<AgentShareEntry[]>>(
+    API_ENDPOINTS.agents.shares(agentId),
+    data,
+  );
+  return response.data.data;
+}
+
+/** List everyone an agent is shared with (owner only). */
+export async function getAgentShares(agentId: string): Promise<AgentShareEntry[]> {
+  const response = await apiClient.get<ApiResponse<AgentShareEntry[]>>(
+    API_ENDPOINTS.agents.shares(agentId),
+  );
+  return response.data.data;
+}
+
+/** Change a share's permission level (owner only). */
+export async function updateAgentSharePermission(
+  agentId: string,
+  shareId: string,
+  permission: AgentPermissionLevel,
+): Promise<AgentShareEntry> {
+  const response = await apiClient.patch<ApiResponse<AgentShareEntry>>(
+    API_ENDPOINTS.agents.shareById(agentId, shareId),
+    { permission },
+  );
+  return response.data.data;
+}
+
+/** Revoke a share (owner only). */
+export async function removeAgentShare(agentId: string, shareId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.shareById(agentId, shareId));
+}
+
+/** Remove an agent that was shared with the current user from their own list. */
+export async function unshareAgent(agentId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.unshare(agentId));
+}
+
+/** Autocomplete search for users to share an agent with. */
+export async function searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
+  const response = await apiClient.get<ApiResponse<UserSearchResult[]>>(
+    API_ENDPOINTS.users.search,
+    { params: { q: query, limit } },
+  );
+  return response.data.data;
 }
 
 /**
