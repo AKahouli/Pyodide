@@ -2,7 +2,10 @@
 
 import asyncio
 import json
+import re
 from typing import Annotated, Any, AsyncGenerator, Dict
+
+_SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9_\-.:]{1,200}$")
 from fastapi import APIRouter, Body, status, HTTPException, Depends
 from starlette.responses import StreamingResponse
 from src.config.settings import get_settings
@@ -51,18 +54,21 @@ async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     external_id_value = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
     raw_status = str(payload.get("status") or "").strip()
 
-    def _safe_for_log(value: str, max_len: int = 200) -> str:
-        sanitized = "".join(ch for ch in value if ch.isprintable() and ch not in ("\r", "\n"))
-        return sanitized[:max_len]
-
     if not external_id_value:
         logger.warning("[index/webhook] Received payload with no external identifier")
         return {"ok": False, "error": "missing external identifier"}
 
     resolved = resolve_indexing_webhook(external_id_value, raw_status, payload)
+
+    # Validate against a strict allow-list before logging (S5145 log-injection guard).
+    safe_external_id = external_id_value if _SAFE_LOG_TOKEN.match(external_id_value) else "<invalid>"
+    safe_status = raw_status if _SAFE_LOG_TOKEN.match(raw_status) else "<invalid>"
+    safe_resolved = bool(resolved)
     logger.info(
-        f"[index/webhook] external_id={_safe_for_log(external_id_value)} "
-        f"status={_safe_for_log(raw_status)} resolved={resolved}"
+        "[index/webhook] external_id=%s status=%s resolved=%s",
+        safe_external_id,
+        safe_status,
+        safe_resolved,
     )
     return {"ok": True, "resolved": resolved}
 
