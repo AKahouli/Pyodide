@@ -57,6 +57,29 @@ export async function deleteAgent(id: string): Promise<void> {
 }
 
 /**
+ * Update a default (admin-created) agent.
+ *
+ * The user-facing `PATCH /agents/:id` rejects default agents with
+ * CUSTOM_AGENT_DEFAULT_READONLY, so admins holding `agents.update` go through
+ * the admin endpoint instead. Permission enforcement stays on the backend.
+ */
+export async function updateDefaultAgent(id: string, data: UpdateAgentData): Promise<Agent> {
+  const response = await apiClient.patch<ApiResponse<Agent>>(
+    API_ENDPOINTS.adminAgents.byId(id),
+    data
+  );
+  return response.data.data;
+}
+
+/**
+ * Delete a default (admin-created) agent via the admin endpoint.
+ * Requires the caller to hold `agents.delete` (enforced server-side).
+ */
+export async function deleteDefaultAgent(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+/**
  * Publish an agent over the A2A protocol. Returns the message endpoint, agent
  * card URL, and the API key — the key is only returned once.
  */

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Agent } from '../../types';
 import { useModuleTranslation } from '@/modules/localization';
+import { usePermissions } from '@/modules/admin';
 
 type Layout = 'grid' | 'list';
 
@@ -72,11 +73,15 @@ export function AgentCardRich({
   publishingA2A = false,
 }: AgentCardRichProps) {
   const { t, language } = useModuleTranslation('agent');
+  const { hasPermission } = usePermissions();
 
   const isDefault = agent.isDefault;
   const isOwned = !isDefault;
-  const isReadOnly = isDefault;
-  const canEdit = !isDefault;
+  // Default (admin-created) agents are read-only for regular users, but admins
+  // with the matching permission can manage them straight from the hub.
+  const canEdit = isOwned || (isDefault && hasPermission('agents.update'));
+  const canDelete = isOwned || (isDefault && hasPermission('agents.delete'));
+  const isReadOnly = isDefault && !canEdit;
 
   const color = typeColor(agent.agentType?.id ?? '');
   const ago = formatRelative(agent.updatedAt, language || 'en');
@@ -169,7 +174,7 @@ export function AgentCardRich({
           <Ban className="h-3.5 w-3.5" />
         </Button>
       )}
-      {isOwned && onDelete && (
+      {canDelete && onDelete && (
         <Button
           variant="ghost"
           size="icon"
@@ -200,7 +205,7 @@ export function AgentCardRich({
             <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
               {agent.agentType?.name ?? t('card.unknownType')}
             </span>
-            {isDefault && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+            {isReadOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
             <span
               className={cn(
                 'ml-auto shrink-0 h-1.5 w-1.5 rounded-full',
@@ -247,7 +252,7 @@ export function AgentCardRich({
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          {isDefault && <Lock className="h-3 w-3 text-muted-foreground" />}
+          {isReadOnly && <Lock className="h-3 w-3 text-muted-foreground" />}
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full',

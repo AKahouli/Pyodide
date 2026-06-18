@@ -107,7 +107,12 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       updateAgent: async (id, data) => {
-        const agent = await api.updateAgent(id, data);
+        // Default (admin-created) agents are read-only on the user endpoint;
+        // route them to the admin endpoint, which gates on `agents.update`.
+        const existing = get().agents.find((a) => a.id === id);
+        const agent = existing?.isDefault
+          ? await api.updateDefaultAgent(id, data)
+          : await api.updateAgent(id, data);
         set((state) => ({
           agents: state.agents.map((a) => (a.id === id ? agent : a)),
         }));
@@ -119,7 +124,12 @@ export const useAgentStore = create<AgentStore>()(
 
       deleteAgent: async (id) => {
         const agent = get().agents.find((a) => a.id === id);
-        await api.deleteAgent(id);
+        // Default agents are deleted through the admin endpoint (`agents.delete`).
+        if (agent?.isDefault) {
+          await api.deleteDefaultAgent(id);
+        } else {
+          await api.deleteAgent(id);
+        }
         set((state) => ({
           agents: state.agents.filter((a) => a.id !== id),
         }));
