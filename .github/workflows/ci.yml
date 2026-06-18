@@ -39,7 +39,13 @@ jobs:
           cache-dependency-path: YellowStorm/back/package-lock.json
       - run: npm ci
       - run: npm run build
-      - run: npm test -- --ci --forceExit --detectOpenHandles
+      - run: npm test -- --ci --forceExit --detectOpenHandles --coverage --coverageProvider=v8
+      - name: Upload backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: YellowStorm/back/coverage/lcov.info
 
   python-tests:
     runs-on: ubuntu-latest
@@ -63,4 +69,49 @@ jobs:
       - name: Generate gRPC stubs
         run: python grpc/generate_proto.py
       - name: Run flow engine tests
-        run: python -m pytest src/flow_engine/tests/ -v
+        run: python -m pytest src/flow_engine/tests/ -v --cov=src --cov=grpc --cov-report=xml:coverage.xml
+      - name: Upload python coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: yellowstorm-adk/coverage.xml
+
+  sonarcloud:
+    needs: [backend-tests, python-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Download Python coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: python-coverage
+          path: yellowstorm-adk/
+        continue-on-error: true
+
+      - name: Download backend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage
+          path: YellowStorm/back/coverage/
+        continue-on-error: true
+
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || format('-Dsonar.branch.name={0}', github.ref_name) }}

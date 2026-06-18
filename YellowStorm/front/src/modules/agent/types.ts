@@ -29,6 +29,48 @@ export interface Agent {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Present when the agent was shared with the current user (non-owner). */
+  shareInfo?: SharedAgentInfo;
+}
+
+export type AgentPermissionLevel = 'read' | 'write';
+
+/** Info about an agent shared with the current user (non-owner). */
+export interface SharedAgentInfo {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  sharedBy: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
+export interface ShareAgentData {
+  emails: string[];
+  permission: AgentPermissionLevel;
+}
+
+/** A single share entry on an agent (owner's view of who it's shared with). */
+export interface AgentShareEntry {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  user: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  createdAt: string;
+}
+
+/** A user returned by the autocomplete search when sharing an agent. */
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 /**
@@ -249,6 +291,8 @@ export interface AgentActions {
   createAgent: (data: CreateAgentData) => Promise<Agent>;
   updateAgent: (id: string, data: UpdateAgentData) => Promise<Agent>;
   deleteAgent: (id: string) => Promise<void>;
+  /** Remove an agent shared with the current user from their own list. */
+  unshareAgent: (id: string) => Promise<void>;
   bulkDeleteAgents: (
     ids: string[],
     onProgress?: (done: number, total: number) => void,

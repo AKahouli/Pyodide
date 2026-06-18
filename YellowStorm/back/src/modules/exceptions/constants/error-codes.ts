@@ -184,6 +184,10 @@ export enum ErrorCode {
   CUSTOM_AGENT_DEFAULT_READONLY = 'ERR_2405',
   CUSTOM_AGENT_A2A_NOT_PUBLISHED = 'ERR_2406',
   CUSTOM_AGENT_A2A_PUBLISH_FAILED = 'ERR_2407',
+  CUSTOM_AGENT_SHARE_NOT_FOUND = 'ERR_2408',
+  CUSTOM_AGENT_SHARE_SELF = 'ERR_2409',
+  CUSTOM_AGENT_SHARE_FORBIDDEN = 'ERR_2410',
+  CUSTOM_AGENT_SHARE_USER_NOT_FOUND = 'ERR_2411',
 
   // Playbook errors (2500-2599)
   PLAYBOOK_NOT_FOUND = 'ERR_2500',
@@ -474,6 +478,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY]: 'Default agents cannot be modified by users.',
   [ErrorCode.CUSTOM_AGENT_A2A_NOT_PUBLISHED]: 'This agent has not been published over A2A yet.',
   [ErrorCode.CUSTOM_AGENT_A2A_PUBLISH_FAILED]: 'Failed to publish the agent over A2A.',
+  [ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND]: 'Agent share not found.',
+  [ErrorCode.CUSTOM_AGENT_SHARE_SELF]: 'Cannot share an agent with yourself.',
+  [ErrorCode.CUSTOM_AGENT_SHARE_FORBIDDEN]: 'You do not have permission to manage this agent share.',
+  [ErrorCode.CUSTOM_AGENT_SHARE_USER_NOT_FOUND]: 'No user found for the provided email.',
 
   [ErrorCode.PLAYBOOK_NOT_FOUND]: 'Playbook not found.',
   [ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND]: 'Playbook execution not found.',

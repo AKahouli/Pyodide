@@ -5,9 +5,7 @@ new instances on every request, which causes high CPU and memory usage.
 """
 
 from functools import lru_cache
-from src.config.settings import get_settings
 from src.smart_rag.core import ChatRAGService, AgentTeamService, SkillsService
-from src.smart_rag.core.external_api_service import ExternalApiService
 from src.smart_rag.core.single_agent_service import SingleAgentService
 from src.smart_rag.core.simple_completion import SimpleCompletionService
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
@@ -24,20 +22,7 @@ def get_chat_rag_service() -> ChatRAGService:
         ChatRAGService: Singleton service instance for RAG-based chat.
     """
     logger.info("Initializing ChatRAGService singleton")
-    external_api_service = get_external_api_service()
-    return ChatRAGService(external_api_service=external_api_service)
-
-
-@lru_cache()
-def get_external_api_service() -> ExternalApiService:
-    """Get singleton ExternalApiService instance.
-
-    Returns:
-        ExternalApiService: Singleton service instance for external API integration.
-    """
-    logger.info("Initializing ExternalApiService singleton")
-    settings = get_settings()
-    return ExternalApiService(settings)
+    return ChatRAGService()
 
 
 @lru_cache()

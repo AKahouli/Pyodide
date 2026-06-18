@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict
+from typing import Optional, List
 
 from pydantic import BaseModel
 
@@ -105,14 +105,4 @@ class MockSettings(BaseModel):
     # Code Interpreter Backend
     CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
 
-    # External API Configuration
-    EXTERNAL_API_BRAIN_IDS: List[str] = []
-    EXTERNAL_API_URL: str = "https://mock_external_api_url"
-    EXTERNAL_API_AGENT_NAME: str = "DPP_MOA"
-    EXTERNAL_API_BRAIN_AGENT_MAPPING: Dict[str, str] = {}
-
-    # Dynamic Authentication Configuration
-    EXTERNAL_API_AUTH_URL: Optional[str] = None
-    EXTERNAL_API_USERNAME: Optional[str] = None
-    EXTERNAL_API_PASSWORD: Optional[str] = None
     BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = ["67c99ad236081d40c152c23d"]

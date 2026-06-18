@@ -134,8 +134,10 @@ agent/
 │   ├── CreateEditAgentDialog.tsx     # Create/edit tabs (incl. Deployment)
 │   ├── AgentDeploymentSection.tsx    # Generate + copy embed snippet
 │   ├── AgentTelegramIntegrationSection.tsx
+│   ├── ShareAgentDialog.tsx          # Owner share modal (read/write by email)
+│   ├── UserSearchInput.tsx           # User autocomplete used by ShareAgentDialog
 │   ├── EvaluationTab.tsx
-│   └── hub/                          # Hub grid, filters, bulk bar
+│   └── hub/                          # Hub grid, filters, bulk bar, cards (Share/Leave)
 └── README.md
 ├── index.ts                          # Public exports (store hooks, hub components, types)
 ├── types.ts                          # Agent, integrations, evaluation types
@@ -196,7 +198,33 @@ interface Agent {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  shareInfo?: SharedAgentInfo;   // present only on agents shared *with* the current user
 }
+```
+
+### Sharing types
+
+```typescript
+type AgentPermissionLevel = 'read' | 'write';
+
+// Attached to an Agent when it was shared *with* the current user (non-owner).
+interface SharedAgentInfo {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  sharedBy: { id: string; email: string; firstName?: string; lastName?: string };
+}
+
+interface ShareAgentData { emails: string[]; permission: AgentPermissionLevel }
+
+// Owner's view of a single share (who the agent is shared with).
+interface AgentShareEntry {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  user: { id: string; email: string; firstName?: string; lastName?: string };
+  createdAt: string;
+}
+
+interface UserSearchResult { id: string; email: string; firstName?: string; lastName?: string }
 ```
 
 ### AgentType
@@ -282,6 +310,17 @@ See `AgentTelegramIntegrationSection` — bot token is never returned; `hasToken
 | `deleteAgent(id)` | DELETE | `/agents/:id` | Delete personal agent |
 | `getActiveTools()` | GET | `/tools/active` | Get available tools for assignment |
 | `createWidgetToken(agentId)` | POST | `/admin/agents/:agentId/widget-tokens` | Create widget token for embed (requires `agents.update`) |
+
+### Sharing API
+
+| Function | Method | Endpoint | Description |
+|----------|--------|----------|-------------|
+| `shareAgent(agentId, data)` | POST | `/agents/:id/shares` | Share with users by email (`read`/`write`) |
+| `getAgentShares(agentId)` | GET | `/agents/:id/shares` | List an agent's shares (owner) |
+| `updateAgentSharePermission(agentId, shareId, permission)` | PATCH | `/agents/:id/shares/:shareId` | Change a share's permission |
+| `removeAgentShare(agentId, shareId)` | DELETE | `/agents/:id/shares/:shareId` | Revoke a share (owner) |
+| `unshareAgent(agentId)` | DELETE | `/agents/:id/unshare` | Remove a shared agent from your own list (recipient) |
+| `searchUsers(query, limit?)` | GET | `/users/search` | Autocomplete users to share with |
 
 ### WidgetTokenResponse
 
@@ -376,8 +415,9 @@ interface AgentState {
 | `fetchAgents()` | Fetch all agents (with 5-min cache) |
 | `fetchAgentTypes()` | Fetch active agent types |
 | `createAgent(data)` | Create agent, append to state, show toast |
-| `updateAgent(id, data)` | Update agent, replace in state, show toast |
-| `deleteAgent(id)` | Delete agent, remove from state, show toast |
+| `updateAgent(id, data)` | Update agent, replace in state, show toast. Routes default agents to the admin endpoint |
+| `deleteAgent(id)` | Delete agent, remove from state, show toast. Routes default agents to the admin endpoint |
+| `unshareAgent(id)` | Remove an agent shared with you from your list, drop it from state, show toast |
 | `getPersonalAgents()` | Sync selector: filter `isDefault === false` |
 | `getDefaultAgents()` | Sync selector: filter `isDefault === true` |
 | `getAgentById(id)` | Sync selector: find by ID |
@@ -393,8 +433,9 @@ Optimized hooks for accessing store state:
 | Hook | Returns | Description |
 |------|---------|-------------|
 | `useAgents()` | `Agent[]` | All agents |
-| `usePersonalAgents()` | `Agent[]` | Non-default agents (shallow compare) |
+| `usePersonalAgents()` | `Agent[]` | Owned agents — `!isDefault && !shareInfo` (shallow compare) |
 | `useDefaultAgents()` | `Agent[]` | Default agents only (shallow compare) |
+| `useSharedAgents()` | `Agent[]` | Agents shared *with* the user — `!!shareInfo` (shallow compare) |
 | `useAgentsLoading()` | `boolean` | Loading state |
 | `useAgentsInitialized()` | `boolean` | Initialization state |
 | `useAgentsError()` | `string \| null` | Error message |
@@ -412,7 +453,19 @@ Sidebar entry point for agent management.
 
 ### AgentHubPage
 
-Primary hub UI: filters, grid of agents (`hub/AgentHubGrid`, `AgentCardRich`), bulk delete, opens `CreateEditAgentDialog`.
+Primary hub UI: filters, grid of agents (`hub/AgentHubGrid`, `AgentCardRich`), bulk delete, opens `CreateEditAgentDialog` and `ShareAgentDialog`. The grid renders three sections — **Personal**, **Defaults**, and **Shared with me** — and the overview/filters expose a matching `shared` scope.
+
+### ShareAgentDialog
+
+Owner-facing share modal (same UX as the Team module's `ShareTeamDialog`): a user-search autocomplete (`UserSearchInput`) to add recipients as `read`/`write` chips, plus a "people with access" list to change permissions or revoke. Opened from the Share button on owned agent cards.
+
+On a card (`hub/AgentCardRich`), the available actions depend on ownership:
+
+| Card kind | Actions shown |
+|-----------|---------------|
+| Owned personal | Edit, Duplicate, **Share**, Publish/Revoke A2A, Delete |
+| Shared with me (`shareInfo`) | "Shared by X" badge; Edit only if `write`; **Leave** (remove from my list) — no delete |
+| Default (admin) | Edit/Delete only with `agents.update` / `agents.delete` permission |
 
 ### AgentList
 
@@ -701,6 +754,25 @@ Zod schema (`userAgentFormSchema`):
 2. Confirm → AgentList.handleDelete()
 3. store.deleteAgent(id) → DELETE /agents/:id
 4. Agent removed from state, toast shown
+```
+
+### Share Agent
+
+```
+1. User clicks Share on an owned agent card → ShareAgentDialog opens
+2. UserSearchInput → searchUsers(query) → /users/search (debounced)
+3. Pick a user + read/write → added as a pending chip
+4. "Share" → grouped by permission → shareAgent(id, { emails, permission })
+5. Shares list refreshes (getAgentShares); recipient now sees the agent under
+   "Shared with me" with a shareInfo badge on their next fetch
+```
+
+### Leave a shared agent (recipient)
+
+```
+1. Recipient clicks Leave on a shared card
+2. ops.unshareAgent(agent) → store.unshareAgent(id) → DELETE /agents/:id/unshare
+3. Agent removed from state, toast shown
 ```
 
 ### Generate widget deployment snippet

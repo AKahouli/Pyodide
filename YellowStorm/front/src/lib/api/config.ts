@@ -282,6 +282,9 @@ export const API_ENDPOINTS = {
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
+    shares: (id: string) => `/agents/${id}/shares`,
+    shareById: (id: string, shareId: string) => `/agents/${id}/shares/${shareId}`,
+    unshare: (id: string) => `/agents/${id}/unshare`,
   },
   widgetTokens: {
     create: (agentId: string) => `/agents/${agentId}/widget-tokens`,

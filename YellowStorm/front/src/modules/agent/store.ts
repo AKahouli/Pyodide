@@ -107,7 +107,12 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       updateAgent: async (id, data) => {
-        const agent = await api.updateAgent(id, data);
+        // Default (admin-created) agents are read-only on the user endpoint;
+        // route them to the admin endpoint, which gates on `agents.update`.
+        const existing = get().agents.find((a) => a.id === id);
+        const agent = existing?.isDefault
+          ? await api.updateDefaultAgent(id, data)
+          : await api.updateAgent(id, data);
         set((state) => ({
           agents: state.agents.map((a) => (a.id === id ? agent : a)),
         }));
@@ -119,12 +124,28 @@ export const useAgentStore = create<AgentStore>()(
 
       deleteAgent: async (id) => {
         const agent = get().agents.find((a) => a.id === id);
-        await api.deleteAgent(id);
+        // Default agents are deleted through the admin endpoint (`agents.delete`).
+        if (agent?.isDefault) {
+          await api.deleteDefaultAgent(id);
+        } else {
+          await api.deleteAgent(id);
+        }
         set((state) => ({
           agents: state.agents.filter((a) => a.id !== id),
         }));
         toast.success(tAgent('store.toasts.agentDeleted', 'Agent deleted'), {
           description: tAgent('store.toasts.agentDeletedDescription', '{{name}} has been deleted.', { name: agent?.name || tAgent('store.defaults.agentName', 'Agent') }),
+        });
+      },
+
+      unshareAgent: async (id) => {
+        const agent = get().agents.find((a) => a.id === id);
+        await api.unshareAgent(id);
+        set((state) => ({
+          agents: state.agents.filter((a) => a.id !== id),
+        }));
+        toast.success(tAgent('store.toasts.agentUnshared', 'Removed from your list'), {
+          description: tAgent('store.toasts.agentUnsharedDescription', '{{name}} is no longer shared with you.', { name: agent?.name || tAgent('store.defaults.agentName', 'Agent') }),
         });
       },
 
@@ -406,10 +427,14 @@ export const useAgentStore = create<AgentStore>()(
 export const useAgents = () => useAgentStore(useShallow((state) => state.agents));
 
 export const usePersonalAgents = () =>
-  useAgentStore(useShallow((state) => state.agents.filter((a) => !a.isDefault)));
+  useAgentStore(useShallow((state) => state.agents.filter((a) => !a.isDefault && !a.shareInfo)));
 
 export const useDefaultAgents = () =>
   useAgentStore(useShallow((state) => state.agents.filter((a) => a.isDefault)));
+
+/** Agents shared with the current user by another owner. */
+export const useSharedAgents = () =>
+  useAgentStore(useShallow((state) => state.agents.filter((a) => !!a.shareInfo)));
 
 export const useAgentsLoading = () => useAgentStore((state) => state.isLoading);
 

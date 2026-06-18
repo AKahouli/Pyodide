@@ -127,19 +127,35 @@ def main():
         sys.exit(1)
 
 
+_ALLOWED_FILENAMES = {
+    "chatbot_pb2.py",
+    "chatbot_pb2_grpc.py",
+    "playbook_flow_pb2_grpc.py",
+    "a2a_admin_pb2.py",
+    "a2a_admin_pb2_grpc.py",
+}
+
+
 def fix_cross_import(pb2_file: Path, old_import: str, new_import: str):
     """Rewrite an aliased cross-proto import in a generated *_pb2.py file."""
-    if not pb2_file.exists():
-        print(f"Warning: File not found: {pb2_file}")
+    # Reconstruct the path from the trusted OUTPUT_DIR + an allow-listed filename,
+    # so the I/O sink never sees user-controlled path data.
+    filename = os.path.basename(str(pb2_file))
+    if filename not in _ALLOWED_FILENAMES:
+        print(f"Warning: Refusing to touch non-allowlisted file: {filename}")
         return
-    content = pb2_file.read_text()
+    safe_path = OUTPUT_DIR / filename
+    if not safe_path.exists():
+        print(f"Warning: File not found: {safe_path}")
+        return
+    content = safe_path.read_text()
     if new_import in content:
-        print(f"No import fixes needed in {pb2_file.name}")
+        print(f"No import fixes needed in {filename}")
     elif old_import in content:
-        pb2_file.write_text(content.replace(old_import, new_import))
-        print(f"Fixed cross-proto import in {pb2_file.name}")
+        safe_path.write_text(content.replace(old_import, new_import))
+        print(f"Fixed cross-proto import in {filename}")
     else:
-        print(f"No import fixes needed in {pb2_file.name}")
+        print(f"No import fixes needed in {filename}")
 
 
 def fix_imports(grpc_file: Path):
@@ -152,27 +168,32 @@ def fix_imports(grpc_file: Path):
     Args:
         grpc_file: Path to the generated gRPC file
     """
-    if not grpc_file.exists():
-        print(f"Warning: File not found: {grpc_file}")
+    filename = os.path.basename(str(grpc_file))
+    if filename not in _ALLOWED_FILENAMES:
+        print(f"Warning: Refusing to touch non-allowlisted file: {filename}")
+        return
+    safe_path = OUTPUT_DIR / filename
+    if not safe_path.exists():
+        print(f"Warning: File not found: {safe_path}")
         return
 
     try:
-        content = grpc_file.read_text()
-        stem = grpc_file.stem.replace("_pb2_grpc", "_pb2")
+        content = safe_path.read_text()
+        stem = filename.replace("_pb2_grpc.py", "_pb2")
         old_import = f"import {stem}"
         new_import = f"from src.grpc_generated import {stem}"
 
         if new_import in content:
-            print(f"No import fixes needed in {grpc_file.name}")
+            print(f"No import fixes needed in {filename}")
         elif old_import in content:
             content = content.replace(old_import, new_import)
-            grpc_file.write_text(content)
-            print(f"Fixed imports in {grpc_file.name}")
+            safe_path.write_text(content)
+            print(f"Fixed imports in {filename}")
         else:
-            print(f"No import fixes needed in {grpc_file.name}")
+            print(f"No import fixes needed in {filename}")
 
     except Exception as e:
-        print(f"Warning: Could not fix imports in {grpc_file}: {e}")
+        print(f"Warning: Could not fix imports in {filename}: {e}")
 
 
 if __name__ == "__main__":
