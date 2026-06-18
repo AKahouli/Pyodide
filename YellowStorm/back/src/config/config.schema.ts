@@ -242,4 +242,15 @@ export const configValidationSchema = Joi.object({
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
   LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
+
+  // Worky (Chief of Staff) — Part 1
+  WORKY_RUNTIME_BASE_URL: Joi.string()
+    .uri()
+    .default('http://worky-adk-runtime:8011'),
+  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(15000),
+  WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
+  WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
+  WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
+  WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
+  WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
 });

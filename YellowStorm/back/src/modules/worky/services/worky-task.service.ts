@@ -1,0 +1,120 @@
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
+import { LoggerService } from '../../logger';
+
+const PROJECTION_LIMIT = 2000;
+
+/**
+ * Per-task read & state-mutation service. The plan-delta service is the
+ * only writer in Part 2; the board projection reads via `projectForBoard`.
+ * Future Parts (3/4) extend with execution / cancel / move endpoints.
+ */
+@Injectable()
+export class WorkyTaskService {
+  constructor(
+    @InjectModel(WorkyTask.name)
+    private readonly tasks: Model<WorkyTaskDocument>,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(WorkyTaskService.name);
+  }
+
+  /**
+   * Project the stream's tasks onto the six user-visible Kanban lanes
+   * (`backlog|ready|running|review|blocked|done`). System lanes
+   * (`failed|canceled|superseded|archived`) live in the collection but are
+   * excluded from the projection per canonical §3.3.
+   *
+   * Tasks whose id appears in `blockedTaskIds` (typically because a
+   * pending `WorkyInteraction.blocksTaskIds` contains them) are placed
+   * in the `blocked` lane and annotated with the blocker reason. The
+   * underlying `lane` field on the document is left untouched — the
+   * projection is the source of truth for the UI.
+   */
+  async projectForBoard(
+    streamId: string,
+    blockersByTaskId: Map<string, string[]>,
+  ): Promise<Record<string, IBoardTaskView[]>> {
+    const objectId = new Types.ObjectId(streamId);
+    const tasks = await this.tasks
+      .find({ streamId: objectId, lane: { $in: BOARD_LANES } })
+      .sort({ updatedAt: 1 })
+      .limit(PROJECTION_LIMIT)
+      .lean()
+      .exec();
+
+    const lanes: Record<string, IBoardTaskView[]> = {
+      backlog: [],
+      ready: [],
+      running: [],
+      review: [],
+      blocked: [],
+      done: [],
+    };
+    for (const task of tasks) {
+      const id = (task._id as Types.ObjectId).toString();
+      const blockerReasons = blockersByTaskId.get(id) ?? [];
+      const projectionLane: BoardLane = blockerReasons.length > 0 ? 'blocked' : ((task.lane ?? 'backlog') as BoardLane);
+      if (!lanes[projectionLane]) continue;
+      lanes[projectionLane].push({
+        id,
+        streamId,
+        title: task.title ?? '',
+        description: task.description ?? '',
+        lane: projectionLane,
+        planningStatus: task.planningStatus ?? 'pending',
+        executionState: task.executionState ?? 'not_started',
+        priority: task.priority ?? 'medium',
+        assigneeType: task.assigneeType ?? 'unassigned',
+        assigneeId: task.assigneeId ? (task.assigneeId as Types.ObjectId).toString() : null,
+        actionCategory: task.actionCategory ?? 'internal_analysis',
+        dependsOn: (task.dependsOn ?? []).map((d) => (d as Types.ObjectId).toString()),
+        blockerReason: blockerReasons.join(', ') || null,
+        theoreticalDeadlineAt: task.theoreticalDeadlineAt
+          ? new Date(task.theoreticalDeadlineAt).toISOString()
+          : null,
+      });
+    }
+    return lanes;
+  }
+
+  /** Resolve the current taskIds by clientTaskId mapping for one stream. */
+  async findByIdInternal(taskId: string): Promise<WorkyTaskDocument | null> {
+    return this.tasks.findById(taskId).exec();
+  }
+
+  async findByIdsInternal(taskIds: string[]): Promise<WorkyTaskDocument[]> {
+    if (taskIds.length === 0) return [];
+    return this.tasks.find({ _id: { $in: taskIds.map((id) => new Types.ObjectId(id)) } }).exec();
+  }
+}
+
+export const BOARD_LANES = [
+  'backlog',
+  'ready',
+  'running',
+  'review',
+  'blocked',
+  'done',
+] as const;
+
+export type BoardLane = (typeof BOARD_LANES)[number];
+
+export interface IBoardTaskView {
+  id: string;
+  streamId: string;
+  title: string;
+  description: string;
+  lane: BoardLane;
+  planningStatus: string;
+  executionState: string;
+  priority: string;
+  assigneeType: string;
+  assigneeId: string | null;
+  actionCategory: string;
+  dependsOn: string[];
+  blockerReason: string | null;
+  theoreticalDeadlineAt: string | null;
+}

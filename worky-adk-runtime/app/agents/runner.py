@@ -1,0 +1,164 @@
+"""Bounded planning turn runner.
+
+Per canonical §4.3: each planning turn is a single bounded invocation
+— load context → reason → emit delta + response → exit. No long-lived
+loops. Persist nothing locally (backend is authority).
+
+Implementation:
+  - Build a per-turn `LlmAgent` (cheap).
+  - Use the standard ADK pattern: `InMemorySessionService` +
+    `Runner.run_async(user_id, session_id, new_message)`.
+  - The agent's `submit_plan_delta` tool validates the body and yields
+    a `delta.pending` frame with the parsed `PlanDeltaBody` payload.
+    The planning router consumes the frame and posts to the backend
+    with the correct `streamId` (the runner is per-app; the stream is
+    per-request). On ack, the router yields `planning.delta.applied`.
+  - The agent's `clarification` tool yields an `interaction.requested`
+    frame with the question/options; the router posts a
+    `WorkyInteraction` to the backend (`request_interaction`) and the
+    owner responds via `POST /worky/interactions/{id}/respond` which
+    triggers a follow-up turn.
+
+Validation failures from the tool surface back to the agent as
+`validation_error`; the agent can retry ONCE. After one retry fails,
+the runner falls back to a clarification so the owner can course-correct.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import AsyncIterator, Optional
+
+from .schemas import PlanDeltaBody
+from .manager import build_manager_agent
+
+logger = logging.getLogger("worky.runner")
+
+
+class PlanningFrame:
+    __slots__ = ("type", "emitted_at", "payload")
+
+    def __init__(self, type_: str, payload: dict, emitted_at: float | None = None):
+        self.type = type_
+        self.payload = payload
+        self.emitted_at = emitted_at if emitted_at is not None else time.time()
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "emitted_at": self.emitted_at, "payload": self.payload}
+
+
+def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
+    """Build the runner closure.
+
+    The runner is app-scoped (no per-stream state) — the router
+    attaches the stream id when it forwards a `delta.pending` frame to
+    the backend.
+    """
+
+    async def run_turn(
+        owner_message: str,
+        context_snapshot: dict | None = None,
+    ) -> AsyncIterator[PlanningFrame]:
+        # Import lazily so unit tests can monkeypatch the agent.
+        try:
+            from google.adk.runners import Runner
+            from google.adk.sessions import InMemorySessionService
+            from google.genai import types as genai_types
+        except Exception:  # pragma: no cover
+            yield PlanningFrame(
+                "planning.error",
+                {"error": "google-adk is not installed"},
+            )
+            return
+
+        # 1) Ack the turn
+        yield PlanningFrame(
+            "planning.ack",
+            {"owner_message": owner_message, "context_snapshot": context_snapshot or {}},
+        )
+
+        # 2) Build the per-turn agent. The tool callbacks DON'T make
+        # network calls — they stash the parsed payload so the runner
+        # can yield it as a frame. The router (which knows the
+        # streamId) does the actual backend call.
+        delta_holder: dict = {"delta": None, "asked": None}
+
+        def on_submit_delta(parsed: PlanDeltaBody) -> None:
+            delta_holder["delta"] = parsed
+
+        def on_clarification(question: str, options: list[str] | None) -> None:
+            delta_holder["asked"] = (question, options)
+
+        agent = build_manager_agent(
+            on_submit_delta=on_submit_delta,
+            on_clarification=on_clarification,
+        )
+        session_service = InMemorySessionService()
+        user_id = "owner"
+        session_id = f"worky-turn-{int(time.time() * 1000)}"
+        await session_service.create_session(
+            app_name="worky_runtime",
+            user_id=user_id,
+            session_id=session_id,
+        )
+        runner = Runner(
+            agent=agent,
+            app_name="worky_runtime",
+            session_service=session_service,
+        )
+
+        new_message = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=owner_message)],
+        )
+
+        assistant_text = ""
+        try:
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=new_message,
+            ):
+                # Surface assistant text as token frames for live streaming.
+                if getattr(event, "is_final_response", lambda: False)():
+                    content = getattr(event, "content", None)
+                    if content and getattr(content, "parts", None):
+                        for part in content.parts:
+                            text = getattr(part, "text", None)
+                            if text:
+                                assistant_text += text
+                                yield PlanningFrame("planning.token", {"text": text})
+                else:
+                    content = getattr(event, "content", None)
+                    if content and getattr(content, "parts", None):
+                        for part in content.parts:
+                            text = getattr(part, "text", None)
+                            if text:
+                                yield PlanningFrame("planning.token", {"text": text})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Runner raised during turn")
+            yield PlanningFrame("planning.error", {"error": str(exc)})
+            return
+
+        # 3) Emit the result frame based on what happened.
+        if delta_holder["delta"] is not None:
+            yield PlanningFrame(
+                "delta.pending",
+                {"body": delta_holder["delta"].model_dump(exclude_none=True)},
+            )
+        elif delta_holder["asked"] is not None:
+            question, options = delta_holder["asked"]
+            yield PlanningFrame(
+                "interaction.requested",
+                {"question": question, "options": options or []},
+            )
+        elif assistant_text:
+            yield PlanningFrame(
+                "assistant.message",
+                {"text": assistant_text},
+            )
+        # 4) Terminal frame
+        yield PlanningFrame("planning.done", {"turn": session_id})
+
+    return run_turn

@@ -40,6 +40,7 @@ import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
 import { TeamButton } from '@/modules/team';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
+import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';
@@ -278,6 +279,8 @@ export const AppSidebar = memo(function AppSidebar() {
             <TeamButton />
 
             <PlaybookButton />
+
+            <WorkyButton />
 
             <ConnectedAppButton />
 

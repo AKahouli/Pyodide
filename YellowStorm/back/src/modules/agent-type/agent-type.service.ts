@@ -129,6 +129,37 @@ export class AgentTypeService {
     return this.toResponse(agentType, promptCount);
   }
 
+  /**
+   * Idempotent lookup-or-create used by the Worky `onModuleInit` seed to make
+   * sure the `manager` agent type exists before any stream is created. Does not
+   * touch prompts — those are populated by the agent-type admin module.
+   */
+  async findOrCreateBySlug(
+    slug: string,
+    data: { name: string; defaultPrompt?: string; isActive?: boolean },
+  ): Promise<IAgentTypeResponse> {
+    const existing = await this.agentTypeModel.findOne({ slug }).lean().exec();
+    if (existing) {
+      const promptCount = await this.agentTypePromptModel
+        .countDocuments({ agentType: existing._id })
+        .exec();
+      return this.toResponse(existing, promptCount);
+    }
+    const created = await this.agentTypeModel.create({
+      name: data.name,
+      slug,
+      defaultPrompt: data.defaultPrompt ?? '',
+      skills: [],
+      isActive: data.isActive ?? true,
+    });
+    this.logger.log('Agent type seeded', {
+      agentTypeId: created._id.toString(),
+      slug,
+      name: data.name,
+    });
+    return this.toResponse(created, 0);
+  }
+
   async findAllActive(): Promise<IAgentTypeResponse[]> {
     const agentTypes = await this.agentTypeModel
       .find({ isActive: true })
