@@ -51,13 +51,18 @@ async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     external_id_value = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
     raw_status = str(payload.get("status") or "").strip()
 
+    def _safe_for_log(value: str, max_len: int = 200) -> str:
+        sanitized = "".join(ch for ch in value if ch.isprintable() and ch not in ("\r", "\n"))
+        return sanitized[:max_len]
+
     if not external_id_value:
-        logger.warning("[index/webhook] Received payload with no external identifier", payload=payload)
+        logger.warning("[index/webhook] Received payload with no external identifier")
         return {"ok": False, "error": "missing external identifier"}
 
     resolved = resolve_indexing_webhook(external_id_value, raw_status, payload)
     logger.info(
-        f"[index/webhook] external_id={external_id_value} status={raw_status} resolved={resolved}"
+        f"[index/webhook] external_id={_safe_for_log(external_id_value)} "
+        f"status={_safe_for_log(raw_status)} resolved={resolved}"
     )
     return {"ok": True, "resolved": resolved}
 

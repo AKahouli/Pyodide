@@ -127,19 +127,32 @@ def main():
         sys.exit(1)
 
 
+def _safe_resolve(pb2_file: Path) -> Path | None:
+    """Resolve pb2_file and ensure it lives inside OUTPUT_DIR (prevents path traversal)."""
+    resolved = pb2_file.resolve()
+    output_root = OUTPUT_DIR.resolve()
+    try:
+        resolved.relative_to(output_root)
+    except ValueError:
+        print(f"Warning: Refusing to touch path outside {output_root}: {resolved}")
+        return None
+    return resolved
+
+
 def fix_cross_import(pb2_file: Path, old_import: str, new_import: str):
     """Rewrite an aliased cross-proto import in a generated *_pb2.py file."""
-    if not pb2_file.exists():
+    safe_path = _safe_resolve(pb2_file)
+    if safe_path is None or not safe_path.exists():
         print(f"Warning: File not found: {pb2_file}")
         return
-    content = pb2_file.read_text()
+    content = safe_path.read_text()
     if new_import in content:
-        print(f"No import fixes needed in {pb2_file.name}")
+        print(f"No import fixes needed in {safe_path.name}")
     elif old_import in content:
-        pb2_file.write_text(content.replace(old_import, new_import))
-        print(f"Fixed cross-proto import in {pb2_file.name}")
+        safe_path.write_text(content.replace(old_import, new_import))
+        print(f"Fixed cross-proto import in {safe_path.name}")
     else:
-        print(f"No import fixes needed in {pb2_file.name}")
+        print(f"No import fixes needed in {safe_path.name}")
 
 
 def fix_imports(grpc_file: Path):
@@ -152,24 +165,25 @@ def fix_imports(grpc_file: Path):
     Args:
         grpc_file: Path to the generated gRPC file
     """
-    if not grpc_file.exists():
+    safe_path = _safe_resolve(grpc_file)
+    if safe_path is None or not safe_path.exists():
         print(f"Warning: File not found: {grpc_file}")
         return
 
     try:
-        content = grpc_file.read_text()
-        stem = grpc_file.stem.replace("_pb2_grpc", "_pb2")
+        content = safe_path.read_text()
+        stem = safe_path.stem.replace("_pb2_grpc", "_pb2")
         old_import = f"import {stem}"
         new_import = f"from src.grpc_generated import {stem}"
 
         if new_import in content:
-            print(f"No import fixes needed in {grpc_file.name}")
+            print(f"No import fixes needed in {safe_path.name}")
         elif old_import in content:
             content = content.replace(old_import, new_import)
-            grpc_file.write_text(content)
-            print(f"Fixed imports in {grpc_file.name}")
+            safe_path.write_text(content)
+            print(f"Fixed imports in {safe_path.name}")
         else:
-            print(f"No import fixes needed in {grpc_file.name}")
+            print(f"No import fixes needed in {safe_path.name}")
 
     except Exception as e:
         print(f"Warning: Could not fix imports in {grpc_file}: {e}")
