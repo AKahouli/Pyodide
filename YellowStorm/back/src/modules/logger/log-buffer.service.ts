@@ -339,7 +339,7 @@ export class LogBufferService implements OnModuleDestroy {
     }
 
     // Merge and return unique values
-    return [...new Set([...bufferValues, ...dbValues])].sort();
+    return [...new Set([...bufferValues, ...dbValues])].sort((a, b) => a.localeCompare(b));
   }
 
   /**
@@ -397,7 +397,7 @@ export class LogBufferService implements OnModuleDestroy {
         if (filters.context) {
           if (!log.context) return false;
           if (filters.context.includes('*') || filters.context.startsWith('^')) {
-            const pattern = new RegExp(filters.context.replace(/\*/g, '.*'), 'i');
+            const pattern = new RegExp(filters.context.replaceAll('*', '.*'), 'i');
             if (!pattern.test(log.context)) return false;
           } else {
             if (log.context !== filters.context) return false;
@@ -487,7 +487,7 @@ export class LogBufferService implements OnModuleDestroy {
       if (filters.context.includes('*') || filters.context.startsWith('^')) {
         // Escape special chars except *, then convert * to .*
         const escaped = filters.context.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escaped.replace(/\*/g, '.*');
+        const pattern = escaped.replaceAll('*', '.*');
         query.context = { $regex: pattern, $options: 'i' };
       } else {
         query.context = filters.context;

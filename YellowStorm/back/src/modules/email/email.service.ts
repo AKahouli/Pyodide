@@ -12,6 +12,7 @@ import {
   EmailAttachment,
 } from './interfaces/email.interface';
 import { EmailConnectionService, EmailConnectionStatus } from './email-connection.service';
+import { randomBackoffJitter } from '@common/utils';
 
 interface RetryConfig {
   enabled: boolean;
@@ -371,10 +372,7 @@ export class EmailService {
     }
 
     if (options.replyTo) {
-      const replyToAddr = typeof options.replyTo === 'string'
-        ? [options.replyTo]
-        : [options.replyTo];
-      message.replyTo = this.toGraphRecipients(replyToAddr as string[] | EmailAddress[]);
+      message.replyTo = this.toGraphRecipients(options.replyTo);
     }
 
     if (options.priority) {
@@ -474,8 +472,7 @@ export class EmailService {
 
   private maskEmail(email: string | string[]): string {
     const mask = (e: string): string => {
-      const parts = e.match(/<([^>]+)>/) || [null, e];
-      const addr = parts[1] || e;
+      const addr = this.extractBracketedEmailAddress(e);
       const [local, domain] = addr.split('@');
       if (!domain) return '***';
       return `${local.substring(0, 2)}***@${domain}`;
@@ -485,6 +482,19 @@ export class EmailService {
       return email.map(mask).join(', ');
     }
     return mask(email);
+  }
+
+  /** Extracts the address from `"Name" <user@host>` or returns the input trimmed. */
+  private extractBracketedEmailAddress(value: string): string {
+    const start = value.indexOf('<');
+    if (start === -1) {
+      return value.trim();
+    }
+    const end = value.indexOf('>', start + 1);
+    if (end === -1) {
+      return value.trim();
+    }
+    return value.slice(start + 1, end).trim();
   }
 
   private isNonRetryableError(error: Error): boolean {
@@ -504,7 +514,7 @@ export class EmailService {
 
   private calculateBackoffDelay(attempt: number): number {
     const { initialDelayMs, maxDelayMs, multiplier } = this.retryConfig;
-    const jitter = 0.9 + Math.random() * 0.2;
+    const jitter = randomBackoffJitter();
     const delay = initialDelayMs * Math.pow(multiplier, attempt) * jitter;
     return Math.min(delay, maxDelayMs);
   }

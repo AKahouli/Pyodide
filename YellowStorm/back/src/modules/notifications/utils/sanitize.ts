@@ -1,16 +1,119 @@
+const SCRIPT_OPEN = '<script';
+const SCRIPT_CLOSE = '</script>';
+
+function isAsciiLetter(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiWhitespace(char: string): boolean {
+  return char === ' ' || char === '\t' || char === '\n' || char === '\r' || char === '\f' || char === '\v';
+}
+
+function removeScriptBlocks(input: string): string {
+  const lower = input.toLowerCase();
+  const parts: string[] = [];
+  let index = 0;
+
+  while (index < input.length) {
+    const scriptStart = lower.indexOf(SCRIPT_OPEN, index);
+    if (scriptStart === -1) {
+      parts.push(input.slice(index));
+      break;
+    }
+
+    parts.push(input.slice(index, scriptStart));
+    const tagEnd = input.indexOf('>', scriptStart);
+    if (tagEnd === -1) {
+      index = scriptStart + 1;
+      continue;
+    }
+
+    const closeStart = lower.indexOf(SCRIPT_CLOSE, tagEnd + 1);
+    if (closeStart === -1) {
+      index = tagEnd + 1;
+      continue;
+    }
+
+    index = closeStart + SCRIPT_CLOSE.length;
+  }
+
+  return parts.join('');
+}
+
+function removeHtmlTags(input: string): string {
+  const parts: string[] = [];
+  let index = 0;
+
+  while (index < input.length) {
+    const tagStart = input.indexOf('<', index);
+    if (tagStart === -1) {
+      parts.push(input.slice(index));
+      break;
+    }
+
+    parts.push(input.slice(index, tagStart));
+    const tagEnd = input.indexOf('>', tagStart + 1);
+    index = tagEnd === -1 ? tagStart + 1 : tagEnd + 1;
+  }
+
+  return parts.join('');
+}
+
+function removeJavascriptProtocol(input: string): string {
+  const needle = 'javascript:';
+  let result = '';
+  let index = 0;
+
+  while (index < input.length) {
+    if (input.slice(index, index + needle.length).toLowerCase() === needle) {
+      index += needle.length;
+      continue;
+    }
+    result += input[index];
+    index++;
+  }
+
+  return result;
+}
+
+function removeEventHandlerPatterns(input: string): string {
+  const lower = input.toLowerCase();
+  let result = '';
+  let index = 0;
+
+  while (index < input.length) {
+    if (lower[index] === 'o' && lower[index + 1] === 'n') {
+      let cursor = index + 2;
+      while (cursor < input.length && isAsciiLetter(input[cursor])) {
+        cursor++;
+      }
+      while (cursor < input.length && isAsciiWhitespace(input[cursor])) {
+        cursor++;
+      }
+      if (input[cursor] === '=') {
+        index = cursor + 1;
+        continue;
+      }
+    }
+
+    result += input[index];
+    index++;
+  }
+
+  return result;
+}
+
 /**
- * Basic HTML sanitization for notification content
- * Removes potentially dangerous HTML/script content
+ * Basic HTML sanitization for notification content.
+ * Removes potentially dangerous HTML/script content using linear-time scans.
  */
 export function sanitizeHtml(input: string): string {
   if (!input) return '';
 
-  return input
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<[^>]*>/g, '') // Remove all HTML tags
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+\s*=/gi, '')
-    .trim();
+  return removeEventHandlerPatterns(
+    removeJavascriptProtocol(removeHtmlTags(removeScriptBlocks(input))),
+  ).trim();
 }
 
 /**

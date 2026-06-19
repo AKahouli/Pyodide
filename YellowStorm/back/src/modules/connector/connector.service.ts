@@ -402,8 +402,8 @@ export class ConnectorService {
 
   private humanizeToolName(name: string): string {
     return name
-      .replace(/_/g, ' ')
-      .replace(/-/g, ' ')
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
@@ -411,7 +411,7 @@ export class ConnectorService {
     return stripLeadingTrailingChar(
       text
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-'),
+        .replaceAll(/[^a-z0-9]+/g, '-'),
       '-',
     ).slice(0, 64);
   }

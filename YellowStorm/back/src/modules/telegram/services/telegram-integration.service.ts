@@ -420,6 +420,6 @@ export class TelegramIntegrationService {
   }
 
   private generateWebhookSecret(): string {
-    return `${randomUUID().replace(/-/g, '')}${randomBytes(8).toString('hex')}`;
+    return `${randomUUID().replaceAll('-', '')}${randomBytes(8).toString('hex')}`;
   }
 }

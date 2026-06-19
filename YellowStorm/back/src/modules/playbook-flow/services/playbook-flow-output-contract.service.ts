@@ -3,6 +3,7 @@ import {
   type FlowReplayOutputContract,
   FlowReplayOutputContractType,
 } from '../schemas/playbook-flow-validated-replay.schema';
+import { extractMarkdownHeadings, hasCitationMarkersInText } from '../utils/playbook-flow-safe-text.util';
 
 export interface OutputContractValidationResult {
   evaluated: boolean;
@@ -257,9 +258,7 @@ export class PlaybookFlowOutputContractService {
       return [];
     }
 
-    const matches = output.matchAll(/^#{1,6}\s+(.+)$/gm);
-    const headings = Array.from(matches, (match) => match[1].trim()).filter(Boolean);
-    return headings.filter((value, index, items) => items.indexOf(value) === index);
+    return extractMarkdownHeadings(output);
   }
 
   private detectCitationPolicy(outputFormatGuide: string | null, output: unknown): 'required' | 'optional' | 'forbidden' {
@@ -315,7 +314,7 @@ export class PlaybookFlowOutputContractService {
 
   private hasCitationMarkers(output: unknown): boolean {
     const text = typeof output === 'string' ? output : JSON.stringify(output ?? '');
-    return /\[[0-9]+\]|\[[^\]]+\]\([^)]+\)|https?:\/\//i.test(text);
+    return hasCitationMarkersInText(text);
   }
 
   private normalizeHeading(value: string): string {

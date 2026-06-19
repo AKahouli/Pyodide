@@ -3,6 +3,7 @@ import {
   ParsedPublicReasoning,
   PublicReasoningTraceItem,
 } from '../../interfaces/playbook-flow-reasoning.interface';
+import { stripTrailingQuoteAndWhitespace } from '../../utils/playbook-flow-safe-text.util';
 
 const PUBLIC_REASONING_MARKER = '---PUBLIC_REASONING_TRACE_JSON---';
 const MAX_PUBLIC_REASONING_BLOCK_BYTES = 64 * 1024;
@@ -193,7 +194,7 @@ export class PlaybookFlowPublicReasoningParserService {
 
   private resolveVisibleOutput(rawOutput: string, markerIndex: number, echoedInstructionIndex: number): string {
     if (echoedInstructionIndex !== -1) {
-      return rawOutput.slice(0, echoedInstructionIndex).replace(/\s*"\s*$/, '').trimEnd();
+      return stripTrailingQuoteAndWhitespace(rawOutput.slice(0, echoedInstructionIndex));
     }
 
     return rawOutput.slice(0, markerIndex).trimEnd();

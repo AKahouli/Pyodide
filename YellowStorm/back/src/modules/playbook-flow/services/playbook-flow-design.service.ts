@@ -18,6 +18,7 @@ import { mapGrpcResponseToFlow } from './playbook-flow-design-mapper';
 import { PlaybookDesignSummaryService } from '../design/playbook-design-summary.service';
 import { PlaybookDesignRequestBuilderService } from '../design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from '../design/playbook-design-result-applier.service';
+import { normalizeRewritePromptText } from '../utils/playbook-flow-safe-text.util';
 
 const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
   'You rewrite workflow prompts for a playbook builder.',
@@ -176,8 +177,7 @@ export class PlaybookFlowDesignService {
   }
 
   private normalizeRewritePrompt(text: string): string {
-    return text.replace(/^```(?:text)?\s*/i, '').replace(/\s*```$/i, '')
-      .replace(/^(rewritten prompt|rewrite|prompt rewrite)\s*:\s*/i, '').trim();
+    return normalizeRewritePromptText(text);
   }
 
   async getDesignMessages(flowId: string, userId: string): Promise<any[]> {
