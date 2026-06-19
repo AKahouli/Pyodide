@@ -10,6 +10,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Elasticsearch = Any  # type: ignore[misc,assignment]
 
+
 def elastic_search_logging(
     record: logging.LogRecord,
     log_source: str,
