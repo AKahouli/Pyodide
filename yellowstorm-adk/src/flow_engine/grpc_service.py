@@ -258,9 +258,9 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_step_resume = False
                             active.pending_interrupt = None
                         yield event
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
                     logger.info("[grpc] Run cancelled", execution_id=execution_id)
-                    raise
+                    return
                 finally:
                     active.current_task = None
 
@@ -275,9 +275,9 @@ class PlaybookFlowRuntimeServicer:
                 if should_emit_fallback_completion(saw_terminal_event):
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
             logger.info("[grpc] Run cancelled while awaiting control input", execution_id=execution_id)
-            raise
+            return
         except Exception as exc:
             logger.exception("[grpc] Run failed", execution_id=execution_id)
             if active is not None:
@@ -457,9 +457,9 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_step_resume = False
                             active.pending_interrupt = None
                         yield event
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
                     logger.info("[grpc] RunFromCheckpoint cancelled", execution_id=execution_id)
-                    raise
+                    return
                 finally:
                     active.current_task = None
 
@@ -474,9 +474,9 @@ class PlaybookFlowRuntimeServicer:
                 if should_emit_fallback_completion(saw_terminal_event):
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
             logger.info("[grpc] RunFromCheckpoint cancelled while awaiting control input", execution_id=execution_id)
-            raise
+            return
         except Exception as exc:
             logger.exception("[grpc] RunFromCheckpoint failed", execution_id=execution_id)
             if active is not None:
