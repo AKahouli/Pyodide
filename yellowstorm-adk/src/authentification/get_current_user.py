@@ -23,7 +23,7 @@ def _service_user() -> User:
     return User(username="service", disabled=False)
 
 
-async def get_current_user(
+def get_current_user(
     x_api_key: Annotated[Optional[str], Depends(api_key_header)] = None,
 ) -> User:
     expected = _expected_api_key()
@@ -42,7 +42,7 @@ async def get_current_user(
     return _service_user()
 
 
-async def get_current_active_user(
+def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     if current_user.disabled:
@@ -50,7 +50,7 @@ async def get_current_active_user(
     return current_user
 
 
-async def get_current_user_optional(
+def get_current_user_optional(
     x_api_key: Annotated[Optional[str], Depends(api_key_header_optional)] = None,
 ) -> User:
     expected = _expected_api_key()
@@ -61,7 +61,7 @@ async def get_current_user_optional(
     return _service_user()
 
 
-async def get_current_active_user_optional(
+def get_current_active_user_optional(
     current_user: Annotated[User, Depends(get_current_user_optional)],
 ) -> User:
     return current_user

@@ -260,6 +260,9 @@ class PlaybookFlowRuntimeServicer:
                         yield event
                 except asyncio.CancelledError:
                     logger.info("[grpc] Run cancelled", execution_id=execution_id)
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                     return
                 finally:
                     active.current_task = None
@@ -277,6 +280,9 @@ class PlaybookFlowRuntimeServicer:
                 return
         except asyncio.CancelledError:
             logger.info("[grpc] Run cancelled while awaiting control input", execution_id=execution_id)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling() > 0:
+                raise
             return
         except Exception as exc:
             logger.exception("[grpc] Run failed", execution_id=execution_id)
@@ -459,6 +465,9 @@ class PlaybookFlowRuntimeServicer:
                         yield event
                 except asyncio.CancelledError:
                     logger.info("[grpc] RunFromCheckpoint cancelled", execution_id=execution_id)
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                     return
                 finally:
                     active.current_task = None
@@ -476,6 +485,9 @@ class PlaybookFlowRuntimeServicer:
                 return
         except asyncio.CancelledError:
             logger.info("[grpc] RunFromCheckpoint cancelled while awaiting control input", execution_id=execution_id)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling() > 0:
+                raise
             return
         except Exception as exc:
             logger.exception("[grpc] RunFromCheckpoint failed", execution_id=execution_id)

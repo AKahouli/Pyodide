@@ -20,6 +20,7 @@ class Dispatcher:
     def __init__(self, pool: WorkerPool) -> None:
         self._pool = pool
         self._executions: dict[str, asyncio.Event] = {}
+        self._submit_tasks: set[asyncio.Task] = set()
 
     async def dispatch(
         self,
@@ -38,12 +39,17 @@ class Dispatcher:
                     pass
             except asyncio.CancelledError:
                 logger.info("[dispatcher] Execution cancelled", execution_id=execution_id)
+                current = asyncio.current_task()
+                if current is not None and current.cancelling() > 0:
+                    raise
             except Exception as exc:
                 logger.error("[dispatcher] Execution failed", execution_id=execution_id, error=str(exc))
             finally:
                 self._executions.pop(execution_id, None)
 
-        asyncio.create_task(self._pool.submit(execution_id, _runner))
+        submit_task = asyncio.create_task(self._pool.submit(execution_id, _runner))
+        self._submit_tasks.add(submit_task)
+        submit_task.add_done_callback(self._submit_tasks.discard)
 
     async def cancel_execution(self, execution_id: str) -> bool:
         cancelled = await self._pool.cancel(execution_id)

@@ -84,6 +84,7 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
+        self._background_tasks: set[asyncio.Task] = set()
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
     async def AdvisePlaybookNode(
@@ -280,12 +281,14 @@ class ChatbotServicer(
             internal_request = await self._convert_agent_team_request_v2(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             # Start background processing task
             bg_task = asyncio.create_task(
@@ -422,6 +425,9 @@ class ChatbotServicer(
                     await get_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Queue get task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
@@ -434,6 +440,9 @@ class ChatbotServicer(
                     await bg_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Background task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during background task cleanup: {cleanup_error}"
@@ -525,12 +534,14 @@ class ChatbotServicer(
             internal_request = await self._convert_single_agent_request(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
@@ -618,7 +629,9 @@ class ChatbotServicer(
                 try:
                     await get_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
             if bg_task is not None and not bg_task.done():
@@ -626,7 +639,9 @@ class ChatbotServicer(
                 try:
                     await bg_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
             return
