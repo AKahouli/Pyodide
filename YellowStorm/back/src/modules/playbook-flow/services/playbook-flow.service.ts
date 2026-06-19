@@ -56,7 +56,7 @@ export class PlaybookFlowService {
 
     seen.add(objectValue);
     const serialized = `{${Object.keys(objectValue)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .map((key) => `${JSON.stringify(key)}:${this.stableStringify(objectValue[key], seen)}`)
       .join(',')}}`;
     seen.delete(objectValue);

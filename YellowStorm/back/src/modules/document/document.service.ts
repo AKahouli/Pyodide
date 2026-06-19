@@ -452,7 +452,7 @@ export class DocumentService {
   }
 
   private sanitizeFileName(fileName: string): string {
-    let sanitized = fileName.replace(/[/\\:\0]/g, '_');
+    let sanitized = fileName.replaceAll(/[/\\:\0]/g, '_');
     sanitized = stripLeadingTrailingWhitespaceOrDot(sanitized);
     sanitized = collapseCharSet(sanitized, '_ \t\n\r\f\v', '_');
 
@@ -465,9 +465,9 @@ export class DocumentService {
 
   private sanitizePath(path: string): string {
     let sanitized = stripLeadingTrailingChar(path, '/');
-    sanitized = sanitized.replace(/[\0\\]/g, '');
+    sanitized = sanitized.replaceAll(/[\0\\]/g, '');
     sanitized = collapseRepeatedChar(sanitized, '/');
-    sanitized = sanitized.replace(/\.\./g, '');
+    sanitized = sanitized.replaceAll('..', '');
     return sanitized;
   }
 

@@ -371,10 +371,7 @@ export class EmailService {
     }
 
     if (options.replyTo) {
-      const replyToAddr = typeof options.replyTo === 'string'
-        ? [options.replyTo]
-        : [options.replyTo];
-      message.replyTo = this.toGraphRecipients(replyToAddr as string[] | EmailAddress[]);
+      message.replyTo = this.toGraphRecipients(options.replyTo);
     }
 
     if (options.priority) {

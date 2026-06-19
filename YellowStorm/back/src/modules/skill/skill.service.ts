@@ -329,7 +329,7 @@ export class SkillService {
   }
 
   private normalizeImportedPath(entryName: string, skillRoot: string): string {
-    const normalized = entryName.replace(/\\/g, '/');
+    const normalized = entryName.replaceAll('\\', '/');
     if (!skillRoot) {
       return normalized;
     }
