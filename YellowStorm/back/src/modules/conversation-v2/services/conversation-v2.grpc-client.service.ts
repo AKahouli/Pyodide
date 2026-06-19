@@ -343,7 +343,7 @@ export class ConversationV2GrpcClientService
   private normaliseEvent = (raw: RawProtoEvent): ConversationV2Event => {
     const base = {
       event_id: raw.event_id,
-      timestamp: typeof raw.timestamp === 'string' ? parseInt(raw.timestamp, 10) : raw.timestamp,
+      timestamp: typeof raw.timestamp === 'string' ? Number.parseInt(raw.timestamp, 10) : raw.timestamp,
     };
     switch (raw.payload) {
       case 'message':

@@ -11,11 +11,11 @@ export default registerAs('a2aAdmin', () => ({
   // returns relative agent-card paths (e.g. `/a2a/{id}/.well-known/...`); this
   // base is prepended so callers receive an absolute, reachable URL.
   apiAdkUrl: process.env.API_ADK_URL || '',
-  grpcUnaryDeadlineMs: parseInt(
+  grpcUnaryDeadlineMs: Number.parseInt(
     process.env.A2A_ADMIN_GRPC_UNARY_DEADLINE_MS || '5000',
     10,
   ),
-  grpcMaxMessageBytes: parseInt(
+  grpcMaxMessageBytes: Number.parseInt(
     process.env.A2A_ADMIN_GRPC_MAX_MESSAGE_BYTES || `${16 * 1024 * 1024}`,
     10,
   ),

@@ -160,8 +160,8 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     }
 
     const contentLength = contentResp.headers.get('content-length');
-    if (contentLength && parseInt(contentLength, 10) > MAX_DOWNLOAD_BYTES) {
-      throw new Error(`File too large (${Math.round(parseInt(contentLength, 10) / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB.`);
+    if (contentLength && Number.parseInt(contentLength, 10) > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`File too large (${Math.round(Number.parseInt(contentLength, 10) / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB.`);
     }
 
     const arrayBuffer = await contentResp.arrayBuffer();

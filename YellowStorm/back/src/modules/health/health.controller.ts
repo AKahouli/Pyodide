@@ -100,10 +100,10 @@ export class HealthController {
     @Query('skip') skip?: string,
   ): Promise<HealthHistoryResponse> {
     return this.healthHistoryService.getHistory({
-      minutes: minutes ? parseInt(minutes, 10) : undefined,
+      minutes: minutes ? Number.parseInt(minutes, 10) : undefined,
       status,
-      limit: limit ? parseInt(limit, 10) : undefined,
-      skip: skip ? parseInt(skip, 10) : undefined,
+      limit: limit ? Number.parseInt(limit, 10) : undefined,
+      skip: skip ? Number.parseInt(skip, 10) : undefined,
     });
   }
 
@@ -118,7 +118,7 @@ export class HealthController {
   })
   @ApiResponse({ status: 200, description: 'Health statistics' })
   async getStats(@Query('minutes') minutes?: string): Promise<HealthHistoryStats> {
-    return this.healthHistoryService.getStats(minutes ? parseInt(minutes, 10) : undefined);
+    return this.healthHistoryService.getStats(minutes ? Number.parseInt(minutes, 10) : undefined);
   }
   /*deprecated-start*/
   @Post('history/trigger')

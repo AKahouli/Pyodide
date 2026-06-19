@@ -27,23 +27,23 @@ export default registerAs('storage', () => ({
     publicUrl: process.env.CEPH_S3_PUBLIC_URL || process.env.CEPH_PUBLIC_URL || '',
   },
 
-  maxFileSizeMb: parseInt(process.env.STORAGE_MAX_FILE_SIZE_MB || '50', 10),
-  maxFilesPerUpload: parseInt(process.env.STORAGE_MAX_FILES_PER_UPLOAD || '10', 10),
+  maxFileSizeMb: Number.parseInt(process.env.STORAGE_MAX_FILE_SIZE_MB || '50', 10),
+  maxFilesPerUpload: Number.parseInt(process.env.STORAGE_MAX_FILES_PER_UPLOAD || '10', 10),
 
-  sasExpiryMinutes: parseInt(process.env.STORAGE_SAS_EXPIRY_MINUTES || '60', 10),
+  sasExpiryMinutes: Number.parseInt(process.env.STORAGE_SAS_EXPIRY_MINUTES || '60', 10),
 
   allowedMimeTypes: getAllowedStorageMimeTypes(),
 
   healthCheck: {
     enabled: process.env.STORAGE_HEALTH_CHECK_ENABLED !== 'false',
-    intervalMs: parseInt(process.env.STORAGE_HEALTH_CHECK_INTERVAL_MS || '60000', 10),
+    intervalMs: Number.parseInt(process.env.STORAGE_HEALTH_CHECK_INTERVAL_MS || '60000', 10),
   },
 
   reconnect: {
     enabled: process.env.STORAGE_RECONNECT_ENABLED !== 'false',
-    initialDelayMs: parseInt(process.env.STORAGE_RECONNECT_INITIAL_DELAY_MS || '1000', 10),
-    maxDelayMs: parseInt(process.env.STORAGE_RECONNECT_MAX_DELAY_MS || '30000', 10),
-    maxAttempts: parseInt(process.env.STORAGE_RECONNECT_MAX_ATTEMPTS || '0', 10),
-    multiplier: parseFloat(process.env.STORAGE_RECONNECT_MULTIPLIER || '2'),
+    initialDelayMs: Number.parseInt(process.env.STORAGE_RECONNECT_INITIAL_DELAY_MS || '1000', 10),
+    maxDelayMs: Number.parseInt(process.env.STORAGE_RECONNECT_MAX_DELAY_MS || '30000', 10),
+    maxAttempts: Number.parseInt(process.env.STORAGE_RECONNECT_MAX_ATTEMPTS || '0', 10),
+    multiplier: Number.parseFloat(process.env.STORAGE_RECONNECT_MULTIPLIER || '2'),
   },
 }));
