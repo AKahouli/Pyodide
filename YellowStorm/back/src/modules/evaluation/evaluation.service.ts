@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nest
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import axios from 'axios';
 import { Evaluation, EvaluationDocument } from './schemas/evaluation.schema';
 import { Dataset, DatasetDocument } from './schemas/dataset.schema';
@@ -136,7 +137,7 @@ export class EvaluationService {
                 reference_output: { messages: [{ role: 'assistant', content: item.reference_answer }] },
             })),
             trajectory_match_mode: mode,
-            session_id: `eval_${this.uuidv4()}_run_${runIndex}`,
+            session_id: `eval_${randomUUID()}_run_${runIndex}`,
             user_id: userId,
             threshold: threshold || 0.7,
             num_runs: 1,
@@ -290,13 +291,6 @@ export class EvaluationService {
             if (!agent) throw new ForbiddenException(ErrorCode.FORBIDDEN);
         }
         await this.evaluationModel.findByIdAndDelete(id).exec();
-    }
-
-    private uuidv4() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-            var r = Math.trunc(Math.random() * 16), v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
     }
 
     private extractScore(val: any): number {

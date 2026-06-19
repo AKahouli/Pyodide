@@ -16,6 +16,7 @@ import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.s
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
+import { parseDesignResourceLine } from '../utils/playbook-flow-safe-text.util';
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
 
@@ -527,14 +528,12 @@ export class PlaybookFlowIntentService {
   }
 
   private extractResolvedDesignResource(line: string): ResolvedDesignResource | null {
-    const match = /^(.*?):\s*(.*?)\s*\[([^\]]+)\]\s*$/.exec(line.trim());
-    if (!match) {
+    const parsed = parseDesignResourceLine(line);
+    if (!parsed) {
       return null;
     }
 
-    const question = match[1]?.trim() || '';
-    const label = match[2]?.trim() || '';
-    const metadata = this.parseResourceMetadata(match[3] || '');
+    const metadata = this.parseResourceMetadata(parsed.metadata);
     const kind = metadata.kind;
     const id = metadata.id;
     if ((kind !== 'workspace' && kind !== 'document') || !id) {
@@ -542,8 +541,8 @@ export class PlaybookFlowIntentService {
     }
 
     return {
-      question,
-      label,
+      question: parsed.question,
+      label: parsed.label,
       kind,
       id,
       ...(metadata.workspaceId ? { workspaceId: metadata.workspaceId } : {}),

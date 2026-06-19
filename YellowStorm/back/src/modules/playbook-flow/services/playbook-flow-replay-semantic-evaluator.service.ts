@@ -1,5 +1,6 @@
 import type { FlowTaskSemanticMatch } from '../schemas/playbook-flow-task-result.schema';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
+import { extractRequiredSectionFromDescription } from '../utils/playbook-flow-safe-text.util';
 
 export class PlaybookFlowReplaySemanticEvaluatorService {
   evaluate(params: {
@@ -88,7 +89,7 @@ export class PlaybookFlowReplaySemanticEvaluatorService {
   }
 
   private matchesOutputContractExpectation(output: string, description: string): boolean {
-    const requiredSection = description.match(/include section:\s*(.+?)\.?$/i)?.[1]?.trim();
+    const requiredSection = extractRequiredSectionFromDescription(description);
     if (!requiredSection) {
       return this.containsMeaningfulText(output, description);
     }
