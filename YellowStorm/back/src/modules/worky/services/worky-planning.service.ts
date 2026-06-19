@@ -11,6 +11,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyRuntimeClient } from './worky-runtime.client';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyTaskService } from './worky-task.service';
+import { ModelsService } from '../../models/models.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
 
 export interface StartTurnInput {
@@ -18,6 +19,11 @@ export interface StartTurnInput {
   userId: string;
   content: string;
   triggerKind: 'owner_message' | 'clarification_response' | 'approval_granted' | 'approval_rejected';
+  // Per-turn model overrides. The backend resolves the full chain
+  // (override → stream field → admin default) and forwards the
+  // resolved LiteLLM identifier to the runtime.
+  managerModelIdOverride?: string | null;
+  workerModelIdOverride?: string | null;
 }
 
 export interface ContextSnapshot {
@@ -55,6 +61,7 @@ export class WorkyPlanningService {
     private readonly tasks: WorkyTaskService,
     private readonly runtime: WorkyRuntimeClient,
     private readonly events: WorkyEventService,
+    private readonly models: ModelsService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
   ) {
@@ -140,6 +147,11 @@ export class WorkyPlanningService {
     try {
       const stream = await this.loadStream(input.streamId, input.userId);
       const snapshot = await this.buildContextSnapshot(stream, input.userId);
+      const { managerModelId, workerModelId } = await this.resolveTurnModelIds(
+        stream,
+        input.managerModelIdOverride,
+        input.workerModelIdOverride,
+      );
       const response = await fetch(`${this.runtime.baseURL}/runtime/streams/${input.streamId}/planning-turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,6 +161,8 @@ export class WorkyPlanningService {
               ? `Resolving clarification: ${input.content}`
               : input.content,
           context_snapshot: snapshot,
+          manager_model_id: managerModelId,
+          worker_model_id: workerModelId,
         }),
         signal: AbortSignal.timeout(this.runtimeTimeoutMs()),
       });
@@ -297,6 +311,60 @@ export class WorkyPlanningService {
         payload: { error: true, source: 'runtime-frame', ...frame.payload },
       });
     }
+  }
+
+  private async resolveTurnModelIds(
+    stream: WorkyStreamDocument,
+    managerOverride: string | null | undefined,
+    workerOverride: string | null | undefined,
+  ): Promise<{ managerModelId: string | null; workerModelId: string | null }> {
+    // Resolve Manager / worker model ids with the priority chain:
+    //   1. per-turn override (passed by the prompt bar),
+    //   2. stream's persistent field (set via PATCH /streams/:id),
+    //   3. admin default model (ModelsService.getDefaultModel).
+    // Any of the three layers may be unset (null); we keep walking
+    // the chain until we find a value. The `defaultModel` is fetched
+    // only if at least one of the two ids is still unresolved, to
+    // avoid an admin DB round-trip in the common case where both
+    // fields are set on the stream.
+    let managerModelId: string | null = null;
+    let workerModelId: string | null = null;
+    if (typeof managerOverride === 'string' && managerOverride.trim()) {
+      managerModelId = managerOverride.trim();
+    } else if (managerOverride === null) {
+      // Explicit `null` override = "clear and fall back to stream field"
+      // (stream field is also checked below).
+      managerModelId = null;
+    } else if (stream.managerModelId) {
+      managerModelId = stream.managerModelId;
+    }
+    if (typeof workerOverride === 'string' && workerOverride.trim()) {
+      workerModelId = workerOverride.trim();
+    } else if (workerOverride === null) {
+      workerModelId = null;
+    } else if (stream.workerModelId) {
+      workerModelId = stream.workerModelId;
+    }
+    if (!managerModelId || !workerModelId) {
+      const defaultModel = await this.models.getDefaultModel();
+      const defaultIdentifier = this.models.getModelIdentifier(defaultModel);
+      if (!managerModelId) managerModelId = defaultIdentifier || null;
+      if (!workerModelId) workerModelId = defaultIdentifier || null;
+    }
+    if (!managerModelId || !workerModelId) {
+      // Reject the turn: the runtime would just hit a missing-model
+      // error. Better to surface a clear message at the API boundary.
+      this.logger.warn('Worky turn rejected: no model configured', {
+        streamId: (stream._id as Types.ObjectId).toString(),
+        managerResolved: Boolean(managerModelId),
+        workerResolved: Boolean(workerModelId),
+      });
+      throw new BadRequestException(
+        ErrorCode.WORKY_NO_DEFAULT_MODEL,
+        'No model is configured for this Worky turn. Select a model in the prompt bar or set a default in Admin > Models.',
+      );
+    }
+    return { managerModelId, workerModelId };
   }
 
   private async loadStream(streamId: string, userId: string): Promise<WorkyStreamDocument> {

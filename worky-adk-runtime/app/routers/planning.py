@@ -34,6 +34,14 @@ router = APIRouter(prefix="/runtime/streams", tags=["planning"])
 class PlanningTurnRequest(BaseModel):
     owner_message: str = Field(..., min_length=1, max_length=16384)
     context_snapshot: dict | None = None
+    # Per-turn model selection. Both are LiteLLM model identifiers
+    # (e.g. `gpt-4o-mini`), never admin DB ids. The runtime passes
+    # them straight to `LiteLlm(model=...)` via `build_model()`.
+    # The backend is responsible for resolving the fallback chain
+    # (per-turn override → stream persistent → admin default); the
+    # runtime never queries the admin DB itself.
+    manager_model_id: str | None = Field(default=None, max_length=256)
+    worker_model_id: str | None = Field(default=None, max_length=256)
 
 
 class PlanningEvent(BaseModel):
@@ -62,11 +70,19 @@ async def planning_turn(
             PlanningEvent(
                 type="planning.bootstrap",
                 emitted_at=asyncio.get_event_loop().time(),
-                payload={"stream_id": stream_id},
+                payload={
+                    "stream_id": stream_id,
+                    "manager_model_id": body.manager_model_id,
+                    "worker_model_id": body.worker_model_id,
+                },
             )
         )
         try:
-            async for frame in run_turn(body.owner_message, body.context_snapshot):
+            async for frame in run_turn(
+                body.owner_message,
+                body.context_snapshot,
+                body.manager_model_id,
+            ):
                 # Translate the runner's internal frames into the wire
                 # contract that NestJS understands.
                 if frame.type == "delta.pending":

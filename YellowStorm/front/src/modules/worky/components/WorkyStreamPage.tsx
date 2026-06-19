@@ -14,6 +14,7 @@ import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { BudgetControl } from './BudgetControl';
 import { HumanTaskPanel } from './HumanTaskPanel';
 import { MemoryProposalCard } from './MemoryProposalCard';
+import { StreamModelsControl } from './StreamModelsControl';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
 import { useWorkyStore } from '../store';
@@ -55,7 +56,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const boardQuery = useBoard(streamId);
   const messagesQuery = useMessages(streamId);
   const streamQuery = useStream(streamId);
-  useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
@@ -263,6 +263,9 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           <div className='grid flex-1 grid-cols-[1fr_320px] overflow-hidden'>
             <KanbanBoard onTaskClick={setSelectedTask} />
             <aside className='flex flex-col overflow-y-auto border-l border-border/60 bg-background/30 p-3 space-y-3'>
+              {streamQuery.data ? (
+                <StreamModelsControl stream={streamQuery.data} />
+              ) : null}
               <BudgetControl streamId={streamId} />
               <HumanTaskPanel
                 streamId={streamId}
@@ -289,7 +292,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           controlState={streamQuery.data.controlState}
         />
       ) : null}
-      <PromptBar streamId={streamId} />
+      <PromptBar
+        streamId={streamId}
+        managerModelId={streamQuery.data?.managerModelId}
+        workerModelId={streamQuery.data?.workerModelId}
+      />
       <PlanDeltaToast />
       {approvalFor ? (
         <ApprovalModal

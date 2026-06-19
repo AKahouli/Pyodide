@@ -49,7 +49,11 @@ def install_adk_stubs() -> None:
 
     class _StubLiteLlm:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            # Record (args, kwargs) on the instance so tests can assert
+            # that the runtime forwards `api_base` / `api_key` to the
+            # LiteLlm wrapper as documented in `app/agents/model.py`.
+            self.args = args
+            self.kwargs = kwargs
 
     class _StubSession:
         pass

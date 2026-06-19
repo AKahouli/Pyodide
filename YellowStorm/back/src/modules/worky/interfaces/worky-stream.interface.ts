@@ -8,6 +8,8 @@ export interface IWorkyStreamResponse {
   workspaceId: string;
   artifactWorkspaceId: string;
   managerAgentId: string;
+  managerModelId?: string | null;
+  workerModelId?: string | null;
   governancePolicyRef?: string | null;
   title: string;
   status: string;

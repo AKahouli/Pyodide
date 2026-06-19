@@ -2,18 +2,18 @@ import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { WorkyStreamService } from './worky-stream.service';
 
+const chainableQuery = (resolved: unknown) => {
+  const chain: { lean: jest.Mock; exec: jest.Mock } = {
+    lean: jest.fn(),
+    exec: jest.fn(),
+  };
+  chain.lean.mockReturnValue(chain);
+  chain.exec.mockResolvedValue(resolved);
+  return chain;
+};
+
 describe('WorkyStreamService.create', () => {
   const userId = new Types.ObjectId().toString();
-
-  const chainableQuery = (resolved: unknown) => {
-    const chain: { lean: jest.Mock; exec: jest.Mock } = {
-      lean: jest.fn(),
-      exec: jest.fn(),
-    };
-    chain.lean.mockReturnValue(chain);
-    chain.exec.mockResolvedValue(resolved);
-    return chain;
-  };
 
   const makeService = (overrides: {
     streamCreate?: jest.Mock;
@@ -97,6 +97,16 @@ describe('WorkyStreamService.create', () => {
     expect(result.status).toBe('created');
   });
 
+  it('seeds per-stream model selection to null on create', async () => {
+    const { service, streamCreate } = makeService();
+    const result = await service.create(userId, { title: 'with-models' });
+    const streamInput = streamCreate.mock.calls[0][0];
+    expect(streamInput.managerModelId).toBeNull();
+    expect(streamInput.workerModelId).toBeNull();
+    expect(result.managerModelId).toBeNull();
+    expect(result.workerModelId).toBeNull();
+  });
+
   it('rejects when the Worky Manager agent type is missing', async () => {
     const { service } = makeService({
       agentTypeFindBySlug: jest.fn().mockResolvedValue(null),
@@ -133,5 +143,110 @@ describe('WorkyStreamService.create', () => {
     await service.create(userId, { title: 'dup' });
 
     expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
+  });
+});
+
+describe('WorkyStreamService.patch (per-stream model selection)', () => {
+  const userObjectId = new Types.ObjectId();
+  const streamObjectId = new Types.ObjectId();
+  const userId = userObjectId.toString();
+
+  const buildStreamDoc = (overrides: Record<string, unknown> = {}) => {
+    const saved = { _id: streamObjectId };
+    const doc: any = {
+      _id: streamObjectId,
+      ownerUserId: userObjectId,
+      workspaceId: new Types.ObjectId(),
+      artifactWorkspaceId: new Types.ObjectId(),
+      managerAgentId: new Types.ObjectId(),
+      title: 'Test stream',
+      status: 'created',
+      controlState: 'active',
+      budget: {
+        limitUsd: 0,
+        limitTokens: 0,
+        spendUsd: 0,
+        tokensUsed: 0,
+        enforcement: 'hard_stop',
+      },
+      schedulerEnabled: false,
+      currentPlanVersion: 0,
+      managerModelId: null,
+      workerModelId: null,
+      lastActivityAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    };
+    doc.save = jest.fn().mockImplementation(async () => {
+      Object.assign(saved, doc);
+      return saved;
+    });
+    return doc;
+  };
+
+  const makePatchService = (streamDoc: any) => {
+    const streamModel = {
+      create: jest.fn(),
+      findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(streamDoc) }),
+      find: jest.fn(),
+      findOne: jest.fn(() => chainableQuery(null)),
+    };
+    const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentTypeService = { findBySlug: jest.fn() };
+    const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    const service = new WorkyStreamService(
+      streamModel as any,
+      workspaceModel as any,
+      agentModel as any,
+      agentTypeService as any,
+      config,
+      logger as any,
+    );
+    return { service, streamDoc };
+  };
+
+  it('persists managerModelId and workerModelId from the PATCH DTO', async () => {
+    const streamDoc = buildStreamDoc();
+    const { service } = makePatchService(streamDoc);
+    const result = await service.patch(userId, streamObjectId.toString(), {
+      managerModelId: 'gpt-4o-mini',
+      workerModelId: 'claude-3-5-sonnet-20240620',
+    } as any);
+    expect(result.managerModelId).toBe('gpt-4o-mini');
+    expect(result.workerModelId).toBe('claude-3-5-sonnet-20240620');
+    expect(streamDoc.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears a persistent selection when the DTO passes null', async () => {
+    const streamDoc = buildStreamDoc({
+      managerModelId: 'gpt-4o-mini',
+      workerModelId: 'claude-3-5-sonnet-20240620',
+    });
+    const { service } = makePatchService(streamDoc);
+    const result = await service.patch(userId, streamObjectId.toString(), {
+      managerModelId: null,
+    } as any);
+    expect(result.managerModelId).toBeNull();
+    expect(result.workerModelId).toBe('claude-3-5-sonnet-20240620');
+  });
+
+  it('is a no-op when neither model field is in the DTO', async () => {
+    const streamDoc = buildStreamDoc({
+      managerModelId: 'gpt-4o-mini',
+      workerModelId: 'claude-3-5-sonnet-20240620',
+    });
+    const before = streamDoc.lastActivityAt;
+    const { service } = makePatchService(streamDoc);
+    const result = await service.patch(userId, streamObjectId.toString(), {} as any);
+    expect(result.managerModelId).toBe('gpt-4o-mini');
+    expect(result.workerModelId).toBe('claude-3-5-sonnet-20240620');
+    expect(streamDoc.lastActivityAt).toEqual(before);
   });
 });

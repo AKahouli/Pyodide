@@ -12,6 +12,7 @@ import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   CreateWorkyStreamData,
+  SendWorkyMessageData,
   UpdateWorkyStreamData,
   WorkyBoardResponse,
   WorkyBudgetSnapshot,
@@ -74,11 +75,11 @@ export async function getMessages(streamId: string, limit = 200): Promise<WorkyM
 
 export async function sendMessage(
   streamId: string,
-  content: string,
+  data: SendWorkyMessageData,
 ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
   const response = await apiClient.post<
     ApiResponse<{ id: string; content: string; createdAt: string; turnStarted: true }>
-  >(API_ENDPOINTS.worky.streamMessages(streamId), { content });
+  >(API_ENDPOINTS.worky.streamMessages(streamId), data);
   return unwrap(response);
 }
 

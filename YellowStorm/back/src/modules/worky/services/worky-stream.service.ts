@@ -87,6 +87,11 @@ export class WorkyStreamService implements OnModuleInit {
         : artifactWorkspace.createdBy,
       artifactWorkspaceId: artifactWorkspace._id,
       managerAgentId: managerAgent._id,
+      // Per-stream model selection starts unset; resolved at
+      // planning / execution time by `WorkyPlanningService` using
+      // the per-turn override → stream field → admin default chain.
+      managerModelId: null,
+      workerModelId: null,
       title,
       status: 'created',
       controlState: 'active',
@@ -187,6 +192,26 @@ export class WorkyStreamService implements OnModuleInit {
           );
         }
         stream.title = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.managerModelId !== undefined) {
+      const next =
+        typeof dto.managerModelId === 'string' && dto.managerModelId.trim()
+          ? dto.managerModelId.trim()
+          : null;
+      if (next !== (stream.managerModelId ?? null)) {
+        stream.managerModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.workerModelId !== undefined) {
+      const next =
+        typeof dto.workerModelId === 'string' && dto.workerModelId.trim()
+          ? dto.workerModelId.trim()
+          : null;
+      if (next !== (stream.workerModelId ?? null)) {
+        stream.workerModelId = next;
         stream.lastActivityAt = new Date();
       }
     }
@@ -324,6 +349,8 @@ export class WorkyStreamService implements OnModuleInit {
       workspaceId: (doc.workspaceId as Types.ObjectId).toString(),
       artifactWorkspaceId: (doc.artifactWorkspaceId as Types.ObjectId).toString(),
       managerAgentId: (doc.managerAgentId as Types.ObjectId).toString(),
+      managerModelId: (doc.managerModelId as string | null | undefined) ?? null,
+      workerModelId: (doc.workerModelId as string | null | undefined) ?? null,
       governancePolicyRef: doc.governancePolicyRef
         ? (doc.governancePolicyRef as Types.ObjectId).toString()
         : null,

@@ -54,6 +54,13 @@ if (!globalThis.ResizeObserver) {
 }
 
 if (
+  typeof Element !== 'undefined'
+  && !Element.prototype.scrollIntoView
+) {
+  Element.prototype.scrollIntoView = vi.fn();
+}
+
+if (
   !globalThis.localStorage
   || typeof globalThis.localStorage.getItem !== 'function'
   || typeof globalThis.localStorage.setItem !== 'function'

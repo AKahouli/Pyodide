@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Callable, Optional
 
 from .schemas import PlanDeltaBody
 from .manager import build_manager_agent
@@ -59,6 +59,7 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
     async def run_turn(
         owner_message: str,
         context_snapshot: dict | None = None,
+        manager_model_id: Optional[str] = None,
     ) -> AsyncIterator[PlanningFrame]:
         # Import lazily so unit tests can monkeypatch the agent.
         try:
@@ -75,7 +76,11 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
         # 1) Ack the turn
         yield PlanningFrame(
             "planning.ack",
-            {"owner_message": owner_message, "context_snapshot": context_snapshot or {}},
+            {
+                "owner_message": owner_message,
+                "context_snapshot": context_snapshot or {},
+                "manager_model_id": manager_model_id,
+            },
         )
 
         # 2) Build the per-turn agent. The tool callbacks DON'T make
@@ -90,10 +95,24 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
         def on_clarification(question: str, options: list[str] | None) -> None:
             delta_holder["asked"] = (question, options)
 
-        agent = build_manager_agent(
-            on_submit_delta=on_submit_delta,
-            on_clarification=on_clarification,
-        )
+        try:
+            agent = build_manager_agent(
+                on_submit_delta=on_submit_delta,
+                on_clarification=on_clarification,
+                model_id=manager_model_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # `build_model` raises RuntimeError when no model id AND
+            # no env endpoint is configured. Surface a clear error
+            # frame so the owner sees a real reason, not a silent
+            # timeout. Backend is expected to reject earlier in the
+            # chain; this is the runtime-side safety net.
+            logger.exception("Manager agent build failed")
+            yield PlanningFrame(
+                "planning.error",
+                {"error": f"manager model not configured: {exc}"},
+            )
+            return
         session_service = InMemorySessionService()
         user_id = "owner"
         session_id = f"worky-turn-{int(time.time() * 1000)}"

@@ -87,13 +87,15 @@ def build_ephemeral_worker(binding: dict[str, Any], task_id: str, stream_id: str
     return EphemeralWorker(binding, task_id, stream_id)
 
 
-def build_agent_tool_for_worker(worker: EphemeralWorker) -> Any:
+def build_agent_tool_for_worker(worker: EphemeralWorker, model_id: str | None = None) -> Any:
     """Build an `AgentTool` from a worker record.
 
     Returns a stub when the runtime stubs are in use (unit tests).
     Real construction uses ADK 2.2.0's `AgentTool` + `LlmAgent`
     pair, with the LiteLlm model wrapper and the scoped tool list
-    passed through to ADK.
+    passed through to ADK. `model_id` is the LiteLLM model identifier
+    forwarded by the backend (per-turn override → stream persistent →
+    admin default fallback chain resolved by the backend).
     """
     try:
         from google.adk.agents import LlmAgent
@@ -104,7 +106,7 @@ def build_agent_tool_for_worker(worker: EphemeralWorker) -> Any:
     inner = LlmAgent(
         name=f"worky_worker_{worker.task_id}",
         description=f"Ephemeral worker for task {worker.task_id} (role: {worker.role}).",
-        model=build_model(None),
+        model=build_model(model_id),
         # The worker is tool-scoped to the binding. The runtime
         # will resolve `scoped_tool_refs` to actual `RestApiTool` /
         # `OpenAPIToolset` instances in a future Part; for now we

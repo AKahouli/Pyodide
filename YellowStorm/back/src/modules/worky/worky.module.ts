@@ -120,6 +120,7 @@ import { LoggerModule } from '../logger';
 import { EmailModule } from '../email/email.module';
 import { UserModule } from '../user/user.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
+import { ModelsModule } from '../models/models.module';
 
 @Module({
   imports: [
@@ -130,6 +131,7 @@ import { WorkspaceModule } from '../workspace/workspace.module';
     EmailModule,
     UserModule,
     WorkspaceModule,
+    ModelsModule,
     MongooseModule.forFeature([
       { name: WorkyStream.name, schema: WorkyStreamSchema },
       { name: WorkyTask.name, schema: WorkyTaskSchema },

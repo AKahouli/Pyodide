@@ -9,6 +9,8 @@ export { StreamReportPage } from './components/StreamReportPage';
 export { HumanTaskPanel } from './components/HumanTaskPanel';
 export { MemoryProposalCard } from './components/MemoryProposalCard';
 export { MemoryTimeline } from './components/MemoryTimeline';
+export { WorkyModelSelector } from './components/WorkyModelSelector';
+export { StreamModelsControl } from './components/StreamModelsControl';
 export {
   useWorkyStore,
   useWorkyStreams,

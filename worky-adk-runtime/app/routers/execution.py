@@ -68,6 +68,10 @@ WORKER_REGISTRY = WorkerRegistry()
 class StartStreamRequest(BaseModel):
     ready_task_ids: list[str] = Field(default_factory=list)
     context_snapshot: dict | None = None
+    # LiteLLM model identifier for ephemeral workers on this run.
+    # Resolved by the backend (per-turn override → stream persistent
+    # → admin default). The runtime never queries the admin DB.
+    worker_model_id: str | None = Field(default=None, max_length=256)
 
 
 class ExecutionEvent(BaseModel):
@@ -84,16 +88,22 @@ async def _dispatch_ready_tasks(
     stream_id: str,
     ready_task_ids: list[str],
     backend: BackendClient,
+    worker_model_id: str | None = None,
 ) -> AsyncIterator[ExecutionEvent]:
     """Spawn a worker per ready task and yield `ExecutionFrame`s.
 
     For Part 3 we spawn one worker per task; the Manager would
-    normally batch — that's a hardening task.
+    normally batch — that's a hardening task. `worker_model_id` is
+    the LiteLLM identifier forwarded by the backend.
     """
     yield ExecutionEvent(
         type="execution.bootstrap",
         emitted_at=time.time(),
-        payload={"stream_id": stream_id, "ready_count": len(ready_task_ids)},
+        payload={
+            "stream_id": stream_id,
+            "ready_count": len(ready_task_ids),
+            "worker_model_id": worker_model_id,
+        },
     )
     plugin = make_default_tracing_plugin(backend)
     for task_id in ready_task_ids:
@@ -123,7 +133,7 @@ async def _dispatch_ready_tasks(
             payload=worker.to_dict(),
         )
 
-        agent_tool = build_agent_tool_for_worker(worker)
+        agent_tool = build_agent_tool_for_worker(worker, model_id=worker_model_id)
         async for frame in run_worker_bounded_step(agent_tool, {"text": task_id}):
             kind = frame.get("kind")
             if kind == "done":
@@ -210,7 +220,10 @@ async def start_stream(
     async def event_stream() -> AsyncIterator[str]:
         try:
             async for ev in _dispatch_ready_tasks(
-                stream_id, body.ready_task_ids, backend
+                stream_id,
+                body.ready_task_ids,
+                backend,
+                worker_model_id=body.worker_model_id,
             ):
                 yield _sse_frame(ev)
         except Exception as exc:  # pragma: no cover

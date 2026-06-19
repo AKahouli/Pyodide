@@ -335,6 +335,7 @@ export enum ErrorCode {
   WORKY_MEMORY_PROPOSAL_NOT_FOUND = 'ERR_3427',
   WORKY_OWNER_MEMORY_FORBIDDEN = 'ERR_3428',
   WORKY_REPLAN_REJECTED = 'ERR_3429',
+  WORKY_NO_DEFAULT_MODEL = 'ERR_3430',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -594,6 +595,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKY_MEMORY_PROPOSAL_NOT_FOUND]: 'Worky owner memory proposal not found.',
   [ErrorCode.WORKY_OWNER_MEMORY_FORBIDDEN]: 'You do not have access to this owner memory entry.',
   [ErrorCode.WORKY_REPLAN_REJECTED]: 'Plan-delta replan was rejected by the auto-apply guard.',
+  [ErrorCode.WORKY_NO_DEFAULT_MODEL]:
+    'No model is configured for this Worky stream. Select a model in the prompt bar or set a default in Admin > Models.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

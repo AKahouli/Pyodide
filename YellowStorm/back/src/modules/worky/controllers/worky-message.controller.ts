@@ -46,6 +46,8 @@ export class WorkyMessageController {
       userId: user._id.toString(),
       content: dto.content,
       triggerKind: 'owner_message',
+      managerModelIdOverride: dto.managerModelId ?? null,
+      workerModelIdOverride: dto.workerModelId ?? null,
     });
     return { ...saved, turnStarted: true };
   }

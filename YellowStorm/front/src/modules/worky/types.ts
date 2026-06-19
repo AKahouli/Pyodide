@@ -69,13 +69,21 @@ export interface WorkyStream {
   workspaceId: string;
   artifactWorkspaceId: string;
   managerAgentId: string;
+  /**
+   * Per-stream Manager model. LiteLLM model identifier
+   * (e.g. `gpt-4o-mini`) — the value `LiteLlm(model=...)` expects.
+   * `null` = use the admin default.
+   */
+  managerModelId?: string | null;
+  /** Per-stream worker model. Same semantics as `managerModelId`. */
+  workerModelId?: string | null;
   governancePolicyRef?: string | null;
   title: string;
   status: WorkyStreamStatus;
   controlState: WorkyControlState;
   schedulerEnabled: boolean;
   currentPlanVersion: number;
-  executionPlanVersion?: number | null;
+  executionPlanVersion?: string | null;
   budget: WorkyStreamBudget;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -96,6 +104,26 @@ export interface CreateWorkyStreamData {
 
 export interface UpdateWorkyStreamData {
   title?: string;
+  /**
+   * LiteLLM model identifier for the Manager agent. Pass `null`
+   * to clear the persistent override and fall back to the admin
+   * default. Omit to leave the current value unchanged.
+   */
+  managerModelId?: string | null;
+  /** Same semantics as `managerModelId`, for ephemeral workers. */
+  workerModelId?: string | null;
+}
+
+/**
+ * Body for `POST /worky/streams/{id}/messages`. Per-turn model
+ * overrides are forwarded to the backend, which resolves the full
+ * chain (override → stream field → admin default) and passes the
+ * resolved LiteLLM identifier to the runtime.
+ */
+export interface SendWorkyMessageData {
+  content: string;
+  managerModelId?: string;
+  workerModelId?: string;
 }
 
 // --- Planning surface (Part 2) ---

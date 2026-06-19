@@ -40,6 +40,23 @@ export class WorkyStream extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Agent', required: true })
   managerAgentId!: Types.ObjectId;
 
+  /**
+   * Per-stream model selection. Both fields store the **LiteLLM
+   * model identifier** (e.g. `gpt-4o-mini`, `claude-3-5-sonnet-…`)
+   * — the value `LiteLlm(model=...)` expects. Never the admin DB
+   * model id. Resolved at planning / execution time by the
+   * `WorkyPlanningService` with the fallback chain:
+   *   1. per-turn request override,
+   *   2. this stream field,
+   *   3. admin default model (Admin > Models).
+   * Null = use the next step in the chain.
+   */
+  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
+  managerModelId?: string | null;
+
+  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
+  workerModelId?: string | null;
+
   @Prop({ type: Types.ObjectId, ref: 'WorkyGovernancePolicy', default: null })
   governancePolicyRef?: Types.ObjectId | null;
 

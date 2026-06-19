@@ -45,8 +45,13 @@ def _make_app(backend: _RecordingBackend) -> FastAPI:
     app.include_router(planning_router.router)
     app.state.backend_client = backend
     # Synthesize a run_planning_turn that emits a single delta.pending
-    # frame so we exercise the basePlanVersion-forwarding path.
-    async def run_turn(owner_message: str, context_snapshot):
+    # frame so we exercise the basePlanVersion-forwarding path. Also
+    # records the (owner_message, context_snapshot, manager_model_id)
+    # tuple so tests can assert the manager model id flows through.
+    captured: list[tuple[str, dict | None, str | None]] = []
+
+    async def run_turn(owner_message: str, context_snapshot, manager_model_id=None):
+        captured.append((owner_message, context_snapshot, manager_model_id))
         yield types.SimpleNamespace(
             type="delta.pending",
             emitted_at=0.0,
@@ -54,6 +59,7 @@ def _make_app(backend: _RecordingBackend) -> FastAPI:
         )
 
     app.state.run_planning_turn = run_turn
+    app.state.captured = captured
     return app
 
 
@@ -91,3 +97,44 @@ def test_planning_router_defaults_base_plan_version_to_zero_when_missing() -> No
     assert len(backend.calls) == 1
     _, payload = backend.calls[0]
     assert payload["basePlanVersion"] == 0
+
+
+def test_planning_router_forwards_manager_model_id_to_runner() -> None:
+    backend = _RecordingBackend()
+    app = _make_app(backend)
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/runtime/streams/stream-3/planning-turn",
+        json={
+            "owner_message": "build it",
+            "context_snapshot": None,
+            "manager_model_id": "gpt-4o-mini",
+            "worker_model_id": "claude-3-5-sonnet-20240620",
+        },
+    ) as resp:
+        for _ in resp.iter_lines():
+            pass
+    captured = app.state.captured
+    assert len(captured) == 1
+    owner_message, context_snapshot, manager_model_id = captured[0]
+    assert owner_message == "build it"
+    assert context_snapshot is None
+    assert manager_model_id == "gpt-4o-mini"
+
+
+def test_planning_router_accepts_omitted_model_ids() -> None:
+    backend = _RecordingBackend()
+    app = _make_app(backend)
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/runtime/streams/stream-4/planning-turn",
+        json={"owner_message": "build it"},
+    ) as resp:
+        for _ in resp.iter_lines():
+            pass
+    captured = app.state.captured
+    assert len(captured) == 1
+    _, _, manager_model_id = captured[0]
+    assert manager_model_id is None

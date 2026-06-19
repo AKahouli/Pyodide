@@ -3,6 +3,7 @@ import * as api from '../api';
 import { workyKeys } from './queryKeys';
 import type {
   CreateWorkyStreamData,
+  SendWorkyMessageData,
   UpdateWorkyStreamData,
   WorkyExecutionReport,
   WorkyGovernancePolicy,
@@ -81,9 +82,9 @@ export function useSendMessage(streamId: string) {
   return useMutation<
     { id: string; content: string; createdAt: string; turnStarted: true },
     Error,
-    string
+    SendWorkyMessageData
   >({
-    mutationFn: (content: string) => api.sendMessage(streamId, content),
+    mutationFn: (data: SendWorkyMessageData) => api.sendMessage(streamId, data),
     onSuccess: (msg) => {
       qc.setQueryData<Awaited<ReturnType<typeof api.getMessages>>>(
         workyKeys.messages(streamId),

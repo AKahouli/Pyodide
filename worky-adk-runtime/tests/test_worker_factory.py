@@ -158,3 +158,100 @@ def test_run_worker_bounded_step_returns_after_error_no_spurious_done():
         assert "done" not in kinds[error_index + 1:]
     finally:
         set_runner_events_provider(None)
+
+
+def test_build_agent_tool_for_worker_forwards_model_id_to_build_model() -> None:
+    # The worker factory must forward the supplied `model_id` to
+    # `build_model`. We patch `LlmAgent` and `AgentTool` on the
+    # stubbed google.adk modules so the real path runs, and stub
+    # `build_model` to record the call.
+    import sys
+    import types
+
+    captured: list[tuple[str | None]] = []
+
+    def _fake_build_model(model_id):
+        captured.append((model_id,))
+        return object()
+
+    class _FakeLlmAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class _FakeAgentTool:
+        def __init__(self, agent, skip_summarization=False):
+            self.agent = agent
+
+    original_build_model = sys.modules.get("app.agents.worker_factory", None)
+    wf = original_build_model
+
+    adk_agents = sys.modules["google.adk.agents"]
+    adk_tools = sys.modules["google.adk.tools"]
+    original_llm_agent = getattr(adk_agents, "LlmAgent", None)
+    original_agent_tool = getattr(adk_tools, "AgentTool", None)
+    original_build_model_attr = wf.build_model
+
+    adk_agents.LlmAgent = _FakeLlmAgent  # type: ignore[attr-defined]
+    adk_tools.AgentTool = _FakeAgentTool  # type: ignore[attr-defined]
+    wf.build_model = _fake_build_model  # type: ignore[attr-defined]
+    try:
+        tool = build_agent_tool_for_worker(
+            build_ephemeral_worker(_binding("t1"), "t1", "s1"),
+            model_id="claude-3-5-sonnet-20240620",
+        )
+    finally:
+        if original_llm_agent is None:
+            delattr(adk_agents, "LlmAgent")
+        else:
+            adk_agents.LlmAgent = original_llm_agent  # type: ignore[attr-defined]
+        if original_agent_tool is None:
+            delattr(adk_tools, "AgentTool")
+        else:
+            adk_tools.AgentTool = original_agent_tool  # type: ignore[attr-defined]
+        wf.build_model = original_build_model_attr  # type: ignore[attr-defined]
+    assert isinstance(tool, _FakeAgentTool)
+    assert captured == [("claude-3-5-sonnet-20240620",)]
+
+
+def test_build_agent_tool_for_worker_defaults_model_id_to_none() -> None:
+    import sys
+
+    captured: list[tuple[str | None]] = []
+
+    def _fake_build_model(model_id):
+        captured.append((model_id,))
+        return object()
+
+    class _FakeLlmAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class _FakeAgentTool:
+        def __init__(self, agent, skip_summarization=False):
+            self.agent = agent
+
+    adk_agents = sys.modules["google.adk.agents"]
+    adk_tools = sys.modules["google.adk.tools"]
+    original_llm_agent = getattr(adk_agents, "LlmAgent", None)
+    original_agent_tool = getattr(adk_tools, "AgentTool", None)
+    wf = sys.modules["app.agents.worker_factory"]
+    original_build_model_attr = wf.build_model
+
+    adk_agents.LlmAgent = _FakeLlmAgent  # type: ignore[attr-defined]
+    adk_tools.AgentTool = _FakeAgentTool  # type: ignore[attr-defined]
+    wf.build_model = _fake_build_model  # type: ignore[attr-defined]
+    try:
+        build_agent_tool_for_worker(
+            build_ephemeral_worker(_binding("t1"), "t1", "s1")
+        )
+    finally:
+        if original_llm_agent is None:
+            delattr(adk_agents, "LlmAgent")
+        else:
+            adk_agents.LlmAgent = original_llm_agent  # type: ignore[attr-defined]
+        if original_agent_tool is None:
+            delattr(adk_tools, "AgentTool")
+        else:
+            adk_tools.AgentTool = original_agent_tool  # type: ignore[attr-defined]
+        wf.build_model = original_build_model_attr  # type: ignore[attr-defined]
+    assert captured == [(None,)]

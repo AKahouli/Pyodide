@@ -1,5 +1,5 @@
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from '@/components/ui/command';
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { ComponentProps, ReactNode } from 'react';
 
@@ -18,6 +18,7 @@ export type ModelSelectorContentProps = ComponentProps<typeof DialogContent> & {
 export const ModelSelectorContent = ({ className, children, title = 'Model Selector', ...props }: ModelSelectorContentProps) => (
   <DialogContent className={cn('p-0', className)} {...props}>
     <DialogTitle className='sr-only'>{title}</DialogTitle>
+    <DialogDescription className='sr-only'>{`Search and select a ${title.toLowerCase()}.`}</DialogDescription>
     <Command className='**:data-[slot=command-input-wrapper]:h-auto'>{children}</Command>
   </DialogContent>
 );

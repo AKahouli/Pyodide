@@ -23,6 +23,8 @@ def make_settings() -> Settings:
         request_timeout_seconds=5,
         adk_version="2.2.0",
         log_level="INFO",
+        litellm_api_base_url=None,
+        litellm_api_secret_key=None,
     )
 
 
