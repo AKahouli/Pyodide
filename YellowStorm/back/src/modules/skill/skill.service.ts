@@ -7,7 +7,7 @@ import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, stripTrailingChar } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
@@ -265,7 +265,10 @@ export class SkillService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The uploaded zip does not contain a SKILL.md file.');
     }
 
-    const skillRoot = skillEntry.entryName.replace(/(^|\/)SKILL\.md$/i, '').replace(/\/$/, '');
+    const skillRoot = stripTrailingChar(
+      skillEntry.entryName.replace(/(^|\/)SKILL\.md$/i, ''),
+      '/',
+    );
     const parsed = this.parseSkillPackage({
       skillMdContent: zip.readAsText(skillEntry, 'utf8'),
       packageName: file.originalname,

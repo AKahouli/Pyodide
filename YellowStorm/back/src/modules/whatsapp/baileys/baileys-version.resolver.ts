@@ -11,7 +11,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 function parseVersionFromSwJs(body: string): WaVersion | null {
   const match = body.match(/client_revision["']?\s*:\s*(\d+)/);
   if (!match) return null;
-  const revision = parseInt(match[1], 10);
+  const revision = Number.parseInt(match[1], 10);
   return [2, 3000, revision];
 }
 

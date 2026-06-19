@@ -20,6 +20,7 @@ import {
   PaginatedWorkspaces,
 } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
+import { stripLeadingTrailingChar, collapseRepeatedChar } from '@common/utils';
 import {
   NotFoundException,
   ConflictException,
@@ -74,12 +75,16 @@ export class WorkspaceService implements OnModuleInit {
    * Generate URL-friendly alias from workspace name
    */
   private generateAlias(name: string): string {
-    return name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .substring(0, 100);
+    return stripLeadingTrailingChar(
+      collapseRepeatedChar(
+        name
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, '-'),
+        '-',
+      ),
+      '-',
+    ).substring(0, 100);
   }
 
   /**
