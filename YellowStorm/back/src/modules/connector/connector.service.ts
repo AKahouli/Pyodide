@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, stripLeadingTrailingChar } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
@@ -408,11 +408,12 @@ export class ConnectorService {
   }
 
   private slugify(text: string): string {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 64);
+    return stripLeadingTrailingChar(
+      text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-'),
+      '-',
+    ).slice(0, 64);
   }
 
   private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {

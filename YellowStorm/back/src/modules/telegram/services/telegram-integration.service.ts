@@ -13,6 +13,7 @@ import {
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
+import { stripTrailingChar } from '@common/utils';
 import {
   AgentTelegramIntegration,
   AgentTelegramIntegrationDocument,
@@ -306,7 +307,7 @@ export class TelegramIntegrationService {
 
   private async registerWebhook(integration: AgentTelegramIntegrationDocument): Promise<string> {
     const botToken = this.cryptoService.decrypt(integration.encryptedBotToken);
-    const backendUrl = this.configService.get<string>('app.backendUrl', '').replace(/\/+$/, '');
+    const backendUrl = stripTrailingChar(this.configService.get<string>('app.backendUrl', ''), '/');
     if (!backendUrl) {
       this.logger.warn('Telegram webhook registration blocked: BACKEND_URL missing', {
         integrationId: integration._id.toString(),

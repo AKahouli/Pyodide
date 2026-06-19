@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '@common/utils';
 
 export type AgentDocument = HydratedDocument<Agent>;
 
@@ -15,15 +16,21 @@ export class AgentConnectorActionSelection {
 const AgentConnectorActionSelectionSchema = SchemaFactory.createForClass(AgentConnectorActionSelection);
 
 function deriveAgentSlug(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+  return stripLeadingTrailingChar(
+    collapseRepeatedChar(
+      collapseWhitespace(
+        value
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .trim(),
+        '-',
+      )
+        .replace(/[^a-z0-9-]/g, '-'),
+      '-',
+    ),
+    '-',
+  );
 }
 
 @Schema({

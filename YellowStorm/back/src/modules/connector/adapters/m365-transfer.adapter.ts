@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../../logger';
 import { ConnectorTransferAdapter } from '../interfaces/connector-transfer.interface';
+import { collapseRepeatedChar } from '@common/utils';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
@@ -64,7 +65,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     const parentReference = (meta.parentReference as Record<string, unknown> | undefined) || {};
     const parentPath = ((parentReference.path as string) || '').replace(/^\/drives\/[^/]+\/root:?/, '');
     const itemName = (meta.name as string) || 'unknown';
-    const sourcePath = `${parentPath}/${itemName}`.replace(/\/+/g, '/');
+    const sourcePath = collapseRepeatedChar(`${parentPath}/${itemName}`, '/');
 
     if (!meta.folder) {
       const file = meta.file as Record<string, unknown> | undefined;
@@ -99,7 +100,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
         const payload = (await childrenResp.json()) as { value?: Array<Record<string, unknown>>; '@odata.nextLink'?: string };
         for (const child of payload.value || []) {
           const childName = (child.name as string) || 'unknown';
-          const childSourcePath = `/${current.prefix}/${childName}`.replace(/\/+/g, '/');
+          const childSourcePath = collapseRepeatedChar(`/${current.prefix}/${childName}`, '/');
           if (child.folder) {
             if (recursive) {
               queue.push({ itemId: child.id as string, prefix: childSourcePath.replace(/^\//, '') });

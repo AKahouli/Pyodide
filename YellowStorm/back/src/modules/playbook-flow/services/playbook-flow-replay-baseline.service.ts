@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { stripLeadingTrailingChar } from '@common/utils';
 import type {
   FlowTaskJudgeResult,
   FlowTaskPublicReasoningTraceItem,
@@ -543,11 +544,10 @@ export class PlaybookFlowReplayBaselineService {
   }
 
   private toSlug(value: string): string {
-    return value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 120);
+    return stripLeadingTrailingChar(
+      value.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      '-',
+    ).slice(0, 120);
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {
