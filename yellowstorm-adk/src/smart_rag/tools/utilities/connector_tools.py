@@ -727,6 +727,7 @@ def _with_default_workspace_params(
     parameter_schema: Dict[str, Any],
     workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
+    connector_name: str = "",
 ) -> Dict[str, Any]:
     default_workspace_id = _resolve_default_workspace_id(
         workspace_names, workspace_id
@@ -744,6 +745,13 @@ def _with_default_workspace_params(
     # Generic connector schemas expose a free-form `params` object, so bind the
     # canonical workspace_id there. Explicit schemas only receive declared fields.
     if not isinstance(properties, dict) or not properties:
+        # Special case: Teams MCP tools with no parameters reject workspace_id injection
+        # causing validation errors. For Teams, skip automatic injection for empty schemas.
+        is_teams_mcp = "teams" in connector_name.lower()
+        if is_teams_mcp:
+            # For Teams tools with no parameters, don't inject workspace_id
+            return merged_params
+
         if _needs_workspace_binding(merged_params.get("workspace_id")):
             merged_params["workspace_id"] = default_workspace_id
         return merged_params
@@ -1040,6 +1048,7 @@ def create_connector_tools(
 
             async def _connector_tool(
                 _connector_id: str = connector_id,
+                _connector_name: str = connector_name,
                 _transport_type: str = transport_type,
                 _server_url: str = server_url,
                 _server_config: Dict[str, Any] = server_config,
@@ -1073,6 +1082,7 @@ def create_connector_tools(
                     _parameter_schema,
                     effective_workspace_names,
                     context.workspace_id,
+                    connector_name=_connector_name,
                 )
                 effective_auth_headers = (
                     _apply_streamable_http_context_headers(
