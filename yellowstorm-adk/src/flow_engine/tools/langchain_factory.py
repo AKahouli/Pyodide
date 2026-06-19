@@ -12,8 +12,8 @@ import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
 # Carries the actual MCP args (after Python overrides) from _execute_mcp to step_tools
-_last_mcp_actual_args: contextvars.ContextVar[dict] = contextvars.ContextVar(
-    "_last_mcp_actual_args", default={}
+_last_mcp_actual_args: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "_last_mcp_actual_args", default=None
 )
 
 import httpx

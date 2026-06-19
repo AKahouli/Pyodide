@@ -2,6 +2,7 @@
 
 import grpc
 import asyncio
+import aiofiles
 from concurrent import futures
 from structlog import get_logger
 
@@ -166,10 +167,10 @@ async def start_grpc_server_with_ssl(
 
     # Read SSL certificate files
     try:
-        with open(private_key_path, 'rb') as f:
-            private_key = f.read()
-        with open(certificate_chain_path, 'rb') as f:
-            certificate_chain = f.read()
+        async with aiofiles.open(private_key_path, 'rb') as f:
+            private_key = await f.read()
+        async with aiofiles.open(certificate_chain_path, 'rb') as f:
+            certificate_chain = await f.read()
         logger.info("[gRPC] SSL certificates loaded successfully")
     except Exception as e:
         logger.error(f"[gRPC] Failed to load SSL certificates: {str(e)}", exc_info=True)

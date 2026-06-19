@@ -118,12 +118,14 @@ def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
+_MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
 def _request_to_log_payload(request: Any) -> dict[str, Any]:
-    return MessageToDict(
-        request,
-        preserving_proto_field_name=True,
-        always_print_fields_with_no_presence=True,
-    )
+    return MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
 
 try:
     from src.grpc_generated import playbook_flow_pb2 as pb

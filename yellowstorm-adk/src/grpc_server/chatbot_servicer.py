@@ -42,6 +42,15 @@ from src.flow_engine.advisor.execution_advisor_service import evaluate_task_exec
 logger = get_logger(__name__)
 app_settings = get_settings()
 
+_MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
+def _message_to_dict(message: Any) -> Dict[str, Any]:
+    return MessageToDict(message, **_MESSAGE_TO_DICT_OPTIONS)
+
 
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     summaries = []
@@ -82,11 +91,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.AdvisePlaybookNodeRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.AdvisePlaybookNodeResponse":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = advise_playbook_node(payload)
 
         suggestions = []
@@ -150,11 +155,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.TaskAdvisorRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.TaskAdvisorResult":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = evaluate_task_execution(payload)
         token_reduction = result.get("estimated_token_reduction_pct")
         latency_reduction = result.get("estimated_latency_reduction_pct")
@@ -227,11 +228,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        return MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        return _message_to_dict(request)
 
     async def RunAgentTeam(
         self,
