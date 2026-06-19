@@ -1,100 +1,79 @@
-# M365 Document Connector
+# Microsoft 365 MCP Server
 
-FastMCP server providing document-oriented tools for Microsoft 365 via Microsoft Graph API.
+Monolithic FastMCP server for interacting with Microsoft 365 services via Microsoft Graph API. Includes document management, Outlook, and Teams tools in a single server.
 
-## Document Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_accessible_sites` | List SharePoint sites accessible to the user |
-| `list_accessible_drives` | List OneDrive and SharePoint document libraries |
-| `search_documents` | Full-text and metadata search across M365 documents |
-| `find_items_by_name` | Find files/folders by exact name |
-| `list_folder_children` | Browse folder contents |
-| `get_item_metadata` | Get detailed metadata for a file or folder |
-| `get_document_content` | Read document content (inline text or download URL) |
-| `create_folder` | Create a new folder |
-| `create_document` | Create a new document with text content |
-| `update_document_content` | Update an existing text document |
-| `rename_item` | Rename a file or folder |
-| `delete_item` | Delete a file or folder |
-
-## Collaboration Tools (backward compatible)
-
-| Tool | Description |
-|------|-------------|
-| `search_m365` | General M365 search across entity types |
-| `list_users` | Search users in the organization |
-| `list_joined_teams` | List joined Teams |
-| `list_channels` | List channels in a team |
-| `send_teams_message` | Send a Teams message |
-| `send_email` | Send an email via Outlook |
-| `create_meeting` | Create a calendar event |
-
-## Setup
+## Quick Start
 
 ```bash
+cd mcp-m365
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-## Configuration
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `M365_ACCESS_TOKEN` | Fallback access token (injected via header at runtime) |
-| `M365_MCP_TRANSPORT` | Transport type: `sse` (default), `http`, `streamable-http` |
-| `MCP_PORT` / `PORT` | Server port (default: 8001) |
-| `ALLOWED_ORIGINS` | CORS origins (default: `*`) |
-
-## Running
-
-```bash
 python server.py
 ```
 
-## Content Read Behavior
+## Tools Overview
 
-- **Text files** (`.txt`, `.md`, `.json`, `.csv`, `.py`, etc.): content returned inline.
-- **Binary/Office files** (`.docx`, `.xlsx`, `.pptx`, `.pdf`, images, etc.): a short-lived `downloadUrl` is returned. Use the platform transfer tools to import the file into the workspace.
+### Document Tools (12 tools)
+Document and file management for SharePoint and OneDrive:
+- `list_accessible_sites` - List SharePoint sites
+- `list_accessible_drives` - List OneDrive and document libraries
+- `search_documents` - Full-text search across documents
+- `find_items_by_name` - Find files/folders by name
+- `list_folder_children` - Browse folder contents
+- `get_item_metadata` - Get file/folder metadata
+- `get_document_content` - Read document content
+- `create_folder`, `create_document`, `update_document_content`, `rename_item`, `delete_item`
 
-## Item Reference Shape
+### Outlook Tools (3 tools)
+Email and calendar operations:
+- `list_users` - Search users in organization
+- `send_email` - Send emails via Outlook
+- `create_meeting` - Create calendar events with optional Teams meeting
 
-All document tools return normalized items:
+### Teams Tools (3 tools)
+Microsoft Teams operations:
+- `list_joined_teams` - List joined teams
+- `list_channels` - List channels in a team
+- `send_teams_message` - Send messages to users or channels
 
-```json
-{
-  "siteId": "...",
-  "driveId": "...",
-  "itemId": "...",
-  "name": "Report.docx",
-  "webUrl": "https://...",
-  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "size": 12345,
-  "isFolder": false,
-  "lastModifiedDateTime": "2026-04-12T10:00:00Z",
-  "createdDateTime": "2026-03-01T08:00:00Z"
-}
-```
+## Authentication
 
-## Required Permissions
+The server supports two authentication methods:
+
+1. **Runtime Token Injection** (Recommended): Token is injected via `Authorization: Bearer <token>` header by the connector layer
+2. **Environment Variable Fallback**: Set `M365_ACCESS_TOKEN` environment variable
+
+## Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TRANSPORT` | Transport type: `sse`, `http`, `streamable-http` | `sse` |
+| `PORT` | Server port | `8000` |
+| `ALLOWED_ORIGINS` | CORS origins | `*` |
+| `M365_ACCESS_TOKEN` | Fallback access token | - |
+
+## Azure AD App Registration
 
 Configure these delegated permissions in your Azure AD app:
 
+**Document Operations**:
 - `Files.Read.All` - Read documents
 - `Files.ReadWrite.All` - Create, update, rename, delete
-- `Sites.Read.All` - Browse SharePoint sites and document libraries
-- `Sites.ReadWrite.All` - Write to SharePoint document libraries
-- `Mail.Read` - For email search (collaboration tools)
-- `Chat.Read` - For Teams messages (collaboration tools)
+- `Sites.Read.All` - Browse SharePoint sites
+- `Sites.ReadWrite.All` - Write to SharePoint libraries
 
-## Architecture
+**Email & Calendar**:
+- `Mail.ReadWrite` - Read and send emails
+- `Mail.Send` - Send emails
+- `Calendars.ReadWrite` - Create and manage events
+- `User.Read.All` - Search and list users
 
-```
-mcp-m365/
-  server.py          # FastMCP entry point, token middleware, collaboration tools
-  document_tools.py  # 12 document-oriented MCP tools
-  graph_helpers.py   # Shared Graph API client, auth, item normalization
-  requirements.txt
-```
+**Teams**:
+- `Chat.ReadWrite` - Read and send chat messages
+- `Team.ReadBasic.All` - Read teams
+- `ChannelMessage.Send` - Send channel messages
+
+## License
+
+[Your License Here]
