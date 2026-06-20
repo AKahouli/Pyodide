@@ -72,7 +72,7 @@ def test_planning_router_forwards_base_plan_version_from_context_snapshot() -> N
         "/runtime/streams/stream-1/planning-turn",
         json={
             "owner_message": "build it",
-            "context_snapshot": {"currentPlanVersion": 7},
+            "context_snapshot": {"planVersion": 7},
         },
     ) as resp:
         for _ in resp.iter_lines():

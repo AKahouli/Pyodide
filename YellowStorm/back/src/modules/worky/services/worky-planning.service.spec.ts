@@ -242,8 +242,61 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
         'plan.delta.applied',
         'plan.version.created',
         'task.updated',
+        'stream.terminal',
       ]),
     );
+  });
+
+  it('emits stream.terminal with error:false on a successful planning.done frame', async () => {
+    stubFetch([
+      sseFrame('planning.token', { type: 'planning.token', emitted_at: 1, payload: { text: 'ok' } }),
+      sseFrame('planning.done', { type: 'planning.done', emitted_at: 2, payload: {} }),
+    ]);
+    const { service, events, ownerId } = makeService();
+    const obs = service.startTurn({
+      streamId,
+      userId: ownerId.toString(),
+      content: 'Hello',
+      triggerKind: 'owner_message',
+    });
+    await new Promise<void>((resolve) => {
+      obs.subscribe({
+        complete: () => resolve(),
+        error: () => resolve(),
+      });
+    });
+    const terminals = events.emit.mock.calls
+      .map((c: any[]) => c[2])
+      .filter((e: any) => e?.type === 'stream.terminal');
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0].payload).toMatchObject({ error: false, source: 'runtime-frame-done' });
+  });
+
+  it('emits stream.terminal even when the runtime body ends without an explicit planning.done', async () => {
+    // Some runtime failure modes (proxy buffer, abrupt close) deliver no
+    // `planning.done` frame. The relay must still fan out a terminal so
+    // the UI's "Manager is working…" chip clears.
+    stubFetch([
+      sseFrame('planning.token', { type: 'planning.token', emitted_at: 1, payload: { text: 'partial' } }),
+    ]);
+    const { service, events, ownerId } = makeService();
+    const obs = service.startTurn({
+      streamId,
+      userId: ownerId.toString(),
+      content: 'Hello',
+      triggerKind: 'owner_message',
+    });
+    await new Promise<void>((resolve) => {
+      obs.subscribe({
+        complete: () => resolve(),
+        error: () => resolve(),
+      });
+    });
+    const terminals = events.emit.mock.calls
+      .map((c: any[]) => c[2])
+      .filter((e: any) => e?.type === 'stream.terminal');
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0].payload).toMatchObject({ error: false, source: 'runtime-frame-implicit-done' });
   });
 
   it('emits a stream.terminal event when the runtime returns non-OK', async () => {

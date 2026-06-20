@@ -242,9 +242,20 @@ export class WorkyPlanningService {
         }
       }
       // End of body without an explicit terminal — emit a `planning.done`
-      // so subscribers always see a terminal frame.
-      subject.next({
-        frame: { type: 'planning.done', emitted_at: Date.now() / 1000, payload: { implicit: true } },
+      // so subscribers always see a terminal frame. Also fan out the
+      // terminal to the per-(user, stream) SSE channel so the
+      // frontend's "Manager is working…" chip clears; the `stream.updated`
+      // we previously sent here was a no-op for the UI.
+      const implicitFrame: RuntimePlanningFrame = {
+        type: 'planning.done',
+        emitted_at: Date.now() / 1000,
+        payload: { implicit: true },
+      };
+      subject.next({ frame: implicitFrame });
+      this.events.emit(input.userId, input.streamId, {
+        type: 'stream.terminal',
+        emittedAt: Date.now(),
+        payload: { error: false, source: 'runtime-frame-implicit-done' },
       });
       subject.complete();
     } catch (err) {
@@ -318,9 +329,9 @@ export class WorkyPlanningService {
     }
     if (frame.type === 'planning.done') {
       this.events.emit(input.userId, input.streamId, {
-        type: 'stream.updated',
+        type: 'stream.terminal',
         emittedAt: Date.now(),
-        payload: { note: 'planning-done' },
+        payload: { error: false, source: 'runtime-frame-done' },
       });
       return;
     }

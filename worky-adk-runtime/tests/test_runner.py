@@ -179,3 +179,38 @@ async def test_runner_does_not_prepend_clarification_without_snapshot() -> None:
         importlib.reload(_runner_mod)
 
     assert captured.get("text") == "plain owner message"
+
+
+@pytest.mark.asyncio
+async def test_runner_terminates_after_bounded_events_when_no_tool_fires() -> None:
+    """If the LLM keeps producing events without ever invoking a
+    Manager tool, the runner must bail out — otherwise the SSE pipe
+    stays open and the UI stays stuck on 'Manager is working…'."""
+
+    events = [_StubEvent(f"thinking step {i}") for i in range(200)]
+    consumed: list[int] = []
+
+    def _counting_provider() -> Any:
+        for ev in events:
+            consumed.append(1)
+            yield ev
+        # If the runner didn't break, append a sentinel so the test can
+        # detect the unbounded consumption.
+        consumed.append(-1)
+
+    set_runner_events_provider(_counting_provider)
+    run_turn = build_runner()
+    frames = []
+    async for f in run_turn("Hello"):
+        frames.append(f)
+    types_seen = [f.type for f in frames]
+    assert types_seen[-1] == "planning.done"
+    # Sentinel must be appended — the runner consumed every event.
+    # If the cap kicks in, the sentinel is never reached and the
+    # consumed list ends at the capped event.
+    assert -1 not in consumed
+    # The cap is 64 events; the provider yields 1 per call.
+    assert len(consumed) <= 64
+    # And we did receive at least one token frame so we know the
+    # cap actually fired (the loop wasn't no-op).
+    assert any(t == "planning.token" for t in types_seen)

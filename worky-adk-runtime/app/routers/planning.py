@@ -92,7 +92,7 @@ async def planning_turn(
                     # whose basePlanVersion does not match the
                     # stream's currentPlanVersion (canonical §6).
                     snapshot = body.context_snapshot or {}
-                    base_plan_version = snapshot.get("currentPlanVersion", 0)
+                    base_plan_version = snapshot.get("planVersion", 0)
                     if not isinstance(base_plan_version, int) or base_plan_version < 0:
                         base_plan_version = 0
                     try:

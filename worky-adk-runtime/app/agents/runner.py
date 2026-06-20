@@ -158,12 +158,23 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
         )
 
         assistant_text = ""
+        # ADK's `Runner.run_async` keeps iterating until the LLM emits a
+        # final response with no tool call. The Manager's only productive
+        # actions are `submit_plan_delta` and `request_input` — once
+        # either fires the turn is done. Bailing out here keeps the
+        # bounded-turn invariant (§4.3) and prevents the LLM from
+        # looping on follow-up "verification" calls or repeated
+        # clarifications. We also enforce a hard upper bound as a
+        # safety net against infinite loops from any cause.
+        max_events = 64
+        events_seen = 0
         try:
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
                 new_message=new_message,
             ):
+                events_seen += 1
                 # Surface assistant text as token frames for live streaming.
                 if getattr(event, "is_final_response", lambda: False)():
                     content = getattr(event, "content", None)
@@ -180,6 +191,18 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
                             text = getattr(part, "text", None)
                             if text:
                                 yield PlanningFrame("planning.token", {"text": text})
+                # The Manager just made a real decision — stop here.
+                if (
+                    delta_holder["delta"] is not None
+                    or delta_holder["asked"] is not None
+                ):
+                    break
+                if events_seen >= max_events:
+                    logger.warning(
+                        "Runner exceeded %d events; terminating turn to avoid loop",
+                        max_events,
+                    )
+                    break
         except Exception as exc:  # noqa: BLE001
             logger.exception("Runner raised during turn")
             yield PlanningFrame("planning.error", {"error": str(exc)})
