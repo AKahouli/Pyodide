@@ -241,6 +241,26 @@ describe('WorkyExecutionService', () => {
     expect(result.blockedTaskIds).toHaveLength(0);
   });
 
+  it('only starts dependency roots when downstream tasks depend on unfinished tasks', async () => {
+    const streamObjectId = new Types.ObjectId();
+    const streamId = streamObjectId.toString();
+    await seedStream(streams, { _id: streamObjectId, currentPlanVersion: 1 });
+    const rootTaskId = await seedTask(tasks, streamObjectId, {
+      assigneeType: 'ephemeral_ai_agent',
+      title: 'Root',
+    });
+    const childTaskId = await seedTask(tasks, streamObjectId, {
+      assigneeType: 'ephemeral_ai_agent',
+      title: 'Child',
+      dependsOn: [new Types.ObjectId(rootTaskId)],
+    });
+    const result = await service.validateStart(streamId, ownerId);
+    expect(result.outcome).toBe('partially_executable');
+    expect(result.readyTaskIds).toEqual([rootTaskId]);
+    expect(result.blockedTaskIds).toEqual([childTaskId]);
+    expect(result.issues.find((i) => i.code === 'dependency_pending')).toBeDefined();
+  });
+
   it('returns partially_executable when some tasks are blocked', async () => {
     const streamObjectId = new Types.ObjectId();
     const streamId = streamObjectId.toString();

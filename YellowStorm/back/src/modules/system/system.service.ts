@@ -337,6 +337,9 @@ export class SystemService implements OnApplicationBootstrap {
       approvalSuggestionMode: settings.approvalSuggestionMode,
       intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(settings.intentNormalizationLimits),
       replayEligibilityConfidenceThreshold: threshold,
+      useDeterministicBlueprintBuilder: typeof settings.useDeterministicBlueprintBuilder === 'boolean'
+        ? settings.useDeterministicBlueprintBuilder
+        : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
     };
 
     await this.systemSettingModel.findOneAndUpdate(
@@ -547,6 +550,9 @@ export class SystemService implements OnApplicationBootstrap {
         replayEligibilityConfidenceThreshold: typeof value?.replayEligibilityConfidenceThreshold === 'number'
           ? Math.max(0, Math.min(100, Math.round(value.replayEligibilityConfidenceThreshold)))
           : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold,
+        useDeterministicBlueprintBuilder: typeof value?.useDeterministicBlueprintBuilder === 'boolean'
+          ? value.useDeterministicBlueprintBuilder
+          : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
       };
 
       this.lastPlaybookSettingsCacheUpdate = Date.now();

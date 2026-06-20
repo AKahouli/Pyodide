@@ -108,7 +108,7 @@ export class WorkyExecutionService {
 
     const tasks = await this.tasks
       .find({ streamId: stream._id })
-      .select({ _id: 1, lane: 1, dependsOn: 1, assigneeType: 1, requiredTools: 1, actionCategory: 1 })
+      .select({ _id: 1, lane: 1, executionState: 1, dependsOn: 1, assigneeType: 1, requiredTools: 1, actionCategory: 1 })
       .lean()
       .exec();
     const userTaskIds = tasks
@@ -155,6 +155,25 @@ export class WorkyExecutionService {
         issues.push({
           code: 'unassigned',
           message: 'Task is not assigned to an AI or human agent.',
+          taskIds: [id],
+        });
+      }
+    }
+
+    const stateByTaskId = new Map(
+      tasks.map((t) => [(t._id as Types.ObjectId).toString(), String(t.executionState ?? '')]),
+    );
+    for (const t of tasks) {
+      if (TERMINAL_TASK_LANES.has(String(t.lane))) continue;
+      const id = (t._id as Types.ObjectId).toString();
+      const pendingDeps = ((t.dependsOn ?? []) as Types.ObjectId[])
+        .map((dep) => dep.toString())
+        .filter((depId) => stateByTaskId.get(depId) !== 'done');
+      if (pendingDeps.length > 0) {
+        blocked.add(id);
+        issues.push({
+          code: 'dependency_pending',
+          message: 'Task is waiting for dependency tasks to complete.',
           taskIds: [id],
         });
       }

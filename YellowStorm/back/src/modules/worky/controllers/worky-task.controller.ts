@@ -22,7 +22,6 @@ import {
   WorkyTaskControlDto,
 } from '../dto/worky-task-control.dto';
 import { WorkyHumanUpdateDto } from '../dto/worky-human-update.dto';
-import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyTaskStreamAccessGuard } from '../guards/worky-task-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -41,7 +40,7 @@ import {
  *   POST /worky/tasks/{id}/cancel
  *   POST /worky/tasks/{id}/review
  *
- * Access is via `WorkyStreamAccessGuard` (owner of the parent stream)
+ * Access is via `WorkyTaskStreamAccessGuard` (owner of the parent stream)
  * and the `worky:stream:write` permission.
  */
 @ApiTags('Worky')
@@ -65,7 +64,7 @@ export class WorkyTaskController {
 
   @Post(':id/move')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(WorkyStreamAccessGuard)
+  @UseGuards(WorkyTaskStreamAccessGuard)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Move a Worky task to a different lane' })
   @ApiParam({ name: 'id', description: 'Task id' })
@@ -79,7 +78,7 @@ export class WorkyTaskController {
 
   @Post(':id/pause')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(WorkyStreamAccessGuard)
+  @UseGuards(WorkyTaskStreamAccessGuard)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Pause a Worky task' })
   @ApiParam({ name: 'id', description: 'Task id' })
@@ -93,7 +92,7 @@ export class WorkyTaskController {
 
   @Post(':id/resume')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(WorkyStreamAccessGuard)
+  @UseGuards(WorkyTaskStreamAccessGuard)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Resume a paused Worky task' })
   @ApiParam({ name: 'id', description: 'Task id' })
@@ -107,7 +106,7 @@ export class WorkyTaskController {
 
   @Post(':id/cancel')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(WorkyStreamAccessGuard)
+  @UseGuards(WorkyTaskStreamAccessGuard)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Cancel a Worky task (not_started only)' })
   @ApiParam({ name: 'id', description: 'Task id' })
@@ -121,7 +120,7 @@ export class WorkyTaskController {
 
   @Post(':id/review')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(WorkyStreamAccessGuard)
+  @UseGuards(WorkyTaskStreamAccessGuard)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Move a running Worky task to review' })
   @ApiParam({ name: 'id', description: 'Task id' })

@@ -928,6 +928,7 @@ export interface AdminPlaybookSettings {
     maxIteratorBodyEdges: number;
   };
   replayEligibilityConfidenceThreshold: number;
+  useDeterministicBlueprintBuilder: boolean;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
@@ -938,6 +939,7 @@ export interface UpdateAdminPlaybookSettingsRequest {
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
   replayEligibilityConfidenceThreshold?: number;
+  useDeterministicBlueprintBuilder?: boolean;
 }
 
 // Playbook Prompt Types

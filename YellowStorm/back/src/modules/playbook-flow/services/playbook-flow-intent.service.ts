@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
@@ -14,6 +14,9 @@ import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-templa
 import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-renderer.service';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
+import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
+import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
 
@@ -245,6 +248,10 @@ export interface PlaybookIntentAnalysisContext {
   promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
+  nodeTemplates: Array<{ id: string; type: string; key: string; nodeType: string; title: string; description?: string; category: string;
+    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    recommendedAgentTypeSlug: string | null; enabled: boolean }>;
 }
 
 export interface PlaybookFlowIntentResponse {
@@ -255,6 +262,8 @@ export interface PlaybookFlowIntentResponse {
 
 @Injectable()
 export class PlaybookFlowIntentService {
+  private readonly logger = new Logger(PlaybookFlowIntentService.name);
+
   constructor(
     @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
@@ -265,6 +274,11 @@ export class PlaybookFlowIntentService {
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
+    private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
+    private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
+      new PlaybookIntentNodeBuildRegistryService(),
+      new PlaybookIntentGraphBindingResolverService(),
+    ),
     private readonly skillService?: SkillService,
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
@@ -284,13 +298,10 @@ export class PlaybookFlowIntentService {
     }, { timeout: 180000 });
 
     return {
-      suggestions: this.normalizeConstructionSuggestions({
+      suggestions: this.normalizeConstructionOutput({
         raw: this.extractChatCompletionText(response.data),
         dto,
-        selectedNodeId: context.selectedNodeId,
-        limits: context.limits,
-        validationContext: context.validationContext,
-        includeFallback: true,
+        context,
       }),
       model: context.model,
       settings: context.effectiveSettings,
@@ -404,6 +415,30 @@ export class PlaybookFlowIntentService {
       promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
+      nodeTemplates: nodeTemplates.items.map((template) => ({
+        id: template.id,
+        type: template.type,
+        key: template.key,
+        nodeType: template.nodeType,
+        title: template.title,
+        description: template.description || '',
+        category: template.category,
+        inputPorts: template.inputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          required: port.required === true,
+          description: port.description || '',
+        })),
+        outputPorts: template.outputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          description: port.description || '',
+        })),
+        recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        enabled: template.enabled,
+      })),
     };
   }
 
@@ -585,6 +620,43 @@ export class PlaybookFlowIntentService {
       args.validationContext,
       args.includeFallback,
     );
+  }
+
+  normalizeConstructionOutput(args: {
+    raw: string;
+    dto: RequestPlaybookFlowIntentDto;
+    context: PlaybookIntentAnalysisContext;
+  }): PlaybookIntentSuggestion[] {
+    const useBlueprint = args.context.effectiveSettings.useDeterministicBlueprintBuilder;
+    if (useBlueprint && this.blueprintParser.hasBlueprintShape(args.raw)) {
+      const parsed = this.blueprintParser.parse(args.raw);
+      if (parsed) {
+        try {
+          const buildResult = this.graphBuilder.build({
+            blueprint: parsed.blueprint,
+            context: args.context.validationContext,
+            limits: args.context.limits,
+            templates: args.context.nodeTemplates,
+            selectedNodeId: args.context.selectedNodeId,
+          });
+          if (buildResult.dropped.length) {
+            this.logger.warn(`playbook_intent_builder_dropped items=${buildResult.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
+          }
+          return [this.createFallbackSuggestion(args.dto, args.context.selectedNodeId), buildResult.suggestion];
+        } catch (error) {
+          this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
+        }
+      }
+    }
+
+    return this.normalizeConstructionSuggestions({
+      raw: args.raw,
+      dto: args.dto,
+      selectedNodeId: args.context.selectedNodeId,
+      limits: args.context.limits,
+      validationContext: args.context.validationContext,
+      includeFallback: true,
+    });
   }
 
   private buildDesignAssessmentSystemPrompt(): string {

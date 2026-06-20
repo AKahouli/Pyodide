@@ -37,7 +37,7 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
         return (
           <section
             key={lane}
-            className='flex h-full w-64 flex-col rounded-md border border-border/60 bg-background/30'
+            className='flex h-full w-64 shrink-0 flex-col rounded-md border border-border/60 bg-background/30'
             aria-label={t(`kanban.lanes.${lane}`)}
           >
             <header className='flex items-center justify-between border-b border-border/60 px-3 py-2'>

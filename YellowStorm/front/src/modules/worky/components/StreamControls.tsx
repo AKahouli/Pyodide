@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   useStartStream,
@@ -34,6 +34,10 @@ export function StreamControls({
   const resumeStream = useResumeStream();
   const stopStream = useStopStream();
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setValidationMessage(null);
+  }, [streamId, status]);
 
   const isActive = controlState === 'active' && (status === 'active' || status === 'partially_blocked');
   const isPaused = controlState === 'paused' || status === 'paused';

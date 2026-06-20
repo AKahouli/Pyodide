@@ -73,6 +73,10 @@ class StubBackendClient:
     async def emit_audit(self, *args, **kwargs):  # noqa: D401
         return {"applied": True, "replay": False, "eventId": "", "receivedAt": ""}
 
+    async def record_trace(self, stream_id: str, body: dict, event_id: str | None = None) -> dict:
+        self.calls.append(("record_trace", stream_id, body))
+        return {"applied": True, "replay": False, "eventId": event_id or "trace", "receivedAt": ""}
+
 
 def _build_app(backend: StubBackendClient) -> FastAPI:
     app = FastAPI()
@@ -109,10 +113,40 @@ def test_start_stream_spawns_a_worker_per_ready_task_and_submits_results():
     callback_names = [name for name, _, _ in backend.calls]
     assert callback_names == [
         "spawn_worker",
+        "record_trace",
         "submit_task_result",
         "spawn_worker",
+        "record_trace",
         "submit_task_result",
     ]
+
+
+def test_start_stream_records_worker_prompt_trace_with_task_context():
+    backend = StubBackendClient()
+    app = _build_app(backend)
+    client = TestClient(app)
+
+    response = client.post(
+        "/runtime/streams/stream-ctx/start",
+        json={
+            "ready_task_ids": ["t1"],
+            "task_contexts": {
+                "t1": {
+                    "id": "t1",
+                    "title": "Draft release announcement",
+                    "description": "Write the launch announcement intro.",
+                    "acceptanceCriteria": ["Include CTA"],
+                }
+            },
+            "context_snapshot": {"streamId": "stream-ctx", "planVersion": 1},
+        },
+    )
+    assert response.status_code == 200
+    trace_call = next(call for call in backend.calls if call[0] == "record_trace")
+    summary = trace_call[2]["summary"]
+    assert "Draft release announcement" in summary
+    assert "Write the launch announcement intro." in summary
+    assert "Include CTA" in summary
 
 
 def test_start_stream_with_empty_ready_list_emits_only_bootstrap_and_done():

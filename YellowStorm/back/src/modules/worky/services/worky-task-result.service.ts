@@ -52,6 +52,8 @@ const TERMINAL_LANE_BY_STATUS: Record<string, { lane: string; executionState: st
   failed: { lane: 'done', executionState: 'failed' },
 };
 
+const SUMMARY_MAX_LENGTH = 5000;
+
 @Injectable()
 export class WorkyTaskResultService {
   constructor(
@@ -75,12 +77,17 @@ export class WorkyTaskResultService {
       .lean()
       .exec();
     const nextVersion = (latest?.version ?? 0) + 1;
+    const summary = input.summary ?? '';
+    const payload = input.payload ? { ...input.payload } : {};
+    if (summary.length > SUMMARY_MAX_LENGTH && typeof payload.output !== 'string') {
+      payload.output = summary;
+    }
     const created = await this.results.create({
       taskId: new Types.ObjectId(input.taskId),
       version: nextVersion,
       status: input.status,
-      summary: input.summary ?? '',
-      payload: input.payload ?? null,
+      summary: truncateSummary(summary),
+      payload: Object.keys(payload).length > 0 ? payload : null,
       contentArtifactId:
         input.contentArtifactId && Types.ObjectId.isValid(input.contentArtifactId)
           ? new Types.ObjectId(input.contentArtifactId)
@@ -161,4 +168,9 @@ export class WorkyTaskResultService {
     if (result.matchedCount === 0) return 'no_change';
     return transition.executionState === 'failed' ? 'failed' : 'done';
   }
+}
+
+function truncateSummary(summary: string): string {
+  if (summary.length <= SUMMARY_MAX_LENGTH) return summary;
+  return `${summary.slice(0, SUMMARY_MAX_LENGTH - 15).trimEnd()}\n[truncated]`;
 }

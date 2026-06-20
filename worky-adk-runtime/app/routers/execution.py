@@ -51,12 +51,14 @@ from ..agents.worker_factory import (
     WorkerRegistry,
     build_agent_tool_for_worker,
     build_ephemeral_worker,
+    format_worker_user_message,
     run_worker_bounded_step,
 )
 from ..agents.gated import GatedFlow, build_approval_workflow_agent
 
 logger = logging.getLogger("worky.execution")
 router = APIRouter(prefix="/runtime/streams", tags=["execution"])
+SUMMARY_MAX_LENGTH = 5000
 
 
 # Per-process worker registry. The runtime is a single-process
@@ -83,6 +85,12 @@ class ExecutionEvent(BaseModel):
 
 def _sse_frame(event: ExecutionEvent) -> str:
     return f"event: {event.type}\ndata: {json.dumps(event.model_dump())}\n\n"
+
+
+def _build_summary(text: str) -> str:
+    if len(text) <= SUMMARY_MAX_LENGTH:
+        return text
+    return f"{text[: SUMMARY_MAX_LENGTH - 15].rstrip()}\n[truncated]"
 
 
 async def _dispatch_ready_tasks(
@@ -138,6 +146,20 @@ async def _dispatch_ready_tasks(
         )
 
         agent_tool = build_agent_tool_for_worker(worker, model_id=worker_model_id)
+        worker_message = format_worker_user_message({"task": task_context, "stream": context_snapshot or {}})
+        try:
+            await backend.record_trace(
+                stream_id,
+                {
+                    "taskId": task_id,
+                    "kind": "model",
+                    "name": "worky_worker_user_message",
+                    "summary": worker_message[:5000],
+                    "durationMs": 0,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("worker prompt trace callback failed for %s", task_id, exc_info=True)
         output_chunks: list[str] = []
         async for frame in run_worker_bounded_step(agent_tool, {"task": task_context, "stream": context_snapshot or {}}):
             kind = frame.get("kind")
@@ -147,10 +169,11 @@ async def _dispatch_ready_tasks(
             if kind == "done":
                 # Worker reported success — submit a task result.
                 status = frame.get("status", "done")
-                summary = frame.get("summary") or "\n".join(output_chunks).strip()
+                output = "\n".join(output_chunks).strip()
+                summary = _build_summary(str(frame.get("summary") or output))
                 payload = dict(frame.get("payload") or {})
-                if output_chunks and "output" not in payload:
-                    payload["output"] = "\n".join(output_chunks).strip()
+                if output and "output" not in payload:
+                    payload["output"] = output
                 try:
                     await backend.submit_task_result(
                         task_id,

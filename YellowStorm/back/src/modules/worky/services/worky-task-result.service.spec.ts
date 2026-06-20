@@ -99,6 +99,16 @@ describe('WorkyTaskResultService', () => {
     expect(rows[0]).toMatchObject({ summary: 'Result', payload: { output: 'Full output' } });
   });
 
+  it('truncates oversized summaries and preserves the full text in payload.output', async () => {
+    const taskId = new Types.ObjectId();
+    const longSummary = 'x'.repeat(15091);
+    await service.record({ taskId: taskId.toString(), status: 'done', summary: longSummary });
+    const rows = await service.listForTask(taskId.toString());
+    expect(rows[0].summary.length).toBeLessThanOrEqual(5000);
+    expect(rows[0].summary).toContain('[truncated]');
+    expect(rows[0].payload).toMatchObject({ output: longSummary });
+  });
+
   it('transitions a running task to done and returns taskTransitionedTo=done', async () => {
     const taskId = new Types.ObjectId();
     await tasks.seed(taskId, { lane: 'running', executionState: 'running', startedAt: new Date(Date.now() - 1000) });

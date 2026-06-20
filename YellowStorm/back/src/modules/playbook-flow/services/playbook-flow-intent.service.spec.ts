@@ -40,6 +40,8 @@ function createService(overrides: Partial<{
     overrides.nodeTemplateService || {} as PlaybookFlowNodeTemplateService,
     overrides.liteLLMConnectionService || {} as LiteLLMConnectionService,
     undefined,
+    undefined,
+    undefined,
     overrides.skillService,
     overrides.connectorService,
     overrides.workspaceService,
@@ -139,6 +141,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -179,6 +182,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -218,6 +222,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -340,6 +345,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -373,6 +379,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -471,10 +478,15 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(prompt?.userTemplate).toContain('{resolved_design_resources}');
     expect(prompt?.userTemplate).toContain('<Available_Design_Catalog_JSON>');
     expect(prompt?.userTemplate).toContain('{available_design_catalog}');
-    expect(prompt?.systemTemplate).toContain('Treat it as authoritative structured input');
-    expect(prompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
-    expect(prompt?.systemTemplate).toContain('sourceKind: "constant"');
-    expect(prompt?.version).toBe(9);
+    expect(prompt?.systemTemplate).toContain('"blueprint"');
+    expect(prompt?.systemTemplate).toContain('sourceKind');
+    expect(prompt?.systemTemplate).toContain('"constant"');
+    expect(prompt?.version).toBe(10);
+  });
+
+  it('keeps the design assessment prompt distinct from intent analyze', () => {
+    const designPrompt = DEFAULT_FLOW_PROMPTS.find((entry) => entry.key === 'intent.design_assessment');
+    expect(designPrompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {
@@ -903,5 +915,79 @@ describe('PlaybookFlowIntentService normalization', () => {
     const result = callNormalize(raw, ctx);
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeUndefined();
+  });
+
+  describe('blueprint path', () => {
+    it('routes a blueprint response through the deterministic builder when the feature flag is enabled', () => {
+      const raw = JSON.stringify({
+        blueprint: {
+          title: 'Linear',
+          summary: 'Two steps',
+          nodes: [
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+          ],
+          links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
+        },
+      });
+      const context = {
+        ...makeContext(),
+        effectiveSettings: { useDeterministicBlueprintBuilder: true } as EffectiveFlowDesignSettings,
+        nodeTemplates: [],
+        limits: DEFAULT_LIMITS,
+        selectedNodeId: null,
+      };
+      const suggestions = (service as any).normalizeConstructionOutput({
+        raw,
+        dto: { intent: 'test' },
+        context: {
+          ...context,
+          httpClient: { post: jest.fn() },
+          flow: {},
+          model: 'm',
+          systemPrompt: '',
+          userPrompt: '',
+          promptVariables: {},
+          validationContext: makeContext(),
+        },
+      });
+      const plan = suggestions.find((s: any) => s.kind === 'workflow_plan');
+      expect(plan).toBeDefined();
+      expect(plan.changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
+      expect(plan.changes.filter((c: any) => c.type === 'create_edge')).toHaveLength(1);
+    });
+
+    it('falls back to legacy normalization when the feature flag is disabled even if a blueprint is present', () => {
+      const raw = JSON.stringify({
+        blueprint: {
+          title: 'Linear',
+          summary: 'Two steps',
+          nodes: [
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+          ],
+        },
+      });
+      const ctx = makeContext();
+      const suggestions = (service as any).normalizeConstructionOutput({
+        raw,
+        dto: { intent: 'test' },
+        context: {
+          httpClient: { post: jest.fn() },
+          flow: {},
+          selectedNodeId: null,
+          effectiveSettings: { useDeterministicBlueprintBuilder: false } as EffectiveFlowDesignSettings,
+          model: 'm',
+          systemPrompt: '',
+          userPrompt: '',
+          promptVariables: {},
+          validationContext: ctx,
+          limits: DEFAULT_LIMITS,
+          nodeTemplates: [],
+        },
+      });
+      // Legacy normalization treats the raw payload as suggestions JSON. With no suggestions array, only the fallback is emitted.
+      expect(suggestions.every((s: any) => s.kind === 'single_change')).toBe(true);
+    });
   });
 });

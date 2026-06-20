@@ -161,6 +161,18 @@ class BackendClient:
             json=body,
         )
 
+    async def record_trace(
+        self,
+        stream_id: str,
+        body: dict[str, Any],
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._post(
+            f"{API_PREFIX}/streams/{stream_id}/trace",
+            event_id=event_id,
+            json=body,
+        )
+
     async def submit_task_result(
         self,
         task_id: str,

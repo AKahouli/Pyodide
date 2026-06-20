@@ -288,6 +288,10 @@ This creates a safe seam before changing the prompt or realtime construction int
 ## Clarifications Before Implementation
 These do not block this plan, but should be answered before coding Phase 2 or later:
 1. Should the first builder version support only new-node construction, or selected-node update/rewrite too?
+Answer : the first builder version should support  new-node construction and  selected-node update/rewrite too
 2. Should router/iterator/human-approval blueprint generation be enabled immediately, or rolled out after linear/parallel fixtures pass?
+Answer : router/iterator/human-approval blueprint generation should be enabled immediately
 3. Do we want a feature flag for blueprint mode while legacy `intent.analyze` remains default during validation?
+Answer : Absolutely yes, as a temporary measure until the deterministic builder is proven to be stable and reliable, it can be removed later so i should be able to enable/disable this flag anytime via Admin > Playbook Setting
 4. Should eventual server-side apply be part of this initiative, or explicitly deferred until deterministic preview is stable?
+Answer : deferred
