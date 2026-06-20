@@ -67,6 +67,7 @@ WORKER_REGISTRY = WorkerRegistry()
 
 class StartStreamRequest(BaseModel):
     ready_task_ids: list[str] = Field(default_factory=list)
+    task_contexts: dict[str, dict] = Field(default_factory=dict)
     context_snapshot: dict | None = None
     # LiteLLM model identifier for ephemeral workers on this run.
     # Resolved by the backend (per-turn override → stream persistent
@@ -88,6 +89,8 @@ async def _dispatch_ready_tasks(
     stream_id: str,
     ready_task_ids: list[str],
     backend: BackendClient,
+    task_contexts: dict[str, dict] | None = None,
+    context_snapshot: dict | None = None,
     worker_model_id: str | None = None,
 ) -> AsyncIterator[ExecutionEvent]:
     """Spawn a worker per ready task and yield `ExecutionFrame`s.
@@ -107,6 +110,7 @@ async def _dispatch_ready_tasks(
     )
     plugin = make_default_tracing_plugin(backend)
     for task_id in ready_task_ids:
+        task_context = (task_contexts or {}).get(task_id) or {"id": task_id}
         try:
             binding = await backend.spawn_worker(
                 stream_id,
@@ -134,19 +138,26 @@ async def _dispatch_ready_tasks(
         )
 
         agent_tool = build_agent_tool_for_worker(worker, model_id=worker_model_id)
-        async for frame in run_worker_bounded_step(agent_tool, {"text": task_id}):
+        output_chunks: list[str] = []
+        async for frame in run_worker_bounded_step(agent_tool, {"task": task_context, "stream": context_snapshot or {}}):
             kind = frame.get("kind")
+            if kind == "text" and frame.get("text"):
+                output_chunks.append(str(frame.get("text")))
+                continue
             if kind == "done":
                 # Worker reported success — submit a task result.
                 status = frame.get("status", "done")
-                summary = frame.get("summary", "")
+                summary = frame.get("summary") or "\n".join(output_chunks).strip()
+                payload = dict(frame.get("payload") or {})
+                if output_chunks and "output" not in payload:
+                    payload["output"] = "\n".join(output_chunks).strip()
                 try:
                     await backend.submit_task_result(
                         task_id,
                         {
                             "status": status,
                             "summary": summary,
-                            "payload": frame.get("payload", {}),
+                            "payload": payload,
                         },
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -223,6 +234,8 @@ async def start_stream(
                 stream_id,
                 body.ready_task_ids,
                 backend,
+                task_contexts=body.task_contexts,
+                context_snapshot=body.context_snapshot,
                 worker_model_id=body.worker_model_id,
             ):
                 yield _sse_frame(ev)

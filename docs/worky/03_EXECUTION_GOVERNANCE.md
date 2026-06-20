@@ -7,6 +7,15 @@ scheduler (no Celery).
 
 > Read `00_INDEX.md` first. Requires Parts 1–2 complete.
 
+> **IMPLEMENTATION STATUS (branch `aga-worky-002`, audited 2026):** most of Part 3 is built and
+> faithful — start validation/snapshot, governance with owner-relax ceiling, approval gates,
+> ephemeral-worker binding callbacks, and the NestJS scheduler. **One gap remains: the
+> backend→runtime execution trigger is NOT wired** (see §3.2a). `WorkyRuntimeClient` only has
+> `ping()`, and `worky-execution.service` emits `start_task`/`spawn_ephemeral_agent` commands
+> that have **no consumer**, so the runtime's `/runtime/streams/{id}/start` flow never fires.
+> The planning loop IS wired (`worky-planning.service` calls `/planning-turn`). Closing §3.2a
+> is what makes execution actually run.
+
 ---
 
 ## 1. Prerequisites
@@ -35,6 +44,25 @@ Planning + plan deltas + Kanban (Part 2); Manager planning agent; internal callb
   event (canonical §11.2). Emit commands (`start_task`, `spawn_ephemeral_agent`,
   `resume_runtime_branch`). Persist `waitConditions` on waiting tasks. NO polling.
 - `worky-event.service.ts`: event→reducer→readiness→commands→handlers loop; all idempotent.
+
+### 3.2a Backend→runtime execution trigger (REQUIRED — do not leave as commands-only)
+> Emitting commands is NOT sufficient. The commands MUST be dispatched to the runtime, or
+> execution never actually runs. A command with no handler that calls the runtime is a bug.
+- Extend `services/worky-runtime.client.ts` beyond `ping()` with real methods:
+  `start(streamId, { ready_task_ids, context_snapshot, worker_model_id })`,
+  `resume(streamId, resume_event)`, `stop(streamId)`, `cancelTask(taskId)` — each calling the
+  runtime HTTP endpoints in §4 (mirror how `worky-planning.service.ts` already `fetch`es
+  `/runtime/streams/{id}/planning-turn` and consumes the SSE).
+- A **command handler** (in `worky-execution.service.ts` or `worky-event.service.ts`) MUST
+  consume `start_task`/`spawn_ephemeral_agent` by calling `runtimeClient.start(...)` right after
+  the snapshot is created, and `resume_runtime_branch` by calling `runtimeClient.resume(...)`.
+  The runtime then drives workers and calls back the existing `/worky/internal/*` endpoints
+  (`spawn-worker`, `tasks/{id}/result`).
+- Inject `WorkyRuntimeClient` into the execution service. The start flow is:
+  `start validation → snapshot → runtimeClient.start(...) → SSE/callbacks update state`.
+- **Acceptance for this step:** after `POST /worky/streams/{id}/start` on a ready plan, the
+  runtime `/start` endpoint is actually invoked (assert via a spy/mock in the service test), and
+  a stubbed/mock runtime that posts a `task.completed` callback drives the task to `done`.
 
 ### 3.3 Governance policy engine (admin-configurable)
 - `services/worky-governance.service.ts`: resolve the level for `(streamId, actionCategory)`:
@@ -79,6 +107,9 @@ Planning + plan deltas + Kanban (Part 2); Manager planning agent; internal callb
 ### 3.8 Backend acceptance criteria
 - Start on a fully-ready plan → snapshot + active; partial start blocks only dependent branches;
   globally-blocked returns explanation without starting.
+- **Start actually invokes the runtime** (§3.2a): the runtime `/start` endpoint is called after
+  snapshot creation, and a runtime `task.completed` / `tasks/{id}/result` callback drives the
+  task to `done`. A start that only emits commands without calling the runtime FAILS this check.
 - An `external_send` task at level `approval` blocks until owner approves; reject triggers
   replan; `off` runs without a gate; admin can change levels; owner override respects the ceiling
   and can never reach `off`.

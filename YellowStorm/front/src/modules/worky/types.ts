@@ -153,6 +153,22 @@ export interface WorkyTask {
   dependsOn: string[];
   blockerReason: string | null;
   theoreticalDeadlineAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface WorkyTaskResult {
+  id: string;
+  taskId: string;
+  version: number;
+  status: string;
+  summary: string;
+  payload: Record<string, unknown> | null;
+  contentArtifactId: string | null;
+  createdByWorkerId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkyBoardResponse {

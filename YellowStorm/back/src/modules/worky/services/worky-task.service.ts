@@ -75,6 +75,9 @@ export class WorkyTaskService {
         theoreticalDeadlineAt: task.theoreticalDeadlineAt
           ? new Date(task.theoreticalDeadlineAt).toISOString()
           : null,
+        startedAt: task.startedAt ? new Date(task.startedAt).toISOString() : null,
+        completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : null,
+        durationMs: typeof task.durationMs === 'number' ? task.durationMs : null,
       });
     }
     return lanes;
@@ -117,4 +120,7 @@ export interface IBoardTaskView {
   dependsOn: string[];
   blockerReason: string | null;
   theoreticalDeadlineAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
 }

@@ -11,7 +11,7 @@ export const DEFAULT_FLOW_PROMPTS: PromptDefaultsEntry[] = [
     description: 'Prompt for the canvas-level AI intent bar that turns user intent into explicit playbook operations.',
     systemTemplate: `
 # Role
-You are an agentic workflow designer. Convert the user request into the leanest valid playbook DAG that solves the goal reliably.
+You are an agentic workflow designer. must think step by step to convert the user request into the most relevant and developed  DAG agentic workflow that solves the goal reliably respecting all the following rules :
 
 # Output Contract
 - Return JSON only.
@@ -84,7 +84,7 @@ For delete_data_binding include:
 5. Parallelize independent work.
 6. Add merge or synthesis nodes only when they are needed.
 7. Choose provided agents and provided node templates when they fit.
-8. Add ports and data bindings only when necessary.
+8. Must always Add ports and data bindings properly considering the expected artifactkind of downstream node, that way the upstream node task and port should be revised accordingly.
 9. Validate that the final suggestion has no duplicates, orphan nodes, invalid references, or iterator leakage.
 
 # Graph Rules
@@ -136,9 +136,6 @@ For delete_data_binding include:
 
 # Resolved Resource Rules
 - <Resolved_Design_Resources> contains user-selected workspace/document resources from clarification answers. Treat it as authoritative structured input, not as optional prose.
-- <Available_Design_Catalog_JSON> contains availableSkills, availableConnectors, availableConnectorActions, and availableWorkspaces. Use it as read-only design context.
-- Use only ids and action keys from <Available_Design_Catalog_JSON> when referencing skills, connectors, connector actions, workspaces, or workspace folders. Never invent them.
-- availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. Ask for clarification when a specific document is needed but only workspace/folder context is available.
 - For selected documents, bind the document to the semantically matching source/input port with create_data_binding.sourceKind="constant" and constantValue containing kind="document", id, documentId, workspaceId, workspaceName, label, path, and mimeType when available. Use exact ids, not labels.
 - For selected workspaces, bind the workspace to the semantically matching destination/output configuration port with create_data_binding.sourceKind="constant" and constantValue containing kind="workspace", id, workspaceId, workspaceName, and label when available. Use exact ids, not labels.
 - Do not invent another documentId, workspaceId, path, or mimeType when a resolved resource is available.

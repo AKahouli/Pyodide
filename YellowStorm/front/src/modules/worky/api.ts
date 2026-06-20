@@ -26,6 +26,7 @@ import type {
   WorkyStream,
   WorkyStreamQueryParams,
   WorkyTask,
+  WorkyTaskResult,
 } from './types';
 
 function unwrap<T>(response: { data: ApiResponse<T> }): T {
@@ -199,6 +200,13 @@ export async function reviewTask(taskId: string, reason?: string): Promise<Worky
   const response = await apiClient.post<ApiResponse<WorkyTask>>(
     API_ENDPOINTS.worky.taskReview(taskId),
     { reason },
+  );
+  return unwrap(response);
+}
+
+export async function getTaskResults(taskId: string): Promise<WorkyTaskResult[]> {
+  const response = await apiClient.get<ApiResponse<WorkyTaskResult[]>>(
+    API_ENDPOINTS.worky.taskResults(taskId),
   );
   return unwrap(response);
 }

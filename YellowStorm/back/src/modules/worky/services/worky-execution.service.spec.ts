@@ -103,15 +103,23 @@ function matchesFilter(doc: any, filter: Record<string, unknown>): boolean {
 function buildService(collections: { streams: FakeCollection; tasks: FakeCollection; snapshots: FakeCollection }) {
   const events = { emit: jest.fn() };
   const audit = { append: jest.fn().mockResolvedValue(undefined) };
+  const dispatch = {
+    dispatchStart: jest.fn().mockResolvedValue({ ok: true, frames: [] }),
+    dispatchResume: jest.fn().mockResolvedValue({ ok: true, frames: [] }),
+    dispatchStop: jest.fn().mockResolvedValue({ ok: true, frames: [] }),
+    dispatchCancelTask: jest.fn().mockResolvedValue({ ok: true, frames: [] }),
+    dispatchSingleTask: jest.fn().mockResolvedValue({ ok: true, frames: [] }),
+  };
   const service = new WorkyExecutionService(
     collections.streams as never,
     collections.tasks as never,
     collections.snapshots as never,
     events as never,
     audit as never,
+    dispatch as never,
     { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } as never,
   );
-  return { service, events, audit };
+  return { service, events, audit, dispatch };
 }
 
 interface StreamOverrides {
@@ -186,6 +194,13 @@ describe('WorkyExecutionService', () => {
   let service: WorkyExecutionService;
   let events: { emit: jest.Mock };
   let audit: { append: jest.Mock };
+  let dispatch: {
+    dispatchStart: jest.Mock;
+    dispatchResume: jest.Mock;
+    dispatchStop: jest.Mock;
+    dispatchCancelTask: jest.Mock;
+    dispatchSingleTask: jest.Mock;
+  };
 
   beforeEach(() => {
     streams = new FakeCollection();
@@ -195,6 +210,7 @@ describe('WorkyExecutionService', () => {
     service = built.service;
     events = built.events;
     audit = built.audit;
+    dispatch = built.dispatch;
   });
 
   it('returns globally_blocked with no_tasks when plan is empty', async () => {
@@ -273,6 +289,52 @@ describe('WorkyExecutionService', () => {
     );
   });
 
+  it('createSnapshot invokes dispatch.dispatchStart with the ready task ids', async () => {
+    const streamObjectId = new Types.ObjectId();
+    const streamId = streamObjectId.toString();
+    await seedStream(streams, { _id: streamObjectId, currentPlanVersion: 1 });
+    const taskA = await seedTask(tasks, streamObjectId, {
+      assigneeType: 'ephemeral_ai_agent',
+      title: 'A',
+    });
+    const taskB = await seedTask(tasks, streamObjectId, {
+      assigneeType: 'ephemeral_ai_agent',
+      title: 'B',
+    });
+    const result = await service.createSnapshot(streamId, ownerId);
+    expect(result.outcome).toBe('fully_executable');
+    expect(dispatch.dispatchStart).toHaveBeenCalledTimes(1);
+    const [streamArg, readyIds] = dispatch.dispatchStart.mock.calls[0]!;
+    expect(streamArg._id.toString()).toBe(streamObjectId.toString());
+    expect(readyIds).toEqual(expect.arrayContaining([taskA, taskB]));
+    expect(readyIds).toHaveLength(2);
+  });
+
+  it('createSnapshot does NOT invoke dispatch.dispatchStart when the plan is globally blocked', async () => {
+    const streamObjectId = new Types.ObjectId();
+    const streamId = streamObjectId.toString();
+    await seedStream(streams, { _id: streamObjectId, currentPlanVersion: 1 });
+    await seedTask(tasks, streamObjectId, { assigneeType: 'unassigned' });
+    await service.createSnapshot(streamId, ownerId);
+    expect(dispatch.dispatchStart).not.toHaveBeenCalled();
+  });
+
+  it('createSnapshot keeps status active and emits error frame when runtime start fails', async () => {
+    const streamObjectId = new Types.ObjectId();
+    const streamId = streamObjectId.toString();
+    await seedStream(streams, { _id: streamObjectId, currentPlanVersion: 1 });
+    await seedTask(tasks, streamObjectId, { assigneeType: 'ephemeral_ai_agent' });
+    // Make the dispatched call resolve with ok=false; we don't await
+    // the fire-and-forget path, so we trigger it by re-reading the
+    // dispatched call arg.
+    dispatch.dispatchStart.mockResolvedValueOnce({ ok: false, status: 503, frames: [], error: 'Runtime returned 503' });
+    await service.createSnapshot(streamId, ownerId);
+    // Drain microtasks so the void chain completes.
+    await new Promise((r) => setImmediate(r));
+    const updated = await streams.findById(streamObjectId).exec();
+    expect(updated.status).toBe('active');
+  });
+
   it('recomputeReadiness returns start_task commands on task.completed', async () => {
     const streamObjectId = new Types.ObjectId();
     const streamId = streamObjectId.toString();
@@ -313,6 +375,26 @@ describe('WorkyExecutionService', () => {
     );
   });
 
+  it('resume fires dispatchResume when the stream has an execution plan', async () => {
+    const streamId = await seedStream(streams, {
+      status: 'paused',
+      controlState: 'paused',
+      executionPlanVersion: 1,
+    });
+    await service.resume(streamId, ownerId, 'resume-test');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch.dispatchResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop fires dispatchStop after the backend state is terminal', async () => {
+    const streamId = await seedStream(streams, { status: 'active', controlState: 'active' });
+    await service.stop(streamId, ownerId, 'stop-test');
+    await new Promise((r) => setImmediate(r));
+    const stream = await streams.findById(streamId).exec();
+    expect(stream.status).toBe('stopped');
+    expect(dispatch.dispatchStop).toHaveBeenCalledTimes(1);
+  });
+
   it('cancelTask throws on running tasks', async () => {
     const streamObjectId = new Types.ObjectId();
     await seedStream(streams, { _id: streamObjectId });
@@ -335,9 +417,11 @@ describe('WorkyExecutionService', () => {
     const result = await service.cancelTask(taskId, ownerId);
     expect(result.lane).toBe('canceled');
     expect(result.executionState).toBe('canceled');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch.dispatchCancelTask).toHaveBeenCalledWith(taskId);
   });
 
-  it('cancelTask supersedes done tasks', async () => {
+  it('cancelTask supersedes done tasks without invoking dispatch', async () => {
     const streamObjectId = new Types.ObjectId();
     await seedStream(streams, { _id: streamObjectId });
     const taskId = await seedTask(tasks, streamObjectId, {
@@ -347,6 +431,8 @@ describe('WorkyExecutionService', () => {
     });
     const result = await service.cancelTask(taskId, ownerId);
     expect(result.lane).toBe('superseded');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch.dispatchCancelTask).not.toHaveBeenCalled();
   });
 
   it('moveTask refuses to move a running task to a terminal lane', async () => {

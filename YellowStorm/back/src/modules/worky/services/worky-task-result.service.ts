@@ -5,6 +5,10 @@ import {
   WorkyTaskResult,
   WorkyTaskResultDocument,
 } from '../schemas/worky-task-result.schema';
+import {
+  WorkyTask,
+  WorkyTaskDocument,
+} from '../schemas/worky-task.schema';
 import { LoggerService } from '../../logger';
 
 export interface RecordTaskResultInput {
@@ -13,6 +17,7 @@ export interface RecordTaskResultInput {
   summary?: string;
   contentArtifactId?: string | null;
   createdByWorkerId?: string | null;
+  payload?: Record<string, unknown> | null;
 }
 
 export interface RecordTaskResultResult {
@@ -21,13 +26,39 @@ export interface RecordTaskResultResult {
   version: number;
   status: string;
   replay: boolean;
+  taskTransitionedTo: 'done' | 'failed' | 'no_change';
 }
+
+export interface WorkyTaskResultView {
+  id: string;
+  taskId: string;
+  version: number;
+  status: string;
+  summary: string;
+  payload: Record<string, unknown> | null;
+  contentArtifactId: string | null;
+  createdByWorkerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Terminal status values produced by the runtime that we mirror to the
+ * task lane/executionState. Anything else is treated as a non-terminal
+ * update and leaves the task state alone.
+ */
+const TERMINAL_LANE_BY_STATUS: Record<string, { lane: string; executionState: string }> = {
+  done: { lane: 'done', executionState: 'done' },
+  failed: { lane: 'done', executionState: 'failed' },
+};
 
 @Injectable()
 export class WorkyTaskResultService {
   constructor(
     @InjectModel(WorkyTaskResult.name)
     private readonly results: Model<WorkyTaskResultDocument>,
+    @InjectModel(WorkyTask.name)
+    private readonly tasks: Model<WorkyTaskDocument>,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyTaskResultService.name);
@@ -49,6 +80,7 @@ export class WorkyTaskResultService {
       version: nextVersion,
       status: input.status,
       summary: input.summary ?? '',
+      payload: input.payload ?? null,
       contentArtifactId:
         input.contentArtifactId && Types.ObjectId.isValid(input.contentArtifactId)
           ? new Types.ObjectId(input.contentArtifactId)
@@ -58,10 +90,14 @@ export class WorkyTaskResultService {
           ? new Types.ObjectId(input.createdByWorkerId)
           : null,
     });
+
+    const transition = await this.mirrorTaskState(input.taskId, input.status);
+
     this.logger.log('Worky task result recorded', {
       taskId: input.taskId,
       version: nextVersion,
       status: input.status,
+      taskTransitionedTo: transition,
     });
     return {
       taskResultId: (created._id as Types.ObjectId).toString(),
@@ -69,6 +105,60 @@ export class WorkyTaskResultService {
       version: nextVersion,
       status: input.status,
       replay: false,
+      taskTransitionedTo: transition,
     };
+  }
+
+  async listForTask(taskId: string): Promise<WorkyTaskResultView[]> {
+    if (!Types.ObjectId.isValid(taskId)) return [];
+    const rows = await this.results
+      .find({ taskId: new Types.ObjectId(taskId) })
+      .sort({ version: -1 })
+      .lean()
+      .exec();
+    return rows.map((row) => ({
+      id: (row._id as Types.ObjectId).toString(),
+      taskId,
+      version: row.version,
+      status: row.status,
+      summary: row.summary ?? '',
+      payload: (row.payload as Record<string, unknown> | null | undefined) ?? null,
+      contentArtifactId: row.contentArtifactId ? (row.contentArtifactId as Types.ObjectId).toString() : null,
+      createdByWorkerId: row.createdByWorkerId ? (row.createdByWorkerId as Types.ObjectId).toString() : null,
+      createdAt: new Date(row.createdAt).toISOString(),
+      updatedAt: new Date(row.updatedAt).toISOString(),
+    }));
+  }
+
+  /**
+   * Mirror a terminal runtime result onto the task's lane and
+   * executionState. The runtime is the source of truth for terminal
+   * outcomes; the backend only needs to keep the task row consistent so
+   * readiness evaluation sees `done`/`failed` (canonical §3.2). Non-
+   * terminal statuses are a no-op to avoid racing a future retry.
+   */
+  private async mirrorTaskState(
+    taskId: string,
+    status: string,
+  ): Promise<'done' | 'failed' | 'no_change'> {
+    const transition = TERMINAL_LANE_BY_STATUS[status];
+    if (!transition) return 'no_change';
+    const completedAt = new Date();
+    const task = await this.tasks
+      .findOne({ _id: new Types.ObjectId(taskId), executionState: { $nin: ['done', 'failed', 'canceled', 'superseded'] } })
+      .select({ startedAt: 1 })
+      .lean()
+      .exec();
+    if (!task) return 'no_change';
+    const startedAt = task.startedAt ? new Date(task.startedAt) : null;
+    const durationMs = startedAt ? Math.max(0, completedAt.getTime() - startedAt.getTime()) : null;
+    const result = await this.tasks
+      .updateOne(
+        { _id: new Types.ObjectId(taskId), executionState: { $nin: ['done', 'failed', 'canceled', 'superseded'] } },
+        { $set: { lane: transition.lane, executionState: transition.executionState, completedAt, durationMs, updatedAt: completedAt } },
+      )
+      .exec();
+    if (result.matchedCount === 0) return 'no_change';
+    return transition.executionState === 'failed' ? 'failed' : 'done';
   }
 }

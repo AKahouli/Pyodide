@@ -162,6 +162,22 @@ describe('WorkyPlanDeltaService.apply', () => {
     expect(result.resultPlanVersion).toBe(1);
   });
 
+  it('defaults created tasks to ephemeral AI workers when assignee is omitted', async () => {
+    const { service, taskCreate } = makeService();
+    await service.apply(
+      baseInput({
+        body: {
+          create_tasks: [
+            { title: 'A', lane: 'ready', actionCategory: 'internal_analysis' },
+          ],
+        },
+      }),
+    );
+    expect(taskCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ assigneeType: 'ephemeral_ai_agent' }),
+    );
+  });
+
   it('rejects when the base plan version is stale', async () => {
     const { service } = makeService({ streamUpdateNull: true });
     await expect(
@@ -236,6 +252,21 @@ describe('WorkyPlanDeltaService.apply', () => {
         }),
       ),
     ).rejects.toMatchObject({ code: 'ERR_3406' });
+  });
+
+  it('allows update_tasks to recover an unassigned task', async () => {
+    const existingTaskId = new Types.ObjectId();
+    const { service } = makeService({ existingTasks: [{ _id: existingTaskId }] });
+    const result = await service.apply(
+      baseInput({
+        body: {
+          update_tasks: [
+            { taskId: existingTaskId.toString(), assigneeType: 'ephemeral_ai_agent' },
+          ],
+        },
+      }),
+    );
+    expect(result.updatedTaskIds).toEqual([existingTaskId.toString()]);
   });
 
   it('rejects a delta with a dependsOn that points nowhere', async () => {

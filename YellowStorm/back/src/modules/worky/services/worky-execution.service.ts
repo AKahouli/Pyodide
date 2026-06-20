@@ -23,6 +23,7 @@ import {
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyAuditService } from './worky-audit.service';
+import { WorkyRuntimeDispatchService } from './worky-runtime-dispatch.service';
 import {
   IWorkyExecutionSnapshotResponse,
   IWorkyStartValidationIssue,
@@ -66,6 +67,7 @@ export class WorkyExecutionService {
     private readonly snapshots: Model<WorkyExecutionSnapshotDocument>,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
+    private readonly dispatch: WorkyRuntimeDispatchService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyExecutionService.name);
@@ -285,6 +287,23 @@ export class WorkyExecutionService {
       payload: { status: newStatus, controlState: 'active' },
     });
 
+    // Fire-and-forget runtime dispatch (canonical §3.2a). The request
+    // returns immediately after the snapshot is created; runtime SSE
+    // frames are forwarded to the SSE channel as they arrive. If the
+    // runtime is unreachable or returns an error, stream status stays
+    // `active` / `partially_blocked` (the snapshot is the user's intent)
+    // and a `stream.terminal` error frame is emitted so the UI surfaces
+    // the failure.
+    if (validation.readyTaskIds.length > 0) {
+      const claimedTaskIds = await this.claimTasksForDispatch(validation.readyTaskIds);
+      void this.dispatch.dispatchStart(stream, claimedTaskIds).catch((err) =>
+        this.logger.warn('Worky runtime start dispatch threw', {
+          streamId,
+          message: (err as Error).message,
+        }),
+      );
+    }
+
     return {
       ...validation,
       snapshotId: (snapshot._id as Types.ObjectId).toString(),
@@ -354,6 +373,77 @@ export class WorkyExecutionService {
       }
     }
     return commands;
+  }
+
+  /**
+   * Event-driven readiness loop (canonical §11.2). Caller passes the
+   * raw event payload; we recompute commands and dispatch the
+   * resulting runtime calls. This is the single production entry point
+   * that turns a backend event (e.g. `task.completed` from the runtime
+   * callback) into runtime work.
+   *
+   * Idempotency: each dispatch path guards on a per-task atomic
+    * state update (`not_started → running`)
+   * so duplicate events are no-ops.
+   */
+  async handleExecutionEvent(
+    streamId: string,
+    event: { type: string; payload: Record<string, unknown> },
+  ): Promise<void> {
+    const stream = await this.streams.findById(streamId).lean().exec();
+    if (!stream) return;
+    const commands = await this.recomputeReadiness(streamId, event);
+    if (commands.length === 0) return;
+    await this.dispatchReadinessCommands(stream as WorkyStreamDocument, commands);
+  }
+
+  /**
+   * Dispatch the commands returned by `recomputeReadiness` to the
+   * runtime. Each command is guarded by an atomic task state
+   * transition so duplicate dispatches are safe.
+   */
+  private async dispatchReadinessCommands(
+    stream: WorkyStreamDocument,
+    commands: Array<{ type: string; taskId: string; reason: string }>,
+  ): Promise<void> {
+    for (const cmd of commands) {
+      if (cmd.type === 'start_task' || cmd.type === 'spawn_ephemeral_agent') {
+        const claimed = await this.claimTaskForDispatch(cmd.taskId);
+        if (!claimed) continue;
+        await this.dispatch.dispatchSingleTask(stream, cmd.taskId);
+      } else if (cmd.type === 'resume_runtime_branch') {
+        // Resume is best-effort: a no-op for tasks whose state has
+        // already moved to a terminal state since the event was queued.
+        const claimed = await this.claimTaskForDispatch(cmd.taskId);
+        if (!claimed) continue;
+        await this.dispatch.dispatchSingleTask(stream, cmd.taskId);
+      }
+    }
+  }
+
+  /**
+   * Atomic guard: flip a task from `not_started` to `running` so a
+   * subsequent `task.completed` for the same task cannot re-dispatch
+   * it. Returns `false` when the task is already in flight or terminal.
+   */
+  private async claimTaskForDispatch(taskId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(taskId)) return false;
+    const now = new Date();
+    const result = await this.tasks
+      .updateOne(
+        { _id: new Types.ObjectId(taskId), executionState: 'not_started' },
+        { $set: { executionState: 'running', lane: 'running', startedAt: now, completedAt: null, durationMs: null, updatedAt: now } },
+      )
+      .exec();
+    return result.matchedCount > 0;
+  }
+
+  private async claimTasksForDispatch(taskIds: string[]): Promise<string[]> {
+    const claimed: string[] = [];
+    for (const taskId of taskIds) {
+      if (await this.claimTaskForDispatch(taskId)) claimed.push(taskId);
+    }
+    return claimed;
   }
 
   // ----- pause / resume / stop -----
@@ -427,6 +517,18 @@ export class WorkyExecutionService {
       emittedAt: Date.now(),
       payload: { status: 'active', controlState: 'active' },
     });
+
+    // Fire-and-forget runtime resume. The runtime re-dispatches any
+    // ready tasks via the existing /start flow on its side.
+    if (stream.executionPlanVersion) {
+      void this.dispatch.dispatchResume(stream, reason).catch((err) =>
+        this.logger.warn('Worky runtime resume dispatch threw', {
+          streamId,
+          message: (err as Error).message,
+        }),
+      );
+    }
+
     return this.latestSnapshotResponse(streamId);
   }
 
@@ -465,6 +567,15 @@ export class WorkyExecutionService {
       emittedAt: Date.now(),
       payload: { status: 'stopped' },
     });
+
+    // Fire-and-forget runtime stop. Failures are warnings only — the
+    // backend state is already terminal.
+    void this.dispatch.dispatchStop(stream).catch((err) =>
+      this.logger.warn('Worky runtime stop dispatch threw', {
+        streamId,
+        message: (err as Error).message,
+      }),
+    );
   }
 
   // ----- per-task ops -----
@@ -544,6 +655,7 @@ export class WorkyExecutionService {
    */
   async cancelTask(taskId: string, userId: string, reason?: string): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
+    const previousExecutionState = task.executionState;
     if (task.executionState === 'not_started') {
       task.lane = 'canceled';
       task.executionState = 'canceled';
@@ -564,6 +676,19 @@ export class WorkyExecutionService {
       emittedAt: Date.now(),
       payload: { taskId: task.id, lane: task.lane, reason: reason ?? '' },
     });
+
+    // Fire-and-forget runtime cancel. Only meaningful for tasks that may
+    // have an active worker. `done` → `superseded` is a no-op on the
+    // runtime (no worker is alive for a terminal task).
+    if (previousExecutionState === 'not_started') {
+      void this.dispatch.dispatchCancelTask(task.id).catch((err) =>
+        this.logger.warn('Worky runtime cancel dispatch threw', {
+          taskId: task.id,
+          message: (err as Error).message,
+        }),
+      );
+    }
+
     return {
       id: (task._id as Types.ObjectId).toString(),
       title: task.title,

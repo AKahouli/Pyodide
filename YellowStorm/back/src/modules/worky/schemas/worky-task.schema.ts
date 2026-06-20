@@ -137,6 +137,15 @@ export class WorkyTask extends Document {
   @Prop({ type: [String], default: [] })
   waitConditions!: string[];
 
+  @Prop({ type: Date, default: null })
+  startedAt?: Date | null;
+
+  @Prop({ type: Date, default: null })
+  completedAt?: Date | null;
+
+  @Prop({ type: Number, default: null, min: 0 })
+  durationMs?: number | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

@@ -379,7 +379,7 @@ export class WorkyPlanDeltaService {
         executionState: 'not_started',
         controlState: 'active',
         priority: c.priority ?? 'medium',
-        assigneeType: c.assigneeType ?? 'unassigned',
+        assigneeType: c.assigneeType ?? 'ephemeral_ai_agent',
         assigneeId: null,
         dependsOn: (c.dependsOn ?? []).map((ref) => this.resolveRef(ref, clientIdMap)),
         requiredTools: c.requiredTools ?? [],
@@ -446,6 +446,7 @@ export class WorkyPlanDeltaService {
       if (u.description !== undefined) update.description = u.description;
       if (u.lane !== undefined) update.lane = u.lane;
       if (u.priority !== undefined) update.priority = u.priority;
+      if (u.assigneeType !== undefined) update.assigneeType = u.assigneeType;
       if (u.actionCategory !== undefined) update.actionCategory = u.actionCategory;
       if (u.acceptanceCriteria !== undefined) update.acceptanceCriteria = u.acceptanceCriteria;
       if (u.dependsOn !== undefined) {

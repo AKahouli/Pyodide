@@ -1,5 +1,6 @@
 import { useModuleTranslation } from '@/modules/localization';
 import { AlertCircle, Clock } from 'lucide-react';
+import { StatusBadge } from './StatusBadge';
 import type { WorkyTask } from '../types';
 
 interface KanbanCardProps {
@@ -21,6 +22,7 @@ export function KanbanCard({ task }: KanbanCardProps): JSX.Element {
       ) : null}
       <footer className='mt-2 flex items-center justify-between text-[10px] text-muted-foreground'>
         <span>{t(`kanban.assignees.${task.assigneeType}`)}</span>
+        <StatusBadge status={task.executionState} />
         {task.theoreticalDeadlineAt ? (
           <span className='flex items-center gap-1'>
             <Clock className='h-3 w-3' aria-hidden />

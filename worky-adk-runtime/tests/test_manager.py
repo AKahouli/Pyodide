@@ -101,6 +101,23 @@ def test_submit_plan_delta_tool_emits_to_callback() -> None:
     assert submitted[0].create_tasks[0].title == "A"
 
 
+def test_update_task_accepts_assignment_recovery() -> None:
+    kwargs, submitted, _ = _build_with_callbacks()
+    submit_tool = kwargs["tools"][0]
+    result = submit_tool(
+        {
+            "update_tasks": [
+                {
+                    "taskId": "task-1",
+                    "assigneeType": "ephemeral_ai_agent",
+                }
+            ]
+        }
+    )
+    assert result == {"submitted": True}
+    assert submitted[0].update_tasks[0].assigneeType == "ephemeral_ai_agent"
+
+
 def test_request_input_tool_invokes_callback() -> None:
     kwargs, _, clarifications = _build_with_callbacks()
     clarify_tool = kwargs["tools"][1]

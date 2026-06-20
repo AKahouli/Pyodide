@@ -229,6 +229,17 @@ export function useTaskOps(streamId: string) {
   };
 }
 
+export function useTaskResults(taskId: string | null | undefined) {
+  return useQuery({
+    queryKey: taskId ? workyKeys.taskResults(taskId) : ['worky', 'task-results', 'noop'],
+    queryFn: () => {
+      if (!taskId) throw new Error('taskId is required');
+      return api.getTaskResults(taskId);
+    },
+    enabled: Boolean(taskId),
+  });
+}
+
 export function useGovernancePolicy(workspaceId: string | null | undefined) {
   return useQuery({
     queryKey: workspaceId ? workyKeys.governancePolicy(workspaceId) : ['worky', 'governance', 'noop'],

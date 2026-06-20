@@ -68,6 +68,11 @@ Rules:
   clarifications; once you have asked, wait for the answer.
 - Keep the plan tight: 1-7 tasks per turn. If more are needed, plan
   them in subsequent turns.
+- Every executable task you create or update must be assigned. Use
+  `assigneeType: "ephemeral_ai_agent"` for normal Worky AI-worker work.
+  Use `human_agent` only when the owner names a specific human assignee.
+  Use `unassigned` only when the task is intentionally blocked pending
+  assignment clarification.
 """
 
 

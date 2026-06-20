@@ -502,6 +502,7 @@ export const API_ENDPOINTS = {
     taskResume: (id: string) => `/worky/tasks/${id}/resume`,
     taskCancel: (id: string) => `/worky/tasks/${id}/cancel`,
     taskReview: (id: string) => `/worky/tasks/${id}/review`,
+    taskResults: (id: string) => `/worky/tasks/${id}/results`,
     taskHumanUpdate: (id: string) => `/worky/tasks/${id}/human-update`,
     streamBudget: (id: string) => `/worky/streams/${id}/budget`,
     executionReport: (id: string) => `/worky/streams/${id}/execution-report`,

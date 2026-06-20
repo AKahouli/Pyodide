@@ -59,6 +59,7 @@ class UpdateTask(BaseModel):
     description: Optional[str] = Field(default=None, max_length=5000)
     lane: Optional[Lane] = None
     priority: Optional[Priority] = None
+    assigneeType: Optional[AssigneeType] = None
     dependsOn: Optional[List[str]] = None
     actionCategory: Optional[ActionCategory] = None
     acceptanceCriteria: Optional[List[str]] = None

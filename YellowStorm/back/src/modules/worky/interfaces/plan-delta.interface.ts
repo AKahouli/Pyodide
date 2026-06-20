@@ -78,6 +78,7 @@ export interface IPlanDeltaUpdateTask {
   description?: string;
   lane?: PlanDeltaTaskLane;
   priority?: PlanDeltaTaskPriority;
+  assigneeType?: PlanDeltaTaskAssigneeType;
   dependsOn?: string[];
   actionCategory?: PlanDeltaActionCategory;
   acceptanceCriteria?: string[];

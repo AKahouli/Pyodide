@@ -170,4 +170,46 @@ describe('WorkyInternalController (idempotency contract)', () => {
       c.planDelta('not-a-valid-id', { eventId: 'e', basePlanVersion: 0 }),
     ).rejects.toBeDefined();
   });
+
+  it('taskResult callback triggers the execution readiness loop', async () => {
+    const taskObjectId = new Types.ObjectId();
+    const streamObjectId = new Types.ObjectId();
+    const executionHandle = jest.fn().mockResolvedValue(undefined);
+    const { controller, events } = makeController();
+    // Replace the empty execution mock with one that has the handler.
+    (controller as unknown as { execution: { handleExecutionEvent: jest.Mock } }).execution = {
+      handleExecutionEvent: executionHandle,
+    };
+    (controller as unknown as { taskModel: { findById: jest.Mock } }).taskModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: () => ({ exec: async () => ({ _id: taskObjectId, streamId: streamObjectId }) }),
+      }),
+    };
+    (controller as unknown as { taskResults: { record: jest.Mock } }).taskResults = {
+      record: jest.fn().mockResolvedValue({
+        taskResultId: new Types.ObjectId().toString(),
+        taskId: taskObjectId.toString(),
+        version: 1,
+        status: 'done',
+        replay: false,
+        taskTransitionedTo: 'done',
+      }),
+    };
+
+    await controller.taskResult(taskObjectId.toString(), {
+      eventId: 'evt-res-1',
+      status: 'done',
+      summary: 'all good',
+    });
+
+    expect(executionHandle).toHaveBeenCalledWith(
+      streamObjectId.toString(),
+      expect.objectContaining({ type: 'task.completed', payload: expect.objectContaining({ taskId: taskObjectId.toString() }) }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      expect.anything(),
+      streamObjectId.toString(),
+      expect.objectContaining({ type: 'task.completed' }),
+    );
+  });
 });

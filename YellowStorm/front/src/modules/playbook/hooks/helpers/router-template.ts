@@ -8,3 +8,7 @@ export function cloneRouterConfig(routerConfig?: RouterConfig | null): RouterCon
     conditions: routerConfig?.conditions?.map((condition) => ({ ...condition })),
   };
 }
+
+export function buildRouterOutputPorts(routerConfig: RouterConfig): Array<{ id: string; name: string; artifactKind: 'text' }> {
+  return routerConfig.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' }));
+}

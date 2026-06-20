@@ -154,6 +154,33 @@ def new_worker_session_id(stream_id: str, task_id: str) -> str:
     return f"worky-worker-{stream_id}-{task_id}-{int(time.time() * 1000)}"
 
 
+def format_worker_user_message(payload: dict[str, Any]) -> str:
+    """Build the ADK user message so traces show the actual task."""
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    stream = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    if not task:
+        return str(payload.get("text", payload))
+    criteria = task.get("acceptanceCriteria") or []
+    dependencies = task.get("dependsOn") or []
+    tools = task.get("requiredTools") or []
+    lines = [
+        "Resolve this Worky task and return the generated task result.",
+        f"Task id: {task.get('id', '')}",
+        f"Title: {task.get('title', '')}",
+        f"Description: {task.get('description', '')}",
+        f"Priority: {task.get('priority', '')}",
+        f"Action category: {task.get('actionCategory', '')}",
+        f"Stream id: {task.get('streamId') or stream.get('streamId', '')}",
+        f"Plan version: {task.get('planVersion') or stream.get('planVersion', '')}",
+        f"Dependencies: {', '.join(map(str, dependencies)) if dependencies else 'none'}",
+        f"Required tools: {', '.join(map(str, tools)) if tools else 'none'}",
+    ]
+    if criteria:
+        lines.append("Acceptance criteria:")
+        lines.extend(f"- {item}" for item in criteria)
+    return "\n".join(lines)
+
+
 async def run_worker_bounded_step(
     agent_tool: Any,
     payload: dict[str, Any],
@@ -204,7 +231,7 @@ async def run_worker_bounded_step(
     )
     new_message = genai_types.Content(
         role="user",
-        parts=[genai_types.Part(text=str(payload.get("text", payload)))],
+        parts=[genai_types.Part(text=format_worker_user_message(payload))],
     )
     try:
         async for event in runner.run_async(

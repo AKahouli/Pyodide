@@ -24,6 +24,9 @@ export class WorkyTaskResult extends Document {
   @Prop({ type: String, default: '', maxlength: 5000 })
   summary!: string;
 
+  @Prop({ type: Object, default: null })
+  payload?: Record<string, unknown> | null;
+
   @Prop({ type: Types.ObjectId, ref: 'WorkspaceDocument', default: null })
   contentArtifactId?: Types.ObjectId | null;
 

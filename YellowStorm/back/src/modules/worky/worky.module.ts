@@ -6,6 +6,7 @@ import { WorkyIdempotencyService } from './services/worky-idempotency.service';
 import { WorkyEventService } from './services/worky-event.service';
 import { WorkyAuditService } from './services/worky-audit.service';
 import { WorkyRuntimeClient } from './services/worky-runtime.client';
+import { WorkyRuntimeDispatchService } from './services/worky-runtime-dispatch.service';
 import { WorkyPlanDeltaService } from './services/worky-plan-delta.service';
 import { WorkyPlanningService } from './services/worky-planning.service';
 import { WorkyTaskService } from './services/worky-task.service';
@@ -178,6 +179,7 @@ import { ModelsModule } from '../models/models.module';
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
     WorkyTaskService,
@@ -202,6 +204,7 @@ import { ModelsModule } from '../models/models.module';
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
     WorkyTaskService,

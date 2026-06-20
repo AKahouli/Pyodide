@@ -58,6 +58,9 @@ const baseTask = {
   dependsOn: [],
   blockerReason: null,
   theoreticalDeadlineAt: null,
+  startedAt: null,
+  completedAt: null,
+  durationMs: null,
 };
 
 describe('KanbanBoard reconciles when useBoard returns new data', () => {

@@ -546,6 +546,7 @@ export class WorkyInternalController {
       taskId,
       status: dto.status,
       summary: dto.summary ?? '',
+      payload: dto.payload ?? null,
       contentArtifactId: dto.contentArtifactId ?? null,
       createdByWorkerId: dto.createdByWorkerId ?? null,
     });
@@ -560,6 +561,15 @@ export class WorkyInternalController {
           taskResultId: persisted.taskResultId,
           version: persisted.version,
         },
+      });
+      // Drive the readiness loop. When this task was a dependency
+      // for downstream tasks, `recomputeReadiness` will emit
+      // `start_task` commands and the dispatch service will
+      // forward them to the runtime. Fire-and-forget; the HTTP
+      // callback stays fast.
+      void this.execution.handleExecutionEvent(streamId, {
+        type: 'task.completed',
+        payload: { taskId, status: dto.status, version: persisted.version },
       });
     }
     await this.audit.append({

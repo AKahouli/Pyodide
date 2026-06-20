@@ -142,6 +142,12 @@ export class UpdateTaskDeltaDto {
   @IsString()
   priority?: (typeof PRIORITY_VALUES)[number];
 
+  @ApiPropertyOptional({ enum: ASSIGNEE_VALUES })
+  @IsOptional()
+  @IsString()
+  @IsEnum(ASSIGNEE_VALUES as unknown as string[])
+  assigneeType?: (typeof ASSIGNEE_VALUES)[number];
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
