@@ -62,6 +62,8 @@ export function StreamSidebar(): JSX.Element {
         <div className='relative'>
           <Search className='pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' />
           <Input
+            id='worky-stream-search'
+            name='streamSearch'
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={t('sidebar.searchPlaceholder')}
@@ -73,6 +75,8 @@ export function StreamSidebar(): JSX.Element {
       {createOpen ? (
         <div className='space-y-2 border-b border-border/60 bg-muted/30 px-3 py-3'>
           <Input
+            id='worky-new-stream-title'
+            name='streamTitle'
             value={draftTitle}
             onChange={(event) => setDraftTitle(event.target.value)}
             placeholder={t('sidebar.newStreamPlaceholder')}

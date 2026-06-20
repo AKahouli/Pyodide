@@ -10,10 +10,14 @@
  * `data:` lines per frame are joined with `\n` (canonical SSE).
  */
 import type { WorkyEvent, WorkyEventType } from '../types';
-import { AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
+import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
 
 export type WorkyEventHandler = (event: WorkyEvent) => void;
 export type WorkyEventUnsubscribe = () => void;
+
+const MAX_RETRY_ATTEMPTS = 6;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRY_MAX_DELAY_MS = 30000;
 
 interface SseConfig {
   baseURL: string;
@@ -21,13 +25,7 @@ interface SseConfig {
 }
 
 const defaultConfig: SseConfig = {
-  baseURL: (() => {
-    // The apiClient base includes `/api/v1`; strip it for the raw
-    // SSE fetch so we can pass the full path explicitly.
-    if (typeof window === 'undefined') return 'http://localhost:3000';
-    const configured = (window as unknown as { __API_BASE__?: string }).__API_BASE__;
-    return configured ?? `${window.location.origin}/api/v1`;
-  })(),
+  baseURL: API_CONFIG.baseURL,
   getAccessToken: () => {
     try {
       return window.localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
@@ -44,26 +42,62 @@ export function subscribeToStreamEvents(
 ): WorkyEventUnsubscribe {
   const controller = new AbortController();
   const url = `${config.baseURL}${API_ENDPOINTS.worky.streamEvents(streamId)}`;
-  const token = config.getAccessToken();
-  const headers: Record<string, string> = { Accept: 'text/event-stream' };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  void (async () => {
+  let isStopped = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryAttempts = 0;
+
+  const buildHeaders = (): Record<string, string> => {
+    const token = config.getAccessToken();
+    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  const shouldRetryStatus = (status: number): boolean => {
+    return status >= 500 || status === 408 || status === 429;
+  };
+
+  const scheduleReconnect = (): boolean => {
+    if (isStopped || controller.signal.aborted) return false;
+    if (retryAttempts >= MAX_RETRY_ATTEMPTS) return false;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryAttempts += 1;
+    const delay = Math.min(
+      RETRY_BASE_DELAY_MS * 2 ** (retryAttempts - 1),
+      RETRY_MAX_DELAY_MS,
+    );
+    const jitteredDelay = Math.round(delay * (0.5 + Math.random() * 0.5));
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void connect();
+    }, jitteredDelay);
+    return true;
+  };
+
+  const emitTerminal = (data: Record<string, unknown>): void => {
+    if (isStopped) return;
+    onEvent({ type: 'stream.terminal', data: { ...data, error: true } });
+  };
+
+  const connect = async (): Promise<void> => {
+    if (isStopped || controller.signal.aborted) return;
     try {
-      const res = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+      const res = await fetch(url, { method: 'GET', headers: buildHeaders(), signal: controller.signal });
       if (!res.ok || !res.body) {
-        onEvent({
-          type: 'stream.terminal',
-          data: { error: true, source: 'sse-non-ok', status: res.status },
-        });
+        if (!shouldRetryStatus(res.status) || !scheduleReconnect()) {
+          emitTerminal({ source: 'sse-non-ok', status: res.status });
+        }
         return;
       }
+      retryAttempts = 0;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       let eventName = '';
       let dataLines: string[] = [];
+      let shouldReconnect = true;
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { value, done } = await reader.read();
@@ -82,8 +116,13 @@ export function subscribeToStreamEvents(
             } catch {
               parsed = { raw: data };
             }
-            const type = (eventName as WorkyEventType) || 'stream.updated';
-            onEvent({ type, data: parsed });
+            if (eventName === 'error') {
+              shouldReconnect = false;
+              emitTerminal({ source: 'sse-error-frame', ...parsed });
+            } else {
+              const type = (eventName as WorkyEventType) || 'stream.updated';
+              onEvent({ type, data: parsed });
+            }
             eventName = '';
             dataLines = [];
             continue;
@@ -98,15 +137,21 @@ export function subscribeToStreamEvents(
           }
         }
       }
+      if (shouldReconnect) scheduleReconnect();
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
-      onEvent({
-        type: 'stream.terminal',
-        data: { error: true, source: 'sse-exception', message: (err as Error).message },
-      });
+      if (!scheduleReconnect()) {
+        emitTerminal({ source: 'sse-exception', message: (err as Error).message });
+      }
     }
+  };
+
+  void (async () => {
+    await connect();
   })();
   return () => {
+    isStopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
     controller.abort();
   };
 }

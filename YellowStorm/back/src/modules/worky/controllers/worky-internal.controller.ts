@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Public } from '../../auth/decorators/public.decorator';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { WorkyServiceAuthGuard } from '../guards/worky-service-auth.guard';
@@ -53,6 +54,12 @@ import {
  * `tasks/{id}/result` to their respective services.
  */
 @ApiTags('Worky (internal)')
+// The runtime is service-to-service; the global APP_GUARD (JwtAuthGuard)
+// must be bypassed so the per-route `WorkyServiceAuthGuard` is the
+// actual gate. Without `@Public()` the global guard rejects the
+// request with 401 before the service-token check runs (the runtime
+// has no JWT to present).
+@Public()
 @UseGuards(WorkyServiceAuthGuard)
 @Controller('worky/internal')
 export class WorkyInternalController {

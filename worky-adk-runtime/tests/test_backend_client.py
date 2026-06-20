@@ -60,7 +60,7 @@ async def test_plan_delta_sends_service_token_and_event_id() -> None:
         await client.aclose()
 
     assert captured["method"] == "POST"
-    assert captured["url"].endswith("/api/worky/internal/streams/stream-1/plan-delta")
+    assert captured["url"].endswith("/api/v1/worky/internal/streams/stream-1/plan-delta")
     assert captured["headers"][SERVICE_TOKEN_HEADER.lower()] == settings.service_token
     assert captured["headers"][EVENT_ID_HEADER.lower()] == "evt-fixed"
     assert captured["body"]["eventId"] == "evt-fixed"

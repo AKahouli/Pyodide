@@ -14,6 +14,8 @@ export function InteractionPanel({ streamId }: InteractionPanelProps): JSX.Eleme
   const { t } = useModuleTranslation('worky');
   const clarifications = useWorkyPendingClarifications();
   const setPendingClarifications = useWorkyStore((s) => s.setPendingClarifications);
+  const setStreaming = useWorkyStore((s) => s.setStreaming);
+  const setStreamError = useWorkyStore((s) => s.setStreamError);
   const respond = useRespondInteraction(streamId);
   const [answer, setAnswer] = useState<Record<string, string>>({});
 
@@ -37,8 +39,10 @@ export function InteractionPanel({ streamId }: InteractionPanelProps): JSX.Eleme
             respond.mutate(
               { interactionId: c.id, content },
               {
-                onSuccess: () => {
+                onSuccess: (result) => {
                   setPendingClarifications(clarifications.filter((x) => x.id !== c.id));
+                  setStreamError(null);
+                  if (result.followUpTurnStarted) setStreaming(true);
                   setAnswer((prev) => {
                     const next = { ...prev };
                     delete next[c.id];

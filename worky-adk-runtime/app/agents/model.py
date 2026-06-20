@@ -31,14 +31,18 @@ logger = logging.getLogger("worky.model")
 def _endpoint_kwargs() -> dict[str, str]:
     """Return `api_base` / `api_key` kwargs resolved from the runtime env.
 
-    Empty / missing env vars are NOT forwarded, so the LiteLLM
-    client falls back to its own defaults (e.g. `OPENAI_API_KEY`,
-    `http://localhost:4000`).
+    When `LITELLM_API_BASE_URL` is set, the runtime talks to a LiteLLM
+    proxy. We set `custom_llm_provider="litellm_proxy"` so LiteLLM's
+    client forwards the model name verbatim to the proxy instead of
+    trying to parse a provider prefix locally (which fails for models
+    like `minimax/minimax-m3` where the provider isn't in LiteLLM's
+    built-in registry).
     """
     settings = get_settings()
     kwargs: dict[str, str] = {}
     if settings.litellm_api_base_url:
         kwargs["api_base"] = settings.litellm_api_base_url
+        kwargs["custom_llm_provider"] = "litellm_proxy"
     if settings.litellm_api_secret_key:
         kwargs["api_key"] = settings.litellm_api_secret_key
     return kwargs

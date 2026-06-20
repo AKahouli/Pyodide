@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage } from '../query/hooks';
-import { useWorkyStreaming } from '../store';
+import { useWorkyStore, useWorkyStreaming } from '../store';
+import type { WorkyStreamStatus } from '../types';
 import { WorkyModelSelector } from './WorkyModelSelector';
 
 interface PromptBarProps {
   streamId: string;
+  status?: WorkyStreamStatus;
   /**
    * Per-stream persistent Manager model (LiteLLM identifier). The
    * prompt bar uses this to seed the local per-turn selector; the
@@ -21,6 +23,7 @@ interface PromptBarProps {
 
 export function PromptBar({
   streamId,
+  status,
   managerModelId,
   workerModelId,
 }: PromptBarProps): JSX.Element {
@@ -30,6 +33,9 @@ export function PromptBar({
   const [workerModel, setWorkerModel] = useState<string | null>(workerModelId ?? null);
   const send = useSendMessage(streamId);
   const streaming = useWorkyStreaming();
+  const setStreamError = useWorkyStore((s) => s.setStreamError);
+  const isTerminal = status === 'stopped' || status === 'completed' || status === 'archived';
+  const isDisabled = send.isPending || isTerminal;
   // `null` is a valid per-turn value the user can set (the "Default"
   // pseudo-option), so we cannot use it as the "never seeded" sentinel.
   // Track the seed flag in a ref so the late-arriving stream data can
@@ -58,7 +64,10 @@ export function PromptBar({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const content = value.trim();
-    if (!content || send.isPending) return;
+    if (!content || isDisabled) return;
+    // Clear any prior stream error so the banner from a previous
+    // failed turn does not linger into a fresh attempt.
+    setStreamError(null);
     // Only attach an override when the local selection differs from
     // the persisted value — keeps the wire payload small and avoids
     // sending redundant data on every turn.
@@ -83,7 +92,7 @@ export function PromptBar({
         onChange={(event) => setValue(event.target.value)}
         placeholder={t('promptBar.placeholder')}
         rows={1}
-        disabled={send.isPending}
+        disabled={isDisabled}
         className='min-h-[40px] flex-1 resize-none rounded-md border border-border/60 bg-background/60 px-3 py-2 text-sm placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
@@ -98,7 +107,7 @@ export function PromptBar({
         searchPlaceholder={t('promptBar.modelSelector.search')}
         defaultOptionLabel={t('promptBar.modelSelector.default')}
         emptyLabel={t('promptBar.modelSelector.empty')}
-        disabled={send.isPending}
+        disabled={isDisabled}
         onChange={setManagerModel}
       />
       <WorkyModelSelector
@@ -107,13 +116,13 @@ export function PromptBar({
         searchPlaceholder={t('promptBar.modelSelector.search')}
         defaultOptionLabel={t('promptBar.modelSelector.default')}
         emptyLabel={t('promptBar.modelSelector.empty')}
-        disabled={send.isPending}
+        disabled={isDisabled}
         onChange={setWorkerModel}
       />
       <Button
         type='submit'
         size='icon'
-        disabled={send.isPending || !value.trim()}
+        disabled={isDisabled || !value.trim()}
         aria-label={streaming ? t('promptBar.streaming') : t('promptBar.send')}
         data-testid='worky-prompt-send'
       >

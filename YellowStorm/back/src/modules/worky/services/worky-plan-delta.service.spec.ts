@@ -176,6 +176,39 @@ describe('WorkyPlanDeltaService.apply', () => {
     ).rejects.toMatchObject({ code: 'ERR_3409' });
   });
 
+  it('accepts a planning plan-delta when the stream is in start_validation_failed', async () => {
+    // After Start Stream rejects an empty plan, the runtime must be
+    // able to apply the follow-up plan delta on the next turn —
+    // otherwise the stream is dead-ended and the owner must abandon
+    // it. The plan-delta service shares the pre-execution phase
+    // definition with the planning service. We include a real
+    // `create_tasks` entry so the test exercises the full apply
+    // path, not the no-op empty-body branch.
+    const { service } = makeService({
+      stream: { ...makeService().stream, status: 'start_validation_failed' },
+    });
+    const result = await service.apply(
+      baseInput({
+        body: {
+          create_tasks: [
+            {
+              clientTaskId: 'recover-1',
+              title: 'Recover with one task',
+              lane: 'ready',
+              actionCategory: 'internal_analysis',
+            },
+          ],
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      streamId: expect.any(String),
+      planDeltaId: expect.any(String),
+      createdTaskIds: expect.any(Array),
+    });
+    expect(result.createdTaskIds.length).toBe(1);
+  });
+
   it('rejects a cyclic dependency in the new subgraph', async () => {
     const { service } = makeService();
     await expect(

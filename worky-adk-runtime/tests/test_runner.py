@@ -100,3 +100,82 @@ async def test_runner_propagates_runner_exception_as_planning_error() -> None:
     types_seen = [f.type for f in frames]
     assert "planning.error" in types_seen
     assert types_seen[-1] == "planning.error"
+
+
+@pytest.mark.asyncio
+async def test_runner_prepends_previous_clarification_to_user_message() -> None:
+    """The follow-up turn must give the Manager the question text, not
+    only the owner's answer — otherwise the model has no signal that
+    the previous turn's clarification was answered and re-asks."""
+
+    import sys
+
+    captured: dict = {}
+
+    genai_types = sys.modules["google.genai.types"]
+    original_part = genai_types.Part
+
+    def _capturing_part(**kwargs: Any) -> Any:
+        text = kwargs.get("text")
+        if text and "text" not in captured:
+            captured["text"] = text
+        return original_part(**kwargs)
+
+    genai_types.Part = _capturing_part
+    try:
+        importlib.reload(_runner_mod)
+        run_turn = _runner_mod.build_runner()
+        snapshot = {
+            "streamId": "s1",
+            "planVersion": 0,
+            "budget": {"limitUsd": 0, "spendUsd": 0},
+            "board": {},
+            "previousClarification": {
+                "interactionId": "i1",
+                "question": "Which document should the benchmark cover?",
+                "options": ["Q1 report", "Q2 report", "Both"],
+            },
+        }
+        async for _ in run_turn("Q2 report", snapshot, None):
+            pass
+    finally:
+        genai_types.Part = original_part
+        importlib.reload(_runner_mod)
+
+    assert "text" in captured, "Runner did not build a Part for the user turn"
+    text = captured["text"]
+    assert "Which document should the benchmark cover?" in text
+    assert "Q2 report" in text
+    assert "Q1 report" in text
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_prepend_clarification_without_snapshot() -> None:
+    """Owner-message turns (no previous clarification) must keep the
+    raw owner message — adding spurious context would still confuse
+    the model on plain new-message turns."""
+
+    import sys
+
+    captured: dict = {}
+
+    genai_types = sys.modules["google.genai.types"]
+    original_part = genai_types.Part
+
+    def _capturing_part(**kwargs: Any) -> Any:
+        text = kwargs.get("text")
+        if text and "text" not in captured:
+            captured["text"] = text
+        return original_part(**kwargs)
+
+    genai_types.Part = _capturing_part
+    try:
+        importlib.reload(_runner_mod)
+        run_turn = _runner_mod.build_runner()
+        async for _ in run_turn("plain owner message", None, None):
+            pass
+    finally:
+        genai_types.Part = original_part
+        importlib.reload(_runner_mod)
+
+    assert captured.get("text") == "plain owner message"

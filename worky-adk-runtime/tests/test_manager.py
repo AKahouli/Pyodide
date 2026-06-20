@@ -62,11 +62,19 @@ def test_manager_agent_wires_submit_and_clarify_tools() -> None:
     kwargs, _, _ = _build_with_callbacks()
     tools = kwargs.get("tools", [])
     assert len(tools) == 2, "Manager must have exactly 2 tools"
+    # The tool NAMES must match the system instruction. Earlier
+    # revisions registered them as `submit_plan_delta_tool` and
+    # `clarification_tool`, which left the LLM with no callable
+    # surface and caused the ask→ask→ask loop.
+    tool_names = {getattr(t, "__name__", None) for t in tools}
+    assert "submit_plan_delta" in tool_names
+    assert "request_input" in tool_names
 
 
 def test_submit_plan_delta_tool_validates_input() -> None:
     kwargs, submitted, _ = _build_with_callbacks()
     submit_tool = kwargs["tools"][0]
+    assert submit_tool.__name__ == "submit_plan_delta"
     # Invalid body — missing required actionCategory.
     result = submit_tool({"create_tasks": [{"title": "X", "lane": "ready"}]})
     assert result["submitted"] is False
@@ -93,9 +101,10 @@ def test_submit_plan_delta_tool_emits_to_callback() -> None:
     assert submitted[0].create_tasks[0].title == "A"
 
 
-def test_clarification_tool_invokes_callback() -> None:
+def test_request_input_tool_invokes_callback() -> None:
     kwargs, _, clarifications = _build_with_callbacks()
     clarify_tool = kwargs["tools"][1]
+    assert clarify_tool.__name__ == "request_input"
     result = clarify_tool("Which doc?", ["A", "B"])
     assert result["asked"] is True
     assert clarifications == [("Which doc?", ["A", "B"])]

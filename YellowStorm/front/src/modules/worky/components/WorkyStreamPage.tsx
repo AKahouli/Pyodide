@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useModuleTranslation } from '@/modules/localization';
@@ -206,11 +207,16 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         }
         case 'stream.terminal': {
           setStreaming(false);
-          setStreamError(
-            event.data && (event.data as { error?: boolean }).error
-              ? tWorky('stream.error')
-              : null,
-          );
+          if (event.data && (event.data as { error?: boolean }).error) {
+            // Prefer the runtime's own error text when the backend
+            // forwarded it (the runtime's `planning.error` payload
+            // is propagated as `errorText`); fall back to the
+            // localized generic message.
+            const detail = (event.data as { errorText?: string }).errorText;
+            setStreamError(detail || tWorky('stream.error'));
+          } else {
+            setStreamError(null);
+          }
           break;
         }
         default:
@@ -245,6 +251,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   // a small chip so the owner can see progress.
   const assistantText = useWorkyStore((s) => s.assistantText);
   const isStreaming = useWorkyStore((s) => s.streaming);
+  const streamError = useWorkyStore((s) => s.streamError);
+  const clearStreamError = useWorkyStore((s) => s.setStreamError);
 
   // Title rename via the existing stream mutation (Part 3 reuses
   // the Part 1 endpoint; PATCH /worky/streams/{id} is owner-only).
@@ -280,9 +288,26 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           </div>
         </section>
       </div>
-      {isStreaming && assistantText ? (
+      {isStreaming ? (
         <div className='border-t border-border/60 bg-background/40 px-6 py-2 text-xs italic text-muted-foreground'>
-          {assistantText}
+          {assistantText || tWorky('stream.working')}
+        </div>
+      ) : null}
+      {streamError ? (
+        <div
+          role='alert'
+          data-testid='worky-stream-error'
+          className='flex items-start gap-3 border-t border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive'
+        >
+          <AlertTriangle className='mt-0.5 h-4 w-4 flex-none' />
+          <div className='flex-1 break-words'>{streamError}</div>
+          <button
+            type='button'
+            className='text-destructive/80 underline-offset-2 hover:underline'
+            onClick={() => clearStreamError(null)}
+          >
+            {tWorky('stream.errorDismiss')}
+          </button>
         </div>
       ) : null}
       {streamQuery.data ? (
@@ -294,6 +319,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
       ) : null}
       <PromptBar
         streamId={streamId}
+        status={streamQuery.data?.status}
         managerModelId={streamQuery.data?.managerModelId}
         workerModelId={streamQuery.data?.workerModelId}
       />

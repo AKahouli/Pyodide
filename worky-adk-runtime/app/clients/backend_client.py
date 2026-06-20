@@ -23,6 +23,13 @@ logger = logging.getLogger("worky.backend_client")
 
 SERVICE_TOKEN_HEADER = "X-Service-Token"
 EVENT_ID_HEADER = "X-Event-Id"
+# NestJS global API prefix is `api` and the default URI version is
+# `1` (see YellowStorm/back/src/main.ts), so every internal callback
+# lives under `/api/v1/worky/internal/...`. The runtime was
+# historically posting to `/api/...` only, which yielded 404 — the
+# `/_post` path is built from this constant so all callbacks stay in
+# lock-step with the backend.
+API_PREFIX = "/api/v1/worky/internal"
 
 
 class BackendClient:
@@ -65,7 +72,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/plan-delta",
+            f"{API_PREFIX}/streams/{stream_id}/plan-delta",
             event_id=event_id,
             json=body,
         )
@@ -77,7 +84,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/spawn-worker",
+            f"{API_PREFIX}/streams/{stream_id}/spawn-worker",
             event_id=event_id,
             json=body,
         )
@@ -89,7 +96,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/interaction",
+            f"{API_PREFIX}/streams/{stream_id}/interaction",
             event_id=event_id,
             json=body,
         )
@@ -101,7 +108,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/governance/check",
+            f"{API_PREFIX}/streams/{stream_id}/governance/check",
             event_id=event_id,
             json=body,
         )
@@ -113,7 +120,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/budget/reserve",
+            f"{API_PREFIX}/streams/{stream_id}/budget/reserve",
             event_id=event_id,
             json=body,
         )
@@ -125,7 +132,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/cost-event",
+            f"{API_PREFIX}/streams/{stream_id}/cost-event",
             event_id=event_id,
             json=body,
         )
@@ -137,7 +144,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/artifact",
+            f"{API_PREFIX}/streams/{stream_id}/artifact",
             event_id=event_id,
             json=body,
         )
@@ -149,7 +156,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/streams/{stream_id}/audit",
+            f"{API_PREFIX}/streams/{stream_id}/audit",
             event_id=event_id,
             json=body,
         )
@@ -161,7 +168,7 @@ class BackendClient:
         event_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._post(
-            f"/api/worky/internal/tasks/{task_id}/result",
+            f"{API_PREFIX}/tasks/{task_id}/result",
             event_id=event_id,
             json=body,
         )

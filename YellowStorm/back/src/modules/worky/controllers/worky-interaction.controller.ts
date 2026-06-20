@@ -132,6 +132,11 @@ export class WorkyInteractionController {
         streamId: result.streamId,
         userId: user._id.toString(),
         content: dto.content,
+        // Carry the original clarification through to the follow-up
+        // turn so the runtime can inject the question/options into
+        // the context snapshot. Without this the Manager only sees
+        // the owner's answer text and tends to re-ask.
+        resolvingInteractionId: interactionId,
         triggerKind:
           result.verdict === 'approved'
             ? 'approval_granted'

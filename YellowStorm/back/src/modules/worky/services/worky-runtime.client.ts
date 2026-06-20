@@ -21,7 +21,7 @@ export class WorkyRuntimeClient implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('worky.runtimeBaseUrl') ?? 'http://worky-adk-runtime:8011';
-    this.timeoutMs = this.config.get<number>('worky.runtimeTimeoutMs') ?? 15000;
+    this.timeoutMs = Math.min(this.config.get<number>('worky.runtimeTimeoutMs') ?? 15000, 15000);
   }
 
   get baseURL(): string {

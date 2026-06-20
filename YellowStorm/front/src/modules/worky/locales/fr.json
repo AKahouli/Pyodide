@@ -70,6 +70,8 @@
   "interactions.answer": "Répondre",
   "interactions.dismiss": "Ignorer la clarification",
   "stream.error": "Flux fermé inopinément.",
+  "stream.errorDismiss": "Ignorer",
+  "stream.working": "Le Manager travaille…",
   "nav.worky": "Worky",
   "nav.worky.tooltip": "Ouvrir la page Worky (Chief of Staff)",
   "controls.start": "Démarrer le flux",

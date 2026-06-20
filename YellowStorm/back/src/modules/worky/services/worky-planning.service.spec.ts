@@ -4,12 +4,26 @@ import { WorkyPlanningService } from './worky-planning.service';
 interface MakeOptions {
   stream?: any;
   board?: Record<string, any[]>;
+  runtimeTimeoutMs?: number;
   /**
    * The value returned by `ModelsService.getModelIdentifier(defaultModel)`
    * when the admin default is queried. `null` (or `'__none__'`) means
    * "no admin default configured". Defaults to `'gpt-4o-mini'`.
    */
   defaultModel?: string | null;
+  /**
+   * Optional mock interaction returned by `WorkyInteractionModel.findById`
+   * when the planning turn is resolving a clarification. `null` (or
+   * omitted) means "interaction not found / not a clarification",
+   * which the service treats as "no prior clarification".
+   */
+  interaction?: {
+    id?: string;
+    type?: string;
+    question?: string;
+    options?: string[];
+    streamObjectId?: Types.ObjectId;
+  } | null;
 }
 
 const makeService = (options: MakeOptions = {}) => {
@@ -37,6 +51,23 @@ const makeService = (options: MakeOptions = {}) => {
       }),
     }),
   };
+  const interactionDoc = options.interaction
+    ? {
+        _id: new Types.ObjectId(options.interaction.id ?? '000000000000000000000001'),
+        streamId:
+          options.interaction.streamObjectId ?? streamObjectId,
+        type: options.interaction.type ?? 'clarification',
+        question: options.interaction.question ?? 'Which doc?',
+        options: options.interaction.options ?? ['A', 'B'],
+      }
+    : null;
+  const interactionModel = {
+    findById: jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(interactionDoc),
+      }),
+    }),
+  };
   const taskService = {
     projectForBoard: jest.fn().mockResolvedValue(options.board ?? {}),
   };
@@ -54,10 +85,17 @@ const makeService = (options: MakeOptions = {}) => {
     getDefaultModel: jest.fn().mockResolvedValue(defaultModelDoc),
     getModelIdentifier: jest.fn(
       (m: { id?: string; litellmModel?: string } | null | undefined) =>
-        m?.id || m?.litellmModel || '',
+        m?.litellmModel || m?.id || '',
     ),
   } as any;
-  const config = { get: jest.fn((key: string, fallback?: number) => fallback ?? 0) } as any;
+  const config = {
+    get: jest.fn((key: string, fallback?: number) => {
+      if (key === 'worky.runtimeTimeoutMs' && options.runtimeTimeoutMs !== undefined) {
+        return options.runtimeTimeoutMs;
+      }
+      return fallback;
+    }),
+  } as any;
   const logger = {
     setContext: jest.fn(),
     log: jest.fn(),
@@ -68,6 +106,7 @@ const makeService = (options: MakeOptions = {}) => {
   const service = new WorkyPlanningService(
     streamModel as any,
     messageModel as any,
+    interactionModel as any,
     taskService as any,
     runtime,
     events,
@@ -75,7 +114,7 @@ const makeService = (options: MakeOptions = {}) => {
     config,
     logger,
   );
-  return { service, streamModel, messageModel, taskService, events, models, ownerId, streamObjectId };
+  return { service, streamModel, messageModel, interactionModel, taskService, events, models, ownerId, streamObjectId };
 };
 
 describe('WorkyPlanningService.appendOwnerMessage', () => {
@@ -110,6 +149,35 @@ describe('WorkyPlanningService.appendOwnerMessage', () => {
     await expect(
       service.appendOwnerMessage(ownerId.toString(), streamId, { content: 'x' }),
     ).rejects.toMatchObject({ code: 'ERR_3409' });
+  });
+
+  it('accepts a message in start_validation_failed so the owner can recover the plan', async () => {
+    // After Start Stream rejects an empty plan, the stream is left
+    // in `start_validation_failed`. The owner must be able to keep
+    // conversing with the Manager from the same stream — otherwise
+    // the stream is dead-ended and they have to abandon it.
+    const { service, messageModel, events, ownerId } = makeService();
+    service['streams'].findById = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(),
+        ownerUserId: ownerId,
+        status: 'start_validation_failed',
+        currentPlanVersion: 0,
+        budget: { limitUsd: 0, spendUsd: 0 },
+      }),
+    });
+    const result = await service.appendOwnerMessage(
+      ownerId.toString(),
+      streamId,
+      { content: 'Add at least one task' },
+    );
+    expect(result.content).toBe('Add at least one task');
+    expect(messageModel.create).toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      ownerId.toString(),
+      streamId,
+      expect.objectContaining({ type: 'message.appended' }),
+    );
   });
 });
 
@@ -197,8 +265,34 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
         error: () => resolve(),
       });
     });
-    const emitTypes = events.emit.mock.calls.map((c: any[]) => c[2]?.type);
-    expect(emitTypes).toContain('stream.terminal');
+    const terminal = events.emit.mock.calls.find((c: any[]) => c[2]?.type === 'stream.terminal');
+    expect(terminal).toBeDefined();
+    expect(terminal![2].payload.errorText).toMatch(/500/);
+  });
+
+  it('forwards the runtime planning.error text as errorText on stream.terminal', async () => {
+    stubFetch([
+      sseFrame('planning.error', {
+        type: 'planning.error',
+        emitted_at: 1,
+        payload: { error: 'litellm.InternalServerError: Missing credentials' },
+      }),
+    ]);
+    const { service, events, ownerId } = makeService();
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'x',
+          triggerKind: 'owner_message',
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    const terminal = events.emit.mock.calls.find((c: any[]) => c[2]?.type === 'stream.terminal');
+    expect(terminal).toBeDefined();
+    expect(terminal![2].payload.error).toBe(true);
+    expect(terminal![2].payload.errorText).toMatch(/Missing credentials/);
   });
 
   it('forwards per-turn model ids in the runtime request body', async () => {
@@ -227,6 +321,160 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
     expect(capturedBody.manager_model_id).toBe('gpt-4o-mini');
     expect(capturedBody.worker_model_id).toBe('claude-3-5-sonnet-20240620');
   });
+
+  it('uses the configured planning runtime timeout for the runtime request', async () => {
+    const timeoutSpy = jest.spyOn(AbortSignal, 'timeout');
+    (global as any).fetch = jest.fn().mockImplementation(async () => {
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const { service, ownerId } = makeService({ runtimeTimeoutMs: 45000 });
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'go',
+          triggerKind: 'owner_message',
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(timeoutSpy).toHaveBeenCalledWith(45000);
+    timeoutSpy.mockRestore();
+  });
+
+  it('injects the resolving clarification into the runtime context snapshot', async () => {
+    let capturedBody: any = null;
+    (global as any).fetch = jest.fn().mockImplementation(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const resolvingInteractionId = new Types.ObjectId().toString();
+    const { service, ownerId } = makeService({
+      interaction: {
+        id: resolvingInteractionId,
+        type: 'clarification',
+        question: 'Which document should the benchmark cover?',
+        options: ['Q1 report', 'Q2 report', 'Both'],
+      },
+    });
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'Q2 report',
+          triggerKind: 'clarification_response',
+          resolvingInteractionId,
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(capturedBody.context_snapshot.previousClarification).toEqual({
+      interactionId: resolvingInteractionId,
+      question: 'Which document should the benchmark cover?',
+      options: ['Q1 report', 'Q2 report', 'Both'],
+    });
+  });
+
+  it('omits previousClarification when no resolving interaction is supplied', async () => {
+    let capturedBody: any = null;
+    (global as any).fetch = jest.fn().mockImplementation(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const { service, ownerId } = makeService();
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'go',
+          triggerKind: 'owner_message',
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(capturedBody.context_snapshot.previousClarification).toBeNull();
+  });
+
+  it('omits previousClarification when the interaction belongs to a different stream', async () => {
+    let capturedBody: any = null;
+    (global as any).fetch = jest.fn().mockImplementation(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const resolvingInteractionId = new Types.ObjectId().toString();
+    const { service, ownerId } = makeService({
+      interaction: {
+        id: resolvingInteractionId,
+        // Belongs to a stream that is NOT the active one.
+        streamObjectId: new Types.ObjectId(),
+        type: 'clarification',
+        question: 'Which document?',
+        options: ['A'],
+      },
+    });
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'A',
+          triggerKind: 'clarification_response',
+          resolvingInteractionId,
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(capturedBody.context_snapshot.previousClarification).toBeNull();
+  });
+
+  it('omits previousClarification when the interaction is not a clarification', async () => {
+    let capturedBody: any = null;
+    (global as any).fetch = jest.fn().mockImplementation(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const resolvingInteractionId = new Types.ObjectId().toString();
+    const { service, ownerId } = makeService({
+      interaction: {
+        id: resolvingInteractionId,
+        type: 'approval',
+        question: 'Approve?',
+        options: [],
+      },
+    });
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'yes',
+          triggerKind: 'approval_granted',
+          resolvingInteractionId,
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(capturedBody.context_snapshot.previousClarification).toBeNull();
+  });
+
 
   it('falls back to the stream field when no per-turn override is supplied', async () => {
     let capturedBody: any = null;

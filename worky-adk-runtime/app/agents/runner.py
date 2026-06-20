@@ -73,12 +73,37 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
             )
             return
 
+        # If this turn is the resolution of a previous clarification,
+        # prepend the original question/options to the owner message
+        # so the Manager has the question text in-context. The full
+        # snapshot is also passed through to the agent via the
+        # session, but ADK's `new_message` is the only slot the
+        # LLM-visible user turn occupies.
+        snapshot = context_snapshot or {}
+        previous_clarification = snapshot.get("previousClarification") or snapshot.get(
+            "previous_clarification"
+        )
+        effective_message = owner_message
+        if isinstance(previous_clarification, dict):
+            prev_q = str(previous_clarification.get("question") or "").strip()
+            prev_options = previous_clarification.get("options") or []
+            if prev_q:
+                option_lines = (
+                    "\n".join(f"- {o}" for o in prev_options) if prev_options else ""
+                )
+                effective_message = (
+                    f"Owner answered the previous clarification question.\n"
+                    f"Question: {prev_q}\n"
+                    + (f"Options previously offered:\n{option_lines}\n" if option_lines else "")
+                    + owner_message
+                )
+
         # 1) Ack the turn
         yield PlanningFrame(
             "planning.ack",
             {
                 "owner_message": owner_message,
-                "context_snapshot": context_snapshot or {},
+                "context_snapshot": snapshot,
                 "manager_model_id": manager_model_id,
             },
         )
@@ -129,7 +154,7 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
 
         new_message = genai_types.Content(
             role="user",
-            parts=[genai_types.Part(text=owner_message)],
+            parts=[genai_types.Part(text=effective_message)],
         )
 
         assistant_text = ""

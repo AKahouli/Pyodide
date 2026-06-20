@@ -70,6 +70,8 @@
   "interactions.answer": "Answer",
   "interactions.dismiss": "Dismiss clarification",
   "stream.error": "Stream closed unexpectedly.",
+  "stream.errorDismiss": "Dismiss",
+  "stream.working": "Manager is working…",
   "nav.worky": "Worky",
   "nav.worky.tooltip": "Open the Worky (Chief of Staff) page",
   "controls.start": "Start stream",

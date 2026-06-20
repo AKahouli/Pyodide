@@ -553,7 +553,16 @@ export class WorkyPlanDeltaService {
   }
 
   private isPreExecutionPhase(status: string): boolean {
-    return status === 'created' || status === 'planning';
+    // `start_validation_failed` is a pre-execution status: Start
+    // Stream ran while the plan was empty, so the owner needs to
+    // keep conversing with the Manager to add tasks. Without this
+    // the plan-delta path would reject the follow-up delta with
+    // ERR_3409 and the stream is dead-ended.
+    return (
+      status === 'created' ||
+      status === 'planning' ||
+      status === 'start_validation_failed'
+    );
   }
 
   private isTerminalPhase(status: string): boolean {

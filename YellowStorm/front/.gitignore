@@ -31,3 +31,8 @@ dist-ssr
 .env.production.local
 */.claude
 *cwd*
+
+# Playwright
+playwright-report/
+test-results/
+tests/e2e/.auth/

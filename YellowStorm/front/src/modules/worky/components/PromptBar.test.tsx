@@ -8,6 +8,7 @@ import { PromptBar } from './PromptBar';
 
 const STREAM_ID = 'stream-1';
 const sendCalls: Array<{ content: string; managerModelId?: string; workerModelId?: string }> = [];
+const setStreamErrorMock = vi.fn();
 
 vi.mock('../query/hooks', () => ({
   useSendMessage: () => ({
@@ -22,6 +23,8 @@ vi.mock('../query/hooks', () => ({
 
 vi.mock('../store', () => ({
   useWorkyStreaming: () => false,
+  useWorkyStore: (selector: (s: { setStreamError: (v: string | null) => void }) => unknown) =>
+    selector({ setStreamError: setStreamErrorMock }),
 }));
 
 function makeModel(overrides: Partial<Model> = {}): Model {
@@ -63,6 +66,7 @@ function seedModelsStore(model: Model | null) {
 describe('PromptBar model selection (cold load + Default stickiness)', () => {
   beforeEach(() => {
     sendCalls.length = 0;
+    setStreamErrorMock.mockClear();
     seedModelsStore(makeModel());
   });
 
@@ -244,5 +248,44 @@ describe('PromptBar model selection (cold load + Default stickiness)', () => {
     expect(sendCalls).toHaveLength(1);
     expect(sendCalls[0].content).toBe('ping');
     expect(sendCalls[0].managerModelId).toBe('openai/gpt-4o-mini');
+  });
+
+  it('does not send messages when the stream is stopped', () => {
+    render(
+      <TestProviders>
+        <PromptBar
+          streamId={STREAM_ID}
+          status='stopped'
+          managerModelId={null}
+          workerModelId={null}
+        />
+      </TestProviders>,
+    );
+
+    const textarea = screen.getByTestId('worky-prompt-content') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'do not send' } });
+    fireEvent.click(screen.getByTestId('worky-prompt-send'));
+
+    expect(textarea).toBeDisabled();
+    expect(screen.getByTestId('worky-prompt-send')).toBeDisabled();
+    expect(sendCalls).toHaveLength(0);
+  });
+
+  it('clears any prior stream error when a new message is sent', () => {
+    render(
+      <TestProviders>
+        <PromptBar
+          streamId={STREAM_ID}
+          managerModelId={null}
+          workerModelId={null}
+        />
+      </TestProviders>,
+    );
+
+    const textarea = screen.getByTestId('worky-prompt-content') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'retry' } });
+    fireEvent.click(screen.getByTestId('worky-prompt-send'));
+
+    expect(setStreamErrorMock).toHaveBeenCalledWith(null);
   });
 });

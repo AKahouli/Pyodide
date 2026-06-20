@@ -247,7 +247,7 @@ export const configValidationSchema = Joi.object({
   WORKY_RUNTIME_BASE_URL: Joi.string()
     .uri()
     .default('http://worky-adk-runtime:8011'),
-  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(15000),
+  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(300000).default(120000),
   WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
   WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),

@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Subject, Observable } from 'rxjs';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
+import { WorkyInteraction, WorkyInteractionDocument } from '../schemas/worky-interaction.schema';
 import { LoggerService } from '../../logger';
 import { BadRequestException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -19,6 +20,11 @@ export interface StartTurnInput {
   userId: string;
   content: string;
   triggerKind: 'owner_message' | 'clarification_response' | 'approval_granted' | 'approval_rejected';
+  // Optional id of the clarification interaction this turn is
+  // resolving. When present, the planning service injects the
+  // original question/options into the context snapshot so the
+  // Manager can finalize the plan instead of re-asking.
+  resolvingInteractionId?: string | null;
   // Per-turn model overrides. The backend resolves the full chain
   // (override → stream field → admin default) and forwards the
   // resolved LiteLLM identifier to the runtime.
@@ -34,6 +40,11 @@ export interface ContextSnapshot {
   ownerMemoryRef: string | null;
   streamMemoryRef: string | null;
   latestMessageId: string | null;
+  previousClarification: {
+    interactionId: string;
+    question: string;
+    options: string[];
+  } | null;
 }
 
 /**
@@ -58,6 +69,8 @@ export class WorkyPlanningService {
     private readonly streams: Model<WorkyStreamDocument>,
     @InjectModel(WorkyMessage.name)
     private readonly messages: Model<WorkyMessageDocument>,
+    @InjectModel(WorkyInteraction.name)
+    private readonly interactions: Model<WorkyInteractionDocument>,
     private readonly tasks: WorkyTaskService,
     private readonly runtime: WorkyRuntimeClient,
     private readonly events: WorkyEventService,
@@ -146,7 +159,14 @@ export class WorkyPlanningService {
   ): Promise<void> {
     try {
       const stream = await this.loadStream(input.streamId, input.userId);
-      const snapshot = await this.buildContextSnapshot(stream, input.userId);
+      const previousClarification = input.resolvingInteractionId
+        ? await this.loadResolvingClarification(input.resolvingInteractionId, stream._id)
+        : null;
+      const snapshot = await this.buildContextSnapshot(
+        stream,
+        input.userId,
+        previousClarification,
+      );
       const { managerModelId, workerModelId } = await this.resolveTurnModelIds(
         stream,
         input.managerModelIdOverride,
@@ -176,7 +196,7 @@ export class WorkyPlanningService {
         this.events.emit(input.userId, input.streamId, {
           type: 'stream.terminal',
           emittedAt: Date.now(),
-          payload: { error: true, source: 'runtime-non-ok' },
+          payload: { error: true, source: 'runtime-non-ok', errorText: `Runtime returned ${response.status}` },
         });
         subject.complete();
         return;
@@ -238,7 +258,7 @@ export class WorkyPlanningService {
       this.events.emit(input.userId, input.streamId, {
         type: 'stream.terminal',
         emittedAt: Date.now(),
-        payload: { error: true, source: 'turn-exception' },
+        payload: { error: true, source: 'turn-exception', errorText: (err as Error).message.slice(0, 500) },
       });
       subject.complete();
     }
@@ -305,10 +325,22 @@ export class WorkyPlanningService {
       return;
     }
     if (frame.type === 'planning.error') {
+      // Surface the runtime's own error message in the terminal payload
+      // so the UI can show "why" instead of a generic "stream closed"
+      // banner. Truncate to keep the toast bounded. Preserve the
+      // runtime's structured `error` field (string) without letting it
+      // shadow our `error: true` flag.
+      const rawError = (frame.payload as { error?: unknown }).error;
+      const errorText =
+        typeof rawError === 'string' && rawError.trim()
+          ? rawError.slice(0, 500)
+          : null;
+      const { error: _runtimeError, ...rest } = frame.payload;
+      void _runtimeError;
       this.events.emit(input.userId, input.streamId, {
         type: 'stream.terminal',
         emittedAt: Date.now(),
-        payload: { error: true, source: 'runtime-frame', ...frame.payload },
+        payload: { error: true, source: 'runtime-frame', errorText, ...rest },
       });
     }
   }
@@ -390,13 +422,64 @@ export class WorkyPlanningService {
     return stream;
   }
 
+  /**
+   * Load the clarification interaction a follow-up turn is resolving.
+   * The original question/options are injected into the runtime
+   * context snapshot so the Manager can produce a `submit_plan_delta`
+   * on the next turn instead of looping back to `request_input`.
+   * Returns `null` when the interaction is missing, belongs to a
+   * different stream, or is not a clarification — those cases are
+   * treated as "no prior clarification" so the turn still runs.
+   */
+  private async loadResolvingClarification(
+    interactionId: string,
+    streamObjectId: Types.ObjectId,
+  ): Promise<{
+    interactionId: string;
+    question: string;
+    options: string[];
+  } | null> {
+    if (!Types.ObjectId.isValid(interactionId)) return null;
+    const interaction = await this.interactions
+      .findById(interactionId)
+      .lean()
+      .exec();
+    if (!interaction) return null;
+    if (interaction.streamId.toString() !== streamObjectId.toString()) return null;
+    if (
+      interaction.type !== 'clarification' &&
+      interaction.type !== 'assignment_disambiguation'
+    ) {
+      return null;
+    }
+    return {
+      interactionId: (interaction._id as Types.ObjectId).toString(),
+      question: interaction.question,
+      options: Array.isArray(interaction.options) ? interaction.options : [],
+    };
+  }
+
   private isPreExecutionPhase(status: string): boolean {
-    return status === 'created' || status === 'planning';
+    // `start_validation_failed` is a pre-execution status: the owner
+    // hit Start Stream before the plan was ready and validation
+    // produced no runnable tasks. They must be able to keep
+    // conversing with the Manager to fix the plan, otherwise the
+    // stream is dead-ended and the owner has to abandon it.
+    return (
+      status === 'created' ||
+      status === 'planning' ||
+      status === 'start_validation_failed'
+    );
   }
 
   private async buildContextSnapshot(
     stream: WorkyStreamDocument,
     _userId: string,
+    previousClarification?: {
+      interactionId: string;
+      question: string;
+      options: string[];
+    } | null,
   ): Promise<ContextSnapshot> {
     const streamId = (stream._id as Types.ObjectId).toString();
     // The board snapshot uses the same projection as `GET /board` so the
@@ -413,11 +496,12 @@ export class WorkyPlanningService {
       ownerMemoryRef: null,
       streamMemoryRef: null,
       latestMessageId: null,
+      previousClarification: previousClarification ?? null,
     };
   }
 
   private runtimeTimeoutMs(): number {
-    return this.config.get<number>('worky.runtimeTimeoutMs') ?? 60000;
+    return this.config.get<number>('worky.runtimeTimeoutMs') ?? 120000;
   }
 }
 

@@ -6,7 +6,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Subject, firstValueFrom } from 'rxjs';
+import { Subject, of, finalize } from 'rxjs';
+import type { Observable } from 'rxjs';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyEventService } from '../services/worky-event.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -31,7 +32,7 @@ export class WorkyEventsController {
   stream(
     @CurrentUser() user: UserDocument,
     @Param('id') streamId: string,
-  ): Promise<MessageEvent> {
+  ): Observable<MessageEvent> {
     const connectionId = `${user._id.toString()}:${streamId}:${Date.now()}`;
     const disconnect$ = new Subject<void>();
     const stream$ = this.events.registerConnection(
@@ -41,7 +42,7 @@ export class WorkyEventsController {
       disconnect$,
     );
     if (!stream$) {
-      return Promise.resolve({
+      return of({
         type: 'error',
         data: {
           code: 'WORKY_SSE_LIMIT',
@@ -49,6 +50,12 @@ export class WorkyEventsController {
         },
       } as MessageEvent);
     }
-    return firstValueFrom(stream$);
+    return stream$.pipe(
+      finalize(() => {
+        disconnect$.next();
+        disconnect$.complete();
+        this.events.removeConnection(user._id.toString(), streamId, connectionId);
+      }),
+    );
   }
 }

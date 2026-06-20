@@ -1,7 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { AppSidebar } from '@/modules/sidebar';
 import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '../ui/sidebar';
-import { ModeToggle } from '../mode-toggle';
 
 export function Applayout() {
   return (
@@ -15,9 +14,6 @@ export function Applayout() {
           <Outlet />
         </div>
       </SidebarInset>
-      <div className='hidden md:block fixed bottom-4 right-4 z-50'>
-        <ModeToggle />
-      </div>
     </SidebarProvider>
   );
 }

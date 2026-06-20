@@ -33,11 +33,20 @@ PLANNING step — never execute, never spawn workers, never send email.
 Workflow:
 1. Read the owner's latest message and the context snapshot (latest
    plan version, current board, budget).
-2. If you need clarification, call `request_input` ONCE with one focused
-   question. Do not ask multi-part questions.
-3. Otherwise, call `submit_plan_delta` exactly ONCE with the
-   incremental change set. The delta is RELATIVE to the current plan
-   version, not a full re-plan.
+2. Decide between exactly two tool calls. The tools are:
+   - `submit_plan_delta(plan_delta)` — propose the incremental change
+     set. The delta is RELATIVE to the current plan version, not a
+     full re-plan.
+   - `request_input(question, options=None)` — ask the owner ONE
+     focused clarification question. Do not ask multi-part questions.
+   Call EXACTLY ONE of these per turn. Never both. Never neither.
+   Do not emit tool calls in plain text — you must invoke the tool.
+3. If this turn was triggered by a clarification response, the owner's
+   message is the answer to a previous question. Read the
+   `context_snapshot.previousClarification` field for the question
+   and options you previously asked, and immediately call
+   `submit_plan_delta` with the resolved plan. Only re-ask
+   `request_input` if the owner's answer is itself ambiguous.
 4. After your tool call, output a short natural-language summary of
    what you proposed. Do not re-list the JSON.
 
@@ -54,8 +63,9 @@ Rules:
 - `dependsOn` references may be either the `clientTaskId` of another
   entry in the same delta, or the id of an existing task. Never
   produce cycles.
-- If the owner's request is ambiguous, prefer a clarification over a
-  guess.
+- If the owner's request is ambiguous and you have not already asked
+  a clarification, prefer a clarification over a guess. Do not chain
+  clarifications; once you have asked, wait for the answer.
 - Keep the plan tight: 1-7 tasks per turn. If more are needed, plan
   them in subsequent turns.
 """
@@ -77,7 +87,7 @@ def build_manager_agent(
     # can still build the agent and exercise the tool callbacks.
     from google.adk.agents import LlmAgent
 
-    def submit_plan_delta_tool(plan_delta: dict) -> dict:
+    def submit_plan_delta(plan_delta: dict) -> dict:
         """Submit a Plan Delta (incremental) for the current turn.
 
         Args:
@@ -101,8 +111,17 @@ def build_manager_agent(
             return {"submitted": False, "backend_error": str(exc)}
         return {"submitted": True}
 
-    def clarification_tool(question: str, options: list[str] | None = None) -> dict:
-        """Ask the owner a clarification question."""
+    def request_input(question: str, options: list[str] | None = None) -> dict:
+        """Ask the owner a clarification question.
+
+        Tool name matches the canonical plan (canonical §4.1) so the
+        LLM can call it by the name referenced in the system
+        instruction. Earlier revisions registered this as
+        `clarification_tool`, which left the model with no callable
+        surface and made it emit clarification prose in plain text
+        instead — causing the
+        ask→ask→ask loop.
+        """
         if on_clarification is not None:
             on_clarification(question, options)
         return {"asked": True, "question": question}
@@ -112,5 +131,5 @@ def build_manager_agent(
         description="Worky Chief of Staff — converts owner intent into incremental Plan Deltas.",
         model=build_model(model_id),
         instruction=MANAGER_INSTRUCTION,
-        tools=[submit_plan_delta_tool, clarification_tool],
+        tools=[submit_plan_delta, request_input],
     )
