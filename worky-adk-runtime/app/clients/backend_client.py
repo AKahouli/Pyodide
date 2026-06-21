@@ -77,6 +77,18 @@ class BackendClient:
             json=body,
         )
 
+    async def replan(
+        self,
+        stream_id: str,
+        body: dict[str, Any],
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._post(
+            f"{API_PREFIX}/streams/{stream_id}/replan",
+            event_id=event_id,
+            json=body,
+        )
+
     async def spawn_worker(
         self,
         stream_id: str,
@@ -196,5 +208,13 @@ class BackendClient:
         eid = event_id or self.new_event_id()
         logger.debug("POST %s event_id=%s", path, eid)
         response = await client.post(path, json={**json, "eventId": eid}, headers={EVENT_ID_HEADER: eid})
+        if response.status_code >= 400:
+            logger.warning(
+                "Backend callback failed status=%s path=%s event_id=%s body=%s",
+                response.status_code,
+                path,
+                eid,
+                response.text[:1000],
+            )
         response.raise_for_status()
         return response.json()

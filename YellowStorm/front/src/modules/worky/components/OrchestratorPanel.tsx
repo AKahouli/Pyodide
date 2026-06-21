@@ -80,7 +80,7 @@ export function OrchestratorPanel({ streamId }: OrchestratorPanelProps): JSX.Ele
       aria-label={t('orchestrator.title')}
       aria-hidden={inertForScreenReaders || undefined}
       className={cn(
-        'flex h-full w-[360px] shrink-0 flex-col gap-3 border-l border-border/60 bg-background/95 p-3',
+        'flex h-full w-[360px] shrink-0 flex-col gap-3 overflow-hidden border-l border-border/60 bg-background/95 p-3',
         // On lg+ the panel is always visible inline; below lg it
         // becomes a fixed slide-over that the user opens via a toggle
         // button rendered by `WorkyStreamPage`.
@@ -132,7 +132,9 @@ function OrchestratorTabs({ activeTab, onChange }: OrchestratorTabsProps): JSX.E
     if (!direction) return;
     event.preventDefault();
     const nextIndex = (currentIndex + direction + ORCHESTRATOR_TABS.length) % ORCHESTRATOR_TABS.length;
-    onChange(ORCHESTRATOR_TABS[nextIndex]);
+    const nextTab = ORCHESTRATOR_TABS[nextIndex];
+    onChange(nextTab);
+    document.getElementById(`worky-orchestrator-${nextTab}-tab`)?.focus();
   };
 
   return (
@@ -159,9 +161,11 @@ function OrchestratorTabs({ activeTab, onChange }: OrchestratorTabsProps): JSX.E
 
 function ChatPanel({ streamId, status }: { streamId: string; status?: WorkyStream['status'] }): JSX.Element {
   return (
-    <div id='worky-orchestrator-chat' role='tabpanel' aria-labelledby='worky-orchestrator-chat-tab' className='flex min-h-0 flex-1 flex-col gap-2 overflow-hidden'>
+    <div id='worky-orchestrator-chat' role='tabpanel' aria-labelledby='worky-orchestrator-chat-tab' className='grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-2 overflow-hidden'>
       <ChatMessageThread />
-      <PromptBar key={streamId} streamId={streamId} status={status} />
+      <div className='shrink-0'>
+        <PromptBar key={streamId} streamId={streamId} status={status} />
+      </div>
     </div>
   );
 }

@@ -34,6 +34,7 @@ export interface StartTurnInput {
 
 export interface ContextSnapshot {
   streamId: string;
+  status: string;
   planVersion: number;
   budget: { limitUsd: number; spendUsd: number };
   board: Record<string, unknown[]>;
@@ -224,7 +225,7 @@ export class WorkyPlanningService {
             dataLines = [];
             if (!frame) continue;
             subject.next({ frame });
-            this.emitRuntimeFrame(input, frame);
+            await this.emitRuntimeFrame(input, frame);
             if (frame.type === 'planning.done' || frame.type === 'planning.error') {
               subject.complete();
               return;
@@ -292,7 +293,7 @@ export class WorkyPlanningService {
     return { type, emitted_at: emittedAt, payload: innerPayload };
   }
 
-  private emitRuntimeFrame(input: StartTurnInput, frame: RuntimePlanningFrame): void {
+  private async emitRuntimeFrame(input: StartTurnInput, frame: RuntimePlanningFrame): Promise<void> {
     if (frame.type === 'planning.ack') {
       this.events.emit(input.userId, input.streamId, {
         type: 'stream.updated',
@@ -307,6 +308,10 @@ export class WorkyPlanningService {
         emittedAt: Date.now(),
         payload: { text: frame.payload.text ?? '' },
       });
+      return;
+    }
+    if (frame.type === 'assistant.message') {
+      await this.persistManagerMessage(input, frame);
       return;
     }
     if (frame.type === 'planning.delta.applied') {
@@ -354,6 +359,36 @@ export class WorkyPlanningService {
         payload: { error: true, source: 'runtime-frame', errorText, ...rest },
       });
     }
+  }
+
+  private async persistManagerMessage(
+    input: StartTurnInput,
+    frame: RuntimePlanningFrame,
+  ): Promise<void> {
+    const content = String((frame.payload as { text?: unknown }).text ?? '').trim();
+    if (!content) {
+      this.logger.warn('Dropped empty Worky assistant.message frame', {
+        streamId: input.streamId,
+        frameType: frame.type,
+      });
+      return;
+    }
+    const message = await this.messages.create({
+      streamId: new Types.ObjectId(input.streamId),
+      role: 'manager',
+      content,
+      planDeltaRef: null,
+      emittedAt: new Date(frame.emitted_at * 1000),
+    });
+    this.events.emit(input.userId, input.streamId, {
+      type: 'message.appended',
+      emittedAt: Date.now(),
+      payload: {
+        id: (message._id as Types.ObjectId).toString(),
+        role: 'manager',
+        content,
+      },
+    });
   }
 
   private async resolveTurnModelIds(
@@ -498,6 +533,7 @@ export class WorkyPlanningService {
     const board = await this.tasks.projectForBoard(streamId, new Map());
     return {
       streamId,
+      status: stream.status,
       planVersion: stream.currentPlanVersion,
       budget: {
         limitUsd: stream.budget?.limitUsd ?? 0,

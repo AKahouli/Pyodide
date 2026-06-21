@@ -1804,6 +1804,43 @@ function PlaybookCanvasInner() {
       });
     };
 
+    const mirrorNodeOutputBindingEdge = (
+      resolvedTargetId: string,
+      targetPort: string,
+      resolvedSourceId: string,
+      sourcePort: string,
+    ) => {
+      nextEdges = nextEdges.filter((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
+        const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+        const matchesTargetPort = edge.target === resolvedTargetId
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetPort;
+        const matchesBinding = matchesTargetPort
+          && edge.source === resolvedSourceId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourcePort;
+        if (isConditionalEdge || matchesBinding) {
+          return true;
+        }
+        if (matchesTargetPort) {
+          changedEdgeIds.add(edge.id);
+        }
+        return !matchesTargetPort;
+      });
+
+      if (!nextEdges.some((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        return edge.source === resolvedSourceId
+          && edge.target === resolvedTargetId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourcePort
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetPort;
+      })) {
+        nextEdges = [
+          ...nextEdges,
+          markEdgeChanged(createProgrammaticEdge(resolvedSourceId, resolvedTargetId, sourcePort, targetPort)),
+        ];
+      }
+    };
+
     const upsertNodeOutputBinding = (
       resolvedTargetId: string,
       targetPort: string,
@@ -1856,6 +1893,9 @@ function PlaybookCanvasInner() {
           iteration,
         },
       ];
+
+      mirrorNodeOutputBindingEdge(resolvedTargetId, targetPort, resolvedSourceId, sourcePort);
+
     };
 
     const upsertConstantBinding = (
@@ -1888,6 +1928,7 @@ function PlaybookCanvasInner() {
           constantValue,
         },
       ];
+
     };
 
     const removeNodeOutputBinding = (
@@ -1927,6 +1968,16 @@ function PlaybookCanvasInner() {
           }
           return !matchesTargetPort;
         });
+      }
+
+      if (nextEdges.some((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        return edge.source === sourceId
+          && edge.target === targetId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourceOutputPortId
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId;
+      })) {
+        return;
       }
 
       nextEdges = [

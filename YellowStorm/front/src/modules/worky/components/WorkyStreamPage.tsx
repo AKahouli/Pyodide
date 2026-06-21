@@ -87,6 +87,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             createdAt: new Date().toISOString(),
           };
           if (m.id) appendMessage(m);
+          if (m.role === 'manager') resetAssistantText();
           break;
         }
         case 'assistant_token': {
@@ -202,6 +203,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         }
         case 'stream.terminal': {
           setStreaming(false);
+          resetAssistantText();
           if (event.data && (event.data as { error?: boolean }).error) {
             const detail = (event.data as { errorText?: string }).errorText;
             setStreamError(detail || tWorky('stream.error'));
@@ -220,6 +222,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     appendMessage,
     appendAssistantToken,
     qc,
+    resetAssistantText,
     setLastDeltaToast,
     setLastPlanVersion,
     setStreaming,

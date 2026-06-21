@@ -16,6 +16,7 @@ from tests._adk_stub import (  # noqa: E402
     install_adk_stubs,
     set_runner_events_provider,
     reset_recordings,
+    constructed_llm_agents,
 )
 
 install_adk_stubs()
@@ -82,6 +83,66 @@ async def test_runner_yields_only_ack_done_when_no_events() -> None:
     assert types_seen[-1] == "planning.done"
     for t in types_seen[1:-1]:
         assert t not in ("delta.pending", "interaction.requested", "assistant.message")
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_streamed_text_when_no_final_text() -> None:
+    events = [
+        _StubEvent("I can "),
+        _StubEvent("continue."),
+    ]
+    _drive_with_events(events)
+    run_turn = build_runner()
+    frames = []
+    async for f in run_turn("continue"):
+        frames.append(f)
+    assistant = next(f for f in frames if f.type == "assistant.message")
+    assert assistant.payload == {"text": "I can continue."}
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_mixed_streamed_and_final_text() -> None:
+    events = [
+        _StubEvent("I can "),
+        _StubEvent("continue.", final=True),
+    ]
+    _drive_with_events(events)
+    run_turn = build_runner()
+    frames = []
+    async for f in run_turn("continue"):
+        frames.append(f)
+    assistant = next(f for f in frames if f.type == "assistant.message")
+    assert assistant.payload == {"text": "I can continue."}
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_delta_and_assistant_message_for_same_turn() -> None:
+    reset_recordings()
+
+    def _events():
+        submit_tool = constructed_llm_agents()[-1]["tools"][0]
+        submit_tool(
+            {
+                "create_tasks": [
+                    {
+                        "title": "Research competitors",
+                        "lane": "ready",
+                        "actionCategory": "research",
+                    }
+                ]
+            }
+        )
+        yield _StubEvent("I added the next task.")
+
+    set_runner_events_provider(_events)
+    run_turn = build_runner()
+    frames = []
+    async for f in run_turn("add another task"):
+        frames.append(f)
+    types_seen = [f.type for f in frames]
+    assert "delta.pending" in types_seen
+    assert "assistant.message" in types_seen
+    assert types_seen.index("delta.pending") < types_seen.index("assistant.message")
 
 
 @pytest.mark.asyncio

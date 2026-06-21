@@ -116,12 +116,14 @@ export class PlaybookFlowIntentConstructionService {
 
       if (useBlueprint) {
         const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
-        await this.emitSuggestions(job, suggestions, 0, false);
+        await this.emitSuggestions(job, suggestions);
+        if (job.abortController.signal.aborted) return;
         job.status = 'completed';
         this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
       } else {
         const suggestions = this.normalizeRawSuggestions(raw, dto, context);
         await this.emitSuggestions(job, suggestions, emittedDeltaCount);
+        if (job.abortController.signal.aborted) return;
         job.status = 'completed';
         this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
       }
@@ -159,29 +161,22 @@ export class PlaybookFlowIntentConstructionService {
       if (built.dropped.length) {
         this.logger.warn(`playbook_intent_builder_dropped items=${built.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
       }
-      const fallback = this.intentService.normalizeConstructionSuggestions({
-        raw: '',
-        dto,
-        selectedNodeId: context.selectedNodeId,
-        limits: context.limits,
-        validationContext: context.validationContext,
-        includeFallback: true,
-      }).find((s) => s.kind === 'single_change');
-      return fallback ? [fallback, built.suggestion] : [built.suggestion];
+      return [built.suggestion];
     } catch (error) {
       this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
       return this.normalizeRawSuggestions(raw, dto, context);
     }
   }
 
-  private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0, splitWorkflowPlans = true): Promise<number> {
-    const deltas = suggestions.flatMap((suggestion) => this.buildSuggestionDeltas(suggestion, splitWorkflowPlans));
+  private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0): Promise<number> {
+    const deltas = suggestions.flatMap((suggestion) => this.buildSuggestionDeltas(suggestion));
     for (let index = emittedDeltaCount; index < deltas.length; index += 1) {
       if (job.abortController.signal.aborted) return emittedDeltaCount;
       const suggestion = deltas[index];
       const changes = suggestion.kind === 'workflow_plan' ? suggestion.changes : [];
-      const hasNode = suggestion.kind === 'single_change' || changes.some((change) => change.type === 'create_node' || change.type === 'update_node' || change.type === 'delete_node');
-      const type = hasNode ? 'node_delta' : changes.some((change) => change.type.includes('data_binding')) ? 'data_binding_delta' : 'edge_delta';
+      const latestChange = changes[changes.length - 1];
+      const hasNode = suggestion.kind === 'single_change' || latestChange?.type === 'create_node' || latestChange?.type === 'update_node' || latestChange?.type === 'delete_node';
+      const type = hasNode ? 'node_delta' : latestChange?.type.includes('data_binding') ? 'data_binding_delta' : 'edge_delta';
       this.emit(job, { type, constructionId: job.id, playbookId: job.flowId, suggestion, nodeIndex: type === 'node_delta' ? index + 1 : undefined, totalNodes: type === 'node_delta' ? deltas.length : undefined } as PlaybookIntentConstructionEvent);
       await this.waitForNextDelta(job.abortController.signal);
     }
@@ -311,8 +306,8 @@ export class PlaybookFlowIntentConstructionService {
     }
   }
 
-  private buildSuggestionDeltas(suggestion: PlaybookIntentSuggestion, splitWorkflowPlans = true): PlaybookIntentSuggestion[] {
-    if (!splitWorkflowPlans || suggestion.kind !== 'workflow_plan' || suggestion.changes.length <= 1) {
+  private buildSuggestionDeltas(suggestion: PlaybookIntentSuggestion): PlaybookIntentSuggestion[] {
+    if (suggestion.kind !== 'workflow_plan' || suggestion.changes.length <= 1) {
       return [suggestion];
     }
 

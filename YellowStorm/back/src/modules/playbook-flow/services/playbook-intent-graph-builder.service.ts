@@ -52,6 +52,11 @@ interface BuildResult {
 
 type BuilderPort = NonNullable<PlaybookIntentTaskDraft['inputPorts']>[number];
 
+interface ReferencedPorts {
+  inputsByRef: Map<string, Set<string>>;
+  outputsByRef: Map<string, Set<string>>;
+}
+
 @Injectable()
 export class PlaybookIntentGraphBuilderService {
   private readonly logger = new Logger(PlaybookIntentGraphBuilderService.name);
@@ -70,9 +75,10 @@ export class PlaybookIntentGraphBuilderService {
 
     const acceptedChanges: PlaybookIntentWorkflowChange[] = [];
     const createdRefs = new Set<string>();
+    const referencedPorts = this.collectReferencedPorts(options.blueprint);
 
     for (const blueprintNode of options.blueprint.nodes.slice(0, options.limits.maxWorkflowPlanChanges)) {
-      const change = this.buildCreateNodeChange(blueprintNode, options, dropped);
+      const change = this.buildCreateNodeChange(blueprintNode, options, dropped, referencedPorts);
       if (!change) continue;
       acceptedChanges.push(change);
       createdRefs.add(blueprintNode.ref);
@@ -80,6 +86,12 @@ export class PlaybookIntentGraphBuilderService {
 
     for (const link of options.blueprint.links) {
       const change = this.buildCreateEdgeChange(link, options, dropped);
+      if (change) acceptedChanges.push(change);
+    }
+
+    const explicitEdgeKeys = new Set(options.blueprint.links.map((link) => this.blueprintEdgeKey(link)));
+    for (const binding of options.blueprint.bindings || []) {
+      const change = this.buildCreateEdgeChangeFromBinding(binding, options, explicitEdgeKeys, dropped);
       if (change) acceptedChanges.push(change);
     }
 
@@ -115,11 +127,12 @@ export class PlaybookIntentGraphBuilderService {
     node: PlaybookIntentBlueprintNode,
     options: BuildOptions,
     dropped: Array<{ rule: string; itemId: string }>,
+    referencedPorts: ReferencedPorts,
   ): PlaybookIntentWorkflowChange | null {
     const descriptor = this.registry.describe(node.nodeType || null);
     const template = this.resolveTemplate(node, options.templates, dropped);
-    const inputPorts: BuilderPort[] = this.mergePorts(template?.inputPorts, node.inputPorts, `${node.ref}.inputs`, dropped);
-    const outputPorts: BuilderPort[] = this.mergePorts(template?.outputPorts, node.outputPorts, `${node.ref}.outputs`, dropped);
+    const inputPorts: BuilderPort[] = this.mergePorts(template?.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), dropped);
+    const outputPorts: BuilderPort[] = this.mergePorts(template?.outputPorts, node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), dropped);
     const agentSlug = this.resolveAgentSlug(node, template);
 
     const task: PlaybookIntentTaskDraft = {
@@ -151,9 +164,10 @@ export class PlaybookIntentGraphBuilderService {
     options: BuildOptions,
     dropped: Array<{ rule: string; itemId: string }>,
   ): PlaybookIntentTaskDraft['iteratorBody'] {
+    const referencedPorts = this.collectIteratorReferencedPorts(body);
     const steps = body.steps
       .slice(0, options.limits.maxIteratorBodySteps)
-      .map((step) => this.buildIteratorStep(step, options, dropped))
+      .map((step) => this.buildIteratorStep(step, options, dropped, referencedPorts))
       .filter((step): step is NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] => step !== null);
     const validStepRefs = new Set(steps.map((s) => s.nodeRef));
     const edges = body.edges
@@ -173,10 +187,11 @@ export class PlaybookIntentGraphBuilderService {
     step: PlaybookIntentBlueprintIteratorStep,
     options: BuildOptions,
     dropped: Array<{ rule: string; itemId: string }>,
+    referencedPorts: ReferencedPorts,
   ): NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] {
     const template = this.resolveTemplate(step as unknown as PlaybookIntentBlueprintNode, options.templates, dropped);
-    const inputPorts: BuilderPort[] = this.mergePorts(template?.inputPorts, step.inputPorts, `${step.ref}.inputs`, dropped);
-    const outputPorts: BuilderPort[] = this.mergePorts(template?.outputPorts, step.outputPorts, `${step.ref}.outputs`, dropped);
+    const inputPorts: BuilderPort[] = this.mergePorts(template?.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), dropped);
+    const outputPorts: BuilderPort[] = this.mergePorts(template?.outputPorts, step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), dropped);
     return {
       nodeRef: step.ref,
       title: step.title,
@@ -216,12 +231,14 @@ export class PlaybookIntentGraphBuilderService {
     templatePorts: BuilderNodeTemplatePort[] | undefined,
     blueprintPorts: PlaybookIntentBlueprintPort[] | undefined,
     ownerRef: string,
+    referencedTemplatePorts: Set<string> | undefined,
     dropped: Array<{ rule: string; itemId: string }>,
   ): BuilderPort[] {
     const ports: BuilderPort[] = [];
     const seen = new Set<string>();
     for (const port of templatePorts || []) {
       if (!port.id || !port.artifactKind) continue;
+      if (!referencedTemplatePorts?.has(port.id)) continue;
       if (seen.has(port.id)) continue;
       seen.add(port.id);
       ports.push({
@@ -251,6 +268,35 @@ export class PlaybookIntentGraphBuilderService {
       }
     }
     return ports;
+  }
+
+  private collectReferencedPorts(blueprint: PlaybookIntentBlueprint): ReferencedPorts {
+    const referenced: ReferencedPorts = { inputsByRef: new Map(), outputsByRef: new Map() };
+    for (const link of blueprint.links) {
+      this.addReferencedPort(referenced.outputsByRef, link.sourceRef, link.sourceOutputPortId || null);
+      this.addReferencedPort(referenced.inputsByRef, link.targetRef, link.targetInputPortId || null);
+    }
+    for (const binding of blueprint.bindings || []) {
+      this.addReferencedPort(referenced.inputsByRef, binding.targetRef, binding.targetPort);
+      if (binding.sourceKind === 'node-output') this.addReferencedPort(referenced.outputsByRef, binding.sourceRef || null, binding.sourcePort || null);
+    }
+    return referenced;
+  }
+
+  private collectIteratorReferencedPorts(body: NonNullable<PlaybookIntentBlueprintNode['iteratorBody']>): ReferencedPorts {
+    const referenced: ReferencedPorts = { inputsByRef: new Map(), outputsByRef: new Map() };
+    for (const edge of body.edges) {
+      this.addReferencedPort(referenced.outputsByRef, edge.sourceRef, edge.sourceOutputPortId || null);
+      this.addReferencedPort(referenced.inputsByRef, edge.targetRef, edge.targetInputPortId || null);
+    }
+    return referenced;
+  }
+
+  private addReferencedPort(portsByRef: Map<string, Set<string>>, ref: string | null, portId: string | null): void {
+    if (!ref || !portId) return;
+    const ports = portsByRef.get(ref) || new Set<string>();
+    ports.add(portId);
+    portsByRef.set(ref, ports);
   }
 
   private buildCreateEdgeChange(
@@ -320,6 +366,28 @@ export class PlaybookIntentGraphBuilderService {
       sourcePort: binding.sourcePort,
       iteration: binding.iteration || 'current',
     };
+  }
+
+  private buildCreateEdgeChangeFromBinding(
+    binding: PlaybookIntentBlueprintBinding,
+    options: BuildOptions,
+    explicitEdgeKeys: Set<string>,
+    dropped: Array<{ rule: string; itemId: string }>,
+  ): PlaybookIntentWorkflowChange | null {
+    if (binding.sourceKind !== 'node-output') return null;
+    if (!binding.sourceRef || !binding.sourcePort) return null;
+    const link = {
+      sourceRef: binding.sourceRef,
+      targetRef: binding.targetRef,
+      sourceOutputPortId: binding.sourcePort,
+      targetInputPortId: binding.targetPort,
+    };
+    if (explicitEdgeKeys.has(this.blueprintEdgeKey(link))) return null;
+    return this.buildCreateEdgeChange(link, options, dropped);
+  }
+
+  private blueprintEdgeKey(link: PlaybookIntentBlueprintLink): string {
+    return [link.sourceRef, link.targetRef, link.sourceOutputPortId || '', link.targetInputPortId || ''].join(':');
   }
 
   private resolveReference(ref: string, options: BuildOptions): string | null {

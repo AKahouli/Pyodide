@@ -304,6 +304,45 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
     expect(terminals[0].payload).toMatchObject({ error: false, source: 'runtime-frame-done' });
   });
 
+  it('persists runtime assistant.message frames as manager messages', async () => {
+    stubFetch([
+      sseFrame('assistant.message', {
+        type: 'assistant.message',
+        emitted_at: 1,
+        payload: { text: 'I can continue the discussion from here.' },
+      }),
+      sseFrame('planning.done', { type: 'planning.done', emitted_at: 2, payload: {} }),
+    ]);
+    const { service, events, messageModel, ownerId } = makeService();
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: ownerId.toString(),
+          content: 'continue',
+          triggerKind: 'owner_message',
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(messageModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'manager',
+        content: 'I can continue the discussion from here.',
+      }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      ownerId.toString(),
+      streamId,
+      expect.objectContaining({
+        type: 'message.appended',
+        payload: expect.objectContaining({
+          role: 'manager',
+          content: 'I can continue the discussion from here.',
+        }),
+      }),
+    );
+  });
+
   it('emits stream.terminal even when the runtime body ends without an explicit planning.done', async () => {
     // Some runtime failure modes (proxy buffer, abrupt close) deliver no
     // `planning.done` frame. The relay must still fan out a terminal so
@@ -490,6 +529,40 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
         .subscribe({ complete: () => resolve(), error: () => resolve() });
     });
     expect(capturedBody.context_snapshot.previousClarification).toBeNull();
+  });
+
+  it('includes stream status in the runtime context snapshot', async () => {
+    let capturedBody: any = null;
+    (global as any).fetch = jest.fn().mockImplementation(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+      };
+    });
+    const localOwnerId = new Types.ObjectId();
+    const { service } = makeService({
+      stream: {
+        _id: new Types.ObjectId(streamId),
+        ownerUserId: localOwnerId,
+        status: 'partially_blocked',
+        currentPlanVersion: 3,
+        budget: { limitUsd: 0, spendUsd: 0 },
+      },
+    });
+    await new Promise<void>((resolve) => {
+      service
+        .startTurn({
+          streamId,
+          userId: localOwnerId.toString(),
+          content: 'add another task',
+          triggerKind: 'owner_message',
+        })
+        .subscribe({ complete: () => resolve(), error: () => resolve() });
+    });
+    expect(capturedBody.context_snapshot.status).toBe('partially_blocked');
+    expect(capturedBody.context_snapshot.planVersion).toBe(3);
   });
 
   it('omits previousClarification when the interaction belongs to a different stream', async () => {

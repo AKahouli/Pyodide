@@ -95,11 +95,10 @@ async def planning_turn(
                     base_plan_version = snapshot.get("planVersion", 0)
                     if not isinstance(base_plan_version, int) or base_plan_version < 0:
                         base_plan_version = 0
+                    payload = {"basePlanVersion": base_plan_version, "body": delta_body}
+                    callback_name = _delta_callback_name_for_status(snapshot.get("status"))
                     try:
-                        ack = await backend.plan_delta(
-                            stream_id,
-                            {"basePlanVersion": base_plan_version, "body": delta_body},
-                        )
+                        ack = await getattr(backend, callback_name)(stream_id, payload)
                         yield _sse_frame(
                             PlanningEvent(
                                 type="planning.delta.applied",
@@ -178,3 +177,12 @@ async def planning_turn(
 def _sse_frame(event: PlanningEvent) -> str:
     """Render one named SSE event (`event: <type>`) with JSON data."""
     return f"event: {event.type}\ndata: {json.dumps(event.model_dump())}\n\n"
+
+
+def _delta_callback_name_for_status(status: object) -> str:
+    """Choose planning vs replan callback from the backend snapshot status."""
+    # Keep this pre-execution set in sync with
+    # WorkyPlanDeltaService.isPreExecutionPhase in NestJS.
+    if status in {None, "created", "planning", "start_validation_failed"}:
+        return "plan_delta"
+    return "replan"

@@ -12,6 +12,7 @@ import type { PlaybookIntentBlueprint } from '../interfaces/playbook-flow-intent
 type Change = PlaybookIntentWorkflowChange;
 type WorkflowPlan = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
 type CreateNodeChange = Extract<Change, { type: 'create_node' }>;
+type CreateEdgeChange = Extract<Change, { type: 'create_edge' }>;
 type CreateBindingChange = Extract<Change, { type: 'create_data_binding' }>;
 
 function makeContext(overrides: Partial<{
@@ -139,7 +140,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       summary: '',
       nodes: [{ ref: 'draft', label: 'Draft', purpose: 'Write', templateType: 'document' }],
       links: [],
-      bindings: [],
+      bindings: [{ targetRef: 'draft', targetPort: 'input-context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } }],
     };
 
     const { suggestion }: { suggestion: WorkflowPlan } = service.build({
@@ -274,13 +275,52 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(nodes.find((n: CreateNodeChange) => n.nodeRef === 'route')).toBeDefined();
   });
 
-  it('uses the node template to fill ports when no explicit ports are provided', () => {
+  it('uses bound node template ports when no explicit ports are provided', () => {
     const template = makeTemplate({ type: 'synthesis-step', inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: false }],
       outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'document' }] });
     const blueprint: PlaybookIntentBlueprint = {
       title: 't',
       summary: '',
-      nodes: [{ ref: 'step', label: 'Step', purpose: '', templateType: 'synthesis-step' }],
+      nodes: [
+        { ref: 'step', label: 'Step', purpose: '', templateType: 'synthesis-step' },
+        { ref: 'publish', label: 'Publish', purpose: '', inputPorts: [{ id: 'draft', artifactKind: 'document' }] },
+      ],
+      links: [],
+      bindings: [
+        { targetRef: 'step', targetPort: 'context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } },
+        { targetRef: 'publish', targetPort: 'draft', sourceKind: 'node-output', sourceRef: 'step', sourcePort: 'draft' },
+      ],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [template],
+      selectedNodeId: null,
+    });
+
+    const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'step');
+    expect(node).toBeDefined();
+    if (!node) return;
+    expect(node.task.templateType).toBe('synthesis-step');
+    expect(node.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['context']);
+    expect(node.task.outputPorts?.map((p: { id: string }) => p.id)).toEqual(['draft']);
+  });
+
+  it('prunes unbound template ports and keeps explicit blueprint ports', () => {
+    const template = makeTemplate({
+      type: 'synthesis-step',
+      inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: true }],
+      outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'document' }],
+    });
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 't',
+      summary: '',
+      nodes: [{
+        ref: 'step', label: 'Step', purpose: '', templateType: 'synthesis-step',
+        inputPorts: [{ id: 'custom', artifactKind: 'text', required: true }],
+      }],
       links: [],
       bindings: [],
     };
@@ -294,11 +334,80 @@ describe('PlaybookIntentGraphBuilderService', () => {
     });
 
     const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
-    expect(node).toBeDefined();
-    if (!node) return;
-    expect(node.task.templateType).toBe('synthesis-step');
-    expect(node.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['context']);
-    expect(node.task.outputPorts?.map((p: { id: string }) => p.id)).toEqual(['draft']);
+    expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['custom']);
+    expect(node?.task.outputPorts).toBeUndefined();
+  });
+
+  it('creates an edge for node-output bindings without requiring an explicit link', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Bound flow',
+      summary: '',
+      nodes: [
+        { ref: 'collect', label: 'Collect', purpose: '', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+        { ref: 'draft', label: 'Draft', purpose: '', inputPorts: [{ id: 'data', artifactKind: 'data' }] },
+      ],
+      links: [],
+      bindings: [{ targetRef: 'draft', targetPort: 'data', sourceKind: 'node-output', sourceRef: 'collect', sourcePort: 'data' }],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [],
+      selectedNodeId: null,
+    });
+
+    const edge = suggestion.changes.find((c: Change): c is CreateEdgeChange => c.type === 'create_edge');
+    expect(edge).toEqual(expect.objectContaining({
+      sourceNodeRef: 'collect',
+      targetNodeRef: 'draft',
+      sourceOutputPortId: 'data',
+      targetInputPortId: 'data',
+    }));
+    expect(suggestion.impact.edgesToCreate).toBe(1);
+  });
+
+  it('prunes iterator step template ports against the enclosing iterator body edges', () => {
+    const template = makeTemplate({ type: 'iterator-step', inputPorts: [
+      { id: 'bound', name: 'Bound', artifactKind: 'text', required: false },
+      { id: 'unused', name: 'Unused', artifactKind: 'text', required: false },
+    ], outputPorts: [
+      { id: 'out', name: 'Out', artifactKind: 'text' },
+      { id: 'extra', name: 'Extra', artifactKind: 'text' },
+    ] });
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Iterate templates',
+      summary: '',
+      nodes: [{
+        ref: 'loop', label: 'Loop', purpose: '', nodeType: 'iterator',
+        iteratorBody: {
+          steps: [
+            { ref: 's1', title: 'Step 1', templateType: 'iterator-step' },
+            { ref: 's2', title: 'Step 2', templateType: 'iterator-step' },
+          ],
+          edges: [{ sourceRef: 's1', targetRef: 's2', sourceOutputPortId: 'out', targetInputPortId: 'bound' }],
+        },
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [template],
+      selectedNodeId: null,
+    });
+
+    const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    const firstStep = node?.task.iteratorBody?.steps.find((step: { nodeRef: string }) => step.nodeRef === 's1');
+    const secondStep = node?.task.iteratorBody?.steps.find((step: { nodeRef: string }) => step.nodeRef === 's2');
+    expect(firstStep?.outputPorts?.map((port: { id: string }) => port.id)).toEqual(['out']);
+    expect(firstStep?.inputPorts).toBeUndefined();
+    expect(secondStep?.inputPorts?.map((port: { id: string }) => port.id)).toEqual(['bound']);
+    expect(secondStep?.outputPorts).toBeUndefined();
   });
 
   it('recomputes impact counts deterministically from accepted changes', () => {
@@ -334,7 +443,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       summary: '',
       nodes: [{ ref: 'r', label: 'R', purpose: '', nodeType: 'agent' }],
       links: [],
-      bindings: [],
+      bindings: [{ targetRef: 'r', targetPort: 'context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } }],
     };
 
     const { suggestion }: { suggestion: WorkflowPlan } = service.build({

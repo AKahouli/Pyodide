@@ -31,9 +31,14 @@ class _RecordingBackend:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        self.replan_calls: list[tuple[str, dict]] = []
 
     async def plan_delta(self, stream_id: str, payload: dict) -> dict:
         self.calls.append((stream_id, payload))
+        return {"applied": True, "replay": False, "receivedAt": "t"}
+
+    async def replan(self, stream_id: str, payload: dict) -> dict:
+        self.replan_calls.append((stream_id, payload))
         return {"applied": True, "replay": False, "receivedAt": "t"}
 
     async def request_interaction(self, stream_id: str, payload: dict) -> dict:
@@ -79,6 +84,27 @@ def test_planning_router_forwards_base_plan_version_from_context_snapshot() -> N
             pass
     assert len(backend.calls) == 1
     stream_id, payload = backend.calls[0]
+    assert stream_id == "stream-1"
+    assert payload["basePlanVersion"] == 7
+
+
+def test_planning_router_uses_replan_for_execution_phase_delta() -> None:
+    backend = _RecordingBackend()
+    app = _make_app(backend)
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/runtime/streams/stream-1/planning-turn",
+        json={
+            "owner_message": "add another task",
+            "context_snapshot": {"planVersion": 7, "status": "partially_blocked"},
+        },
+    ) as resp:
+        for _ in resp.iter_lines():
+            pass
+    assert backend.calls == []
+    assert len(backend.replan_calls) == 1
+    stream_id, payload = backend.replan_calls[0]
     assert stream_id == "stream-1"
     assert payload["basePlanVersion"] == 7
 

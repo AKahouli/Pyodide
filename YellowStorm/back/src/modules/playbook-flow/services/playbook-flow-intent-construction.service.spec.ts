@@ -72,22 +72,10 @@ describe('PlaybookFlowIntentConstructionService', () => {
       };
     }
 
-    it('produces a builder-driven workflow_plan suggestion when the blueprint flag is enabled and a blueprint is present', () => {
+    it('produces only a builder-driven workflow_plan suggestion when the blueprint flag is enabled and a blueprint is present', () => {
+      const normalizeConstructionSuggestions = jest.fn();
       const service = new PlaybookFlowIntentConstructionService({
-        normalizeConstructionSuggestions: jest.fn((args: { dto: { intent: string } }) => [
-          {
-            id: 'intent-fallback',
-            kind: 'single_change',
-            label: '',
-            summary: args.dto.intent,
-            reason: '',
-            confidence: 1,
-            operationType: 'create_node',
-            task: { title: args.dto.intent.slice(0, 120), description: args.dto.intent },
-            targetTaskId: null,
-            isDirectIntentFallback: true,
-          },
-        ]),
+        normalizeConstructionSuggestions,
       } as any);
 
       const raw = JSON.stringify({
@@ -103,13 +91,14 @@ describe('PlaybookFlowIntentConstructionService', () => {
       });
 
       const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(true), { intent: 'test' });
-      expect(suggestions.length).toBe(2);
-      const plan = suggestions.find((s: any) => s.kind === 'workflow_plan');
-      expect(plan).toBeDefined();
-      expect(plan.changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
+      expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].kind).toBe('workflow_plan');
+      expect(suggestions[0].changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
+      expect(suggestions[0].changes.some((c: any) => c.type === 'create_node' && c.task.title === 'test')).toBe(false);
     });
 
-    it('emits blueprint workflow plans as one complete delta with bindings included', async () => {
+    it('emits blueprint workflow plans as progressive cumulative deltas', async () => {
       const service = createService();
       const job = {
         id: 'construction-1',
@@ -135,19 +124,29 @@ describe('PlaybookFlowIntentConstructionService', () => {
         ],
       };
 
-      await (service as any).emitSuggestions(job, [suggestion], 0, false);
+      await (service as any).emitSuggestions(job, [suggestion]);
 
       const deltaEvents = (job.events as any[]).filter((event: any) => event.type.endsWith('_delta'));
-      expect(deltaEvents).toHaveLength(1);
-      expect(deltaEvents[0].suggestion.changes).toHaveLength(4);
-      expect(deltaEvents[0].suggestion.changes.some((change: any) => change.type === 'create_data_binding')).toBe(true);
+      expect(deltaEvents).toHaveLength(4);
+      expect(deltaEvents.map((event: any) => event.type)).toEqual([
+        'node_delta',
+        'node_delta',
+        'edge_delta',
+        'data_binding_delta',
+      ]);
+      expect(deltaEvents.map((event: any) => event.suggestion.changes.length)).toEqual([1, 2, 3, 4]);
+      expect(deltaEvents[3].suggestion.changes.some((change: any) => change.type === 'create_data_binding')).toBe(true);
+      expect(deltaEvents.some((event: any) => event.suggestion.id === 'intent-fallback' || event.suggestion.isDirectIntentFallback)).toBe(false);
     });
 
-    it('falls back to legacy normalization when the blueprint flag is disabled', () => {
+    it('normalizes raw suggestions through the legacy path used when the blueprint flag is disabled', () => {
       const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
       const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);
-      const raw = JSON.stringify({ blueprint: { title: 'x', summary: '', nodes: [], links: [] } });
-      const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(false), { intent: 'test' });
+      const suggestions = (service as any).normalizeRawSuggestions(
+        JSON.stringify({ blueprint: { title: 'x', summary: '', nodes: [], links: [] } }),
+        { intent: 'test' },
+        makeContext(false),
+      );
       expect(normalizeConstructionSuggestions).toHaveBeenCalled();
       expect(suggestions[0]).toEqual({ id: 'legacy', kind: 'single_change' });
     });

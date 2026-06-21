@@ -69,6 +69,39 @@ async def test_plan_delta_sends_service_token_and_event_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_replan_posts_to_replan_callback() -> None:
+    settings = make_settings()
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        body = json.loads(request.content.decode("utf-8"))
+        captured["body"] = body
+        return httpx.Response(202, json={"applied": True, "replay": False, "eventId": body.get("eventId")})
+
+    transport = httpx.MockTransport(handler)
+    client = BackendClient(settings)
+    client._client = httpx.AsyncClient(  # type: ignore[attr-defined]
+        base_url=settings.backend_base_url,
+        timeout=settings.request_timeout_seconds,
+        headers={SERVICE_TOKEN_HEADER: settings.service_token},
+        transport=transport,
+    )
+    try:
+        ack = await client.replan(
+            stream_id="stream-1",
+            body={"basePlanVersion": 3, "body": {"create_tasks": []}},
+            event_id="evt-replan",
+        )
+    finally:
+        await client.aclose()
+
+    assert captured["url"].endswith("/api/v1/worky/internal/streams/stream-1/replan")
+    assert captured["body"]["eventId"] == "evt-replan"
+    assert ack["eventId"] == "evt-replan"
+
+
+@pytest.mark.asyncio
 async def test_new_event_id_is_unique_and_prefixed() -> None:
     a = BackendClient.new_event_id()
     b = BackendClient.new_event_id()

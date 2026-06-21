@@ -176,21 +176,13 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
             ):
                 events_seen += 1
                 # Surface assistant text as token frames for live streaming.
-                if getattr(event, "is_final_response", lambda: False)():
-                    content = getattr(event, "content", None)
-                    if content and getattr(content, "parts", None):
-                        for part in content.parts:
-                            text = getattr(part, "text", None)
-                            if text:
-                                assistant_text += text
-                                yield PlanningFrame("planning.token", {"text": text})
-                else:
-                    content = getattr(event, "content", None)
-                    if content and getattr(content, "parts", None):
-                        for part in content.parts:
-                            text = getattr(part, "text", None)
-                            if text:
-                                yield PlanningFrame("planning.token", {"text": text})
+                content = getattr(event, "content", None)
+                if content and getattr(content, "parts", None):
+                    for part in content.parts:
+                        text = getattr(part, "text", None)
+                        if text:
+                            assistant_text += text
+                            yield PlanningFrame("planning.token", {"text": text})
                 # The Manager just made a real decision — stop here.
                 if (
                     delta_holder["delta"] is not None
@@ -220,7 +212,7 @@ def build_runner() -> Callable[..., AsyncIterator[PlanningFrame]]:
                 "interaction.requested",
                 {"question": question, "options": options or []},
             )
-        elif assistant_text:
+        if assistant_text:
             yield PlanningFrame(
                 "assistant.message",
                 {"text": assistant_text},
