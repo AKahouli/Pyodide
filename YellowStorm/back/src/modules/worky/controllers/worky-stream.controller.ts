@@ -96,6 +96,19 @@ export class WorkyStreamController {
     return this.streams.patch(user._id.toString(), id, dto);
   }
 
+  @Delete(':id/delete')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(WorkyStreamAccessGuard)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Delete a Worky stream and its artifact workspace' })
+  @ApiParam({ name: 'id', description: 'Stream id' })
+  async delete(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+  ): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
+    return this.streams.delete(user._id.toString(), id);
+  }
+
   // ----- Lifecycle (Part 3) -----
 
   /**

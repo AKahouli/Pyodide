@@ -495,6 +495,7 @@ export const API_ENDPOINTS = {
     streamPause: (id: string) => `/worky/streams/${id}/pause`,
     streamResume: (id: string) => `/worky/streams/${id}/resume`,
     streamStop: (id: string) => `/worky/streams/${id}`,
+    streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,
     taskMove: (id: string) => `/worky/tasks/${id}/move`,

@@ -15,7 +15,6 @@ import {
 } from '../schemas/worky-execution-snapshot.schema';
 import { LoggerService } from '../../logger';
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -84,12 +83,6 @@ export class WorkyExecutionService {
    */
   async validateStart(streamId: string, userId: string): Promise<IWorkyStartValidationResult> {
     const stream = await this.findStreamForUser(streamId, userId);
-    if (!['created', 'planning', 'paused', 'stopped', 'start_validation_failed', 'partially_blocked', 'active'].includes(stream.status)) {
-      throw new BadRequestException(
-        ErrorCode.WORKY_STREAM_PHASE_INVALID,
-        `Cannot validate start in status '${stream.status}'.`,
-      );
-    }
     if (stream.currentPlanVersion <= 0) {
       return {
         outcome: 'globally_blocked',
@@ -469,7 +462,6 @@ export class WorkyExecutionService {
 
   async pause(streamId: string, userId: string, reason?: string): Promise<IWorkyExecutionSnapshotResponse | null> {
     const stream = await this.findStreamForUser(streamId, userId);
-    this.assertControlTransition(stream.controlState, 'pause');
     await this.streams
       .updateOne(
         { _id: stream._id },
@@ -505,7 +497,6 @@ export class WorkyExecutionService {
 
   async resume(streamId: string, userId: string, reason?: string): Promise<IWorkyExecutionSnapshotResponse | null> {
     const stream = await this.findStreamForUser(streamId, userId);
-    this.assertControlTransition(stream.controlState, 'resume');
     await this.streams
       .updateOne(
         { _id: stream._id },
@@ -553,7 +544,6 @@ export class WorkyExecutionService {
 
   async stop(streamId: string, userId: string, reason?: string): Promise<void> {
     const stream = await this.findStreamForUser(streamId, userId);
-    this.assertControlTransition(stream.controlState, 'stop');
     await this.streams
       .updateOne(
         { _id: stream._id },
@@ -600,10 +590,9 @@ export class WorkyExecutionService {
   // ----- per-task ops -----
 
   /**
-   * Move a task to a new lane. Used by the Kanban UI to reflect the
-   * owner's manual triage. Validates that the move respects the
-   * `not_started -> canceled` rule and the `done -> superseded` rule
-   * (canonical §3.6).
+    * Move a task to a new visible lane. The owner can manually reshape
+    * the board during execution; the Manager/runtime reconciles the new
+    * lane through the normal realtime task.updated path.
    */
   async moveTask(
     taskId: string,
@@ -612,7 +601,6 @@ export class WorkyExecutionService {
     reason?: string,
   ): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
-    this.assertLaneTransition(task.lane, lane);
     const nextExecutionState = laneToExecutionState(lane);
     task.lane = lane;
     if (nextExecutionState) task.executionState = nextExecutionState;
@@ -787,45 +775,6 @@ export class WorkyExecutionService {
       );
     }
     return task;
-  }
-
-  private assertControlTransition(current: string, op: 'pause' | 'resume' | 'stop'): void {
-    if (op === 'pause' && current !== 'active' && current !== 'pause_requested') {
-      throw new ConflictException(
-        ErrorCode.WORKY_STREAM_INVALID_STATE,
-        `Cannot pause from controlState '${current}'.`,
-      );
-    }
-    if (op === 'resume' && current !== 'paused' && current !== 'resume_requested') {
-      throw new ConflictException(
-        ErrorCode.WORKY_STREAM_INVALID_STATE,
-        `Cannot resume from controlState '${current}'.`,
-      );
-    }
-    if (op === 'stop' && (current === 'stopped' || current === 'stop_requested')) {
-      throw new ConflictException(
-        ErrorCode.WORKY_STREAM_INVALID_STATE,
-        `Stream is already in controlState '${current}'.`,
-      );
-    }
-  }
-
-  private assertLaneTransition(current: string, next: string): void {
-    if (current === next) return;
-    if (TERMINAL_TASK_LANES.has(current)) {
-      throw new ConflictException(
-        ErrorCode.WORKY_TASK_INVALID_STATE,
-        `Task in lane '${current}' is terminal and cannot be moved.`,
-      );
-    }
-    if (TERMINAL_TASK_LANES.has(next) && current === 'running') {
-      // Cancel during running requires a separate approval flow (canonical
-      // §3.6). Direct moves into terminal lanes from `running` are blocked.
-      throw new ConflictException(
-        ErrorCode.WORKY_TASK_INVALID_STATE,
-        `Cannot move a running task directly to '${next}'.`,
-      );
-    }
   }
 
   private assertTaskNotTerminal(executionState: string): void {

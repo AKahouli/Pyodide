@@ -101,6 +101,24 @@ def test_submit_plan_delta_tool_emits_to_callback() -> None:
     assert submitted[0].create_tasks[0].title == "A"
 
 
+def test_submit_plan_delta_accepts_single_create_task_object() -> None:
+    kwargs, submitted, _ = _build_with_callbacks()
+    submit_tool = kwargs["tools"][0]
+    result = submit_tool(
+        {
+            "create_tasks": {
+                "title": "Get Tesla stock price",
+                "lane": "ready",
+                "actionCategory": "research",
+                "assigneeType": "ephemeral_ai_agent",
+            }
+        }
+    )
+    assert result == {"submitted": True}
+    assert len(submitted) == 1
+    assert submitted[0].create_tasks[0].title == "Get Tesla stock price"
+
+
 def test_update_task_accepts_assignment_recovery() -> None:
     kwargs, submitted, _ = _build_with_callbacks()
     submit_tool = kwargs["tools"][0]

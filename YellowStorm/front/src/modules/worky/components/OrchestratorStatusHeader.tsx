@@ -23,7 +23,7 @@ function resolvePhase(
   streaming: boolean,
   hasAssistantText: boolean,
 ): OrchestratorPhase {
-  if (streaming && hasAssistantText) return 'thinking';
+  if (streaming) return hasAssistantText ? 'thinking' : 'planning';
   if (
     stream?.status === 'planning' ||
     stream?.status === 'start_requested' ||
@@ -102,6 +102,17 @@ export function OrchestratorStatusHeader({
         >
           {assistantText}
         </p>
+      ) : streaming ? (
+        <div
+          aria-live='polite'
+          className='flex items-center gap-1 text-xs italic text-foreground/80'
+          data-testid='worky-manager-progress'
+        >
+          <span>{t('messages.streamingLabel')}</span>
+          <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.2s]' />
+          <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.1s]' />
+          <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-primary' />
+        </div>
       ) : null}
       {streamError ? (
         <div

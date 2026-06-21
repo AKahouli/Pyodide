@@ -1,5 +1,7 @@
+import type { DragEvent } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../store';
+import { useTaskOps } from '../query/hooks';
 import { KanbanCard } from './KanbanCard';
 import type { WorkyBoardLane, WorkyTask } from '../types';
 import { cn } from '@/lib/utils';
@@ -7,14 +9,24 @@ import { cn } from '@/lib/utils';
 const VISIBLE_LANES: WorkyBoardLane[] = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
 
 interface KanbanBoardProps {
+  streamId: string;
   onTaskClick?: (task: WorkyTask) => void;
 }
 
-export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element {
+export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const board = useWorkyBoard();
   const loading = useWorkyBoardLoading();
   const error = useWorkyBoardError();
+  const taskOps = useTaskOps(streamId);
+
+  const handleDrop = (lane: WorkyBoardLane, event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData('application/x-worky-task-id');
+    const sourceLane = event.dataTransfer.getData('application/x-worky-source-lane');
+    if (!taskId || sourceLane === lane) return;
+    taskOps.move.mutate({ taskId, lane, reason: 'owner-kanban-move' });
+  };
 
   if (loading && !board) {
     return (
@@ -44,6 +56,8 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
             data-testid={`worky-lane-${lane}`}
             data-empty={isEmpty}
             aria-label={t(`kanban.lanes.${lane}`)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => handleDrop(lane, event)}
             className={cn(
               'flex shrink-0 flex-col rounded-md border border-border/60 transition-colors',
               isEmpty
@@ -63,6 +77,12 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
                   <button
                     type='button'
                     key={task.id}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData('application/x-worky-task-id', task.id);
+                      event.dataTransfer.setData('application/x-worky-source-lane', task.lane);
+                      event.dataTransfer.effectAllowed = 'move';
+                    }}
                     onClick={() => onTaskClick?.(task)}
                     className='w-full text-left'
                   >

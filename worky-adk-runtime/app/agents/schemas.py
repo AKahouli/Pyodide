@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Lane = Literal[
     "backlog",
@@ -83,6 +83,23 @@ class PlanDeltaBody(BaseModel):
     update_tasks: Optional[List[UpdateTask]] = None
     cancel_tasks: Optional[List[CancelTask]] = None
     clarification_requests: Optional[List[ClarificationRequest]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_single_sections(cls, raw: object) -> object:
+        if not isinstance(raw, dict):
+            return raw
+        normalized = dict(raw)
+        for key in (
+            "create_tasks",
+            "update_tasks",
+            "cancel_tasks",
+            "clarification_requests",
+        ):
+            value = normalized.get(key)
+            if isinstance(value, dict):
+                normalized[key] = [value]
+        return normalized
 
     @field_validator("create_tasks", "update_tasks", "cancel_tasks", "clarification_requests")
     @classmethod

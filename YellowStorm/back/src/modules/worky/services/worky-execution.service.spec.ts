@@ -415,6 +415,31 @@ describe('WorkyExecutionService', () => {
     expect(dispatch.dispatchStop).toHaveBeenCalledTimes(1);
   });
 
+  it('allows pause, resume, and stop from any current control state', async () => {
+    const pausedStreamId = await seedStream(streams, { status: 'stopped', controlState: 'stopped' });
+    await expect(service.pause(pausedStreamId, ownerId, 'manual')).resolves.toBeNull();
+
+    const freshStreamId = await seedStream(streams, { status: 'created', controlState: 'active' });
+    await expect(service.resume(freshStreamId, ownerId, 'manual')).resolves.toBeNull();
+
+    const stoppedStreamId = await seedStream(streams, { status: 'stopped', controlState: 'stopped' });
+    await expect(service.stop(stoppedStreamId, ownerId, 'manual')).resolves.toBeUndefined();
+  });
+
+  it('allows moving a running task directly to any visible lane', async () => {
+    const streamObjectId = new Types.ObjectId();
+    await seedStream(streams, { _id: streamObjectId, status: 'active', controlState: 'active' });
+    const taskId = await seedTask(tasks, streamObjectId, {
+      lane: 'running',
+      executionState: 'running',
+    });
+
+    const result = await service.moveTask(taskId, ownerId, 'done', 'owner override');
+
+    expect(result.lane).toBe('done');
+    expect(result.executionState).toBe('done');
+  });
+
   it('cancelTask throws on running tasks', async () => {
     const streamObjectId = new Types.ObjectId();
     await seedStream(streams, { _id: streamObjectId });
@@ -455,7 +480,7 @@ describe('WorkyExecutionService', () => {
     expect(dispatch.dispatchCancelTask).not.toHaveBeenCalled();
   });
 
-  it('moveTask refuses to move a running task to a terminal lane', async () => {
+  it('moveTask allows moving a running task to a terminal lane', async () => {
     const streamObjectId = new Types.ObjectId();
     await seedStream(streams, { _id: streamObjectId });
     const taskId = await seedTask(tasks, streamObjectId, {
@@ -463,8 +488,20 @@ describe('WorkyExecutionService', () => {
       lane: 'running',
       executionState: 'running',
     });
-    await expect(service.moveTask(taskId, ownerId, 'canceled')).rejects.toMatchObject({
-      code: 'ERR_3414',
+    const result = await service.moveTask(taskId, ownerId, 'canceled');
+    expect(result.lane).toBe('canceled');
+  });
+
+  it('moveTask allows resurrecting a terminal task', async () => {
+    const streamObjectId = new Types.ObjectId();
+    await seedStream(streams, { _id: streamObjectId });
+    const taskId = await seedTask(tasks, streamObjectId, {
+      title: 'Failed',
+      lane: 'failed',
+      executionState: 'failed',
     });
+    const result = await service.moveTask(taskId, ownerId, 'ready');
+    expect(result.lane).toBe('ready');
+    expect(result.executionState).toBe('scheduled');
   });
 });

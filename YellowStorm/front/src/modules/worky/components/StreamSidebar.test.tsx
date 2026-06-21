@@ -78,11 +78,14 @@ describe('StreamSidebar', () => {
   beforeEach(() => {
     mockApiClient.get.mockReset();
     mockApiClient.post.mockReset();
+    mockApiClient.delete.mockReset();
     mockNavigate.mockReset();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('lists streams returned by the backend', async () => {
@@ -111,5 +114,28 @@ describe('StreamSidebar', () => {
       await Promise.resolve();
     });
     expect(mockNavigate).toHaveBeenCalledWith('/worky/stream-1');
+  });
+
+  it('does not delete a stream when confirmation is cancelled', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockApiClient.get.mockResolvedValue({ data: { data: [sampleStream] } });
+    client = makeClient();
+    const { user, findByRole } = renderWithQuery();
+
+    await user.click(await findByRole('button', { name: 'sidebar.deleteStream' }));
+
+    expect(window.confirm).toHaveBeenCalledWith('sidebar.deleteConfirm');
+    expect(mockApiClient.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes a stream after confirmation', async () => {
+    mockApiClient.get.mockResolvedValue({ data: { data: [sampleStream] } });
+    mockApiClient.delete.mockResolvedValue({ data: { data: { ok: true, deletedWorkspaceId: 'ws-art-1' } } });
+    client = makeClient();
+    const { user, findByRole } = renderWithQuery();
+
+    await user.click(await findByRole('button', { name: 'sidebar.deleteStream' }));
+
+    expect(mockApiClient.delete).toHaveBeenCalledWith('/worky/streams/stream-1/delete');
   });
 });

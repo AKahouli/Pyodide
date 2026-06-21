@@ -160,6 +160,15 @@ export async function stopStream(
   return unwrap(response);
 }
 
+export async function deleteStream(
+  streamId: string,
+): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
+  const response = await apiClient.delete<ApiResponse<{ ok: true; deletedWorkspaceId: string | null }>>(
+    API_ENDPOINTS.worky.streamDelete(streamId),
+  );
+  return unwrap(response);
+}
+
 export async function moveTask(
   taskId: string,
   lane: string,

@@ -41,11 +41,15 @@ vi.mock('../query/hooks', () => ({
 
 vi.mock('../store', () => ({
   useWorkyStreaming: () => false,
-  useWorkyStore: (selector: (s: { setStreamError: (v: string | null) => void }) => unknown) =>
-    selector({ setStreamError: setStreamErrorMock }),
+  useWorkyStore: (selector: (s: {
+    setStreamError: (v: string | null) => void;
+    setStreaming: (v: boolean) => void;
+  }) => unknown) =>
+    selector({ setStreamError: setStreamErrorMock, setStreaming: setStreamingMock }),
 }));
 
 const setStreamErrorMock = vi.fn();
+const setStreamingMock = vi.fn();
 
 function TestProviders({ children }: { children: ReactNode }): JSX.Element {
   const qc = new QueryClient({
@@ -64,6 +68,7 @@ describe('PromptBar composer', () => {
     lastMutate = null;
     nextError = null;
     setStreamErrorMock.mockClear();
+    setStreamingMock.mockClear();
     useWorkyUiStore.getState().reset();
   });
 
@@ -94,7 +99,7 @@ describe('PromptBar composer', () => {
     expect(screen.queryByTestId(/^worky-model-default-/)).not.toBeInTheDocument();
   });
 
-  it('disables input and send button when the stream is stopped', () => {
+  it('allows sending when the stream is stopped', () => {
     render(
       <TestProviders>
         <PromptBar streamId={STREAM_ID} status='stopped' />
@@ -105,9 +110,22 @@ describe('PromptBar composer', () => {
     fireEvent.change(textarea, { target: { value: 'do not send' } });
     fireEvent.click(screen.getByTestId('worky-prompt-send'));
 
-    expect(textarea).toBeDisabled();
-    expect(screen.getByTestId('worky-prompt-send')).toBeDisabled();
-    expect(sendCalls).toHaveLength(0);
+    expect(textarea).not.toBeDisabled();
+    expect(sendCalls).toHaveLength(1);
+  });
+
+  it('sets manager-working state while a message is sent', () => {
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='active' />
+      </TestProviders>,
+    );
+
+    const textarea = screen.getByTestId('worky-prompt-content') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'show progress' } });
+    fireEvent.click(screen.getByTestId('worky-prompt-send'));
+
+    expect(setStreamingMock).toHaveBeenCalledWith(true);
   });
 
   it('clears any prior stream error when a new message is sent', () => {

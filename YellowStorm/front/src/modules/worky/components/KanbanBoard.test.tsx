@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthContext } from '@/modules/auth';
@@ -8,13 +8,15 @@ import { LocalizationProvider } from '@/modules/localization';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { KanbanBoard } from './KanbanBoard';
 import { useWorkyStore } from '../store';
-import { useBoard } from '../query/hooks';
+import { useBoard, useTaskOps } from '../query/hooks';
 import type { WorkyBoardResponse } from '../types';
 
 vi.mock('../query/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../query/hooks')>();
-  return { ...actual, useBoard: vi.fn() };
+  return { ...actual, useBoard: vi.fn(), useTaskOps: vi.fn() };
 });
+
+const moveTask = vi.fn();
 
 const authValue: AuthContextType = {
   isAuthenticated: true,
@@ -67,6 +69,9 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
   beforeEach(() => {
     useWorkyStore.getState().reset();
     vi.clearAllMocks();
+    (useTaskOps as ReturnType<typeof vi.fn>).mockReturnValue({
+      move: { mutate: moveTask, isPending: false },
+    });
   });
 
   afterEach(() => {
@@ -112,7 +117,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
 
     const { rerender } = render(
       <TestProviders>
-        <KanbanBoard />
+        <KanbanBoard streamId='stream-1' />
       </TestProviders>,
     );
     expect(screen.getByText('First task')).toBeInTheDocument();
@@ -123,7 +128,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     useWorkyStore.getState().setBoard(updatedBoard);
     rerender(
       <TestProviders>
-        <KanbanBoard />
+        <KanbanBoard streamId='stream-1' />
       </TestProviders>,
     );
     expect(screen.getByText('Second task (just added)')).toBeInTheDocument();
@@ -152,7 +157,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
 
     render(
       <TestProviders>
-        <KanbanBoard />
+        <KanbanBoard streamId='stream-1' />
       </TestProviders>,
     );
 
@@ -162,4 +167,59 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     const readyLane = screen.getByTestId('worky-lane-ready');
     expect(readyLane.getAttribute('data-empty')).toBe('false');
   });
+
+  it('moves a dragged task card into any visible lane', async () => {
+    const board: WorkyBoardResponse = {
+      streamId: 'stream-1',
+      lanes: {
+        backlog: [],
+        ready: [{ ...baseTask, id: 'task-1', title: 'Move me', lane: 'ready' }],
+        running: [],
+        review: [],
+        blocked: [],
+        done: [],
+      },
+      pendingClarifications: [],
+    };
+    (useBoard as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: board,
+      isLoading: false,
+      error: null,
+      refetch: () => Promise.resolve({ data: board }),
+    });
+    useWorkyStore.getState().setBoard(board);
+
+    render(
+      <TestProviders>
+        <KanbanBoard streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    const dataTransfer = createDataTransfer();
+    fireEvent.dragStart(screen.getByText('Move me').closest('button')!, { dataTransfer });
+    fireEvent.dragOver(screen.getByTestId('worky-lane-done'), { dataTransfer });
+    fireEvent.drop(screen.getByTestId('worky-lane-done'), { dataTransfer });
+
+    await waitFor(() => {
+      expect(moveTask).toHaveBeenCalledWith({
+        taskId: 'task-1',
+        lane: 'done',
+        reason: 'owner-kanban-move',
+      });
+    });
+  });
 });
+
+function createDataTransfer(): DataTransfer {
+  const data = new Map<string, string>();
+  return {
+    effectAllowed: 'move',
+    dropEffect: 'move',
+    setData: (type: string, value: string) => data.set(type, value),
+    getData: (type: string) => data.get(type) ?? '',
+    clearData: (type?: string) => {
+      if (type) data.delete(type);
+      else data.clear();
+    },
+  } as unknown as DataTransfer;
+}

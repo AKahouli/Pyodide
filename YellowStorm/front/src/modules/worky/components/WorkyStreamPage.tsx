@@ -281,7 +281,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             </Button>
           </div>
         ) : null}
-        <KanbanBoard onTaskClick={setSelectedTask} />
+        <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
       </main>
       <OrchestratorPanel streamId={streamId} />
       {orchestratorOpen ? (

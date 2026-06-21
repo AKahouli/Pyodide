@@ -180,6 +180,21 @@ export function useStopStream() {
   });
 }
 
+export function useDeleteStream() {
+  const qc = useQueryClient();
+  return useMutation<
+    Awaited<ReturnType<typeof api.deleteStream>>,
+    Error,
+    string
+  >({
+    mutationFn: (streamId) => api.deleteStream(streamId),
+    onSuccess: (_data, streamId) => {
+      qc.removeQueries({ queryKey: workyKeys.detail(streamId) });
+      qc.invalidateQueries({ queryKey: workyKeys.lists() });
+    },
+  });
+}
+
 export function useTaskOps(streamId: string) {
   const qc = useQueryClient();
   const invalidate = () => {

@@ -25,11 +25,11 @@ export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
   const send = useSendMessage(streamId);
   const streaming = useWorkyStreaming();
   const setStreamError = useWorkyStore((s) => s.setStreamError);
+  const setStreaming = useWorkyStore((s) => s.setStreaming);
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
   const clearSendError = useWorkyUiStore((s) => s.clearSendError);
   const sendError = useWorkyUiStore((s) => s.sendError);
-  const isTerminal = status === 'stopped' || status === 'completed' || status === 'archived';
-  const isDisabled = send.isPending || isTerminal;
+  const isDisabled = send.isPending || status === 'archived';
 
   // Reset the draft and any in-flight error on stream switch so the
   // composer never carries text or stale failure toasts across streams.
@@ -44,11 +44,13 @@ export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
     if (!content || isDisabled) return;
     setStreamError(null);
     clearSendError();
+    setStreaming(true);
     send.mutate(
       { content },
       {
         onSuccess: () => setValue(''),
         onError: (err: unknown) => {
+          setStreaming(false);
           const message =
             (err as { message?: string })?.message ?? t('promptBar.sendFailed');
           notifySendError(message);

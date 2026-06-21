@@ -39,10 +39,6 @@ export function StreamControls({
     setValidationMessage(null);
   }, [streamId, status]);
 
-  const isActive = controlState === 'active' && (status === 'active' || status === 'partially_blocked');
-  const isPaused = controlState === 'paused' || status === 'paused';
-  const isTerminal = status === 'stopped' || status === 'completed' || status === 'archived';
-
   const handleStart = async () => {
     setValidationMessage(null);
     const result = await startStream.mutateAsync(streamId);
@@ -79,7 +75,7 @@ export function StreamControls({
           type='button'
           className='rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50'
           onClick={handleStart}
-          disabled={startStream.isPending || isActive || isTerminal}
+          disabled={startStream.isPending}
         >
           {tWorky('controls.start')}
         </button>
@@ -87,7 +83,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium disabled:opacity-50'
           onClick={handlePause}
-          disabled={pauseStream.isPending || !isActive}
+          disabled={pauseStream.isPending}
         >
           {tWorky('controls.pause')}
         </button>
@@ -95,7 +91,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium disabled:opacity-50'
           onClick={handleResume}
-          disabled={resumeStream.isPending || !isPaused}
+          disabled={resumeStream.isPending}
         >
           {tWorky('controls.resume')}
         </button>
@@ -103,7 +99,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-xs font-medium text-destructive disabled:opacity-50'
           onClick={handleStop}
-          disabled={stopStream.isPending || isTerminal}
+          disabled={stopStream.isPending}
         >
           {tWorky('controls.stop')}
         </button>

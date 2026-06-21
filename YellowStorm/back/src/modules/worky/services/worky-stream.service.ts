@@ -1,10 +1,13 @@
-import { Injectable, OnModuleInit, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
+import { InjectConnection } from '@nestjs/mongoose';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
 import { Agent, AgentDocument } from '../../agent/schemas/agent.schema';
+import { WorkspaceService } from '../../workspace/workspace.service';
+import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { CreateWorkyStreamDto } from '../dto/create-worky-stream.dto';
 import { UpdateWorkyStreamDto } from '../dto/update-worky-stream.dto';
@@ -15,6 +18,23 @@ import { NotFoundException, ForbiddenException, ConflictException } from '../../
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { escapeRegex } from '../../../common/utils';
 import { WORKY_MANAGER_AGENT_TYPE_SLUG } from '../constants/worky.constants';
+import { WorkyAuditEvent } from '../schemas/worky-audit-event.schema';
+import { WorkyBudgetReservation } from '../schemas/worky-budget-reservation.schema';
+import { WorkyCostEvent } from '../schemas/worky-cost-event.schema';
+import { WorkyEphemeralWorker } from '../schemas/worky-ephemeral-worker.schema';
+import { WorkyExecutionReport } from '../schemas/worky-execution-report.schema';
+import { WorkyExecutionSnapshot } from '../schemas/worky-execution-snapshot.schema';
+import { WorkyIdempotencyRecord } from '../schemas/worky-idempotency-record.schema';
+import { WorkyInteraction } from '../schemas/worky-interaction.schema';
+import { WorkyMailEventLedger } from '../schemas/worky-mail-event-ledger.schema';
+import { WorkyMemoryEntry, WorkyMemoryProposal } from '../schemas/worky-memory.schema';
+import { WorkyMessage } from '../schemas/worky-message.schema';
+import { WorkyPlanDelta } from '../schemas/worky-plan-delta.schema';
+import { WorkyPlanVersion } from '../schemas/worky-plan-version.schema';
+import { WorkyScheduledEvent } from '../schemas/worky-scheduled-event.schema';
+import { WorkyTask } from '../schemas/worky-task.schema';
+import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
+import { WorkyTrace } from '../schemas/worky-trace.schema';
 
 const ARTIFACT_WORKSPACE_NAME_PREFIX = 'Worky';
 const STREAM_AGENT_NAME_PREFIX = 'Worky Manager';
@@ -39,7 +59,11 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly workspaceModel: Model<WorkspaceDocument>,
     @InjectModel(Agent.name)
     private readonly agentModel: Model<AgentDocument>,
+    @InjectConnection()
+    private readonly connection: Connection,
     private readonly agentTypeService: AgentTypeService,
+    private readonly workspaceService: WorkspaceService,
+    private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
   ) {
@@ -117,6 +141,41 @@ export class WorkyStreamService implements OnModuleInit {
     });
 
     return this.toResponse(stream);
+  }
+
+  async delete(userId: string, streamId: string): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
+    const stream = await this.streamModel.findById(streamId).exec();
+    if (!stream) {
+      throw new NotFoundException(
+        ErrorCode.WORKY_STREAM_NOT_FOUND,
+        'Worky stream not found.',
+      );
+    }
+    if (stream.ownerUserId.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKY_STREAM_FORBIDDEN,
+        'You do not have access to this Worky stream.',
+      );
+    }
+
+    const artifactWorkspaceId = stream.artifactWorkspaceId?.toString() ?? null;
+    if (artifactWorkspaceId) {
+      await this.workspaceDocuments.deleteAllByWorkspace(artifactWorkspaceId);
+      await this.workspaceService.delete(artifactWorkspaceId, userId);
+    }
+    if (stream.managerAgentId) {
+      await this.agentModel.deleteOne({ _id: stream.managerAgentId, createdBy: stream.ownerUserId }).exec();
+    }
+    await this.deleteStreamScopedRecords(stream._id as Types.ObjectId);
+    await this.streamModel.deleteOne({ _id: stream._id }).exec();
+
+    this.logger.log('Worky stream deleted', {
+      streamId,
+      userId,
+      artifactWorkspaceId,
+      managerAgentId: stream.managerAgentId?.toString() ?? null,
+    });
+    return { ok: true, deletedWorkspaceId: artifactWorkspaceId };
   }
 
   async findAllForUser(
@@ -220,6 +279,48 @@ export class WorkyStreamService implements OnModuleInit {
   }
 
   // ===== Private helpers =====
+
+  private async deleteStreamScopedRecords(streamObjectId: Types.ObjectId): Promise<void> {
+    const taskDocs = await this.connection
+      .model(WorkyTask.name)
+      .find({ streamId: streamObjectId })
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    const taskIds = (taskDocs as Array<{ _id: Types.ObjectId }>).map((task) => task._id);
+    const deletes: Array<[string, Record<string, unknown>]> = [
+      [WorkyAuditEvent.name, { streamId: streamObjectId }],
+      [WorkyBudgetReservation.name, { streamId: streamObjectId }],
+      [WorkyCostEvent.name, { streamId: streamObjectId }],
+      [WorkyEphemeralWorker.name, { streamId: streamObjectId }],
+      [WorkyExecutionReport.name, { streamId: streamObjectId }],
+      [WorkyExecutionSnapshot.name, { streamId: streamObjectId }],
+      [WorkyIdempotencyRecord.name, { streamId: streamObjectId }],
+      [WorkyInteraction.name, { streamId: streamObjectId }],
+      [WorkyMailEventLedger.name, { streamId: streamObjectId }],
+      [WorkyMemoryEntry.name, { sourceStreamId: streamObjectId }],
+      [WorkyMemoryProposal.name, { sourceStreamId: streamObjectId }],
+      [WorkyMessage.name, { streamId: streamObjectId }],
+      [WorkyPlanDelta.name, { streamId: streamObjectId }],
+      [WorkyPlanVersion.name, { streamId: streamObjectId }],
+      [WorkyScheduledEvent.name, { streamId: streamObjectId }],
+      [WorkyTask.name, { streamId: streamObjectId }],
+      [WorkyTrace.name, { streamId: streamObjectId }],
+    ];
+    if (taskIds.length > 0) {
+      deletes.push([WorkyTaskResult.name, { taskId: { $in: taskIds } }]);
+    }
+    const results = await Promise.all(
+      deletes.map(async ([name, filter]) => {
+        const result = await this.connection.model(name).deleteMany(filter).exec();
+        return [name, result.deletedCount ?? 0] as const;
+      }),
+    );
+    this.logger.log('Worky stream scoped records deleted', {
+      streamId: streamObjectId.toString(),
+      deletedCounts: Object.fromEntries(results),
+    });
+  }
 
   private async createArtifactWorkspace(
     userId: string,

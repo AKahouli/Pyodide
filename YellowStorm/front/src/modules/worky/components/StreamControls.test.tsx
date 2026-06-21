@@ -82,14 +82,25 @@ describe('StreamControls', () => {
     expect(mutationCalls[0]).toEqual({ name: 'startStream', args: STREAM_ID });
   });
 
-  it('disables Start when status is already active', () => {
+  it('keeps Start clickable when status is already active', async () => {
     renderControls({ status: 'active', controlState: 'active' });
-    expect(screen.getByText('controls.start')).toBeDisabled();
+    fireEvent.click(screen.getByText('controls.start'));
+    await waitFor(() => {
+      expect(mutationCalls.find((c) => c.name === 'startStream')).toBeDefined();
+    });
   });
 
-  it('disables Start when status is terminal', () => {
+  it('keeps all controls clickable when status is terminal', async () => {
     renderControls({ status: 'stopped', controlState: 'stopped' });
-    expect(screen.getByText('controls.start')).toBeDisabled();
+    fireEvent.click(screen.getByText('controls.start'));
+    fireEvent.click(screen.getByText('controls.pause'));
+    fireEvent.click(screen.getByText('controls.resume'));
+    fireEvent.click(screen.getByText('controls.stop'));
+    await waitFor(() => {
+      expect(mutationCalls.map((c) => c.name)).toEqual(
+        expect.arrayContaining(['startStream', 'pauseStream', 'resumeStream', 'stopStream']),
+      );
+    });
   });
 
   it('invokes pause mutation when the Pause button is clicked', async () => {

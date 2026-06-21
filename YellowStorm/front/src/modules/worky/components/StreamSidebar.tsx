@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Loader2 } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Plus, Search, Loader2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useStreams, useCreateStream } from '../query/hooks';
+import { showError } from '@/lib/notifications';
+import { useStreams, useCreateStream, useDeleteStream } from '../query/hooks';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   WORKY_STREAM_TITLE_MAX,
@@ -25,6 +26,7 @@ function StatusDot({ status }: { status: string }): JSX.Element {
 
 export function StreamSidebar(): JSX.Element {
   const navigate = useNavigate();
+  const { streamId: activeStreamId } = useParams<{ streamId?: string }>();
   const { t } = useModuleTranslation('worky');
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -32,6 +34,7 @@ export function StreamSidebar(): JSX.Element {
 
   const { data: streams = [], isLoading } = useStreams({ search: search || undefined });
   const createStream = useCreateStream();
+  const deleteStream = useDeleteStream();
 
   const onCreate = async (): Promise<void> => {
     const title = draftTitle.trim();
@@ -40,6 +43,19 @@ export function StreamSidebar(): JSX.Element {
     setDraftTitle('');
     setCreateOpen(false);
     navigate(`/worky/${stream.id}`);
+  };
+
+  const onDelete = async (stream: { id: string; title: string }): Promise<void> => {
+    const confirmed = window.confirm(t('sidebar.deleteConfirm', { title: stream.title }));
+    if (!confirmed) return;
+    try {
+      await deleteStream.mutateAsync(stream.id);
+      if (activeStreamId === stream.id) {
+        navigate('/worky');
+      }
+    } catch (error) {
+      showError(error instanceof Error ? error.message : t('sidebar.deleteFailed'));
+    }
   };
 
   return (
@@ -129,10 +145,10 @@ export function StreamSidebar(): JSX.Element {
             <li className='px-2 py-2 text-xs text-muted-foreground'>{t('sidebar.empty')}</li>
           ) : (
             streams.map((stream) => (
-              <li key={stream.id}>
+              <li key={stream.id} className='group flex items-center gap-1 rounded-md hover:bg-muted/60'>
                 <button
                   type='button'
-                  className='flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60'
+                  className='flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm'
                   onClick={() => navigate(`/worky/${stream.id}`)}
                 >
                   <StatusDot status={stream.status} />
@@ -141,6 +157,20 @@ export function StreamSidebar(): JSX.Element {
                     {stream.status}
                   </span>
                 </button>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon'
+                  className='mr-1 h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus:opacity-100'
+                  aria-label={t('sidebar.deleteStream', { title: stream.title })}
+                  disabled={deleteStream.isPending}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onDelete(stream);
+                  }}
+                >
+                  {deleteStream.isPending ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Trash2 className='h-3.5 w-3.5' />}
+                </Button>
               </li>
             ))
           )}

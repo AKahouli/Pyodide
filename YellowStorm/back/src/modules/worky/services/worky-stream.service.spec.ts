@@ -12,6 +12,30 @@ const chainableQuery = (resolved: unknown) => {
   return chain;
 };
 
+const writeQuery = (resolved: unknown = { deletedCount: 1 }) => ({
+  exec: jest.fn().mockResolvedValue(resolved),
+});
+
+const makeConnection = (taskIds: Types.ObjectId[] = [new Types.ObjectId()]) => {
+  const models = new Map<string, { deleteMany: jest.Mock; find?: jest.Mock }>();
+  return {
+    models,
+    model: jest.fn((name: string) => {
+      if (!models.has(name)) {
+        models.set(name, {
+          deleteMany: jest.fn(() => writeQuery()),
+          find: jest.fn(() => ({
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockReturnThis(),
+            exec: jest.fn().mockResolvedValue(taskIds.map((_id) => ({ _id }))),
+          })),
+        });
+      }
+      return models.get(name);
+    }),
+  };
+};
+
 describe('WorkyStreamService.create', () => {
   const userId = new Types.ObjectId().toString();
 
@@ -39,6 +63,9 @@ describe('WorkyStreamService.create', () => {
     const workspaceModel = { create: workspaceCreate, findOne: workspaceFindOne };
     const agentModel = { create: agentCreate, findOne: agentFindOne };
     const agentTypeService = { findBySlug: agentTypeFindBySlug };
+    const connection = makeConnection();
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
     const config = { get: jest.fn((key: string, fallback?: number) => fallback ?? 0) } as unknown as ConfigService;
     const logger = {
       setContext: jest.fn(),
@@ -52,7 +79,10 @@ describe('WorkyStreamService.create', () => {
       streamModel as any,
       workspaceModel as any,
       agentModel as any,
+      connection as any,
       agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
       config,
       logger as any,
     );
@@ -193,6 +223,9 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
     const agentModel = { create: jest.fn(), findOne: jest.fn() };
     const agentTypeService = { findBySlug: jest.fn() };
+    const connection = makeConnection();
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
     const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
     const logger = {
       setContext: jest.fn(),
@@ -205,7 +238,10 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       streamModel as any,
       workspaceModel as any,
       agentModel as any,
+      connection as any,
       agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
       config,
       logger as any,
     );
@@ -248,5 +284,85 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     expect(result.managerModelId).toBe('gpt-4o-mini');
     expect(result.workerModelId).toBe('claude-3-5-sonnet-20240620');
     expect(streamDoc.lastActivityAt).toEqual(before);
+  });
+});
+
+describe('WorkyStreamService.delete', () => {
+  const userObjectId = new Types.ObjectId();
+  const streamObjectId = new Types.ObjectId();
+  const artifactWorkspaceId = new Types.ObjectId();
+  const managerAgentId = new Types.ObjectId();
+  const userId = userObjectId.toString();
+
+  const makeDeleteService = (streamDoc: any) => {
+    const streamModel = {
+      create: jest.fn(),
+      findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(streamDoc) }),
+      find: jest.fn(),
+      findOne: jest.fn(),
+      deleteOne: jest.fn(() => writeQuery()),
+    };
+    const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentModel = { create: jest.fn(), findOne: jest.fn(), deleteOne: jest.fn(() => writeQuery()) };
+    const agentTypeService = { findBySlug: jest.fn() };
+    const connection = makeConnection();
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
+    const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    const service = new WorkyStreamService(
+      streamModel as any,
+      workspaceModel as any,
+      agentModel as any,
+      connection as any,
+      agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
+      config,
+      logger as any,
+    );
+    return { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments };
+  };
+
+  it('deletes the stream, manager agent, stream records, and artifact workspace', async () => {
+    const streamDoc = {
+      _id: streamObjectId,
+      ownerUserId: userObjectId,
+      artifactWorkspaceId,
+      managerAgentId,
+    };
+    const { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments } = makeDeleteService(streamDoc);
+
+    const result = await service.delete(userId, streamObjectId.toString());
+
+    expect(result).toEqual({ ok: true, deletedWorkspaceId: artifactWorkspaceId.toString() });
+    expect(streamModel.deleteOne).toHaveBeenCalledWith({ _id: streamObjectId });
+    expect(agentModel.deleteOne).toHaveBeenCalledWith({ _id: managerAgentId, createdBy: userObjectId });
+    expect(workspaceDocuments.deleteAllByWorkspace).toHaveBeenCalledWith(artifactWorkspaceId.toString());
+    expect(workspaceService.delete).toHaveBeenCalledWith(artifactWorkspaceId.toString(), userId);
+    expect(connection.models.has('WorkyGovernancePolicy')).toBe(false);
+    expect(connection.models.get('WorkyMemoryProposal')?.deleteMany).toHaveBeenCalledWith({ sourceStreamId: streamObjectId });
+    expect(connection.models.get('WorkyMemoryEntry')?.deleteMany).toHaveBeenCalledWith({ sourceStreamId: streamObjectId });
+    expect(connection.models.get('WorkyTaskResult')?.deleteMany).toHaveBeenCalledWith({ taskId: { $in: expect.any(Array) } });
+    expect(connection.models.get('WorkyTask')?.deleteMany).toHaveBeenCalledWith({ streamId: streamObjectId });
+    expect(connection.models.get('WorkyMessage')?.deleteMany).toHaveBeenCalledWith({ streamId: streamObjectId });
+  });
+
+  it('rejects deletion by a non-owner', async () => {
+    const { service, streamModel } = makeDeleteService({
+      _id: streamObjectId,
+      ownerUserId: new Types.ObjectId(),
+      artifactWorkspaceId,
+      managerAgentId,
+    });
+
+    await expect(service.delete(userId, streamObjectId.toString())).rejects.toMatchObject({ code: 'ERR_3401' });
+    expect(streamModel.deleteOne).not.toHaveBeenCalled();
   });
 });

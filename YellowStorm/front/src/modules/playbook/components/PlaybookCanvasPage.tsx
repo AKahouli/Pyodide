@@ -71,6 +71,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
+import { CompactPlaybookNode } from './CompactPlaybookNode';
 import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
@@ -147,17 +148,20 @@ import {
   hasPendingJudgeEvaluations,
 } from '../utils/playbook-canvas-status';
 import { showError, showWarning } from '@/lib/notifications';
+import { layoutCompactCanvasNodes } from '../utils/compact-canvas-layout';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
 }
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
+type CanvasViewMode = 'expanded' | 'compact';
 
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
   const { t } = useModuleTranslation('playbook');
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
 
@@ -656,6 +660,7 @@ function PlaybookCanvasInner() {
     playbookIteratorContainer: PlaybookIteratorContainerNode,
     playbookRouter: RouterNode,
     playbookHumanApproval: HumanApprovalNode,
+    compactPlaybookNode: CompactPlaybookNode,
   }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
@@ -775,6 +780,14 @@ function PlaybookCanvasInner() {
     });
   }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
+  const canvasNodes = useMemo(() => liveNodes.map((node) => ({
+    ...node,
+    data: {
+      ...(node.data as PlaybookNodeData),
+      isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
+    },
+  })), [liveNodes, recentlyChangedNodeIds]);
+
   // Style edges based on source node status
   const styledControlEdges = useMemo(() => {
     if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
@@ -835,6 +848,45 @@ function PlaybookCanvasInner() {
 
     return [...styledControlEdges, ...dataLayerEdges];
   }, [dataBindingsVisible, playbook, styledControlEdges]);
+
+  const isCompactCanvas = canvasViewMode === 'compact';
+  const visibleCanvasEdges = useMemo(() => {
+    if (!isCompactCanvas) return liveEdges;
+    return styledControlEdges.map((edge) => ({
+      ...edge,
+      sourceHandle: null,
+      targetHandle: null,
+      selectable: false,
+      data: {
+        ...(edge.data || {}),
+        label: undefined,
+      },
+      style: {
+        ...(edge.style || {}),
+        strokeWidth: 1.5,
+      },
+    }));
+  }, [isCompactCanvas, liveEdges, styledControlEdges]);
+
+  const visibleCanvasNodes = useMemo(() => {
+    if (!isCompactCanvas) return canvasNodes;
+    const compactNodes = canvasNodes
+      .filter((node) => node.id !== TRIGGER_NODE_ID)
+      .map((node) => ({
+        ...node,
+        type: 'compactPlaybookNode',
+        draggable: false,
+      }));
+    return layoutCompactCanvasNodes(compactNodes, visibleCanvasEdges);
+  }, [canvasNodes, isCompactCanvas, visibleCanvasEdges]);
+
+  useEffect(() => {
+    if (!playbook?.id) return;
+    const frame = window.requestAnimationFrame(() => {
+      void reactFlow.fitView({ padding: isCompactCanvas ? 0.18 : 0.12, duration: 250 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasViewMode, isCompactCanvas, playbook?.id, reactFlow]);
 
   const {
     handleAddStep,
@@ -2442,14 +2494,6 @@ function PlaybookCanvasInner() {
     constructionAbortRef,
   });
 
-  const canvasNodes = useMemo(() => liveNodes.map((node) => ({
-    ...node,
-    data: {
-      ...(node.data as PlaybookNodeData),
-      isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
-    },
-  })), [liveNodes, recentlyChangedNodeIds]);
-
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
     playbook,
@@ -2915,8 +2959,8 @@ function PlaybookCanvasInner() {
               <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
-                  nodes={canvasNodes}
-                  edges={liveEdges}
+                  nodes={visibleCanvasNodes}
+                  edges={visibleCanvasEdges}
                   onNodesChange={onNodesChange}
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
@@ -2943,14 +2987,40 @@ function PlaybookCanvasInner() {
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"
-                  nodesDraggable={!isSaving}
-                  nodesConnectable={!isSaving}
+                  nodesDraggable={!isSaving && !isCompactCanvas}
+                  nodesConnectable={!isSaving && !isCompactCanvas}
                   elementsSelectable={!isSaving}
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
                 >
                   <Controls position="bottom-left" />
                 </Canvas>
+                <div
+                  className="absolute right-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
+                  role="group"
+                  aria-label={t('canvas.view.groupLabel')}
+                >
+                  <Button
+                    type="button"
+                    variant={canvasViewMode === 'expanded' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-8 rounded-full px-3 text-xs"
+                    aria-pressed={canvasViewMode === 'expanded'}
+                    onClick={() => setCanvasViewMode('expanded')}
+                  >
+                    {t('canvas.view.expanded')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={canvasViewMode === 'compact' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-8 rounded-full px-3 text-xs"
+                    aria-pressed={canvasViewMode === 'compact'}
+                    onClick={() => setCanvasViewMode('compact')}
+                  >
+                    {t('canvas.view.compact')}
+                  </Button>
+                </div>
                 {intentLoading ? <PlaybookIntentGhostNode progress={constructionProgress} /> : null}
                 <PlaybookIntentBar
                   ref={intentBarRef}
