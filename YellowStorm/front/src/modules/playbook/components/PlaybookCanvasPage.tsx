@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
+import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
@@ -2522,12 +2523,14 @@ function PlaybookCanvasInner() {
     if (!id || !playbook) return;
     const newValue = !playbook.deepSearch;
     updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
+    toast.success(newValue ? t('floatingToolbar.deepSearchEnable') : t('floatingToolbar.deepSearchDisable'));
     try {
       await updatePlaybook(id, { deepSearch: newValue });
     } catch (err) {
       console.error('Failed to toggle deep search:', err);
+      toast.error('Failed to toggle deep search');
     }
-  }, [id, playbook, updatePlaybook, updateTasks]);
+  }, [id, playbook, updatePlaybook, updateTasks, t]);
 
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
