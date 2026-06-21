@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString, MinLength, MaxLength, IsOptional, IsArray, IsEnum,
-  ValidateNested, ArrayMaxSize, IsObject,
+  ValidateNested, ArrayMaxSize, IsObject, IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FlowNodeDto } from './playbook-flow-node.dto';
@@ -97,4 +97,9 @@ export class CreatePlaybookFlowDto {
   @ApiPropertyOptional()
   @IsOptional()
   advisorAutopilotMaxTurns?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
 }
