@@ -389,6 +389,9 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       onClick: onToggleDeepSearch,
       disabled: false,
       active: deepSearch,
+      activeClassName: deepSearch
+        ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 border-amber-500/40'
+        : '',
       hidden: !onToggleDeepSearch,
     },
     {
@@ -543,17 +546,23 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
 
           {actionButtons.filter((a) => !a.hidden).map((action) => {
             const Icon = action.icon;
+            const useCustomActive = Boolean(action.activeClassName);
             return (
               <Button
                 key={action.key}
                 type="button"
-                variant={action.active ? 'default' : 'outline'}
+                variant={useCustomActive ? 'outline' : (action.active ? 'default' : 'outline')}
                 size="sm"
                 onClick={action.onClick}
                 disabled={action.disabled}
-                className={cn('h-9', collapsed ? 'w-9 px-0' : 'w-full justify-start px-3')}
+                className={cn(
+                  'h-9',
+                  collapsed ? 'w-9 px-0' : 'w-full justify-start px-3',
+                  useCustomActive && action.active ? action.activeClassName : '',
+                )}
                 aria-label={collapsed ? action.label : undefined}
                 title={collapsed ? action.label : undefined}
+                aria-pressed={action.active ? 'true' : undefined}
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 {!collapsed && <span className="ml-2 truncate">{action.label}</span>}
