@@ -1669,6 +1669,8 @@
   "toolbar.export": "Export playbook definition",
   "floatingToolbar.deepSearchEnable": "Enable Deep Search",
   "floatingToolbar.deepSearchDisable": "Disable Deep Search",
+  "floatingToolbar.deepSearchOn": "Deep Search enabled",
+  "floatingToolbar.deepSearchOff": "Deep Search disabled",
   "import.warningTitle": "Import playbook definition?",
   "import.warningDescription": "This will replace the current playbook definition with \"{{name}}\". You can undo this action with Ctrl+Z.",
   "import.unsavedWarning": "You have unsaved changes that will be lost. Consider exporting your current playbook first.",

@@ -1665,6 +1665,8 @@
   "toolbar.export": "Exporter la définition du playbook",
   "floatingToolbar.deepSearchEnable": "Activer la recherche approfondie",
   "floatingToolbar.deepSearchDisable": "Désactiver la recherche approfondie",
+  "floatingToolbar.deepSearchOn": "Recherche approfondie activée",
+  "floatingToolbar.deepSearchOff": "Recherche approfondie désactivée",
   "import.warningTitle": "Importer la définition du playbook ?",
   "import.warningDescription": "Cela remplacera la définition actuelle du playbook par « {{name}} ». Vous pouvez annuler cette action avec Ctrl+Z.",
   "import.unsavedWarning": "Vous avez des modifications non enregistrées qui seront perdues. Envisagez d'exporter votre playbook actuel au préalable.",

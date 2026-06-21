@@ -2523,7 +2523,7 @@ function PlaybookCanvasInner() {
     if (!id || !playbook) return;
     const newValue = !playbook.deepSearch;
     updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
-    toast.success(newValue ? t('floatingToolbar.deepSearchEnable') : t('floatingToolbar.deepSearchDisable'));
+    toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
     try {
       await updatePlaybook(id, { deepSearch: newValue });
     } catch (err) {
