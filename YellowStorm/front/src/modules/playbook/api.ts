@@ -298,6 +298,7 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    deepSearch: data.deepSearch,
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
@@ -318,6 +319,7 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.deepSearch !== undefined) body.deepSearch = sanitized.deepSearch;
   if (sanitized.expectedDefinitionRevision !== undefined) body.expectedDefinitionRevision = sanitized.expectedDefinitionRevision;
   if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
   if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
@@ -382,6 +384,7 @@ function buildDeltaPatchFields(
     fields.advisorAutopilotMaxTurns = current.advisorAutopilotMaxTurns;
   }
   if (!isEqualByStableStringify(previous.workspaces, current.workspaces)) fields.workspaces = current.workspaces;
+  if (!isEqualByStableStringify(previous.deepSearch, current.deepSearch)) fields.deepSearch = current.deepSearch;
 
   return Object.keys(fields).length > 0 ? fields : undefined;
 }

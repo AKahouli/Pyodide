@@ -2520,11 +2520,14 @@ function PlaybookCanvasInner() {
 
   const handleToggleDeepSearch = useCallback(async () => {
     if (!id || !playbook) return;
+    const newValue = !playbook.deepSearch;
+    updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
     try {
-      await updatePlaybook(id, { deepSearch: !playbook.deepSearch });
-    } catch {
+      await updatePlaybook(id, { deepSearch: newValue });
+    } catch (err) {
+      console.error('Failed to toggle deep search:', err);
     }
-  }, [id, playbook, updatePlaybook]);
+  }, [id, playbook, updatePlaybook, updateTasks]);
 
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
@@ -2978,6 +2981,8 @@ function PlaybookCanvasInner() {
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
+                  deepSearch={playbook.deepSearch}
+                  onToggleDeepSearch={() => { void handleToggleDeepSearch(); }}
                 />
                 </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>

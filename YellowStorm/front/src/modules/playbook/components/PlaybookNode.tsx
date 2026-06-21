@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2, Search } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -473,7 +473,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
-  const deepSearchClass = data.deepSearch ? 'ring-1 ring-amber-500/30' : '';
   const recentlyChangedClass = isRecentlyChanged
     ? 'ring-2 ring-primary/70 shadow-[0_0_12px_2px_rgba(59,130,246,0.15)] animate-[ys-node-flash_1.6s_ease-in-out_infinite]'
     : '';
@@ -741,7 +740,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             ringClass,
             selectedClass,
             disabledClass,
-            deepSearchClass,
             recentlyChangedClass,
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
@@ -1118,29 +1116,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">{t('node.executeStep')}</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "h-7 w-7",
-                        data.deepSearch
-                          ? "text-amber-500 hover:text-amber-600 bg-amber-500/10"
-                          : "text-muted-foreground hover:text-foreground"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        nodeDataActions?.updateNodeData(id, { deepSearch: !data.deepSearch });
-                      }}
-                    >
-                      <Search className="h-3.5 w-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {data.deepSearch ? t('node.deepSearchDisable') : t('node.deepSearchEnable')}
-                  </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>

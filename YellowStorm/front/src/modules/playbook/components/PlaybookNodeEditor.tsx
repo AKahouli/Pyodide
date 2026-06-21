@@ -1396,28 +1396,6 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                 </div>
               </EditorSection>
 
-              {isStepLikeNodeType(draft.nodeType) && (
-                <EditorSection title={t('nodeEditor.deepSearch')} resetKey={`${task.id}:deep-search`}>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="deep-search" className="text-sm font-normal">
-                          {t('nodeEditor.deepSearch')}
-                        </Label>
-                        <p className="text-xs text-muted-foreground">{t('nodeEditor.deepSearchDescription')}</p>
-                      </div>
-                      <Switch
-                        id="deep-search"
-                        checked={draft.deepSearch}
-                        onCheckedChange={(v) => {
-                          updateDraft({ deepSearch: v });
-                          onSave(task.id, { deepSearch: v });
-                        }}
-                      />
-                    </div>
-                  </div>
-                </EditorSection>
-              )}
             </div>
           </div>
       </DialogContent>

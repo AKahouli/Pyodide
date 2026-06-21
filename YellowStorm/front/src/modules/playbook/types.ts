@@ -2811,6 +2811,7 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  deepSearch?: boolean;
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
@@ -2839,6 +2840,7 @@ export interface PlaybookDeltaPatchFields {
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
   workspaces?: string[];
+  deepSearch?: boolean;
 }
 
 export interface PatchPlaybookFlowDeltaData {

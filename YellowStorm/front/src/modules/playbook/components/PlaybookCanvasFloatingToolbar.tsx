@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -55,6 +55,8 @@ interface Props {
   minTopOffset?: number;
   minLeftOffset?: number;
   avoidRectPadding?: number;
+  deepSearch?: boolean;
+  onToggleDeepSearch?: () => void;
 }
 
 export interface PlaybookCanvasFloatingToolbarHandle {
@@ -108,6 +110,8 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   minTopOffset = 0,
   minLeftOffset = DEFAULT_POSITION.x,
   avoidRectPadding = 12,
+  deepSearch = false,
+  onToggleDeepSearch,
 }: Props, ref) {
   const { t } = useModuleTranslation('playbook');
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
@@ -377,6 +381,15 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       disabled: false,
       active: designerOpen,
       hidden: !onToggleDesigner,
+    },
+    {
+      key: 'deepSearch',
+      label: deepSearch ? t('floatingToolbar.deepSearchDisable') : t('floatingToolbar.deepSearchEnable'),
+      icon: Search,
+      onClick: onToggleDeepSearch,
+      disabled: false,
+      active: deepSearch,
+      hidden: !onToggleDeepSearch,
     },
     {
       key: 'removeAll',
