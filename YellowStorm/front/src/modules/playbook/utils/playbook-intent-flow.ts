@@ -11,6 +11,8 @@ import type {
   PlaybookIntentSuggestion,
 } from '../types';
 import { getTopIntentSuggestion } from './playbook-intent';
+import { usePlaybookStore } from '../store';
+import { getUnboundRequiredPorts } from './required-port-validation';
 import { useModuleTranslation } from '@/modules/localization';
 
 const AUTO_APPLY_MIN_CONFIDENCE = 0.75;
@@ -39,6 +41,7 @@ interface PlaybookIntentFlowDeps {
   addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
   previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
   showError: (message: string) => void;
+  showWarning: (message: string) => void;
   getCurrentDefinitionRevision: () => number;
   setConstructionStatus?: (status: PlaybookIntentConstructionStatus) => void;
   setConstructionProgress?: (message: string) => void;
@@ -76,6 +79,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setIntentSuggestions,
     setLastIntentSuggestions,
     showError,
+    showWarning,
     startPlaybookIntentConstruction,
     streamPlaybookIntentConstruction,
     setConstructionStatus,
@@ -193,6 +197,17 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       return true;
     }
     if (lastSequence > 0) {
+      const currentPlaybook = usePlaybookStore.getState().currentPlaybook;
+      const unboundRequiredPorts = currentPlaybook
+        ? getUnboundRequiredPorts(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [])
+        : [];
+      if (unboundRequiredPorts.length > 0) {
+        console.warn('[IntentApply] Skipped construction save with unbound required inputs:', unboundRequiredPorts);
+        showWarning(t('intentBar.invalidRequiredBindings'));
+        setConstructionStatus?.('completed');
+        setConstructionProgress?.(t('intentBar.construction.completed'));
+        return appliedDelta;
+      }
       await saveConstruction({
         expectedDefinitionRevision: getCurrentDefinitionRevision(),
         clientMutationId: `intent-construction-${construction.constructionId}`,
@@ -201,7 +216,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setConstructionStatus?.('completed');
     setConstructionProgress?.(t('intentBar.construction.completed'));
     return appliedDelta;
-  }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
+  }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, showWarning, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
   const generateIntentSuggestions = useCallback(async (normalizedIntent: string, selectedTaskId?: string, options?: { applyBest?: boolean }) => {
     const analysis = await runIntentAnalysis(normalizedIntent, selectedTaskId, { includeFallback: options?.applyBest });

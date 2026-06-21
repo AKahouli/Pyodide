@@ -23,7 +23,7 @@ export function InteractionPanel({ streamId }: InteractionPanelProps): JSX.Eleme
 
   return (
     <aside
-      className='flex flex-col gap-3 border-b border-border/60 bg-background/40 px-4 py-3'
+      className='flex max-h-64 flex-col gap-3 overflow-y-auto rounded-md border border-border/60 bg-background/40 px-4 py-3'
       aria-label={t('interactions.heading')}
     >
       <h2 className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>

@@ -135,13 +135,13 @@ describe('WorkyPlanningService.appendOwnerMessage', () => {
     expect(result.content).toBe('Hello Manager');
   });
 
-  it('rejects when the stream is in an execution phase', async () => {
+  it('rejects when the stream is archived (read-only snapshot)', async () => {
     const { service, streamModel, ownerId } = makeService();
     streamModel.findById.mockReturnValueOnce({
       exec: jest.fn().mockResolvedValue({
         _id: new Types.ObjectId(),
         ownerUserId: ownerId,
-        status: 'active',
+        status: 'archived',
         currentPlanVersion: 0,
         budget: { limitUsd: 0, spendUsd: 0 },
       }),
@@ -172,6 +172,38 @@ describe('WorkyPlanningService.appendOwnerMessage', () => {
       { content: 'Add at least one task' },
     );
     expect(result.content).toBe('Add at least one task');
+    expect(messageModel.create).toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      ownerId.toString(),
+      streamId,
+      expect.objectContaining({ type: 'message.appended' }),
+    );
+  });
+
+  it.each([
+    'partially_blocked',
+    'active',
+    'paused',
+    'stopped',
+    'completed',
+    'waiting_for_owner',
+  ])('accepts a message in %s so the owner can keep discussing post-execution', async (status) => {
+    const { service, messageModel, events, ownerId } = makeService();
+    service['streams'].findById = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(),
+        ownerUserId: ownerId,
+        status,
+        currentPlanVersion: 0,
+        budget: { limitUsd: 0, spendUsd: 0 },
+      }),
+    });
+    const result = await service.appendOwnerMessage(
+      ownerId.toString(),
+      streamId,
+      { content: `follow-up in ${status}` },
+    );
+    expect(result.content).toBe(`follow-up in ${status}`);
     expect(messageModel.create).toHaveBeenCalled();
     expect(events.emit).toHaveBeenCalledWith(
       ownerId.toString(),

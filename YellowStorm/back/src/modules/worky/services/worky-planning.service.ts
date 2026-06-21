@@ -87,10 +87,10 @@ export class WorkyPlanningService {
     dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string }> {
     const stream = await this.loadStream(streamId, userId);
-    if (!this.isPreExecutionPhase(stream.status)) {
+    if (!this.isMessageablePhase(stream.status)) {
       throw new BadRequestException(
         ErrorCode.WORKY_STREAM_PHASE_INVALID,
-        `Messages can only be sent in a pre-execution phase (current: ${stream.status}).`,
+        `Messages are not accepted in phase '${stream.status}'.`,
       );
     }
     const message = await this.messages.create({
@@ -470,17 +470,17 @@ export class WorkyPlanningService {
     };
   }
 
-  private isPreExecutionPhase(status: string): boolean {
-    // `start_validation_failed` is a pre-execution status: the owner
-    // hit Start Stream before the plan was ready and validation
-    // produced no runnable tasks. They must be able to keep
-    // conversing with the Manager to fix the plan, otherwise the
-    // stream is dead-ended and the owner has to abandon it.
-    return (
-      status === 'created' ||
-      status === 'planning' ||
-      status === 'start_validation_failed'
-    );
+  private isMessageablePhase(status: string): boolean {
+    // The owner can keep conversing with the Manager in every phase
+    // except `archived` (read-only snapshot of a completed stream).
+    // This covers pre-execution (`created` / `planning` /
+    // `start_validation_failed` / `start_requested`), in-flight
+    // execution (`active` / `partially_blocked` / `waiting_for_*`),
+    // and post-execution (`paused` / `stopped` / `completed`).
+    // Without this, post-execution streams dead-end: the user has no
+    // way to ask the Manager to re-plan, clarify a result, or close
+    // the loop without abandoning the stream.
+    return status !== 'archived';
   }
 
   private async buildContextSnapshot(

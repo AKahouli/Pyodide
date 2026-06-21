@@ -128,4 +128,38 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     );
     expect(screen.getByText('Second task (just added)')).toBeInTheDocument();
   });
+
+  it('marks empty lanes as compact via the data-empty attribute', () => {
+    const board: WorkyBoardResponse = {
+      streamId: 'stream-1',
+      lanes: {
+        backlog: [],
+        ready: [{ ...baseTask, id: 'task-1', title: 'First task', lane: 'ready' }],
+        running: [],
+        review: [],
+        blocked: [],
+        done: [],
+      },
+      pendingClarifications: [],
+    };
+    (useBoard as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: board,
+      isLoading: false,
+      error: null,
+      refetch: () => Promise.resolve({ data: board }),
+    });
+    useWorkyStore.getState().setBoard(board);
+
+    render(
+      <TestProviders>
+        <KanbanBoard />
+      </TestProviders>,
+    );
+
+    const runningLane = screen.getByTestId('worky-lane-running');
+    expect(runningLane.getAttribute('data-empty')).toBe('true');
+
+    const readyLane = screen.getByTestId('worky-lane-ready');
+    expect(readyLane.getAttribute('data-empty')).toBe('false');
+  });
 });

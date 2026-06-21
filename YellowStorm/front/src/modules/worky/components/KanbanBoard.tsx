@@ -1,8 +1,8 @@
 import { useModuleTranslation } from '@/modules/localization';
-import { WORKY_LANES } from '../constants';
 import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../store';
 import { KanbanCard } from './KanbanCard';
 import type { WorkyBoardLane, WorkyTask } from '../types';
+import { cn } from '@/lib/utils';
 
 const VISIBLE_LANES: WorkyBoardLane[] = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
 
@@ -31,14 +31,25 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
     );
   }
   return (
-    <div className='flex h-full flex-1 gap-2 overflow-x-auto p-4'>
+    <div
+      data-testid='worky-kanban-board'
+      className='flex h-full flex-1 items-stretch gap-2 overflow-x-auto p-4'
+    >
       {VISIBLE_LANES.map((lane) => {
         const tasks: WorkyTask[] = (board?.[lane] ?? []) as WorkyTask[];
+        const isEmpty = tasks.length === 0;
         return (
           <section
             key={lane}
-            className='flex h-full w-64 shrink-0 flex-col rounded-md border border-border/60 bg-background/30'
+            data-testid={`worky-lane-${lane}`}
+            data-empty={isEmpty}
             aria-label={t(`kanban.lanes.${lane}`)}
+            className={cn(
+              'flex shrink-0 flex-col rounded-md border border-border/60 transition-colors',
+              isEmpty
+                ? 'h-16 w-40 self-start bg-background/20 opacity-70'
+                : 'h-full w-64 bg-background/30',
+            )}
           >
             <header className='flex items-center justify-between border-b border-border/60 px-3 py-2'>
               <h2 className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
@@ -46,13 +57,9 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
               </h2>
               <span className='text-[10px] text-muted-foreground'>{tasks.length}</span>
             </header>
-            <div className='flex flex-1 flex-col gap-2 overflow-y-auto px-2 py-2'>
-              {tasks.length === 0 ? (
-                <p className='px-2 py-2 text-center text-xs text-muted-foreground'>
-                  {t('kanban.placeholder')}
-                </p>
-              ) : (
-                tasks.map((task) => (
+            {isEmpty ? null : (
+              <div className='flex flex-1 flex-col gap-2 overflow-y-auto px-2 py-2'>
+                {tasks.map((task) => (
                   <button
                     type='button'
                     key={task.id}
@@ -61,13 +68,12 @@ export function KanbanBoard({ onTaskClick }: KanbanBoardProps = {}): JSX.Element
                   >
                     <KanbanCard task={task} />
                   </button>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         );
       })}
-      <span data-worky-lanes-count={WORKY_LANES.length} className='hidden' aria-hidden />
     </div>
   );
 }

@@ -116,7 +116,7 @@ export class PlaybookFlowIntentConstructionService {
 
       if (useBlueprint) {
         const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
-        await this.emitSuggestions(job, suggestions, 0);
+        await this.emitSuggestions(job, suggestions, 0, false);
         job.status = 'completed';
         this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
       } else {
@@ -174,8 +174,8 @@ export class PlaybookFlowIntentConstructionService {
     }
   }
 
-  private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0): Promise<number> {
-    const deltas = suggestions.flatMap((suggestion) => this.buildSuggestionDeltas(suggestion));
+  private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0, splitWorkflowPlans = true): Promise<number> {
+    const deltas = suggestions.flatMap((suggestion) => this.buildSuggestionDeltas(suggestion, splitWorkflowPlans));
     for (let index = emittedDeltaCount; index < deltas.length; index += 1) {
       if (job.abortController.signal.aborted) return emittedDeltaCount;
       const suggestion = deltas[index];
@@ -311,8 +311,8 @@ export class PlaybookFlowIntentConstructionService {
     }
   }
 
-  private buildSuggestionDeltas(suggestion: PlaybookIntentSuggestion): PlaybookIntentSuggestion[] {
-    if (suggestion.kind !== 'workflow_plan' || suggestion.changes.length <= 1) {
+  private buildSuggestionDeltas(suggestion: PlaybookIntentSuggestion, splitWorkflowPlans = true): PlaybookIntentSuggestion[] {
+    if (!splitWorkflowPlans || suggestion.kind !== 'workflow_plan' || suggestion.changes.length <= 1) {
       return [suggestion];
     }
 

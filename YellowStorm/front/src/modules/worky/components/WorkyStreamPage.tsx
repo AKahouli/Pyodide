@@ -1,24 +1,21 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
+import { Button } from '@/components/ui/button';
 import { StreamSidebar } from './StreamSidebar';
 import { StreamHeader } from './StreamHeader';
 import { KanbanBoard } from './KanbanBoard';
-import { PromptBar } from './PromptBar';
-import { InteractionPanel } from './InteractionPanel';
+import { OrchestratorPanel } from './OrchestratorPanel';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { StreamControls } from './StreamControls';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
-import { BudgetControl } from './BudgetControl';
-import { HumanTaskPanel } from './HumanTaskPanel';
-import { MemoryProposalCard } from './MemoryProposalCard';
-import { StreamModelsControl } from './StreamModelsControl';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
 import { useWorkyStore } from '../store';
+import { useWorkyUiStore } from '../uiStore';
 import {
   useBoard,
   useMessages,
@@ -27,7 +24,7 @@ import {
 } from '../query/hooks';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
-function summarizeDelta(event: WorkyEvent): string {
+function summarizeDelta(event: WorkyEvent, fallback: string): string {
   const created = (event.data.createdTaskIds as string[] | undefined)?.length ?? 0;
   const updated = (event.data.updatedTaskIds as string[] | undefined)?.length ?? 0;
   const cancelled = (event.data.cancelledTaskIds as string[] | undefined)?.length ?? 0;
@@ -35,7 +32,7 @@ function summarizeDelta(event: WorkyEvent): string {
   if (created) parts.push(`+${created}`);
   if (updated) parts.push(`~${updated}`);
   if (cancelled) parts.push(`-${cancelled}`);
-  return parts.length === 0 ? 'Plan updated' : parts.join(' / ');
+  return parts.length === 0 ? fallback : parts.join(' / ');
 }
 
 function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
@@ -99,7 +96,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           break;
         }
         case 'plan.delta.applied': {
-          const summary = summarizeDelta({ type: 'plan.delta.applied', data: event.data });
+          const summary = summarizeDelta({ type: 'plan.delta.applied', data: event.data }, tWorky('plan.updated'));
           setLastDeltaToast({ summary, at: Date.now() });
           setLastPlanVersion(
             typeof (event.data as { resultPlanVersion?: number }).resultPlanVersion === 'number'
@@ -128,8 +125,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           break;
         }
         case 'interaction.requested': {
-          // Auto-open the approval modal for type=approval; clarifications
-          // continue to render via the existing InteractionPanel.
           const data = event.data as {
             type?: string;
             question?: string;
@@ -208,10 +203,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         case 'stream.terminal': {
           setStreaming(false);
           if (event.data && (event.data as { error?: boolean }).error) {
-            // Prefer the runtime's own error text when the backend
-            // forwarded it (the runtime's `planning.error` payload
-            // is propagated as `errorText`); fall back to the
-            // localized generic message.
             const detail = (event.data as { errorText?: string }).errorText;
             setStreamError(detail || tWorky('stream.error'));
           } else {
@@ -236,10 +227,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     tWorky,
   ]);
 
-  // When the user lands on a stream, mark `streaming=false` after
-  // the SSE pipe opens (so the prompt bar's send button shows the
-  // icon, not the stop icon). On `planning.done` events the runtime
-  // sends `stream.terminal` with `error: false`.
   useEffect(() => {
     return () => {
       resetAssistantText();
@@ -247,82 +234,62 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     };
   }, [streamId, resetAssistantText, setStreaming]);
 
-  // Render the assistant's streaming text in the prompt-bar area as
-  // a small chip so the owner can see progress.
-  const assistantText = useWorkyStore((s) => s.assistantText);
-  const isStreaming = useWorkyStore((s) => s.streaming);
-  const streamError = useWorkyStore((s) => s.streamError);
-  const clearStreamError = useWorkyStore((s) => s.setStreamError);
-
-  // Title rename via the existing stream mutation (Part 3 reuses
-  // the Part 1 endpoint; PATCH /worky/streams/{id} is owner-only).
   const onRename = (newTitle: string) => {
     if (!newTitle.trim()) return;
     updateStream.mutate({ streamId, data: { title: newTitle.trim() } });
   };
 
+  const orchestratorOpen = useWorkyUiStore((s) => s.orchestratorOpen);
+  const setOrchestratorOpen = useWorkyUiStore((s) => s.setOrchestratorOpen);
+  // Close the slide-over automatically on stream switch so the next
+  // stream doesn't inherit the open state of the previous one.
+  useEffect(() => {
+    setOrchestratorOpen(false);
+  }, [streamId, setOrchestratorOpen]);
+
   return (
-    <div className='flex h-full w-full flex-col'>
-      <div className='flex h-full w-full flex-1 overflow-hidden'>
-        <StreamSidebar />
-        <section className='flex h-full flex-1 flex-col overflow-hidden'>
-          <StreamHeader streamId={streamId} onRename={onRename} />
-          <InteractionPanel streamId={streamId} />
-          <div className='grid flex-1 grid-cols-[1fr_320px] overflow-hidden'>
-            <KanbanBoard onTaskClick={setSelectedTask} />
-            <aside className='flex flex-col overflow-y-auto border-l border-border/60 bg-background/30 p-3 space-y-3'>
-              {streamQuery.data ? (
-                <StreamModelsControl stream={streamQuery.data} />
-              ) : null}
-              <BudgetControl streamId={streamId} />
-              <HumanTaskPanel
+    <div className='flex h-full w-full overflow-hidden'>
+      <StreamSidebar />
+      <main
+        data-testid='worky-stream-main'
+        className='flex min-w-0 flex-1 flex-col overflow-hidden'
+      >
+        <StreamHeader streamId={streamId} onRename={onRename} />
+        {streamQuery.data ? (
+          <div className='flex items-center gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
+            <div className='flex-1'>
+              <StreamControls
                 streamId={streamId}
-                tasks={
-                  boardQuery.data
-                    ? Object.values(boardQuery.data.lanes).flat()
-                    : []
-                }
+                status={streamQuery.data.status}
+                controlState={streamQuery.data.controlState}
               />
-              <MemoryProposalCard />
-            </aside>
+            </div>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={() => setOrchestratorOpen(true)}
+              className='lg:hidden'
+              data-testid='worky-orchestrator-open'
+              aria-label={tWorky('orchestrator.open')}
+            >
+              <Bot className='mr-1 h-3.5 w-3.5' />
+              {tWorky('orchestrator.open')}
+            </Button>
           </div>
-        </section>
-      </div>
-      {isStreaming ? (
-        <div className='border-t border-border/60 bg-background/40 px-6 py-2 text-xs italic text-muted-foreground'>
-          {assistantText || tWorky('stream.working')}
-        </div>
-      ) : null}
-      {streamError ? (
-        <div
-          role='alert'
-          data-testid='worky-stream-error'
-          className='flex items-start gap-3 border-t border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive'
-        >
-          <AlertTriangle className='mt-0.5 h-4 w-4 flex-none' />
-          <div className='flex-1 break-words'>{streamError}</div>
-          <button
-            type='button'
-            className='text-destructive/80 underline-offset-2 hover:underline'
-            onClick={() => clearStreamError(null)}
-          >
-            {tWorky('stream.errorDismiss')}
-          </button>
-        </div>
-      ) : null}
-      {streamQuery.data ? (
-        <StreamControls
-          streamId={streamId}
-          status={streamQuery.data.status}
-          controlState={streamQuery.data.controlState}
+        ) : null}
+        <KanbanBoard onTaskClick={setSelectedTask} />
+      </main>
+      <OrchestratorPanel streamId={streamId} />
+      {orchestratorOpen ? (
+        <button
+          type='button'
+          aria-label={tWorky('orchestrator.close')}
+          onClick={() => setOrchestratorOpen(false)}
+          className='fixed inset-0 z-20 bg-black/40 backdrop-blur-sm lg:hidden'
+          data-testid='worky-orchestrator-backdrop'
         />
       ) : null}
-      <PromptBar
-        streamId={streamId}
-        status={streamQuery.data?.status}
-        managerModelId={streamQuery.data?.managerModelId}
-        workerModelId={streamQuery.data?.workerModelId}
-      />
       <PlanDeltaToast />
       {approvalFor ? (
         <ApprovalModal
@@ -342,13 +309,14 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
 }
 
 export function WorkyStreamPage(): JSX.Element {
+  const { t: tWorky } = useModuleTranslation('worky');
   const params = useParams<{ streamId: string }>();
   const streamId = params.streamId ?? '';
 
   if (!streamId) {
     return (
       <div className='flex h-full w-full items-center justify-center text-sm text-muted-foreground'>
-        Stream id is missing from the URL.
+        {tWorky('stream.missingId')}
       </div>
     );
   }

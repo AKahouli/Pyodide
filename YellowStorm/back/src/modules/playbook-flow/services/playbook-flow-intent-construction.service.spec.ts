@@ -109,6 +109,40 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(plan.changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
     });
 
+    it('emits blueprint workflow plans as one complete delta with bindings included', async () => {
+      const service = createService();
+      const job = {
+        id: 'construction-1',
+        flowId: 'flow-1',
+        events: [],
+        abortController: new AbortController(),
+        waiters: new Set<() => void>(),
+      };
+      const suggestion = {
+        id: 'intent-blueprint',
+        kind: 'workflow_plan',
+        label: 'Plan',
+        summary: '',
+        reason: '',
+        confidence: 0.8,
+        isDirectIntentFallback: false,
+        impact: { nodesToCreate: 2, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 1, edgesToDelete: 0, dataBindingsToCreate: 1, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+        changes: [
+          { type: 'create_node', nodeRef: 'a', anchor: { mode: 'append', targetTaskId: null, nodeRef: null }, task: { title: 'A', description: 'A' } },
+          { type: 'create_node', nodeRef: 'b', anchor: { mode: 'append', targetTaskId: null, nodeRef: null }, task: { title: 'B', description: 'B', inputPorts: [{ id: 'input', artifactKind: 'text', required: true }] } },
+          { type: 'create_edge', sourceTaskId: null, sourceNodeRef: 'a', targetTaskId: null, targetNodeRef: 'b', sourceOutputPortId: 'output', targetInputPortId: 'input' },
+          { type: 'create_data_binding', targetTaskId: null, targetNodeRef: 'b', targetPort: 'input', sourceKind: 'node-output', sourceTaskId: null, sourceNodeRef: 'a', sourcePort: 'output', iteration: 'current' },
+        ],
+      };
+
+      await (service as any).emitSuggestions(job, [suggestion], 0, false);
+
+      const deltaEvents = (job.events as any[]).filter((event: any) => event.type.endsWith('_delta'));
+      expect(deltaEvents).toHaveLength(1);
+      expect(deltaEvents[0].suggestion.changes).toHaveLength(4);
+      expect(deltaEvents[0].suggestion.changes.some((change: any) => change.type === 'create_data_binding')).toBe(true);
+    });
+
     it('falls back to legacy normalization when the blueprint flag is disabled', () => {
       const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
       const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);

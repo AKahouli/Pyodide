@@ -1453,19 +1453,19 @@ function PlaybookCanvasInner() {
               errorStrategy: 'stop',
             }
           : undefined,
-        inputPorts: matchedTemplate
-          ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
-          : isIterator
+        inputPorts: genericInputPorts.length > 0
+          ? genericInputPorts
+          : matchedTemplate
+            ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
+            : isIterator
             ? getDefaultIteratorInputPorts()
-            : genericInputPorts.length > 0
-              ? genericInputPorts
             : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
-        outputPorts: matchedTemplate
-          ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
-          : isIterator
+        outputPorts: genericOutputPorts.length > 0
+          ? genericOutputPorts
+          : matchedTemplate
+            ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
+            : isIterator
             ? getDefaultIteratorOutputPorts()
-            : genericOutputPorts.length > 0
-              ? genericOutputPorts
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
         retryPolicy: matchedTemplate?.retryPolicy
           ? { ...matchedTemplate.retryPolicy }
@@ -2327,11 +2327,17 @@ function PlaybookCanvasInner() {
       console.warn('[IntentApply] Warnings:', applicationWarnings);
     }
 
-    warnInvalidRequiredInputs();
+    const unboundRequiredInputs = findUnboundRequiredInputs();
+    if (unboundRequiredInputs.length > 0) {
+      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundRequiredInputs);
+      if (shouldSave) {
+        showWarning(t('intentBar.invalidRequiredBindings'));
+      }
+    }
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     if (shouldClearSuggestions) setIntentSuggestions([]);
-    if (shouldSave) {
+    if (shouldSave && unboundRequiredInputs.length === 0) {
       void saveCurrentPlaybook({
         expectedDefinitionRevision: suggestionBaseDefinitionRevision,
         clientMutationId: suggestionApplicationKey,
@@ -2377,6 +2383,7 @@ function PlaybookCanvasInner() {
     addIntentSuggestionHistoryEntry,
     previewAdvisorRemediation,
     showError,
+    showWarning,
     getCurrentDefinitionRevision,
     setConstructionStatus,
     setConstructionProgress,
