@@ -347,35 +347,38 @@ export class ConversationV2Controller {
     }
     // Mark in-flight first so a reload mid-deploy resumes the loader state.
     await this.sessions.setDeployState(user.id, id, { deployStatus: 'deploying' });
+
+    let result: { url: string; deployedAt: number } | null;
     try {
-      let result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
-      // TEMP terrain stub: Manus doesn't implement Deploy yet, so the gRPC call
-      // returns null (UNIMPLEMENTED). Synthesize a placeholder URL so the full
-      // Publish → deployed UI flow is demoable now. REMOVE this fallback once
-      // Manus ships the Deploy RPC — the real URL will then flow through.
-      if (!result) {
-        result = {
-          url: `https://${id}.preview.yellowstorm.app`,
-          deployedAt: Math.floor(Date.now() / 1000),
-        };
-      }
-      const lastDeployedAt = new Date(result.deployedAt * 1000);
-      await this.sessions.setDeployState(user.id, id, {
-        deployStatus: 'deployed',
-        deployedUrl: result.url,
-        lastDeployedAt,
-      });
-      return {
-        deployStatus: 'deployed',
-        deployedUrl: result.url,
-        lastDeployedAt: lastDeployedAt.toISOString(),
-      };
+      result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
     } catch (err) {
       await this.sessions
         .setDeployState(user.id, id, { deployStatus: 'error' })
         .catch(() => undefined);
       this.translateGrpcError(err);
     }
+
+    // Manus doesn't implement Deploy yet (UNIMPLEMENTED → null). Revert to idle
+    // and signal it's not available — once Manus ships the RPC this returns a
+    // real URL and the happy path below runs unchanged.
+    if (!result) {
+      await this.sessions
+        .setDeployState(user.id, id, { deployStatus: 'idle' })
+        .catch(() => undefined);
+      throw new ServiceUnavailableException('Deployment is not available yet');
+    }
+
+    const lastDeployedAt = new Date(result.deployedAt * 1000);
+    await this.sessions.setDeployState(user.id, id, {
+      deployStatus: 'deployed',
+      deployedUrl: result.url,
+      lastDeployedAt,
+    });
+    return {
+      deployStatus: 'deployed',
+      deployedUrl: result.url,
+      lastDeployedAt: lastDeployedAt.toISOString(),
+    };
   }
 
   @Post('sessions/:id/share-deploy')
@@ -388,9 +391,7 @@ export class ConversationV2Controller {
   ): Promise<{ sent: number }> {
     const pointer = await this.sessions.getOne(user.id, id);
     if (!pointer) throw new NotFoundException('Session not found');
-    // Prefer the persisted deployed URL; fall back to the client-provided one
-    // (front-only static demo, where no real deploy persisted a URL).
-    const url = pointer.deployedUrl ?? body.url;
+    const url = pointer.deployedUrl;
     if (!url) {
       throw new BadRequestException('App is not deployed yet');
     }

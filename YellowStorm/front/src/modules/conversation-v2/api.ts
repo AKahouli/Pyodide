@@ -153,17 +153,11 @@ export const conversationV2Api = {
     });
     return res.data.data;
   },
-  /** Email the deployed app URL to the given recipients. Returns how many were sent.
-   *  `url` is a client-side fallback used when the backend has no persisted
-   *  deployed URL (front-only static demo). */
-  async shareDeployedApp(
-    sessionId: string,
-    emails: string[],
-    url?: string,
-  ): Promise<{ sent: number }> {
+  /** Email the deployed app URL to the given recipients. Returns how many were sent. */
+  async shareDeployedApp(sessionId: string, emails: string[]): Promise<{ sent: number }> {
     const res = await apiClient.post<ApiResponse<{ sent: number }>>(
       `/conversation-v2/sessions/${sessionId}/share-deploy`,
-      { emails, url },
+      { emails },
     );
     return res.data.data;
   },

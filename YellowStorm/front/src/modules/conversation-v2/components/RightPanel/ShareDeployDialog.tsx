@@ -90,7 +90,6 @@ export function ShareDeployDialog({ open, onOpenChange }: ShareDeployDialogProps
       await conversationV2Api.shareDeployedApp(
         sessionId,
         selected.map((u) => u.email),
-        deployedUrl ?? undefined,
       );
       toast.success(t('toasts.share.success'));
       onOpenChange(false);

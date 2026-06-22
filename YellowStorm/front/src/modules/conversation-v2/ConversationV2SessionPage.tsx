@@ -153,27 +153,6 @@ export default function ConversationV2SessionPage() {
     };
   }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, replayEvents, setStreaming, hydrateSelectedModelForSession]);
 
-  // TEMP dev preview: once the session is loaded, inject a fake `webpage` tool
-  // event and open the right panel so a refresh shows the WebPageToolView with
-  // example.com. Client-side only (not persisted). Remove when done previewing.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    if (loading || notFound || !sessionId) return;
-    const id = 'preview-webpage';
-    useConversationV2Store.getState().handleEvent({
-      type: 'tool',
-      event_id: id,
-      timestamp: Math.floor(Date.now() / 1000),
-      tool_call_id: id,
-      name: 'webpage',
-      status: 'completed',
-      function: 'webpage_show',
-      args: { url: 'https://example.com' },
-      content: { kind: 'webpage', url: 'https://example.com', title: 'Example' },
-    } as AgentEvent);
-    useConversationV2Store.getState().openToolPanel(id);
-  }, [loading, notFound, sessionId]);
-
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send
   // when the user navigates back to a session that was created with a state.

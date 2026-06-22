@@ -464,20 +464,7 @@ export const useConversationV2Store = create<State & Actions>()(
         const id = get().sessionId;
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
-        // TEMP static demo: fake the deployment (loader → success) entirely on
-        // the front, no backend/Manus needed. Set FAKE_DEPLOY = false to use the
-        // real `POST /sessions/:id/deploy` path.
-        const FAKE_DEPLOY: boolean = true;
         try {
-          if (FAKE_DEPLOY) {
-            await new Promise((resolve) => setTimeout(resolve, 2500));
-            set(
-              { deployStatus: 'deployed', deployedUrl: 'https://example.com' },
-              false,
-              'deploy/done(fake)',
-            );
-            return;
-          }
           const r = await conversationV2Api.deploySession(id);
           set(
             { deployStatus: r.deployStatus, deployedUrl: r.deployedUrl },
