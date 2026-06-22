@@ -4,7 +4,7 @@ import { ConnectedAppTokenService } from '@modules/connected-app/services/connec
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MSG_SELECT = '$select=id,conversationId,receivedDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,hasAttachments';
-const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 45 * 60 * 1000;
+const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 4320 * 60 * 1000; // Graph max for mailFolders: 72 hours
 
 @Injectable()
 export class PlaybookFlowMailGraphClientService {
