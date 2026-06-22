@@ -10,4 +10,7 @@ export { default as a2aAdminConfig } from './a2a-admin.config';
 export { default as telegramConfig } from './telegram.config';
 export { default as whatsappConfig } from './whatsapp.config';
 export { default as loggingConfig } from './logging.config';
+export { default as workyConfig } from './worky.config';
+export { default as litellmConfig } from './litellm.config';
+export { default as playbookFlowConfig } from './playbook-flow.config';
 export { configValidationSchema } from './config.schema';

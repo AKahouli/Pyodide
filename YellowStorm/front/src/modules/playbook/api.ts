@@ -12,6 +12,7 @@ import type {
   PlaybookExecutionSummary,
   DesignMessage,
   DesignOperation,
+  ClearDesignMessagesResult,
   CreatePlaybookData,
   GeneratePlaybookData,
   RewritePlaybookPromptData,
@@ -1854,6 +1855,13 @@ export async function designPlaybook(
 export async function getDesignMessages(id: string): Promise<DesignMessage[]> {
   const response = await apiClient.get<ApiResponse<DesignMessage[]>>(
     API_ENDPOINTS.playbooks.designMessages(id),
+  );
+  return response.data.data;
+}
+
+export async function clearDesignMessages(id: string): Promise<ClearDesignMessagesResult> {
+  const response = await apiClient.delete<ApiResponse<ClearDesignMessagesResult>>(
+    API_ENDPOINTS.playbooks.clearDesignMessages(id),
   );
   return response.data.data;
 }

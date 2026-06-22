@@ -175,7 +175,7 @@ export function ConnectorBindingModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-w-lg'>
+      <DialogContent className='flex max-w-lg max-h-[85vh] flex-col'>
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <Cable className='h-5 w-5' />
@@ -188,7 +188,7 @@ export function ConnectorBindingModal({
             <Loader2 className='h-5 w-5 animate-spin text-muted-foreground' />
           </div>
         ) : connector ? (
-          <div className='space-y-4'>
+          <div className='flex-1 space-y-4 overflow-y-auto pr-1'>
             {isOAuthConnector && (
               <div className='rounded-md border p-3 space-y-2'>
                 <div className='flex items-center gap-2'>

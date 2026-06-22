@@ -95,6 +95,9 @@ import { PlaybookFlowTokenBufferService } from './services/playbook-flow-token-b
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowIntentConstructionService } from './services/playbook-flow-intent-construction.service';
 import { PlaybookIntentGraphBindingResolverService } from './services/playbook-intent-graph-binding-resolver.service';
+import { PlaybookIntentBlueprintParserService } from './services/playbook-intent-blueprint-parser.service';
+import { PlaybookIntentGraphBuilderService } from './services/playbook-intent-graph-builder.service';
+import { PlaybookIntentNodeBuildRegistryService } from './services/playbook-intent-node-build-registry.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -239,6 +242,9 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowIntentService,
     PlaybookFlowIntentConstructionService,
     PlaybookIntentGraphBindingResolverService,
+    PlaybookIntentBlueprintParserService,
+    PlaybookIntentGraphBuilderService,
+    PlaybookIntentNodeBuildRegistryService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
     PlaybookFlowPublicReasoningParserService,

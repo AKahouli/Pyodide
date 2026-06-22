@@ -948,6 +948,7 @@ export interface AdminPlaybookSettings {
     maxIteratorBodyEdges: number;
   };
   replayEligibilityConfidenceThreshold: number;
+  useDeterministicBlueprintBuilder: boolean;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
@@ -958,11 +959,12 @@ export interface UpdateAdminPlaybookSettingsRequest {
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
   replayEligibilityConfidenceThreshold?: number;
+  useDeterministicBlueprintBuilder?: boolean;
 }
 
 // Playbook Prompt Types
 
-import type { PlaybookIteratorConfig } from '@/modules/playbook';
+import type { PlaybookIteratorConfig, PlaybookNodeType, RouterConfig } from '@/modules/playbook';
 
 export interface PlaybookPromptResponse {
   id: string;
@@ -1006,7 +1008,7 @@ export interface PlaybookNodeTemplateResponse {
   id: string;
   key: string;
   type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1021,6 +1023,7 @@ export interface PlaybookNodeTemplateResponse {
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -1035,7 +1038,7 @@ export interface PlaybookNodeTemplateListResponse {
 export interface CreatePlaybookNodeTemplateRequest {
   key: string;
   type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1050,13 +1053,14 @@ export interface CreatePlaybookNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 
 export interface UpdatePlaybookNodeTemplateRequest {
   key?: string;
   type?: string;
-  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType?: PlaybookNodeType;
   title?: string;
   description?: string;
   icon?: string;
@@ -1071,6 +1075,7 @@ export interface UpdatePlaybookNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 

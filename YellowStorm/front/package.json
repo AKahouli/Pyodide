@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "test": "vitest run --reporter=verbose",
     "test:cov": "vitest run --coverage --reporter=verbose --reporter=junit --outputFile=vitest-report.xml",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "preview": "vite preview",
     "release": "commit-and-tag-version",
     "release:minor": "commit-and-tag-version --release-as minor",
@@ -95,6 +97,7 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -19,9 +19,13 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import {
   PlaybookIteratorConfigFields,
+  PlaybookRouterConfigSection,
+  buildRouterOutputPorts,
+  cloneRouterConfig,
   usePlaybookStore,
   type PlaybookIteratorConfig,
   type PlaybookNodeType,
+  type RouterConfig,
 } from '@/modules/playbook';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '@/modules/playbook/hooks/helpers/node-serializer';
 import apiClient from '@/lib/api/client';
@@ -128,19 +132,37 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-function normalizeIteratorTemplate(template: PlaybookNodeTemplateResponse): PlaybookNodeTemplateResponse {
-  if (template.nodeType !== 'iterator') {
-    return template;
+function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): PlaybookNodeTemplateResponse {
+  if (template.nodeType === 'iterator') {
+    return {
+      ...template,
+      executionMode: 'agent',
+      assignedAgentId: null,
+      selectedAction: null,
+      inputPorts: getDefaultIteratorInputPorts(),
+      outputPorts: getDefaultIteratorOutputPorts(),
+      iteratorConfig: template.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG },
+      routerConfig: null,
+    };
+  }
+
+  if (template.nodeType === 'router') {
+    const routerConfig = cloneRouterConfig(template.routerConfig);
+    return {
+      ...template,
+      executionMode: 'agent',
+      assignedAgentId: null,
+      selectedAction: null,
+      outputPorts: buildRouterOutputPorts(routerConfig),
+      iteratorConfig: null,
+      routerConfig,
+    };
   }
 
   return {
     ...template,
-    executionMode: 'agent',
-    assignedAgentId: null,
-    selectedAction: null,
-    inputPorts: getDefaultIteratorInputPorts(),
-    outputPorts: getDefaultIteratorOutputPorts(),
-    iteratorConfig: template.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG },
+    routerConfig: null,
+    iteratorConfig: null,
   };
 }
 
@@ -208,7 +230,7 @@ export function PlaybookPromptsPage() {
       setTemplateDraft(EMPTY_NODE_TEMPLATE);
       return;
     }
-    setTemplateDraft(normalizeIteratorTemplate(item));
+    setTemplateDraft(normalizeNodeTemplate(item));
   };
 
   const fetchPrompts = async () => {
@@ -334,9 +356,12 @@ export function PlaybookPromptsPage() {
       return;
     }
     const type = templateDraft.type || templateDraft.key;
-    const draftToSave = templateDraft.nodeType === 'iterator'
-      ? normalizeIteratorTemplate({ ...templateDraft, type })
-      : templateDraft;
+    const draftToSave = normalizeNodeTemplate({ ...templateDraft, type });
+    const routerValidationError = validateRouterTemplate(draftToSave);
+    if (routerValidationError) {
+      toast.error(routerValidationError);
+      return;
+    }
     setTemplateSaving(true);
     try {
       if (isCreatingTemplate) {
@@ -357,6 +382,7 @@ export function PlaybookPromptsPage() {
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          routerConfig: draftToSave.nodeType === 'router' ? draftToSave.routerConfig : null,
           enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => [...current, created].sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)));
@@ -382,6 +408,7 @@ export function PlaybookPromptsPage() {
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          routerConfig: draftToSave.nodeType === 'router' ? draftToSave.routerConfig : null,
           enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
@@ -418,7 +445,7 @@ export function PlaybookPromptsPage() {
   const startCreateTemplate = () => {
     setIsCreatingTemplate(true);
     setSelectedTemplateId('');
-    setTemplateDraft(normalizeIteratorTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
+    setTemplateDraft(normalizeNodeTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
   };
 
   const cancelCreateTemplate = () => {
@@ -445,6 +472,26 @@ export function PlaybookPromptsPage() {
     if (!config) return null;
     const { _id, id, ...rest } = config as any;
     return rest as PlaybookIteratorConfig;
+  };
+
+  const validateRouterTemplate = (template: PlaybookNodeTemplateResponse): string | null => {
+    if (template.nodeType !== 'router') return null;
+
+    const routerConfig = template.routerConfig;
+    if (!routerConfig) return t('playbook.templates.toasts.routerConfigRequired');
+
+    const labels = routerConfig.outputLabels.map((label) => label.trim());
+    if (labels.length === 0) return t('playbook.templates.toasts.routerLabelRequired');
+    if (labels.some((label) => label.length === 0)) return t('playbook.templates.toasts.routerLabelRequired');
+    if (new Set(labels).size !== labels.length) return t('playbook.templates.toasts.routerLabelDuplicate');
+    if (routerConfig.defaultLabel && !labels.includes(routerConfig.defaultLabel)) {
+      return t('playbook.templates.toasts.routerDefaultInvalid');
+    }
+    if ((routerConfig.conditions ?? []).some((condition) => !labels.includes(condition.label))) {
+      return t('playbook.templates.toasts.routerConditionInvalid');
+    }
+
+    return null;
   };
 
   const addInputPort = () => {
@@ -513,9 +560,19 @@ export function PlaybookPromptsPage() {
   const applyTemplateNodeType = (nodeType: PlaybookNodeType) => {
     setTemplateDraft((current) => {
       if (nodeType === 'iterator') {
-        return normalizeIteratorTemplate({
+        return normalizeNodeTemplate({
           ...current,
           nodeType: 'iterator',
+        });
+      }
+
+      if (nodeType === 'router') {
+        const routerConfig = cloneRouterConfig(current.routerConfig);
+        return normalizeNodeTemplate({
+          ...current,
+          nodeType: 'router',
+          routerConfig,
+          outputPorts: buildRouterOutputPorts(routerConfig),
         });
       }
 
@@ -527,6 +584,7 @@ export function PlaybookPromptsPage() {
           assignedAgentId: null,
           selectedAction: current.selectedAction ?? 'index',
           iteratorConfig: null,
+          routerConfig: null,
         };
       }
 
@@ -536,13 +594,13 @@ export function PlaybookPromptsPage() {
         executionMode: 'agent',
         selectedAction: null,
         iteratorConfig: null,
+        routerConfig: null,
       };
     });
   };
 
-  const templateNodeType: PlaybookNodeType = templateDraft.type === 'iterator'
-    ? 'iterator'
-    : templateDraft.nodeType ?? (templateDraft.executionMode === 'action' ? 'action' : 'agent');
+  const templateNodeType: PlaybookNodeType = templateDraft.nodeType
+    ?? (templateDraft.type === 'iterator' ? 'iterator' : templateDraft.executionMode === 'action' ? 'action' : 'agent');
 
   const isLoading = promptLoading || templateLoading;
 
@@ -889,6 +947,7 @@ export function PlaybookPromptsPage() {
                         <option value="agent">{t('playbook.templates.fields.nodeTypeAgent')}</option>
                         <option value="action">{t('playbook.templates.fields.nodeTypeAction')}</option>
                         <option value="iterator">{t('playbook.templates.fields.nodeTypeIterator')}</option>
+                        <option value="router">{t('playbook.templates.fields.nodeTypeRouter')}</option>
                       </select>
                     </div>
                   </div>
@@ -973,12 +1032,27 @@ export function PlaybookPromptsPage() {
 
                   </div>
 
-                  {/* Agent or Action based on Execution Mode */}
+                  {/* Node type configuration */}
                   {templateNodeType === 'iterator' && templateDraft.iteratorConfig ? (
                     <PlaybookIteratorConfigFields
                       value={templateDraft.iteratorConfig}
                       onChange={(iteratorConfig) => setTemplateDraft((current) => ({ ...current, iteratorConfig }))}
                     />
+                  ) : templateNodeType === 'router' && templateDraft.routerConfig ? (
+                    <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                      <div>
+                        <h3 className="text-sm font-medium">{t('playbook.templates.fields.routerConfig')}</h3>
+                        <p className="text-xs text-muted-foreground">{t('playbook.templates.fields.routerConfigHint')}</p>
+                      </div>
+                      <PlaybookRouterConfigSection
+                        value={templateDraft.routerConfig}
+                        onChange={(routerConfig) => setTemplateDraft((current) => ({
+                          ...current,
+                          routerConfig,
+                          outputPorts: buildRouterOutputPorts(routerConfig),
+                        }))}
+                      />
+                    </div>
                   ) : templateDraft.executionMode === 'agent' ? (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.agent')}</label>
@@ -1069,12 +1143,15 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.outputPorts')}</label>
-                      <Button variant="outline" size="sm" onClick={addOutputPort} disabled={templateNodeType === 'iterator'}>
+                      <Button variant="outline" size="sm" onClick={addOutputPort} disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}>
                         <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
                     {templateNodeType === 'iterator' && (
                       <p className="text-xs text-muted-foreground">{t('playbook.templates.fields.iteratorOutputPortHint')}</p>
+                    )}
+                    {templateNodeType === 'router' && (
+                      <p className="text-xs text-muted-foreground">{t('playbook.templates.fields.routerOutputPortHint')}</p>
                     )}
                     {templateDraft.outputPorts.map((port, index) => (
                       <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto] items-end rounded-lg border p-3">
@@ -1082,7 +1159,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portName')}</label>
                           <Input
                             value={port.name}
-                            disabled={templateNodeType === 'iterator'}
+                            disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}
                             onChange={(e) => updateOutputPort(index, { ...port, name: e.target.value })}
                             placeholder={t('playbook.templates.fields.portNamePlaceholder')}
                           />
@@ -1091,7 +1168,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portId')}</label>
                           <Input
                             value={port.id}
-                            disabled={templateNodeType === 'iterator'}
+                            disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}
                             onChange={(e) => updateOutputPort(index, { ...port, id: e.target.value })}
                             placeholder="port-id"
                           />
@@ -1100,7 +1177,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.artifactKind')}</label>
                           <select
                             value={port.artifactKind}
-                            disabled={templateNodeType === 'iterator'}
+                            disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}
                             onChange={(e) => updateOutputPort(index, { ...port, artifactKind: e.target.value })}
                             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                           >
@@ -1109,7 +1186,7 @@ export function PlaybookPromptsPage() {
                             ))}
                           </select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator'}>
+                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>

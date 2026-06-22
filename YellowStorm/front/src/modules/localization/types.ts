@@ -16,6 +16,7 @@ import type sidebar from '../sidebar/locales/en.json';
 import type team from '../team/locales/en.json';
 import type usage from '../usage/locales/en.json';
 import type workspace from '../workspace/locales/en.json';
+import type worky from '../worky/locales/en.json';
 
 export type Language = (typeof SUPPORTED_LANGUAGES)[number];
 export type Namespace = (typeof NAMESPACES)[number];
@@ -38,6 +39,7 @@ export type NamespaceResourceMap = {
   team: typeof team;
   usage: typeof usage;
   workspace: typeof workspace;
+  worky: typeof worky;
 };
 
 type Keys<T> = Extract<keyof T, string>;

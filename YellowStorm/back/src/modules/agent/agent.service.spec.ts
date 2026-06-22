@@ -47,7 +47,7 @@ describe('AgentService connector skill inheritance', () => {
       findById: jest.fn(),
       getDefaultModel: jest.fn().mockResolvedValue(null),
       getModelIdentifier: jest.fn((model: { id?: string; litellmModel?: string } | null | undefined) =>
-        model?.id || model?.litellmModel || ''),
+        model?.litellmModel || model?.id || ''),
     };
     const skillService = {
       findByIds: jest.fn(),
