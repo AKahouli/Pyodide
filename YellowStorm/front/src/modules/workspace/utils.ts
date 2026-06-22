@@ -10,6 +10,11 @@ import { toast } from 'sonner';
 /**
  * Allowed MIME types for document upload
  * SYNC WITH: back/src/modules/document/constants/mime-types.constant.ts
+ *
+ * @deprecated Server-side validation now consults the admin-managed
+ * workspace upload settings. This list remains as a client-side
+ * pre-filter in `validateFiles` only and should not be treated as
+ * authoritative.
  */
 export const ALLOWED_MIME_TYPES = [
   // Documents
@@ -25,6 +30,7 @@ export const ALLOWED_MIME_TYPES = [
   'text/csv',
   'text/markdown',
   'text/html',
+  'text/css',
   'application/json',
   // Images
   'image/png',
@@ -33,12 +39,6 @@ export const ALLOWED_MIME_TYPES = [
   'image/webp',
   'image/svg+xml',
 ] as const;
-
-/**
- * File extensions for accept attribute in file inputs
- */
-export const ACCEPT_EXTENSIONS =
-  '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.html,.htm,.json,.png,.jpg,.jpeg,.gif,.webp,.svg';
 
 /**
  * Maximum file size in bytes (500MB)

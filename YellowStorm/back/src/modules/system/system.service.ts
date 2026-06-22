@@ -1,7 +1,7 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue } from './schemas/system-setting.schema';
+import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue } from './schemas/system-setting.schema';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
@@ -18,6 +18,7 @@ const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
 const APPEARANCE_KEY = 'appearance_settings';
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
+const CORS_SETTINGS_KEY = 'cors_settings';
 const CACHE_TTL_MS = 5000; // 5 seconds
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   defaultColorTheme: 'default',
@@ -71,7 +72,7 @@ function normalizePlaybookIntentNormalizationLimits(
       value?.maxWorkflowPlanChanges,
       DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
       1,
-      100,
+      DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
     ),
     maxInputPorts: normalizeLimit(
       value?.maxInputPorts,
@@ -106,9 +107,11 @@ export class SystemService implements OnApplicationBootstrap {
   private registrationCache: RegistrationStatus | null = null;
   private appearanceCache: AppearanceSettings | null = null;
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
+  private corsSettingsCache: CorsSettingsValue | null = null;
   private lastCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private lastPlaybookSettingsCacheUpdate = 0;
+  private lastCorsCacheUpdate = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -129,6 +132,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshRegistrationCache(),
         this.refreshAppearanceCache(),
         this.refreshPlaybookSettingsCache(),
+        this.refreshCorsSettingsCache(),
       ]);
       this.logger.log('System service initialized', {
         maintenanceEnabled: this.maintenanceCache?.enabled ?? false,
@@ -136,7 +140,6 @@ export class SystemService implements OnApplicationBootstrap {
         appearanceDefaultColorTheme: this.appearanceCache?.defaultColorTheme ?? 'default',
       });
 
-      // Start periodic refresh
       this.refreshInterval = setInterval(() => {
         this.refreshMaintenanceCache().catch((err) => {
           this.logger.warn('Periodic maintenance cache refresh failed', { error: err.message });
@@ -149,6 +152,9 @@ export class SystemService implements OnApplicationBootstrap {
         });
         this.refreshPlaybookSettingsCache().catch((err) => {
           this.logger.warn('Periodic playbook settings cache refresh failed', { error: err.message });
+        });
+        this.refreshCorsSettingsCache().catch((err) => {
+          this.logger.warn('Periodic CORS settings cache refresh failed', { error: err.message });
         });
       }, CACHE_TTL_MS);
     } catch (error) {
@@ -288,6 +294,58 @@ export class SystemService implements OnApplicationBootstrap {
     await this.refreshMaintenanceCache();
     await this.refreshAppearanceCache();
     await this.refreshPlaybookSettingsCache();
+    await this.refreshCorsSettingsCache();
+  }
+
+  // ─── CORS Settings ─────────────────────────────────────────────
+
+  async getCorsSettings(): Promise<CorsSettingsValue> {
+    const now = Date.now();
+    if (this.corsSettingsCache && now - this.lastCorsCacheUpdate < CACHE_TTL_MS) {
+      return this.corsSettingsCache;
+    }
+    return this.refreshCorsSettingsCache();
+  }
+
+  async setCorsSettings(origins: CorsSettingsValue['origins'], userId?: string): Promise<CorsSettingsValue> {
+    const value: CorsSettingsValue = { origins };
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: CORS_SETTINGS_KEY },
+      { key: CORS_SETTINGS_KEY, value },
+      { upsert: true, new: true },
+    );
+    this.corsSettingsCache = value;
+    this.lastCorsCacheUpdate = Date.now();
+    return value;
+  }
+
+  getEnabledCorsOrigins(): string[] {
+    if (!this.corsSettingsCache?.origins) return [];
+    return this.corsSettingsCache.origins
+      .filter((entry) => entry.enabled)
+      .map((entry) => entry.origin);
+  }
+
+  private async refreshCorsSettingsCache(): Promise<CorsSettingsValue> {
+    try {
+      const setting = await this.systemSettingModel.findOne({ key: CORS_SETTINGS_KEY }).lean().exec();
+      const raw = setting?.value as Partial<CorsSettingsValue> | undefined;
+      if (raw?.origins && Array.isArray(raw.origins)) {
+        this.corsSettingsCache = {
+          origins: raw.origins
+            .filter((e) => typeof e.origin === 'string')
+            .map((e) => ({ origin: e.origin, enabled: e.enabled !== false })),
+        };
+      } else {
+        this.corsSettingsCache = { origins: [] };
+      }
+      this.lastCorsCacheUpdate = Date.now();
+      return this.corsSettingsCache;
+    } catch (error) {
+      this.logger.error('Failed to refresh CORS settings cache', { error: (error as Error).message });
+      this.corsSettingsCache = this.corsSettingsCache ?? { origins: [] };
+      return this.corsSettingsCache;
+    }
   }
 
   async getAppearanceSettings(): Promise<AppearanceSettings> {
@@ -337,6 +395,9 @@ export class SystemService implements OnApplicationBootstrap {
       approvalSuggestionMode: settings.approvalSuggestionMode,
       intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(settings.intentNormalizationLimits),
       replayEligibilityConfidenceThreshold: threshold,
+      useDeterministicBlueprintBuilder: typeof settings.useDeterministicBlueprintBuilder === 'boolean'
+        ? settings.useDeterministicBlueprintBuilder
+        : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
     };
 
     await this.systemSettingModel.findOneAndUpdate(
@@ -547,6 +608,9 @@ export class SystemService implements OnApplicationBootstrap {
         replayEligibilityConfidenceThreshold: typeof value?.replayEligibilityConfidenceThreshold === 'number'
           ? Math.max(0, Math.min(100, Math.round(value.replayEligibilityConfidenceThreshold)))
           : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold,
+        useDeterministicBlueprintBuilder: typeof value?.useDeterministicBlueprintBuilder === 'boolean'
+          ? value.useDeterministicBlueprintBuilder
+          : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
       };
 
       this.lastPlaybookSettingsCacheUpdate = Date.now();

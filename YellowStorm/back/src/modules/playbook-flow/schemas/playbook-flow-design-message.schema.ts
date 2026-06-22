@@ -50,6 +50,7 @@ export class FlowDesignMessage {
 export const FlowDesignMessageSchema = SchemaFactory.createForClass(FlowDesignMessage);
 
 FlowDesignMessageSchema.index({ flowId: 1, createdAt: -1 });
+FlowDesignMessageSchema.index({ flowId: 1, createdBy: 1, createdAt: -1 });
 
 FlowDesignMessageSchema.set('toJSON', {
   virtuals: true,

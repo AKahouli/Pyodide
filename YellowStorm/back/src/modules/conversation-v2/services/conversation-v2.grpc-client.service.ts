@@ -21,6 +21,16 @@ import {
   SessionWithEvents,
   ConversationV2EventType,
 } from '../types/conversation-v2.types';
+import {
+  buildGrpcChannelCredentials,
+  createGrpcMetadata,
+} from '../../../common/grpc/grpc-security.util';
+
+/**
+ * Config namespace for v2's gRPC security. v2 dials a different AI service than
+ * the other clients, so it has its own cert + key — see grpc-security-v2.config.
+ */
+const V2_GRPC_SECURITY_NS = 'grpcSecurityV2';
 
 export interface ConversationV2HealthStatus {
   available: boolean;
@@ -93,15 +103,17 @@ export class ConversationV2GrpcClientService
     const proto = grpc.loadPackageDefinition(packageDef) as any;
     const url = this.config.get<string>('conversationV2.grpcUrl')!;
     const maxMsg = this.config.get<number>('conversationV2.grpcMaxMessageBytes')!;
-    this.client = new proto.yellostorm.manus.v1.ConversationV2(
-      url,
-      grpc.credentials.createInsecure(),
-      {
-        'grpc.max_send_message_length': maxMsg,
-        'grpc.max_receive_message_length': maxMsg,
-        'grpc.keepalive_time_ms': 30_000,
-      },
+    const { credentials, options: tlsOptions } = buildGrpcChannelCredentials(
+      this.config,
+      (msg) => this.logger.warn(msg),
+      V2_GRPC_SECURITY_NS,
     );
+    this.client = new proto.yellostorm.manus.v1.ConversationV2(url, credentials, {
+      ...tlsOptions,
+      'grpc.max_send_message_length': maxMsg,
+      'grpc.max_receive_message_length': maxMsg,
+      'grpc.keepalive_time_ms': 30_000,
+    });
     this.logger.log(`ConversationV2 gRPC client initialised against ${url}`);
 
     // Initial readiness probe so the first /health call has accurate state.
@@ -194,7 +206,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.CreateSession(
         { user_id: userId, workspace_paths: workspacePaths },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string }) => {
           if (err) return reject(err);
@@ -208,7 +220,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.GetSession(
         { user_id: userId, session_id: sessionId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: any) => {
           if (err) return reject(err);
@@ -228,7 +240,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.StopSession(
         { user_id: userId, session_id: sessionId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
       );
@@ -239,7 +251,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.PauseSession(
         { user_id: userId, session_id: sessionId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
       );
@@ -250,7 +262,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.ResumeSession(
         { user_id: userId, session_id: sessionId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
       );
@@ -264,7 +276,7 @@ export class ConversationV2GrpcClientService
     return new Promise((resolve, reject) => {
       this.client.GetVncSignedUrl(
         { user_id: userId, session_id: sessionId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
@@ -319,7 +331,12 @@ export class ConversationV2GrpcClientService
       }
       if (skills?.length) request.skills = skills;
       if (connectors?.length) request.connectors = connectors;
-      const call = this.client.Chat(request);
+      // Pass metadata positionally (NOT `{ metadata }`) so grpc-js sends the
+      // x-api-key header instead of treating it as call options.
+      const call = this.client.Chat(
+        request,
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
+      );
       call.on('data', (raw: RawProtoEvent) => {
         try {
           const event = this.normaliseEvent(raw);
@@ -349,7 +366,7 @@ export class ConversationV2GrpcClientService
   private normaliseEvent = (raw: RawProtoEvent): ConversationV2Event => {
     const base = {
       event_id: raw.event_id,
-      timestamp: typeof raw.timestamp === 'string' ? parseInt(raw.timestamp, 10) : raw.timestamp,
+      timestamp: typeof raw.timestamp === 'string' ? Number.parseInt(raw.timestamp, 10) : raw.timestamp,
     };
     switch (raw.payload) {
       case 'message':

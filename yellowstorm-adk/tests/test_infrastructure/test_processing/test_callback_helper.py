@@ -4,7 +4,10 @@ import pytest
 import base64
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from src.smart_rag.infrastructure.processing.callback_helper import get_structured_context
+from src.smart_rag.infrastructure.processing.callback_helper import (
+    get_structured_context,
+    inject_images_before_model,
+)
 
 
 class TestCallbackHelper:
@@ -79,6 +82,33 @@ class TestCallbackHelper:
         assert len(matches) == 1
         assert matches[0][0] == "png"
         assert len(matches[0][1]) > 0
+
+    def test_inject_images_before_model_appends_buffered_images(self):
+        """Test buffered connector images are injected into the next LLM request."""
+        image_base64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode("ascii")
+
+        state = {
+            "_pending_tool_images_response-1": [
+                {"mime": "image/png", "data": image_base64}
+            ],
+            "_list_of_filenames_response-1": ["img-1"],
+        }
+        callback_context = MagicMock()
+        callback_context.state.to_dict.return_value = dict(state)
+        callback_context.state.get.side_effect = lambda key, default=None: state.get(
+            key, default
+        )
+        callback_context.state.__setitem__.side_effect = state.__setitem__
+        llm_request = MagicMock()
+        llm_request.contents = []
+
+        inject_images_before_model(callback_context, llm_request)
+
+        assert len(llm_request.contents) == 1
+        assert "Inspect this image visually" in llm_request.contents[0].parts[0].text
+        assert llm_request.contents[0].parts[1].inline_data.mime_type == "image/png"
+        assert llm_request.contents[0].parts[1].inline_data.data == b"\x89PNG\r\n\x1a\nfake"
+        assert state["_pending_tool_images_response-1"] == []
 
     def test_get_structured_context_multiple_events(self):
         """Test get_structured_context with multiple events."""

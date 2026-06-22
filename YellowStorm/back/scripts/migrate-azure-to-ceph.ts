@@ -36,7 +36,7 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const APPLY = process.argv.includes('--apply');
 const limitArg = process.argv.find((a) => a.startsWith('--limit='));
-const LIMIT = limitArg ? parseInt(limitArg.split('=')[1], 10) : 0;
+const LIMIT = limitArg ? Number.parseInt(limitArg.split('=')[1], 10) : 0;
 
 const mongodbUri = process.env.MONGODB_URI;
 const azureConn = process.env.AZURE_STORAGE_CONNECTION_STRING;

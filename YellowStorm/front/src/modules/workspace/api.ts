@@ -621,3 +621,18 @@ export async function searchUsers(
   );
   return response.data.data;
 }
+
+// ===== Workspace Upload Settings (admin-managed) =====
+
+export interface WorkspaceUploadSettings {
+  allowedExtensions: string[];
+  supportedExtensions?: string[];
+  updatedAt?: string;
+}
+
+export async function getWorkspaceUploadSettings(): Promise<WorkspaceUploadSettings> {
+  const response = await apiClient.get<ApiResponse<WorkspaceUploadSettings>>(
+    API_ENDPOINTS.workspaceUploadSettings.current,
+  );
+  return response.data.data;
+}

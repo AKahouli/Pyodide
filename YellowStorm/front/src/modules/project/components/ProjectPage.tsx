@@ -27,7 +27,7 @@ import {
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '@/modules/conversation/hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import {
   useConversationStore,
   useConversationsByProject,
@@ -45,6 +45,7 @@ export function ProjectPage() {
   const { id: projectId = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useModuleTranslation('sidebar');
+  const { accept } = useAllowedUploadExtensions();
 
   const projects = useProjects();
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
@@ -118,6 +119,7 @@ export function ProjectPage() {
       repoName: string;
       repoUrl?: string;
     },
+    teamIds?: string[],
   ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
@@ -149,6 +151,7 @@ export function ProjectPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         connectorRepo,
       });
 
@@ -240,7 +243,7 @@ export function ProjectPage() {
               onFilesAdded={(rawFiles, ids) => addFiles(rawFiles, ids)}
               onFileRemoved={(id) => removeFile(id)}
               uploadingFiles={uploadFiles}
-              accept={ACCEPT_EXTENSIONS}
+              accept={accept}
               maxFiles={5}
               showWorkspaceSelect={true}
             />

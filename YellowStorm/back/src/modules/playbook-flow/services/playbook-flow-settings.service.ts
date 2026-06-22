@@ -63,6 +63,7 @@ export class PlaybookFlowSettingsService {
         maxIteratorBodyEdges: patch.intentNormalizationLimits?.maxIteratorBodyEdges ?? current.intentNormalizationLimits.maxIteratorBodyEdges,
       },
       replayEligibilityConfidenceThreshold: patch.replayEligibilityConfidenceThreshold ?? current.replayEligibilityConfidenceThreshold,
+      useDeterministicBlueprintBuilder: patch.useDeterministicBlueprintBuilder ?? current.useDeterministicBlueprintBuilder,
     });
   }
 
@@ -177,6 +178,7 @@ export class PlaybookFlowSettingsService {
         ? adminSettings.approvalSuggestionMode : normalized.approvalSuggestionMode,
       intentNormalizationLimits: adminSettings.intentNormalizationLimits,
       replayEligibilityConfidenceThreshold: adminSettings.replayEligibilityConfidenceThreshold,
+      useDeterministicBlueprintBuilder: adminSettings.useDeterministicBlueprintBuilder,
       resolvedInferenceModelId,
       recursionLimit: normalized.recursionLimit,
       maxParallelism: normalized.maxParallelism,

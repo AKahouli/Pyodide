@@ -71,8 +71,8 @@ function normalizeIteratorTaskPorts(task: PlaybookTask): PlaybookTask {
   }
   return {
     ...task,
-    inputPorts: getDefaultIteratorInputPorts(),
-    outputPorts: getDefaultIteratorOutputPorts(),
+    inputPorts: task.inputPorts?.length ? task.inputPorts : getDefaultIteratorInputPorts(),
+    outputPorts: task.outputPorts?.length ? task.outputPorts : getDefaultIteratorOutputPorts(),
   };
 }
 

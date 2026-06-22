@@ -98,7 +98,7 @@ export class RateLimiterService {
     }
 
     if (endpoint) {
-      parts.push(endpoint.replace(/\//g, ':'));
+      parts.push(endpoint.replaceAll('/', ':'));
     }
 
     return parts.join(':');

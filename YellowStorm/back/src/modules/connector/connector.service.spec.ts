@@ -187,6 +187,75 @@ describe('ConnectorService importFromMcp', () => {
     );
   });
 
+  it('clears referenced skills when update payload provides an empty array', async () => {
+    const connectorId = new Types.ObjectId().toString();
+    const findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: connectorId,
+          slug: 'github',
+          createdBy: new Types.ObjectId(),
+        }),
+      }),
+    });
+    const findByIdAndUpdate = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: connectorId,
+          slug: 'github',
+          name: 'GitHub',
+          description: 'GitHub MCP',
+          icon: '',
+          color: '',
+          authType: 'token',
+          authConfigSchema: {},
+          authSourceType: 'credential',
+          connectedAppKey: '',
+          runtimeAuthConfig: {},
+          mcpTransportType: 'streamable_http',
+          mcpServerUrl: 'https://example.com/mcp',
+          mcpServerConfig: {},
+          actions: [],
+          referencedSkillIds: [],
+          isActive: true,
+          createdBy: new Types.ObjectId(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      }),
+    });
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+    };
+
+    const service = new ConnectorService(
+      {
+        findById,
+        findByIdAndUpdate,
+        findOne: jest.fn(),
+      } as any,
+      { find: jest.fn() } as any,
+      logger as any,
+      null as any,
+    );
+
+    await service.update(connectorId, {
+      referencedSkillIds: [],
+    });
+
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      connectorId,
+      {
+        $set: expect.objectContaining({
+          referencedSkillIds: [],
+        }),
+      },
+      { new: true },
+    );
+  });
+
   it('truncates oversized action fields before persisting', async () => {
     const create = jest.fn().mockResolvedValue({
       _id: new Types.ObjectId(),

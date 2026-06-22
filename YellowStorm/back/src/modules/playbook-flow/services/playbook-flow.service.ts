@@ -23,7 +23,6 @@ import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.serv
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
-import { DEFAULT_HITL_BLOCKERS } from '../constants/playbook-flow-hitl-default-blockers';
 import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 
 @Injectable()
@@ -57,7 +56,7 @@ export class PlaybookFlowService {
 
     seen.add(objectValue);
     const serialized = `{${Object.keys(objectValue)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .map((key) => `${JSON.stringify(key)}:${this.stableStringify(objectValue[key], seen)}`)
       .join(',')}}`;
     seen.delete(objectValue);
@@ -182,7 +181,7 @@ export class PlaybookFlowService {
     for (const doc of duplicates) {
       const match = doc.name.match(pattern);
       if (match?.[1]) {
-        maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
+        maxSeq = Math.max(maxSeq, Number.parseInt(match[1], 10));
       }
     }
 
@@ -214,9 +213,7 @@ export class PlaybookFlowService {
   }
 
   private buildDefaultHitlBlockers(): Array<Record<string, unknown>> {
-    if (!this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) return [];
-    const now = new Date();
-    return DEFAULT_HITL_BLOCKERS.map((blocker) => ({ ...blocker, createdAt: now, updatedAt: now }));
+    return [];
   }
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {

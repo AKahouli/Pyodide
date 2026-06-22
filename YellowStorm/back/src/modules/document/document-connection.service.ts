@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client, HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { LoggerService } from '../logger';
+import { randomBackoffJitter } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -270,7 +271,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   private calculateBackoffDelay(): number {
     const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
 
-    const jitter = 0.9 + Math.random() * 0.2;
+    const jitter = randomBackoffJitter();
     const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
     const delayWithJitter = exponentialDelay * jitter;
 

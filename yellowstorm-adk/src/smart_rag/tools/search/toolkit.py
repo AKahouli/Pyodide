@@ -27,6 +27,8 @@ from src.smart_rag.tools.utilities.esg_helpers import (
 
 logger = get_logger("api.smart_rag.tools.search_toolkit")
 
+_OBJECT_ID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
 
 class SearchToolkit:
     """
@@ -162,9 +164,11 @@ class SearchToolkit:
                     return self._empty_search_result()
                 return await self.perform_standard_search(query)
 
+            search_file_names = self._resolve_search_file_names(file_names)
+
             # Perform text and image searches with filtered file names
-            text_results = await self._search_text_documents(query, filtered_filenames=file_names)
-            image_results = await self._search_image_documents(query, filtered_filenames=file_names)
+            text_results = await self._search_text_documents(query, filtered_filenames=search_file_names)
+            image_results = await self._search_image_documents(query, filtered_filenames=search_file_names)
             resp_id=self.response_id
             self.response_id+=1
             return {
@@ -177,6 +181,26 @@ class SearchToolkit:
         except Exception as e:
             logger.exception(f"Error in perform_filtered_search: {e}")
             return self._empty_search_result()
+
+    def _resolve_search_file_names(self, file_names: List[str]) -> List[str]:
+        file_name_by_id = self.attribute_mapping.get("_file_name_by_id", {})
+        resolved_file_names = []
+        seen_file_names = set()
+        for file_name in file_names or []:
+            normalized = str(file_name or "").strip()
+            if not normalized:
+                continue
+            resolved = str(file_name_by_id.get(normalized) or normalized).strip()
+            if _OBJECT_ID_RE.fullmatch(resolved):
+                logger.warning(
+                    "Skipping unresolved document id for Qdrant file_name filter: %s",
+                    resolved,
+                )
+                continue
+            if resolved and resolved not in seen_file_names:
+                resolved_file_names.append(resolved)
+                seen_file_names.add(resolved)
+        return resolved_file_names
 
     async def perform_document_search(self, query: str, **filters) -> Dict:
         """
@@ -208,7 +232,7 @@ class SearchToolkit:
             filtered_ids = self.common_helpers.filter_ids(filters, self.attribute_mapping)
 
             if filtered_ids:
-                list_of_filtered_ids = list(filtered_ids)
+                list_of_filtered_ids = self._resolve_search_file_names(list(filtered_ids))
                 self.ids.update(filtered_ids)
 
                 # Execute text and image searches in parallel
@@ -681,7 +705,6 @@ class SearchToolkit:
                 text_filter = {
                     "workspace_id": self.workspace_name,
                     "image": False,
-                    "ids": list(self.ids) if self.ids else [""]
                 }
                 if self.user_id:
                     text_filter["user_id"] = self.user_id
@@ -694,7 +717,6 @@ class SearchToolkit:
                 for file_name in filtered_filenames:
                     text_filter = {
                         "image": False,
-                        "ids": list(self.ids) if self.ids else [""],
                         "file_name": file_name
                     }
                     # Only include workspace_id if it's not empty
@@ -774,7 +796,6 @@ class SearchToolkit:
                 image_filter = {
                     "workspace_id": self.workspace_name,
                     "image": True,
-                    "ids": list(self.ids) if self.ids else [""]
                 }
                 if self.user_id:
                     image_filter["user_id"] = self.user_id
@@ -788,7 +809,6 @@ class SearchToolkit:
                 for file_name in filtered_filenames:
                     image_filter = {
                         "image": True,
-                        "ids": list(self.ids) if self.ids else [""],
                         "file_name": file_name
                     }
                     # Only include workspace_id if it's not empty
@@ -987,7 +1007,7 @@ class SearchToolkit:
         response_text_content.append({
             "page_content": document_data["page_content"],
             "filename": document_data["metadata"]["source"],
-            "text_order": len(self.sources_text) - 1 if existing_entry else len(self.sources_text) - 1,
+            "text_order": len(self.sources_text) - 1,
             "source_reference": reference
         })
 
@@ -1046,7 +1066,7 @@ class SearchToolkit:
         response_text_content.append({
             "page_content": page_content,
             "filename": modified_document_data["metadata"]["source"],
-            "text_order": len(self.sources_text) - 1 if existing_entry else len(self.sources_text) - 1,
+            "text_order": len(self.sources_text) - 1,
             "source_reference": reference
         })
 

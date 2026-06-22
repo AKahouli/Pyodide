@@ -33,7 +33,7 @@ function getYmdFormatter(timeZone: string): Intl.DateTimeFormat {
 function parseHm(s: string): { h: number; m: number } | null {
   const m = s.trim().match(HM);
   if (!m) return null;
-  return { h: parseInt(m[1], 10), m: parseInt(m[2], 10) };
+  return { h: Number.parseInt(m[1], 10), m: Number.parseInt(m[2], 10) };
 }
 
 export function zonedYmd(date: Date, timeZone: string): string {
@@ -42,9 +42,9 @@ export function zonedYmd(date: Date, timeZone: string): string {
 
 export function daysBetweenYmd(a: string, b: string): number {
   const parseYmd = (s: string) => {
-    const y = parseInt(s.slice(0, 4), 10);
-    const m = parseInt(s.slice(5, 7), 10) - 1;
-    const d = parseInt(s.slice(8, 10), 10);
+    const y = Number.parseInt(s.slice(0, 4), 10);
+    const m = Number.parseInt(s.slice(5, 7), 10) - 1;
+    const d = Number.parseInt(s.slice(8, 10), 10);
     return Date.UTC(y, m, d);
   };
   return Math.round((parseYmd(b) - parseYmd(a)) / 86400000);
@@ -62,11 +62,11 @@ function getZonedParts(date: Date, timeZone: string): ZonedParts {
   }
   const weekday = WEEKDAY_MAP[map.weekday ?? ''] ?? 0;
   return {
-    year: parseInt(map.year ?? '0', 10),
-    month: parseInt(map.month ?? '0', 10),
-    day: parseInt(map.day ?? '0', 10),
-    hour: parseInt(map.hour ?? '0', 10),
-    minute: parseInt(map.minute ?? '0', 10),
+    year: Number.parseInt(map.year ?? '0', 10),
+    month: Number.parseInt(map.month ?? '0', 10),
+    day: Number.parseInt(map.day ?? '0', 10),
+    hour: Number.parseInt(map.hour ?? '0', 10),
+    minute: Number.parseInt(map.minute ?? '0', 10),
     weekday,
   };
 }

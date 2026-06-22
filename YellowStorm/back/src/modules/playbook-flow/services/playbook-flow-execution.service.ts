@@ -85,8 +85,10 @@ const RUNTIME_AGENT_METADATA_KEYS = [
   'agent_prompt',
   'agent_type',
   'agent_tools',
+  'skills',
   'agent_params',
   'connector_bindings',
+  'connector_ids',
   'brain_context',
 ] as const;
 
@@ -106,13 +108,50 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
+function getConnectorIdsFromRuntimeBindings(bindings: unknown): Set<string> {
+  if (!Array.isArray(bindings)) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    bindings
+      .filter((binding): binding is Record<string, unknown> => !!binding && typeof binding === 'object' && !Array.isArray(binding))
+      .map((binding) => String(binding.connector_id || '').trim())
+      .filter(Boolean),
+  );
+}
+
+function getSkillIdsFromRuntimeSkills(skills: unknown): Set<string> {
+  if (!Array.isArray(skills)) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    skills
+      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
+      .map((skill) => String(skill.id || '').trim())
+      .filter(Boolean),
+  );
+}
+
+function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(blockers)) return [];
+  return blockers.filter((blocker): blocker is Record<string, unknown> => (
+    !!blocker
+    && typeof blocker === 'object'
+    && !Array.isArray(blocker)
+    && blocker.enabled !== false
+    && blocker.createdBy === 'user'
+  ));
+}
+
 export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> {
   const metadata = node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
     ? node.metadata as Record<string, unknown>
     : {};
   const flowHitlPolicy = snapshot.hitlPolicy;
   const nodeHitlPolicy = node.hitlPolicy ?? metadata.hitlPolicy ?? metadata.hitl_policy;
-  const hitlBlockers = snapshot.hitlBlockers;
+  const hitlBlockers = filterRuntimeHitlBlockers(snapshot.hitlBlockers);
 
   // Keep HITL contract data inside metadata until the runtime proto carries first-class flow-node fields.
   return {
@@ -133,7 +172,7 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       ? { max_clarifications: Number(node.maxClarifications ?? metadata.maxClarifications) || 0 }
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
-    ...(hitlBlockers ? { hitl_blockers: hitlBlockers } : {}),
+    ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
   };
 }
 
@@ -263,6 +302,145 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private async reconcileOrphanedExecutions(): Promise<void> {
     // This remains disabled until execution ownership is persisted and validated.
+  }
+
+  private async buildNodeRuntimeAgentMetadata(
+    ownerId: string,
+    nodeId: string,
+    baseMetadata: Record<string, unknown>,
+    resolvedAgent?: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!resolvedAgent) {
+      return resolvedAgent;
+    }
+
+    const taskToolBindings = Array.isArray(baseMetadata.toolBindings)
+      ? baseMetadata.toolBindings.filter((binding): binding is Record<string, unknown> => (
+        !!binding && typeof binding === 'object' && !Array.isArray(binding)
+      ))
+      : [];
+
+    if (taskToolBindings.length === 0) {
+      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
+    }
+
+    const existingConnectorIds = new Set([
+      ...getConnectorIdsFromRuntimeBindings(resolvedAgent.connector_bindings),
+      ...((Array.isArray(resolvedAgent.connector_ids) ? resolvedAgent.connector_ids : [])
+        .map((connectorId) => String(connectorId || '').trim())
+        .filter(Boolean)),
+    ]);
+
+    const additionalBindings: Record<string, unknown>[] = [];
+    const seenConnectorIds = new Set<string>();
+
+    for (const binding of taskToolBindings) {
+      if (binding.isEnabled === false) {
+        continue;
+      }
+
+      const connectorId = String(binding.connectorId || '').trim();
+      if (!connectorId || existingConnectorIds.has(connectorId) || seenConnectorIds.has(connectorId)) {
+        continue;
+      }
+
+      seenConnectorIds.add(connectorId);
+      additionalBindings.push(binding);
+    }
+
+    if (additionalBindings.length === 0) {
+      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
+    }
+
+    const additionalRuntime = await this.agentService.buildGrpcConnectorRuntimeForPlaybook(ownerId, additionalBindings);
+    if (additionalRuntime.connector_bindings.length === 0) {
+      this.logger.warn('Skipped playbook task connector bindings without runtime actions', {
+        ownerId,
+        nodeId,
+        connectorIds: additionalBindings.map((binding) => String(binding.connectorId || '')).filter(Boolean),
+      });
+      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
+    }
+
+    const mergedConnectorBindings = [
+      ...(Array.isArray(resolvedAgent.connector_bindings) ? resolvedAgent.connector_bindings : []),
+      ...additionalRuntime.connector_bindings,
+    ];
+    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
+    const additionalConnectorSkills = (Array.isArray(additionalRuntime.skills) ? additionalRuntime.skills : [])
+      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
+      .filter((skill) => {
+        const skillId = String(skill.id || '').trim();
+        return !!skillId && !existingSkillIds.has(skillId);
+      });
+
+    return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, {
+      ...resolvedAgent,
+      agent_tools: [
+        ...(Array.isArray(resolvedAgent.agent_tools) ? resolvedAgent.agent_tools : []),
+        ...additionalRuntime.tools,
+      ],
+      skills: [
+        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
+        ...additionalConnectorSkills,
+      ],
+      agent_params: {
+        ...(resolvedAgent.agent_params && typeof resolvedAgent.agent_params === 'object' && !Array.isArray(resolvedAgent.agent_params)
+          ? resolvedAgent.agent_params as Record<string, unknown>
+          : {}),
+        connector_bindings_json: JSON.stringify(mergedConnectorBindings),
+      },
+      connector_bindings: mergedConnectorBindings,
+      connector_ids: [
+        ...existingConnectorIds,
+        ...additionalRuntime.connectorIds,
+      ],
+    });
+  }
+
+  private async mergeNodeRuntimeSkills(
+    ownerId: string,
+    nodeId: string,
+    baseMetadata: Record<string, unknown>,
+    resolvedAgent: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const taskSkillBindings = Array.isArray(baseMetadata.skillBindings)
+      ? baseMetadata.skillBindings.filter((binding): binding is Record<string, unknown> => (
+        !!binding && typeof binding === 'object' && !Array.isArray(binding)
+      ))
+      : [];
+
+    if (taskSkillBindings.length === 0) {
+      return resolvedAgent;
+    }
+
+    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
+    const additionalSkillIds = [...new Set(taskSkillBindings
+      .filter((binding) => binding.isEnabled !== false)
+      .map((binding) => String(binding.skillId || '').trim())
+      .filter((skillId) => skillId && !existingSkillIds.has(skillId)))];
+
+    if (additionalSkillIds.length === 0) {
+      return resolvedAgent;
+    }
+
+    const additionalSkills = await this.agentService.buildGrpcSkillsForPlaybook(additionalSkillIds);
+    if (additionalSkills.length === 0) {
+      this.logger.warn('Skipped playbook task skill bindings without active runtime skills', {
+        ownerId,
+        nodeId,
+        skillIds: additionalSkillIds,
+      });
+      return resolvedAgent;
+    }
+
+    return {
+      ...resolvedAgent,
+      skills: [
+        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
+        ...additionalSkills,
+      ],
+    };
   }
 
   private cacheSelectedReplayArtifacts(
@@ -574,21 +752,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     dispatcher.schedule(ownerId, (queuedOwnerId) => this.drainQueue(queuedOwnerId));
   }
 
-  async start(
+  private async prepareExecutionStartFlow(
     flowId: string,
     ownerId: string,
-    inputContext?: Record<string, unknown>,
-    idempotencyKey?: string,
-    singleStepTaskId?: string,
-    advisorAutopilotEnabled?: boolean,
-    advisorAutopilotTargetScore?: number,
-    advisorAutopilotMaxTurns?: number,
-    reflectionEnabled?: boolean,
-    advisorScoringMode?: AdvisorScoringMode,
-    executionMode?: string,
-    stepExecutionModes?: Record<string, string>,
-    modelIdOverride?: string,
-  ): Promise<IFlowExecutionResponse> {
+  ): Promise<IFlowResponse> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
@@ -620,6 +787,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+
+    return flow;
+  }
+
+  async start(
+    flowId: string,
+    ownerId: string,
+    inputContext?: Record<string, unknown>,
+    idempotencyKey?: string,
+    singleStepTaskId?: string,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
+    reflectionEnabled?: boolean,
+    advisorScoringMode?: AdvisorScoringMode,
+    executionMode?: string,
+    stepExecutionModes?: Record<string, string>,
+    modelIdOverride?: string,
+  ): Promise<IFlowExecutionResponse> {
+    const flow = await this.prepareExecutionStartFlow(flowId, ownerId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
@@ -1107,17 +1294,23 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             agent_prompt: agent.prompt,
             agent_type: agent.agent_type,
             agent_tools: agent.tools,
+            skills: agent.skills || [],
             agent_params: agent.agent_params?.params || {},
             connector_bindings: agent.connector_bindings || [],
+            connector_ids: agent.connectorIds || [],
             brain_context: agent.brain_context || [],
           });
         }
       }
       // Merge resolved agent config into each node's metadata (flattened to avoid gRPC Struct nesting issues)
-      const enrichedNodes = (snapshot.nodes as any[]).map((n) => {
+      const nodeMetadataEntries = (snapshot.nodes as any[]).map((n) => {
+        const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+        return { n, baseMetadata };
+      });
+      const enrichedNodes = await Promise.all(nodeMetadataEntries.map(async ({ n, baseMetadata }) => {
         const assignedAgentId = n.metadata?.assignedAgentId;
         const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
-        const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+        const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
         const description = typeof n.description === 'string' && n.description.trim()
           ? n.description.trim()
           : typeof n.metadata?.description === 'string' && n.metadata.description.trim()
@@ -1125,14 +1318,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             : '';
         return {
           ...n,
-          modelId: n.modelId || (resolvedAgent?.agent_model as string) || '',
+          modelId: n.modelId || (runtimeAgentMetadata?.agent_model as string) || '',
           metadata: {
             ...baseMetadata,
             ...(description ? { description } : {}),
-            ...(resolvedAgent || {}),
+            ...(runtimeAgentMetadata || {}),
           },
         };
-      });
+      }));
 
       const taskNodeIds = enrichedNodes
         .filter((n: any) => n.kind === 'step' || n.kind === 'iterator')
@@ -2366,7 +2559,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const snapshot = sourceExecution.snapshot as Record<string, unknown>;
+    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
+    const executableSnapshot = this.buildExecutableSnapshot(
+      this.builderService.buildSnapshot(latestFlow as any),
+      String(sourceExecution.flowId),
+    );
+    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -2377,15 +2575,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const iteration = payload.iteration ?? 0;
+    const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
+      ? snapshot.settings as Record<string, unknown>
+      : {};
+    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
+    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
-      recursionLimit: sourceExecution.recursionLimit,
-      maxParallelism: sourceExecution.maxParallelism,
+      recursionLimit,
+      maxParallelism,
       inputContext: sourceExecution.inputContext,
-      snapshot: sourceExecution.snapshot,
+      snapshot,
       replaySource: {
         executionId: sourceExecution.id,
         taskId: payload.taskId,
@@ -2454,22 +2657,25 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           agent_prompt: agent.prompt,
           agent_type: agent.agent_type,
           agent_tools: agent.tools,
+          skills: agent.skills || [],
           agent_params: agent.agent_params?.params || {},
           connector_bindings: agent.connector_bindings || [],
+          connector_ids: agent.connectorIds || [],
           brain_context: agent.brain_context || [],
         });
       }
     }
 
-    const enrichedNodes = (snapshot.nodes as any[]).map((n) => {
+    const enrichedNodes = await Promise.all((snapshot.nodes as any[]).map(async (n) => {
       const assignedAgentId = n.metadata?.assignedAgentId;
       const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
       const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+      const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
       return {
         ...n,
-        metadata: { ...baseMetadata, ...(resolvedAgent || {}) },
+        metadata: { ...baseMetadata, ...(runtimeAgentMetadata || {}) },
       };
-    });
+    }));
 
     const dataBindingsProto = await this.buildDataBindingsProto(snapshot.dataBindings as any[]);
 

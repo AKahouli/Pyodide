@@ -19,7 +19,25 @@ from src.flow_engine.nodes.step_hitl_blockers import (
 )
 
 
-def test_evaluate_hitl_blocker_pauses_for_missing_required_input() -> None:
+def test_evaluate_hitl_blocker_pauses_for_missing_required_input_only_with_user_rule() -> None:
+    decision = evaluate_hitl_blocker(
+        node_config={
+            "label": "Draft summary",
+            "input": {"ports": [{"id": "brief", "label": "Brief", "required": True}]},
+        },
+        input_context={},
+        hitl_policy={"mode": "auto", "clarificationsEnabled": True},
+        hitl_blockers=[{"id": "rule-1", "kind": "missing_required_input", "createdBy": "user"}],
+    )
+
+    assert decision is not None
+    assert decision.interrupt_type == "clarification"
+    assert decision.reason_code == "missing_required_input"
+    assert decision.blocker_kind == "missing_required_input"
+    assert "Brief" in decision.message
+
+
+def test_evaluate_hitl_blocker_ignores_missing_required_input_without_user_rule() -> None:
     decision = evaluate_hitl_blocker(
         node_config={
             "label": "Draft summary",
@@ -30,11 +48,7 @@ def test_evaluate_hitl_blocker_pauses_for_missing_required_input() -> None:
         hitl_blockers=[],
     )
 
-    assert decision is not None
-    assert decision.interrupt_type == "clarification"
-    assert decision.reason_code == "missing_required_input"
-    assert decision.blocker_kind == "missing_required_input"
-    assert "Brief" in decision.message
+    assert decision is None
 
 
 def test_evaluate_hitl_blocker_ignores_auto_when_policy_is_not_auto() -> None:
@@ -66,6 +80,7 @@ def test_evaluate_hitl_blocker_pauses_for_explicit_approval_rule() -> None:
         hitl_blockers=[{
             "id": "rule-1",
             "kind": "explicit_human_request",
+            "createdBy": "user",
             "matcher": {"type": "contains", "pattern": "final message"},
             "message": "Approve the customer-facing email.",
             "riskLevel": "high",
@@ -120,6 +135,20 @@ def test_evaluate_hitl_blocker_does_not_preempt_step_prompt_clarification_instru
         input_context={},
         hitl_policy={"mode": "auto", "clarificationEnabled": True},
         hitl_blockers=[],
+    )
+
+    assert decision is None
+
+
+def test_evaluate_hitl_blocker_ignores_system_missing_input_rule() -> None:
+    decision = evaluate_hitl_blocker(
+        node_config={
+            "label": "Draft summary",
+            "input": {"ports": [{"id": "brief", "label": "Brief", "required": True}]},
+        },
+        input_context={},
+        hitl_policy={"mode": "auto", "clarificationsEnabled": True},
+        hitl_blockers=[{"id": "system-missing-required-input", "kind": "missing_required_input", "createdBy": "system"}],
     )
 
     assert decision is None
@@ -253,6 +282,7 @@ async def test_evaluate_llm_judge_blocker_uses_model_decision(monkeypatch) -> No
         hitl_blockers=[{
             "id": "custom-population-gender",
             "enabled": True,
+            "createdBy": "user",
             "kind": "custom",
             "description": "population gender missing",
             "action": "clarify",
@@ -290,6 +320,7 @@ async def test_evaluate_llm_judge_blocker_ignores_clarification_toggle(monkeypat
         hitl_blockers=[{
             "id": "custom-population-gender",
             "enabled": True,
+            "createdBy": "user",
             "kind": "custom",
             "description": "population gender missing",
             "action": "clarify",
@@ -415,6 +446,7 @@ def test_evaluate_hitl_blocker_pauses_for_destructive_action_rule() -> None:
         hitl_blockers=[{
             "id": "system-destructive-action",
             "kind": "destructive_action",
+            "createdBy": "user",
             "riskLevel": "critical",
             "matcherConfig": {"verbs": ["delete", "purge"]},
         }],
@@ -443,6 +475,7 @@ def test_evaluate_hitl_blocker_pauses_for_external_connector_action() -> None:
         hitl_blockers=[{
             "id": "system-external-send",
             "kind": "external_send",
+            "createdBy": "user",
             "riskLevel": "critical",
             "appliesToConnectorActions": ["send"],
         }],
@@ -462,6 +495,7 @@ def test_evaluate_hitl_blocker_does_not_match_action_rules_on_label_only() -> No
         hitl_blockers=[{
             "id": "system-external-send",
             "kind": "external_send",
+            "createdBy": "user",
             "riskLevel": "critical",
             "appliesToConnectorActions": ["send"],
         }],
@@ -489,6 +523,7 @@ def test_evaluate_hitl_blocker_does_not_match_when_multiple_bound_actions_exist_
         hitl_blockers=[{
             "id": "system-destructive-action",
             "kind": "destructive_action",
+            "createdBy": "user",
             "riskLevel": "critical",
             "matcherConfig": {"verbs": ["delete"]},
         }],

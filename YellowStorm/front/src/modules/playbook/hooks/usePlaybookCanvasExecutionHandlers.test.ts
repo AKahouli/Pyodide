@@ -13,6 +13,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
   const setDesignerOpen = vi.fn();
   const setWorkspaceExplorerOpen = vi.fn();
   const setConnectorSidebarOpen = vi.fn();
+  const setSkillSidebarOpen = vi.fn();
   const setGlobalSidebarOpen = vi.fn();
   const executePlaybook = vi.fn().mockResolvedValue('execution-id');
   const stopExecution = vi.fn().mockResolvedValue(undefined);
@@ -48,6 +49,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
+        setSkillSidebarOpen,
         setGlobalSidebarOpen,
         showError,
         workspaceRequiredForRunError: 'Please add a workspace',
@@ -93,6 +95,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
+        setSkillSidebarOpen,
         setGlobalSidebarOpen,
         showError,
         workspaceRequiredForRunError: 'Please add a workspace',
@@ -110,6 +113,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
     expect(setDesignerOpen).toHaveBeenCalledWith(false);
     expect(setWorkspaceExplorerOpen).toHaveBeenCalledWith(false);
     expect(setConnectorSidebarOpen).toHaveBeenCalledWith(false);
+    expect(setSkillSidebarOpen).toHaveBeenCalledWith(false);
     expect(setGlobalSidebarOpen).toHaveBeenCalledWith(false);
     expect(executePlaybook).toHaveBeenCalledWith('playbook-1', {
       executionMode: 'inherit',
@@ -153,6 +157,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
+        setSkillSidebarOpen,
         setGlobalSidebarOpen,
         showError,
         workspaceRequiredForRunError: 'Please add a workspace',
@@ -188,6 +193,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
+        setSkillSidebarOpen,
         setGlobalSidebarOpen,
         showError,
         workspaceRequiredForRunError: 'Please add a workspace',

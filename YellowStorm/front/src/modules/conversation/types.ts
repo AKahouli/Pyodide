@@ -155,6 +155,8 @@ export interface SendMessagePayload {
   modelId?: string;
   agentIds?: string[];
   memberIds?: string[];
+  /** Mentioned team IDs; the backend expands each into its agents at send time. */
+  teamIds?: string[];
   parentMessageId?: string;
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];

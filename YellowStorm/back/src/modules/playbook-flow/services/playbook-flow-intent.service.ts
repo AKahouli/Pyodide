@@ -1,17 +1,82 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { AgentService } from '@modules/agent/agent.service';
+import { SkillService } from '@modules/skill/skill.service';
+import { ConnectorService } from '@modules/connector/connector.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
 import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-template.service';
 import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-renderer.service';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
+import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
+import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
+import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
+import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
+import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
+import { parseDesignResourceLine } from '../utils/playbook-flow-safe-text.util';
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
+
+const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
+const NO_RESOLVED_DESIGN_RESOURCES = '[]';
+const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
+
+interface ResolvedDesignResource {
+  question: string;
+  label: string;
+  kind: 'workspace' | 'document';
+  id: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  path?: string;
+  mimeType?: string;
+}
+
+interface ResolvedDesignResourceBindingValue extends ResolvedDesignResource {
+  documentId?: string;
+}
+
+export interface AvailableDesignCatalog {
+  availableSkills: Array<{
+    id: string;
+    skillSlug: string;
+    name: string;
+    description: string;
+    category?: string | null;
+  }>;
+  availableConnectors: Array<{
+    id: string;
+    connectorSlug: string;
+    name: string;
+    description: string;
+    category?: string | null;
+  }>;
+  availableConnectorActions: Array<{
+    connectorId: string;
+    connectorSlug: string;
+    connectorName: string;
+    actionKey: string;
+    label: string;
+    description: string;
+  }>;
+  availableWorkspaces: Array<{
+    id: string;
+    name: string;
+    description: string;
+    folders: Array<{
+      id: string;
+      name: string;
+      parentId: string | null;
+    }>;
+  }>;
+}
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -34,7 +99,7 @@ export interface IntentWorkflowValidationContext {
   existingBindingTargets: Set<string>;
 }
 
-interface PlaybookIntentTaskDraft {
+export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
@@ -49,6 +114,21 @@ interface PlaybookIntentTaskDraft {
     id: string;
     name?: string | null;
     artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+  }>;
+  toolBindings?: Array<{
+    id: string;
+    connectorId: string;
+    connectorSlug?: string;
+    connectorName?: string;
+    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    isEnabled?: boolean;
+  }>;
+  skillBindings?: Array<{
+    id: string;
+    skillId: string;
+    skillSlug?: string;
+    skillName?: string;
+    isEnabled?: boolean;
   }>;
   iteratorBody?: {
     steps: Array<{
@@ -91,7 +171,7 @@ interface PlaybookIntentSingleChangeSuggestion {
   isDirectIntentFallback: boolean;
 }
 
-type PlaybookIntentWorkflowChange =
+export type PlaybookIntentWorkflowChange =
   | {
     type: 'create_node';
     nodeRef: string;
@@ -136,6 +216,14 @@ type PlaybookIntentWorkflowChange =
     iteration?: 'current' | 'previous';
   }
   | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetPort: string;
+    sourceKind: 'constant';
+    constantValue: ResolvedDesignResourceBindingValue;
+  }
+  | {
     type: 'delete_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
@@ -177,8 +265,14 @@ export interface PlaybookIntentAnalysisContext {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
+  availableDesignCatalog: AvailableDesignCatalog;
+  nodeTemplates: Array<{ id: string; type: string; key: string; nodeType: string; title: string; description?: string; category: string;
+    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    recommendedAgentTypeSlug: string | null; enabled: boolean }>;
 }
 
 export interface PlaybookFlowIntentResponse {
@@ -189,6 +283,8 @@ export interface PlaybookFlowIntentResponse {
 
 @Injectable()
 export class PlaybookFlowIntentService {
+  private readonly logger = new Logger(PlaybookFlowIntentService.name);
+
   constructor(
     @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
@@ -198,6 +294,16 @@ export class PlaybookFlowIntentService {
     private readonly agentService: AgentService,
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
+    private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
+    private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
+      new PlaybookIntentNodeBuildRegistryService(),
+      new PlaybookIntentGraphBindingResolverService(),
+    ),
+    private readonly skillService?: SkillService,
+    private readonly connectorService?: ConnectorService,
+    private readonly workspaceService?: WorkspaceService,
+    private readonly workspaceDocumentService?: WorkspaceDocumentService,
   ) {}
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
@@ -213,17 +319,36 @@ export class PlaybookFlowIntentService {
     }, { timeout: 180000 });
 
     return {
-      suggestions: this.normalizeConstructionSuggestions({
+      suggestions: this.normalizeConstructionOutput({
         raw: this.extractChatCompletionText(response.data),
         dto,
-        selectedNodeId: context.selectedNodeId,
-        limits: context.limits,
-        validationContext: context.validationContext,
-        includeFallback: true,
+        context,
       }),
       model: context.model,
       settings: context.effectiveSettings,
     };
+  }
+
+  async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
+    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
+    const prompt = await this.promptService.findByKey('intent.design_assessment');
+    const userPrompt = prompt?.userTemplate?.trim()
+      ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
+      : context.userPrompt;
+    const response = await context.httpClient.post('/v1/chat/completions', {
+      model: context.model,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
+        { role: 'user', content: userPrompt },
+      ],
+    }, { timeout: 180000 });
+
+    return this.normalizeDesignAssessment(
+      this.extractChatCompletionText(response.data),
+      dto.intent,
+    );
   }
 
   async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
@@ -250,8 +375,11 @@ export class PlaybookFlowIntentService {
     const prompt = await this.promptService.findByKey('intent.analyze');
     const defaultAgents = await this.agentService.findDefaultAgents({ page: 1, limit: 100, isActive: true });
     const nodeTemplates = await this.nodeTemplateService.findEnabled();
+    const availableDesignCatalog = await this.buildAvailableDesignCatalog(ownerId);
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return JSON only with a top-level suggestions array.';
-    const userPrompt = this.promptRenderer.render(prompt?.userTemplate || '', {
+    const intentParts = this.splitIntentClarifications(dto.intent);
+    const resolvedDesignResources = this.extractResolvedDesignResources(intentParts.capturedClarifications);
+    const promptVariables = {
       playbook_name: flow.name,
       playbook_description: (flow as any).description || '',
       workflow_summary: JSON.stringify(this.buildWorkflowSummary(flow, dto.selectedTaskId || null), null, 2),
@@ -269,21 +397,32 @@ export class PlaybookFlowIntentService {
         executionMode: template.executionMode,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
+          name: port.name,
           artifactKind: port.artifactKind,
           required: port.required === true,
+          description: port.description || '',
         })),
         outputPorts: template.outputPorts.map((port) => ({
           id: port.id,
+          name: port.name,
           artifactKind: port.artifactKind,
+          description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
       })), null, 2),
-      intent_text: dto.intent.trim(),
+      intent_text: intentParts.intentText,
+      captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
+      resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
+      available_design_catalog: JSON.stringify(availableDesignCatalog, null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
       selected_task_context: JSON.stringify(this.buildSelectedNodeContext(flow, selectedNode?.id || null), null, 2),
-    });
+    };
+    const userPrompt = this.promptRenderer.render(
+      prompt?.userTemplate || '',
+      this.withClarificationTemplateFallback(promptVariables, prompt?.userTemplate || ''),
+    );
 
     const validationContext = this.buildValidationContext(flow);
     return {
@@ -294,9 +433,217 @@ export class PlaybookFlowIntentService {
       model,
       systemPrompt,
       userPrompt,
+      promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
+      availableDesignCatalog,
+      nodeTemplates: nodeTemplates.items.map((template) => ({
+        id: template.id,
+        type: template.type,
+        key: template.key,
+        nodeType: template.nodeType,
+        title: template.title,
+        description: template.description || '',
+        category: template.category,
+        inputPorts: template.inputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          required: port.required === true,
+          description: port.description || '',
+        })),
+        outputPorts: template.outputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          description: port.description || '',
+        })),
+        recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        enabled: template.enabled,
+      })),
     };
+  }
+
+  buildGraphBuilderDesignCatalog(catalog: AvailableDesignCatalog): BuilderDesignCatalog {
+    return {
+      connectors: catalog.availableConnectors.map((connector) => ({
+        id: connector.id,
+        slug: connector.connectorSlug,
+        name: connector.name,
+      })),
+      connectorActions: catalog.availableConnectorActions.map((action) => ({
+        connectorSlug: action.connectorSlug,
+        actionKey: action.actionKey,
+      })),
+      skills: catalog.availableSkills.map((skill) => ({
+        id: skill.id,
+        slug: skill.skillSlug,
+        name: skill.name,
+      })),
+    };
+  }
+
+  private async buildAvailableDesignCatalog(ownerId: string): Promise<AvailableDesignCatalog> {
+    const [skills, connectors, workspaces] = await Promise.all([
+      this.skillService?.findAllActive() ?? Promise.resolve([]),
+      this.connectorService?.findAllActive() ?? Promise.resolve([]),
+      this.workspaceService?.findAllByUser(ownerId, { page: 1, limit: 100 }) ?? Promise.resolve({
+        workspaces: [],
+        pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
+      }),
+    ]);
+
+    return {
+      availableSkills: skills.map((skill) => ({
+        id: skill.id,
+        skillSlug: skill.name,
+        name: skill.name,
+        description: skill.description || '',
+        category: skill.categoryName ?? null,
+      })),
+      availableConnectors: connectors.map((connector) => ({
+        id: connector.id,
+        connectorSlug: connector.slug,
+        name: connector.name,
+        description: connector.description || '',
+        category: connector.categoryName ?? null,
+      })),
+      availableConnectorActions: connectors.flatMap((connector) =>
+        (connector.actions || [])
+          .filter((action) => action.isEnabled !== false)
+          .map((action) => ({
+            connectorId: connector.id,
+            connectorSlug: connector.slug,
+            connectorName: connector.name,
+            actionKey: action.key,
+            label: action.label || action.key,
+            description: action.description || '',
+          })),
+      ),
+      availableWorkspaces: await this.buildAvailableWorkspaceCatalog(workspaces.workspaces || []),
+    };
+  }
+
+  private async buildAvailableWorkspaceCatalog(workspaces: Array<{ id: string; name: string; description?: string }>) {
+    if (!this.workspaceDocumentService) {
+      return workspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        description: workspace.description || '',
+        folders: [],
+      }));
+    }
+
+    return Promise.all(workspaces.map(async (workspace) => {
+      const folders = await this.workspaceDocumentService!.getAllFolders(workspace.id);
+      return {
+        id: workspace.id,
+        name: workspace.name,
+        description: workspace.description || '',
+        folders: folders.slice(0, MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE).map((folder) => ({
+          id: folder.id,
+          name: folder.folderName || folder.originalName,
+          parentId: folder.parentId || null,
+        })),
+      };
+    }));
+  }
+
+  private splitIntentClarifications(intent: string): { intentText: string; capturedClarifications: string } {
+    const marker = '\n\nClarifications:\n';
+    const normalizedIntent = intent.trim();
+    const markerIndex = normalizedIntent.indexOf(marker);
+    if (markerIndex === -1) {
+      return { intentText: normalizedIntent, capturedClarifications: '' };
+    }
+
+    return {
+      intentText: normalizedIntent.slice(0, markerIndex).trim(),
+      capturedClarifications: normalizedIntent.slice(markerIndex + marker.length).trim(),
+    };
+  }
+
+  private withClarificationTemplateFallback(variables: Record<string, unknown>, template: string): Record<string, unknown> {
+    const capturedClarifications = this.asString(variables.captured_clarifications);
+    const resolvedDesignResources = this.asString(variables.resolved_design_resources);
+    const intentText = this.asString(variables.intent_text);
+    const resourceBlock = resolvedDesignResources && resolvedDesignResources !== NO_RESOLVED_DESIGN_RESOURCES && !this.hasResolvedDesignResourcesPlaceholder(template)
+      ? `\n\n<Resolved_Design_Resources>\n${resolvedDesignResources}\n</Resolved_Design_Resources>`
+      : '';
+    if (this.hasClarificationPlaceholder(template)) {
+      return resourceBlock
+        ? { ...variables, captured_clarifications: `${capturedClarifications}${resourceBlock}` }
+        : variables;
+    }
+
+    if (!capturedClarifications || capturedClarifications === NO_CAPTURED_CLARIFICATIONS) {
+      return variables;
+    }
+
+    return {
+      ...variables,
+      intent_text: `${intentText}\n\nClarifications:\n${capturedClarifications}${resourceBlock}`,
+    };
+  }
+
+  private hasClarificationPlaceholder(template: string): boolean {
+    return /\{captured_clarifications\}|\{\{\s*captured_clarifications\s*\}\}/.test(template);
+  }
+
+  private hasResolvedDesignResourcesPlaceholder(template: string): boolean {
+    return /\{resolved_design_resources\}|\{\{\s*resolved_design_resources\s*\}\}/.test(template);
+  }
+
+  private extractResolvedDesignResources(capturedClarifications: string): ResolvedDesignResource[] {
+    if (!capturedClarifications.trim()) {
+      return [];
+    }
+
+    return capturedClarifications
+      .split('\n')
+      .map((line) => this.extractResolvedDesignResource(line))
+      .filter((resource): resource is ResolvedDesignResource => resource !== null);
+  }
+
+  private extractResolvedDesignResource(line: string): ResolvedDesignResource | null {
+    const parsed = parseDesignResourceLine(line);
+    if (!parsed) {
+      return null;
+    }
+
+    const metadata = this.parseResourceMetadata(parsed.metadata);
+    const kind = metadata.kind;
+    const id = metadata.id;
+    if ((kind !== 'workspace' && kind !== 'document') || !id) {
+      return null;
+    }
+
+    return {
+      question: parsed.question,
+      label: parsed.label,
+      kind,
+      id,
+      ...(metadata.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
+      ...(metadata.workspaceName ? { workspaceName: metadata.workspaceName } : {}),
+      ...(metadata.path ? { path: metadata.path } : {}),
+      ...(metadata.mimeType ? { mimeType: metadata.mimeType } : {}),
+    };
+  }
+
+  private parseResourceMetadata(metadataText: string): Record<string, string> {
+    const metadata: Record<string, string> = {};
+    const keyPattern = 'kind|id|workspaceId|workspaceName|path|mimeType';
+    const pattern = new RegExp(`(?:^|,\\s*)(${keyPattern})=([\\s\\S]*?)(?=,\\s*(?:${keyPattern})=|$)`, 'g');
+    let match = pattern.exec(metadataText);
+    while (match) {
+      const key = match[1]?.trim() || '';
+      const value = match[2]?.trim() || '';
+      if (key && value) {
+        metadata[key] = value;
+      }
+      match = pattern.exec(metadataText);
+    }
+    return metadata;
   }
 
   normalizeConstructionSuggestions(args: {
@@ -315,6 +662,165 @@ export class PlaybookFlowIntentService {
       args.validationContext,
       args.includeFallback,
     );
+  }
+
+  normalizeConstructionOutput(args: {
+    raw: string;
+    dto: RequestPlaybookFlowIntentDto;
+    context: PlaybookIntentAnalysisContext;
+  }): PlaybookIntentSuggestion[] {
+    const useBlueprint = args.context.effectiveSettings.useDeterministicBlueprintBuilder;
+    if (useBlueprint && this.blueprintParser.hasBlueprintShape(args.raw)) {
+      const parsed = this.blueprintParser.parse(args.raw);
+      if (parsed) {
+        try {
+          const buildResult = this.graphBuilder.build({
+            blueprint: parsed.blueprint,
+            context: args.context.validationContext,
+            limits: args.context.limits,
+            templates: args.context.nodeTemplates,
+            designCatalog: this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog),
+            selectedNodeId: args.context.selectedNodeId,
+          });
+          if (buildResult.dropped.length) {
+            this.logger.warn(`playbook_intent_builder_dropped items=${buildResult.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
+          }
+          return [this.createFallbackSuggestion(args.dto, args.context.selectedNodeId), buildResult.suggestion];
+        } catch (error) {
+          this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
+        }
+      }
+    }
+
+    return this.normalizeConstructionSuggestions({
+      raw: args.raw,
+      dto: args.dto,
+      selectedNodeId: args.context.selectedNodeId,
+      limits: args.context.limits,
+      validationContext: args.context.validationContext,
+      includeFallback: true,
+    });
+  }
+
+  private buildDesignAssessmentSystemPrompt(): string {
+    return `You are a strict workflow design reviewer. Before playbook generation, challenge missing requirements that would make the generated workflow unreliable.
+Return JSON only. Use one of these statuses: needs_clarification, ready_for_review, ready_to_generate.
+Ask concise, decision-driving questions only when missing information changes workflow structure, datasource binding, HITL approval/review, or output quality.
+For every clarification question, include 2 to 4 short clickable choices that cover likely answers. Do not include an "other" choice; the UI adds that.
+When a question asks the user to pick a source workspace or document, set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise.
+Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
+Use ready_for_review when enough information exists but assumptions should be confirmed.
+Use ready_to_generate only when the intent is complete and low risk.
+Shape:
+{"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."],"resourceSelector":"workspace_or_document|destination_workspace"}],"missingRequirements":["..."],"riskFlags":["..."]}
+or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
+or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`;
+  }
+
+  private normalizeDesignAssessment(raw: string, intent: string): PlaybookIntentDesignResponse {
+    const parsed = this.parseJsonObject(raw);
+    if (!parsed) return this.buildFallbackDesignAssessment(intent);
+    const status = parsed.status;
+    if (status === 'ready_to_generate') return this.normalizeReadyToGenerate(parsed, intent);
+    if (status === 'ready_for_review') return this.normalizeReadyForReview(parsed, intent);
+    return this.normalizeNeedsClarification(parsed, intent);
+  }
+
+  private normalizeNeedsClarification(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+    const normalizedQuestions = questions
+      .map((question, index) => this.normalizeClarificationQuestion(question, index))
+      .filter((question) => question.question);
+    return {
+      status: 'needs_clarification',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      questions: normalizedQuestions.length > 0 ? normalizedQuestions : this.buildFallbackQuestions(),
+      missingRequirements: this.asStringArray(parsed.missingRequirements),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeReadyForReview(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    const brief = typeof parsed.brief === 'object' && parsed.brief ? parsed.brief as Record<string, unknown> : {};
+    return {
+      status: 'ready_for_review',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      brief: {
+        goal: this.asString(brief.goal) || intent.trim(),
+        trigger: this.asString(brief.trigger) || 'Manual trigger',
+        datasources: this.asStringArray(brief.datasources),
+        steps: this.asStringArray(brief.steps),
+        outputs: this.asStringArray(brief.outputs),
+        hitlRules: this.asStringArray(brief.hitlRules),
+      },
+      assumptions: this.asStringArray(parsed.assumptions),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeReadyToGenerate(parsed: Record<string, unknown>, intent: string): PlaybookIntentDesignResponse {
+    return {
+      status: 'ready_to_generate',
+      detectedIntent: this.asString(parsed.detectedIntent) || intent.trim(),
+      assumptions: this.asStringArray(parsed.assumptions),
+      riskFlags: this.asStringArray(parsed.riskFlags),
+    };
+  }
+
+  private normalizeClarificationQuestion(value: unknown, index: number): PlaybookIntentClarificationQuestion {
+    const item = typeof value === 'object' && value ? value as Record<string, unknown> : {};
+    const allowedCategories = ['datasource', 'trigger', 'input', 'output', 'business_rule', 'approval', 'scope'];
+    const category = this.asString(item.category);
+    return {
+      id: this.asString(item.id) || `q${index + 1}`,
+      question: this.asString(item.question),
+      reason: this.asString(item.reason),
+      category: this.asQuestionCategory(category, allowedCategories),
+      required: item.required !== false,
+      choices: [...new Set(this.asStringArray(item.choices))].slice(0, 4),
+      ...this.buildQuestionResourceSelector(item.resourceSelector),
+    };
+  }
+
+  private buildQuestionResourceSelector(value: unknown): Pick<PlaybookIntentClarificationQuestion, 'resourceSelector'> {
+    const resourceSelector = this.asString(value);
+    return resourceSelector === 'workspace_or_document' || resourceSelector === 'destination_workspace'
+      ? { resourceSelector }
+      : {};
+  }
+
+  private asQuestionCategory(category: string, allowedCategories: string[]): PlaybookIntentClarificationQuestion['category'] {
+    return allowedCategories.includes(category)
+      ? category as PlaybookIntentClarificationQuestion['category']
+      : 'scope';
+  }
+
+  private parseJsonObject(raw: string): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return typeof parsed === 'object' && parsed ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private asString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private asStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.map((item) => this.asString(item)).filter(Boolean).slice(0, 8) : [];
+  }
+
+  private buildFallbackDesignAssessment(intent: string): PlaybookIntentDesignResponse {
+    return { status: 'needs_clarification', detectedIntent: intent.trim(), questions: this.buildFallbackQuestions(), missingRequirements: ['Workflow requirements need confirmation.'], riskFlags: [] };
+  }
+
+  private buildFallbackQuestions() {
+    return [
+      { id: 'datasource', question: 'Which datasource should this workflow use?', reason: 'Datasource choice affects workflow structure and input bindings.', category: 'datasource' as const, required: true, choices: ['Workspace documents', 'Connected business app', 'Uploaded files'], resourceSelector: 'workspace_or_document' as const },
+      { id: 'output', question: 'What final output should the workflow produce?', reason: 'The output contract determines the final steps.', category: 'output' as const, required: true, choices: ['Summary report', 'Structured table', 'Approval-ready recommendation'] },
+    ];
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {
@@ -539,7 +1045,13 @@ export class PlaybookFlowIntentService {
       }
     }
 
-    if (acceptedChanges.length === 0) {
+    const resolvedChanges = this.graphBindingResolver.resolveWorkflowChanges({
+      changes: acceptedChanges,
+      context: ctx,
+      deletedTaskIds,
+    });
+
+    if (resolvedChanges.length === 0) {
       return null;
     }
 
@@ -550,8 +1062,8 @@ export class PlaybookFlowIntentService {
       summary: this.normalizeText(item.summary) || '',
       reason: this.normalizeText(item.reason) || '',
       confidence: this.normalizeConfidence(item.confidence),
-      impact: this.normalizeWorkflowImpact(item.impact, acceptedChanges),
-      changes: acceptedChanges,
+      impact: this.normalizeWorkflowImpact(item.impact, resolvedChanges),
+      changes: resolvedChanges,
       isDirectIntentFallback: false,
     };
   }
@@ -619,9 +1131,23 @@ export class PlaybookFlowIntentService {
     }
 
     if (change.type === 'create_data_binding') {
-      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
       const targetValid = this.resolveTaskRef(change.targetTaskId, change.targetNodeRef, ctx.existingTaskIds, createdNodeRefs);
-      if (!sourceValid || !targetValid) {
+      if (!targetValid) {
+        return null;
+      }
+
+      if (change.sourceKind === 'constant') {
+        if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
+          const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
+          if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
+            return null;
+          }
+        }
+        return change;
+      }
+
+      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      if (!sourceValid) {
         return null;
       }
 
@@ -757,6 +1283,18 @@ export class PlaybookFlowIntentService {
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
       const sourcePort = this.normalizeText(item.sourcePort);
+      if (item.sourceKind === 'constant') {
+        const constantValue = this.normalizeResolvedDesignResourceBindingValue(item.constantValue);
+        return constantValue ? {
+          type: 'create_data_binding',
+          targetTaskId: targetTaskId || null,
+          targetNodeRef: targetNodeRef || null,
+          targetPort,
+          sourceKind: 'constant',
+          constantValue,
+        } : null;
+      }
+
       if (item.sourceKind !== 'node-output' || !(sourceTaskId || sourceNodeRef) || !sourcePort) {
         return null;
       }
@@ -795,6 +1333,28 @@ export class PlaybookFlowIntentService {
     }
 
     return null;
+  }
+
+  private normalizeResolvedDesignResourceBindingValue(value: unknown): ResolvedDesignResourceBindingValue | null {
+    const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const kind = this.normalizeText(item.kind);
+    const id = this.normalizeText(item.id);
+    const workspaceId = this.normalizeText(item.workspaceId) || (kind === 'workspace' ? id : '');
+    if ((kind !== 'document' && kind !== 'workspace') || !id || !workspaceId) {
+      return null;
+    }
+
+    return {
+      kind,
+      id,
+      workspaceId,
+      ...(kind === 'document' ? { documentId: this.normalizeText(item.documentId) || id } : {}),
+      ...(this.normalizeText(item.question) ? { question: this.normalizeText(item.question) } : { question: '' }),
+      ...(this.normalizeText(item.label) ? { label: this.normalizeText(item.label) } : { label: '' }),
+      ...(this.normalizeText(item.workspaceName) ? { workspaceName: this.normalizeText(item.workspaceName) } : {}),
+      ...(this.normalizeText(item.path) ? { path: this.normalizeText(item.path) } : {}),
+      ...(this.normalizeText(item.mimeType) ? { mimeType: this.normalizeText(item.mimeType) } : {}),
+    };
   }
 
   private normalizeWorkflowAnchor(value: unknown): { mode: 'append' | 'before' | 'after' | 'as_input'; targetTaskId: string | null; nodeRef: string | null; targetTaskIds?: string[]; nodeRefs?: string[]; sourceOutputPortId?: string | null; targetInputPortId?: string | null } {
@@ -946,13 +1506,13 @@ export class PlaybookFlowIntentService {
       ]);
 
     return {
-      nodesToCreate: this.normalizeCount(item.nodesToCreate, changes.filter((change) => change.type === 'create_node').length),
-      nodesToUpdate: this.normalizeCount(item.nodesToUpdate, changes.filter((change) => change.type === 'update_node').length),
-      nodesToDelete: this.normalizeCount(item.nodesToDelete, changes.filter((change) => change.type === 'delete_node').length),
-      edgesToCreate: this.normalizeCount(item.edgesToCreate, changes.filter((change) => change.type === 'create_edge').length),
-      edgesToDelete: this.normalizeCount(item.edgesToDelete, changes.filter((change) => change.type === 'delete_edge').length),
-      dataBindingsToCreate: this.normalizeCount((item as Record<string, unknown>).dataBindingsToCreate, changes.filter((change) => change.type === 'create_data_binding').length),
-      dataBindingsToDelete: this.normalizeCount((item as Record<string, unknown>).dataBindingsToDelete, changes.filter((change) => change.type === 'delete_data_binding').length),
+      nodesToCreate: changes.filter((change) => change.type === 'create_node').length,
+      nodesToUpdate: changes.filter((change) => change.type === 'update_node').length,
+      nodesToDelete: changes.filter((change) => change.type === 'delete_node').length,
+      edgesToCreate: changes.filter((change) => change.type === 'create_edge').length,
+      edgesToDelete: changes.filter((change) => change.type === 'delete_edge').length,
+      dataBindingsToCreate: changes.filter((change) => change.type === 'create_data_binding').length,
+      dataBindingsToDelete: changes.filter((change) => change.type === 'delete_data_binding').length,
       affectedTaskIds: [...new Set(affectedTaskIds)],
       businessOutcome: this.normalizeText(item.businessOutcome),
     };
@@ -1002,10 +1562,6 @@ export class PlaybookFlowIntentService {
       return 0.65;
     }
     return Math.max(0, Math.min(1, value));
-  }
-
-  private normalizeCount(value: unknown, fallback: number): number {
-    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : fallback;
   }
 
   private normalizeTextArray(value: unknown): string[] {

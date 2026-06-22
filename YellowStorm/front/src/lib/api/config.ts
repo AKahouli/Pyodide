@@ -10,6 +10,20 @@ export const API_CONFIG = {
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
+/** Origin for Socket.IO (strips `/api/v1` from the REST base URL). */
+export function getSocketBaseUrl(): string {
+  const base = API_CONFIG.baseURL;
+  if (base === 'MY_APP_VITE_API_URL') {
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  }
+  try {
+    const url = new URL(base);
+    return url.origin;
+  } catch {
+    return 'http://localhost:3000';
+  }
+}
+
 export const AUTH_STORAGE_KEYS = {
   accessToken: 'yellostorm_access_token',
   user: 'yellostorm_user',
@@ -46,9 +60,19 @@ export const API_ENDPOINTS = {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
+    cors: '/experimental/system/cors',
+  },
+  workspaceUploadSettings: {
+    current: '/workspace-settings/uploads',
+  },
+  adminWorkspaceUploadSettings: {
+    base: '/admin/workspace-settings/uploads',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
+  },
+  adminTeamAutoBuilder: {
+    config: '/admin/teams/auto-builder-config',
   },
   usage: {
     status: '/usage/status',
@@ -245,9 +269,36 @@ export const API_ENDPOINTS = {
     all: '/agents/all',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
+    whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+    whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
+    whatsappPairing: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
+    whatsappReconnect: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
+    whatsappSession: (id: string, sessionId: string) =>
+      `/agents/${id}/whatsapp-integration/${sessionId}`,
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
+    shares: (id: string) => `/agents/${id}/shares`,
+    shareById: (id: string, shareId: string) => `/agents/${id}/shares/${shareId}`,
+    unshare: (id: string) => `/agents/${id}/unshare`,
+  },
+  widgetTokens: {
+    create: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    list: (agentId: string) => `/agents/${agentId}/widget-tokens`,
+    update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+    revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+  },
+  teams: {
+    list: '/teams',
+    all: '/teams/all',
+    byId: (id: string) => `/teams/${id}`,
+    generate: '/teams/generate',
+    hierarchy: (id: string) => `/teams/${id}/hierarchy`,
+    shares: (id: string) => `/teams/${id}/shares`,
+    shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
+    unshare: (id: string) => `/teams/${id}/unshare`,
   },
   tools: {
     active: '/tools/active',
@@ -291,6 +342,7 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,
@@ -308,6 +360,7 @@ export const API_ENDPOINTS = {
     designOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}`,
     cancelDesignOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}/cancel`,
     designMessages: (id: string) => `/playbooks/${id}/design-messages`,
+    clearDesignMessages: (id: string) => `/playbooks/${id}/design-messages`,
     revertDesign: (id: string, msgId: string) => `/playbooks/${id}/design-messages/${msgId}/revert`,
     cloneShare: (id: string) => `/playbooks/${id}/clone-share`,
     clone: (id: string) => `/playbooks/${id}/clone`,
@@ -442,5 +495,34 @@ export const API_ENDPOINTS = {
     enabled: '/playbook-flow-templates/enabled',
     nodeKinds: '/playbook-flow-templates/node-kinds',
     byId: (id: string) => `/playbook-flow-templates/${id}`,
+  },
+  worky: {
+    streams: '/worky/streams',
+    streamById: (id: string) => `/worky/streams/${id}`,
+    streamEvents: (id: string) => `/worky/streams/${id}/events`,
+    streamMessages: (id: string) => `/worky/streams/${id}/messages`,
+    streamBoard: (id: string) => `/worky/streams/${id}/board`,
+    streamStart: (id: string) => `/worky/streams/${id}/start`,
+    streamPause: (id: string) => `/worky/streams/${id}/pause`,
+    streamResume: (id: string) => `/worky/streams/${id}/resume`,
+    streamStop: (id: string) => `/worky/streams/${id}`,
+    streamDelete: (id: string) => `/worky/streams/${id}/delete`,
+    respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
+    taskById: (id: string) => `/worky/tasks/${id}`,
+    taskMove: (id: string) => `/worky/tasks/${id}/move`,
+    taskPause: (id: string) => `/worky/tasks/${id}/pause`,
+    taskResume: (id: string) => `/worky/tasks/${id}/resume`,
+    taskCancel: (id: string) => `/worky/tasks/${id}/cancel`,
+    taskReview: (id: string) => `/worky/tasks/${id}/review`,
+    taskResults: (id: string) => `/worky/tasks/${id}/results`,
+    taskHumanUpdate: (id: string) => `/worky/tasks/${id}/human-update`,
+    streamBudget: (id: string) => `/worky/streams/${id}/budget`,
+    executionReport: (id: string) => `/worky/streams/${id}/execution-report`,
+    streamTraces: (id: string) => `/worky/streams/${id}/traces`,
+    memoryProposals: '/worky/memory/proposals',
+    memoryEntries: '/worky/memory/entries',
+    memoryProposalConfirm: (id: string) => `/worky/memory/proposals/${id}/confirm`,
+    memoryProposalReject: (id: string) => `/worky/memory/proposals/${id}/reject`,
+    governancePolicy: '/worky/admin/governance-policy',
   },
 } as const;

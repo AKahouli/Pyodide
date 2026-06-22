@@ -10,6 +10,7 @@ import { inspect } from 'node:util';
 import { URL } from 'node:url';
 import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
+import { SystemService } from './modules/system/system.service';
 
 function serializeUnhandledReason(reason: unknown) {
   if (reason instanceof Error) {
@@ -55,15 +56,34 @@ async function bootstrap() {
     logger.warn('Failed to parse runtime database configuration', { mongoUri });
   }
   const corsOrigins = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
-  const allowedOrigins = corsOrigins
+  const envAllowedOrigins = corsOrigins
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  const corsOrigin = allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins;
 
-  // CORS - use NestJS built-in for proper integration
+  const systemService = app.get(SystemService);
+  await systemService.getCorsSettings();
+
+  const isOriginAllowed = (requestOrigin: string | undefined): boolean => {
+    if (!requestOrigin) {
+      return true;
+    }
+    const allAllowed = new Set([
+      ...envAllowedOrigins,
+      ...systemService.getEnabledCorsOrigins(),
+    ]);
+    return allAllowed.has(requestOrigin);
+  };
+
+  // CORS: env baseline (CORS_ORIGIN) + admin whitelist from MongoDB
   app.enableCors({
-    origin: corsOrigin,
+    origin: (requestOrigin, callback) => {
+      if (isOriginAllowed(requestOrigin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

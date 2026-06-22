@@ -110,7 +110,7 @@ export class Message extends Document {
   timeToFirstToken?: number;
 
   // Request tracking for log correlation
-  @Prop({ type: String, index: true })
+  @Prop({ type: String })
   requestId?: string;
 
   createdAt!: Date;

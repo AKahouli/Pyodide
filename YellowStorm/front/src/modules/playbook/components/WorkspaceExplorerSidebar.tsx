@@ -1,15 +1,15 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
 import {
   Search, PanelLeftClose, FolderOpen, FileText, ChevronRight, ChevronDown,
   Loader2, Upload, Plus, Trash2, RefreshCw, Clock, Check, AlertTriangle,
-  FileX, Home, MoreHorizontal
+  FileX,
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ResizablePanel, OverflowTooltip } from '@/components/ui/resizable-panel';
 import { Badge } from '@/components/ui/badge';
@@ -21,10 +21,10 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Separator } from '@/components/ui/separator';
 import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import * as workspaceApi from '@/modules/workspace/api';
-import { validateFiles, ACCEPT_EXTENSIONS, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { validateFiles, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import type { Workspace, WorkspaceDocument, IndexingStatus } from '@/modules/workspace/types';
 import type { InputFile, PlaybookResourceKind } from '../types';
 import type { ArtifactKind } from '../types';
@@ -60,12 +60,56 @@ interface DragPayload {
   artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
+    workspaceName?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
+    folderpath?: string;
     language?: string;
     mimeType?: string;
   };
+}
+
+interface DocumentTreeNode {
+  document: WorkspaceDocument;
+  children: DocumentTreeNode[];
+}
+
+function getDocumentDisplayName(document: WorkspaceDocument): string {
+  return document.isFolder
+    ? document.folderName || document.originalName || document.filename
+    : document.originalName || document.filename;
+}
+
+function buildDocumentTree(documents: WorkspaceDocument[]): DocumentTreeNode[] {
+  const nodesById = new Map<string, DocumentTreeNode>();
+  const roots: DocumentTreeNode[] = [];
+
+  for (const document of documents) {
+    nodesById.set(document.id, { document, children: [] });
+  }
+
+  for (const node of nodesById.values()) {
+    const parentId = node.document.parentId ?? null;
+    const parent = parentId ? nodesById.get(parentId) : undefined;
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const sortNodes = (items: DocumentTreeNode[]) => {
+    items.sort((a, b) => {
+      if (a.document.isFolder && !b.document.isFolder) return -1;
+      if (!a.document.isFolder && b.document.isFolder) return 1;
+      return getDocumentDisplayName(a.document).localeCompare(getDocumentDisplayName(b.document));
+    });
+    items.forEach((item) => sortNodes(item.children));
+  };
+  sortNodes(roots);
+
+  return roots;
 }
 
 function IndexingBadge({ status, error }: { status: IndexingStatus; error?: string }) {
@@ -108,6 +152,7 @@ export function WorkspaceExplorerSidebar() {
   const isOpen = useWorkspaceExplorerOpen();
   const setOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
   const { t } = useModuleTranslation('playbook');
+  const { accept } = useAllowedUploadExtensions();
 
   // Workspace state
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -116,9 +161,9 @@ export function WorkspaceExplorerSidebar() {
 
   // Document/folder state
   const [documents, setDocuments] = useState<WorkspaceDocument[]>([]);
-  const [allFolders, setAllFolders] = useState<WorkspaceDocument[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set(['root']));
   const [search, setSearch] = useState('');
 
   // Selection
@@ -137,15 +182,6 @@ export function WorkspaceExplorerSidebar() {
 
   // Hover for inline actions
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
-
-  // Sort documents: folders first, then alphabetical
-  const sortedDocuments = useMemo(() => {
-    return [...documents].sort((a, b) => {
-      if (a.isFolder && !b.isFolder) return -1;
-      if (!a.isFolder && b.isFolder) return 1;
-      return (a.originalName || a.filename).localeCompare(b.originalName || b.filename);
-    });
-  }, [documents]);
 
   // Load persisted state
   useEffect(() => {
@@ -180,17 +216,14 @@ export function WorkspaceExplorerSidebar() {
     fetch();
   }, [isOpen]);
 
-  // Fetch documents and folders when workspace or folder changes
-  const fetchDocuments = useCallback(async (workspaceId: string, folderId: string | null) => {
+  // Fetch documents and folders when workspace changes
+  const fetchDocuments = useCallback(async (workspaceId: string) => {
     setDocsLoading(true);
     try {
       const result = await workspaceApi.getHierarchicalDocuments(workspaceId, {
         limit: 100,
       });
-      const visibleDocuments = result.documents.filter(
-        (document) => (document.parentId ?? null) === folderId,
-      );
-      setDocuments(visibleDocuments);
+      setDocuments(result.documents);
     } catch (err) {
       console.error('WorkspaceExplorer: failed to fetch documents', err);
     } finally {
@@ -198,43 +231,30 @@ export function WorkspaceExplorerSidebar() {
     }
   }, []);
 
-  const fetchAllFolders = useCallback(async (workspaceId: string) => {
-    try {
-      const folders = await workspaceApi.getAllFolders(workspaceId);
-      setAllFolders(folders);
-    } catch (err) {
-      console.error('WorkspaceExplorer: failed to fetch folders', err);
-    }
-  }, []);
-
   useEffect(() => {
     if (!activeWorkspaceId) return;
-    fetchDocuments(activeWorkspaceId, currentFolderId);
-    fetchAllFolders(activeWorkspaceId);
-  }, [activeWorkspaceId, currentFolderId, fetchDocuments, fetchAllFolders]);
+    fetchDocuments(activeWorkspaceId);
+  }, [activeWorkspaceId, fetchDocuments]);
 
-  // Breadcrumbs
-  const breadcrumbs = useMemo(() => {
-    const items: { id: string; name: string }[] = [];
-    let currentId = currentFolderId;
-    while (currentId) {
-      const folder = allFolders.find((d) => d.id === currentId && d.isFolder);
-      if (folder) {
-        items.unshift({ id: folder.id, name: folder.folderName || folder.originalName });
-        currentId = folder.parentId || null;
-      } else break;
-    }
-    return items;
-  }, [allFolders, currentFolderId]);
+  const documentTree = useMemo(() => buildDocumentTree(documents), [documents]);
 
-  // Filtered documents based on search
+  // Filtered documents based on search. Searching flattens matches so hidden nested results stay visible.
   const filteredDocuments = useMemo(() => {
-    if (!search.trim()) return sortedDocuments;
+    if (!search.trim()) return null;
     const lower = search.toLowerCase();
-    return sortedDocuments.filter(
-      (d) => (d.originalName || d.filename).toLowerCase().includes(lower),
+    return documents.filter(
+      (d) => getDocumentDisplayName(d).toLowerCase().includes(lower),
     );
-  }, [sortedDocuments, search]);
+  }, [documents, search]);
+
+  const toggleFolderExpanded = useCallback((folderId: string) => {
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }, []);
 
   // Upload handlers
   const handleUploadFiles = useCallback((files: File[]) => {
@@ -271,8 +291,7 @@ export function WorkspaceExplorerSidebar() {
           setUploadQueue((prev) =>
             prev.map((q) => (q.id === item.id ? { ...q, status: 'completed' as const, progress: 100 } : q)),
           );
-          fetchDocuments(activeWorkspaceId, currentFolderId);
-          fetchAllFolders(activeWorkspaceId);
+          fetchDocuments(activeWorkspaceId);
         })
         .catch((err) => {
           setUploadQueue((prev) =>
@@ -282,7 +301,7 @@ export function WorkspaceExplorerSidebar() {
           );
         });
     });
-  }, [activeWorkspaceId, currentFolderId, fetchDocuments, fetchAllFolders]);
+  }, [activeWorkspaceId, currentFolderId, fetchDocuments]);
 
   // Clear completed/failed uploads after a delay
   useEffect(() => {
@@ -319,12 +338,11 @@ export function WorkspaceExplorerSidebar() {
       });
       setCreateFolderName('');
       setIsCreateFolderOpen(false);
-      fetchDocuments(activeWorkspaceId, currentFolderId);
-      fetchAllFolders(activeWorkspaceId);
+      fetchDocuments(activeWorkspaceId);
     } catch (err) {
       console.error('WorkspaceExplorer: failed to create folder', err);
     }
-  }, [activeWorkspaceId, currentFolderId, createFolderName, fetchDocuments, fetchAllFolders]);
+  }, [activeWorkspaceId, currentFolderId, createFolderName, fetchDocuments]);
 
   // Delete document
   const handleDeleteDocument = useCallback(async () => {
@@ -332,12 +350,11 @@ export function WorkspaceExplorerSidebar() {
     try {
       await workspaceApi.deleteDocument(activeWorkspaceId, isDeleteDialogOpen.id);
       setIsDeleteDialogOpen(null);
-      fetchDocuments(activeWorkspaceId, currentFolderId);
-      fetchAllFolders(activeWorkspaceId);
+      fetchDocuments(activeWorkspaceId);
     } catch (err) {
       console.error('WorkspaceExplorer: failed to delete document', err);
     }
-  }, [activeWorkspaceId, isDeleteDialogOpen, currentFolderId, fetchDocuments, fetchAllFolders]);
+  }, [activeWorkspaceId, isDeleteDialogOpen, fetchDocuments]);
 
   // Delete folder
   const handleDeleteFolder = useCallback(async () => {
@@ -345,16 +362,12 @@ export function WorkspaceExplorerSidebar() {
     try {
       await workspaceApi.deleteFolder(activeWorkspaceId, isDeleteDialogOpen.id);
       setIsDeleteDialogOpen(null);
-      if (currentFolderId === isDeleteDialogOpen.id) {
-        setCurrentFolderId(null);
-      }
       setCurrentFolderId(null);
-      fetchAllFolders(activeWorkspaceId);
-      fetchDocuments(activeWorkspaceId, null);
+      fetchDocuments(activeWorkspaceId);
     } catch (err) {
       console.error('WorkspaceExplorer: failed to delete folder', err);
     }
-  }, [activeWorkspaceId, isDeleteDialogOpen, currentFolderId, fetchAllFolders, fetchDocuments]);
+  }, [activeWorkspaceId, isDeleteDialogOpen, fetchDocuments]);
 
   // Reindex document
   const handleReindex = useCallback(async (docId: string) => {
@@ -372,6 +385,7 @@ export function WorkspaceExplorerSidebar() {
   // Drag handlers
   const handleDragStart = useCallback(
     (e: React.DragEvent, document: WorkspaceDocument) => {
+      const workspaceName = workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name;
       const artifactKind = !document.isFolder
         ? inferArtifactKind(document.filename, document.mimeType)
         : undefined;
@@ -380,13 +394,20 @@ export function WorkspaceExplorerSidebar() {
         type: kind,
         kind,
         id: document.id,
-        name: document.originalName || document.filename,
+        name: document.isFolder
+          ? document.folderName || document.originalName || document.filename
+          : document.originalName || document.filename,
         workspaceId: activeWorkspaceId ?? undefined,
         artifactKind,
         metadata: document.isFolder
-          ? { workspaceId: activeWorkspaceId ?? undefined }
+          ? {
+              workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
+              folderpath: document.path,
+            }
           : {
               workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
               documentId: document.id,
               filename: document.filename,
               filepath: document.path,
@@ -397,7 +418,26 @@ export function WorkspaceExplorerSidebar() {
       e.dataTransfer.setData('application/json', JSON.stringify(payload));
       e.dataTransfer.effectAllowed = 'copy';
     },
-    [activeWorkspaceId],
+    [activeWorkspaceId, workspaces],
+  );
+
+  const handleWorkspaceDragStart = useCallback(
+    (e: React.DragEvent, workspace: Workspace) => {
+      const payload: DragPayload = {
+        type: 'workspace',
+        kind: 'workspace',
+        id: workspace.id,
+        name: workspace.name,
+        workspaceId: workspace.id,
+        metadata: {
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+        },
+      };
+      e.dataTransfer.setData('application/json', JSON.stringify(payload));
+      e.dataTransfer.effectAllowed = 'copy';
+    },
+    [],
   );
 
   // Toggle selection
@@ -416,6 +456,121 @@ export function WorkspaceExplorerSidebar() {
   if (!isOpen) return null;
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const isRootExpanded = expandedFolderIds.has('root');
+  const visibleDocumentCount = filteredDocuments?.length ?? documents.length;
+
+  const renderDocumentRow = (node: DocumentTreeNode, depth: number): ReactNode => {
+    const doc = node.document;
+    const displayName = getDocumentDisplayName(doc);
+    const isFolderExpanded = expandedFolderIds.has(doc.id);
+    const hasChildren = node.children.length > 0;
+
+    return (
+      <div key={doc.id}>
+        <div
+          className={cn(
+            'group flex items-center gap-1 py-1.5 pr-2 rounded-md transition-colors cursor-grab',
+            hoveredItemId === doc.id && 'bg-muted/50',
+            selectedItems.includes(doc.id) && 'bg-muted',
+            currentFolderId === doc.id && 'bg-muted/50',
+          )}
+          style={{ paddingLeft: `${8 + depth * 16}px` }}
+          draggable
+          onDragStart={(e) => handleDragStart(e, doc)}
+          onMouseEnter={() => setHoveredItemId(doc.id)}
+          onMouseLeave={() => setHoveredItemId(null)}
+          onClick={() => {
+            if (doc.isFolder) setCurrentFolderId(doc.id);
+          }}
+        >
+          <Checkbox
+            checked={selectedItems.includes(doc.id)}
+            onCheckedChange={() => toggleItem(doc.id)}
+            className="h-4 w-4 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {doc.isFolder ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 shrink-0 p-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFolderExpanded(doc.id);
+              }}
+              aria-label={isFolderExpanded ? 'Collapse folder' : 'Expand folder'}
+            >
+              {hasChildren && isFolderExpanded ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          ) : (
+            <div className="h-5 w-5 shrink-0" />
+          )}
+          {doc.isFolder ? (
+            <FolderOpen className="h-4 w-4 text-blue-500 shrink-0" />
+          ) : (
+            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+          )}
+          <OverflowTooltip text={displayName} className="flex-1 min-w-0 text-xs" />
+
+          {!doc.isFolder && <IndexingBadge status={doc.indexingStatus} error={doc.indexingError} />}
+
+          {hoveredItemId === doc.id && (
+            <div className="flex items-center gap-0.5 shrink-0">
+              {!doc.isFolder && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 p-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleReindex(doc.id);
+                        }}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      {doc.indexingStatus === 'none' ? t('workspaceExplorer.indexTooltip') : t('workspaceExplorer.reindexTooltip')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 p-0 hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsDeleteDialogOpen({
+                          type: doc.isFolder ? 'folder' : 'document',
+                          id: doc.id,
+                          name: displayName,
+                        });
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">{t('workspaceExplorer.deleteTooltip')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          )}
+        </div>
+        {doc.isFolder && isFolderExpanded && node.children.map((child) => renderDocumentRow(child, depth + 1))}
+      </div>
+    );
+  };
 
   return (
     <ResizablePanel
@@ -437,6 +592,8 @@ export function WorkspaceExplorerSidebar() {
       {/* Workspace selector */}
       <div className="px-3 py-2 border-b shrink-0">
         <select
+          id="playbook-workspace-explorer-select"
+          name="workspaceExplorerWorkspace"
           className="w-full h-8 text-sm rounded-md border border-input bg-background px-2"
           value={activeWorkspaceId ?? ''}
           onChange={(e) => {
@@ -466,7 +623,7 @@ export function WorkspaceExplorerSidebar() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPT_EXTENSIONS}
+            accept={accept}
             multiple
             className="hidden"
             onChange={handleFileChange}
@@ -540,145 +697,68 @@ export function WorkspaceExplorerSidebar() {
         </div>
       </div>
 
-      {/* Breadcrumb navigation */}
-      {activeWorkspace && breadcrumbs.length > 0 && (
-        <div className="flex items-center gap-0.5 px-2 py-1 border-b shrink-0 overflow-x-auto">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-1.5 text-xs gap-0.5 shrink-0"
-            onClick={() => setCurrentFolderId(null)}
-          >
-            <Home className="h-3 w-3" />
-          </Button>
-          {breadcrumbs.map((item) => (
-            <div key={item.id} className="flex items-center gap-0.5 shrink-0">
-              <ChevronRight className="h-3 w-3 text-muted-foreground" />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-1.5 text-xs truncate max-w-24"
-                onClick={() => setCurrentFolderId(item.id)}
-              >
-                {item.name}
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Document/folder list */}
       <ScrollArea className="flex-1">
         {!activeWorkspace ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
             {t('workspaceExplorer.selectWorkspace')}
           </div>
-        ) : docsLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : filteredDocuments.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? t('workspaceExplorer.noResults') : t('workspaceExplorer.noDocuments')}
-          </div>
         ) : (
           <div className="p-1">
-            {filteredDocuments.map((doc) => (
-              <div
-                key={doc.id}
-                className={cn(
-                  'group flex items-center gap-2 py-1.5 px-2 rounded-md transition-colors',
-                  hoveredItemId === doc.id && 'bg-muted/50',
-                  selectedItems.includes(doc.id) && 'bg-muted',
-                )}
-                onMouseEnter={() => setHoveredItemId(doc.id)}
-                onMouseLeave={() => setHoveredItemId(null)}
+            <div
+              className={cn(
+                'group flex items-center gap-2 py-1.5 px-2 rounded-md transition-colors cursor-grab',
+                currentFolderId === null && 'bg-muted/50',
+              )}
+              draggable
+              onDragStart={(e) => handleWorkspaceDragStart(e, activeWorkspace)}
+              onClick={() => setCurrentFolderId(null)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') setCurrentFolderId(null);
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 p-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFolderExpanded('root');
+                }}
+                aria-label={isRootExpanded ? 'Collapse workspace' : 'Expand workspace'}
               >
-                <Checkbox
-                  checked={selectedItems.includes(doc.id)}
-                  onCheckedChange={() => toggleItem(doc.id)}
-                  className="h-4 w-4 shrink-0"
-                  onClick={(e) => e.stopPropagation()}
-                />
-                {doc.isFolder ? (
-                  <FolderOpen className="h-4 w-4 text-blue-500 shrink-0" />
+                {isRootExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5" />
                 ) : (
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <ChevronRight className="h-3.5 w-3.5" />
                 )}
-                {doc.isFolder ? (
-                  <button
-                    className="flex-1 text-left text-xs truncate min-w-0 hover:underline cursor-pointer"
-                    onClick={() => setCurrentFolderId(doc.id)}
-                    title={doc.folderName || doc.originalName}
-                  >
-                    {doc.folderName || doc.originalName}
-                  </button>
-                ) : (
-                  <span
-                    className={cn(
-                      'flex-1 text-xs truncate min-w-0',
-                      'cursor-grab active:cursor-grabbing',
-                    )}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, doc)}
-                    title={doc.originalName || doc.filename}
-                  >
-                    <OverflowTooltip text={doc.originalName || doc.filename} />
-                  </span>
-                )}
+              </Button>
+              <FolderOpen className="h-4 w-4 shrink-0 text-sky-600" />
+              <OverflowTooltip text={activeWorkspace.name} className="flex-1 min-w-0 text-xs font-medium" />
+              <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
+                {visibleDocumentCount}
+              </Badge>
+            </div>
 
-                {/* Indexing status badge (documents only) */}
-                {!doc.isFolder && (
-                  <IndexingBadge status={doc.indexingStatus} error={doc.indexingError} />
-                )}
-
-                {/* Hover actions */}
-                {hoveredItemId === doc.id && (
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    {!doc.isFolder && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 p-0"
-                              onClick={() => handleReindex(doc.id)}
-                            >
-                              <RefreshCw className="h-3 w-3" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">
-                            {doc.indexingStatus === 'none' ? t('workspaceExplorer.indexTooltip') : t('workspaceExplorer.reindexTooltip')}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 p-0 hover:text-destructive"
-                            onClick={() =>
-                              setIsDeleteDialogOpen({
-                                type: doc.isFolder ? 'folder' : 'document',
-                                id: doc.id,
-                                name: doc.isFolder ? doc.folderName || doc.originalName : doc.originalName || doc.filename,
-                              })
-                            }
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">{t('workspaceExplorer.deleteTooltip')}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                )}
+            {isRootExpanded && docsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
-            ))}
+            ) : isRootExpanded && filteredDocuments && filteredDocuments.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {t('workspaceExplorer.noResults')}
+              </div>
+            ) : isRootExpanded && !filteredDocuments && documentTree.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {t('workspaceExplorer.noDocuments')}
+              </div>
+            ) : isRootExpanded && filteredDocuments ? (
+              filteredDocuments.map((doc) => renderDocumentRow({ document: doc, children: [] }, 1))
+            ) : isRootExpanded ? (
+              documentTree.map((node) => renderDocumentRow(node, 1))
+            ) : null}
           </div>
         )}
       </ScrollArea>

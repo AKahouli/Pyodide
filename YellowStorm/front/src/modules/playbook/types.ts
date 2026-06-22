@@ -70,6 +70,8 @@ export interface PlaybookResourceReference {
   id: string;
   name: string;
   workspaceId: string;
+  workspaceName?: string;
+  content: string;
   path?: string;
   mimeType?: string;
   metadata?: Record<string, unknown>;
@@ -84,9 +86,11 @@ export interface InputFile {
   artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
+    workspaceName?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
+    folderpath?: string;
     language?: string;
     mimeType?: string;
   };
@@ -355,6 +359,7 @@ export interface PlaybookTask {
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
+  skillBindings?: TaskSkillBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
   iteratorLayout?: PlaybookIteratorLayout | null;
@@ -564,6 +569,14 @@ export type PlaybookIntentWorkflowChange =
       iteration?: 'current' | 'previous';
     }
   | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
+      sourceKind: 'constant';
+      constantValue: ResolvedDesignResourceBindingValue;
+    }
+  | {
       type: 'delete_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
@@ -572,6 +585,18 @@ export type PlaybookIntentWorkflowChange =
       sourceNodeRef?: string | null;
       sourcePort?: string | null;
     };
+
+export interface ResolvedDesignResourceBindingValue {
+  kind: 'document' | 'workspace';
+  id: string;
+  documentId?: string;
+  workspaceId: string;
+  workspaceName?: string;
+  question?: string;
+  label?: string;
+  path?: string;
+  mimeType?: string;
+}
 
 export interface PlaybookIntentWorkflowImpact {
   nodesToCreate: number;
@@ -613,6 +638,57 @@ export interface RequestPlaybookIntentData {
   selectedTaskId?: string;
 }
 
+export interface PlaybookIntentClarificationQuestion {
+  id: string;
+  question: string;
+  reason: string;
+  category: 'datasource' | 'trigger' | 'input' | 'output' | 'business_rule' | 'approval' | 'scope';
+  required: boolean;
+  choices: string[];
+  resourceSelector?: 'workspace_or_document' | 'destination_workspace';
+}
+
+export interface PlaybookIntentClarificationResource {
+  kind: 'workspace' | 'document';
+  id: string;
+  name: string;
+  workspaceId: string;
+  workspaceName?: string;
+  path?: string;
+  mimeType?: string;
+}
+
+export interface PlaybookIntentWorkflowBrief {
+  goal: string;
+  trigger: string;
+  datasources: string[];
+  steps: string[];
+  outputs: string[];
+  hitlRules: string[];
+}
+
+export type PlaybookIntentDesignResponse =
+  | {
+      status: 'needs_clarification';
+      detectedIntent: string;
+      questions: PlaybookIntentClarificationQuestion[];
+      missingRequirements: string[];
+      riskFlags: string[];
+    }
+  | {
+      status: 'ready_for_review';
+      detectedIntent: string;
+      brief: PlaybookIntentWorkflowBrief;
+      assumptions: string[];
+      riskFlags: string[];
+    }
+  | {
+      status: 'ready_to_generate';
+      detectedIntent: string;
+      assumptions: string[];
+      riskFlags: string[];
+    };
+
 export interface PlaybookIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
   model: string;
@@ -645,11 +721,20 @@ export interface ToolBindingAction {
 export interface ToolBinding {
   id: string;
   connectorId: string;
+  connectorSlug?: string;
   connectorName?: string;
   actions: ToolBindingAction[];
   credentialId?: string | null;
   fixedParams?: Record<string, unknown>;
   disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
+export interface TaskSkillBinding {
+  id: string;
+  skillId: string;
+  skillSlug?: string;
+  skillName?: string;
   isEnabled?: boolean;
 }
 
@@ -1934,6 +2019,10 @@ export interface DesignPlaybookData {
   query: string;
 }
 
+export interface ClearDesignMessagesResult {
+  deletedCount: number;
+}
+
 export type DesignOperationStatus = 'queued' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
 
 export interface DesignOperation {
@@ -2214,6 +2303,7 @@ export interface PlaybookState {
   executionDetailTab: string;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
+  skillSidebarOpen: boolean;
   nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
@@ -2394,6 +2484,8 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  clearDesignMessages: (playbookId: string) => Promise<void>;
+  assessPlaybookIntentDesign: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentDesignResponse>;
   requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
@@ -2423,6 +2515,10 @@ export interface PlaybookActions {
   setConnectorSidebarOpen: (open: boolean) => void;
   addToolBindingToTask: (taskId: string, binding: ToolBinding) => void;
   removeToolBindingFromTask: (taskId: string, bindingId: string) => void;
+  skillSidebarOpen: boolean;
+  setSkillSidebarOpen: (open: boolean) => void;
+  addSkillBindingToTask: (taskId: string, binding: TaskSkillBinding) => void;
+  removeSkillBindingFromTask: (taskId: string, bindingId: string) => void;
 
   // Cleanup
   reset: () => void;

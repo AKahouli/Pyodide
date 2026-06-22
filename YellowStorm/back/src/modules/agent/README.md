@@ -12,8 +12,10 @@ The Agent module manages AI agents — both user-created personal agents and sys
 - [DTOs](#dtos)
 - [Interfaces](#interfaces)
 - [Stream Integration](#stream-integration)
+- [Channel Integrations](#channel-integrations)
 - [Error Codes](#error-codes)
 - [Usage Examples](#usage-examples)
+- [Related Documentation](#related-documentation)
 
 ---
 
@@ -25,10 +27,12 @@ The Agent module manages AI agents — both user-created personal agents and sys
 - **Agent Type Binding**: Each agent references an agent type for prompt configuration
 - **Tool Assignment**: Agents can be assigned tools from the Tool module
 - **Knowledge Base Assignment**: Personal agents can reference workspaces for RAG context
+- **Sharing**: A personal agent can be shared with other users by email, with `read` or `write` access (mirrors the Team module's sharing)
 - **Stream Integration**: Builds complete gRPC-ready agent payloads with resolved prompts, tools, and model info
 - **Batch Processing**: Resolves prompts and tools in batch for efficiency (2–3 DB queries)
 - **Name Uniqueness**: Per-user for personal agents, global for default agents
 - **Admin Audit Logging**: All admin write operations are logged with full actor context
+- **Channel Integrations**: External messaging connectors (WhatsApp, Telegram) are scoped per agent and depend on `AgentService` for ownership checks and stream payloads
 
 ### Module Structure
 
@@ -38,13 +42,22 @@ agent/
 ├── agent.service.ts
 ├── controllers/
 │   ├── agent.controller.ts          # User (personal) agent endpoints
-│   └── admin-agent.controller.ts    # Admin (default) agent endpoints
+│   ├── admin-agent.controller.ts    # Admin (default) agent endpoints
+│   └── agent-share.controller.ts    # Sharing endpoints (/agents/:id/shares...)
+├── services/
+│   └── agent-share.service.ts       # share / list / update / revoke / unshare
+├── guards/
+│   └── agent-permission.guard.ts    # owner | write | read access
+├── decorators/
+│   └── require-agent-permission.decorator.ts
 ├── schemas/
-│   └── agent.schema.ts
+│   ├── agent.schema.ts
+│   └── shared-agent.schema.ts       # share grants (shared_agents collection)
 ├── dto/
 │   ├── create-agent.dto.ts
 │   ├── update-agent.dto.ts
 │   ├── query-agent.dto.ts
+│   ├── share-agent.dto.ts
 │   └── index.ts
 └── interfaces/
     └── agent.interface.ts
@@ -52,10 +65,12 @@ agent/
 
 ### Module Configuration
 
-- **Imports**: `MongooseModule` (Agent schema), `AgentTypeModule`, `AuthorizationModule`, `ToolModule`
-- **Controllers**: `AgentController`, `AdminAgentController`
-- **Providers**: `AgentService`
-- **Exports**: `AgentService`
+- **Imports**: `MongooseModule` (Agent + SharedAgent schemas), `AgentTypeModule`, `AuthorizationModule`, `ToolModule`, `UserModule` (sharing resolves recipients by email)
+- **Controllers**: `AgentController`, `AdminAgentController`, `AgentShareController`
+- **Providers**: `AgentService`, `AgentShareService`, `AgentPermissionGuard`
+- **Exports**: `AgentService`, `AgentShareService` (consumed by `WhatsAppModule`, `TelegramModule`, `ConversationModule`, and others)
+
+Channel integration modules live in separate NestJS modules but expose REST routes nested under `/agents/:agentId/…`. They import `AgentModule` and call `AgentService.findUserAgentById()` to enforce that only the agent owner can configure connectors.
 
 ---
 
@@ -105,8 +120,37 @@ Base route: `/agents` — requires Bearer token.
 | GET | `/agents/all` | Get all agents for user (personal + defaults, no pagination) |
 | GET | `/agents/:id` | Get personal agent by ID |
 | POST | `/agents` | Create personal agent |
-| PATCH | `/agents/:id` | Update personal agent |
+| PATCH | `/agents/:id` | Update personal agent (owner **or** `write`-shared user) |
 | DELETE | `/agents/:id` | Delete personal agent (204) |
+
+`GET /agents/all` returns owned + default agents **and** agents shared with the user; each shared agent carries a `shareInfo` object (`{ shareId, permission, sharedBy }`).
+
+### Agent Sharing
+
+Base route: `/agents` — requires Bearer token. Access is enforced by `AgentPermissionGuard` + `@RequireAgentPermission`.
+
+| Method | Route | Access | Description |
+|--------|-------|--------|-------------|
+| POST | `/agents/:id/shares` | owner | Share with users by email (`read`/`write`) |
+| GET | `/agents/:id/shares` | owner | List an agent's shares |
+| PATCH | `/agents/:id/shares/:shareId` | owner | Change a share's permission |
+| DELETE | `/agents/:id/shares/:shareId` | owner | Revoke a share |
+| DELETE | `/agents/:id/unshare` | recipient | Remove a shared agent from your own list |
+
+- Only **personal** agents are shareable (you must own them; default agents are already global).
+- `read` recipients see the agent; `write` recipients can also edit it via `PATCH /agents/:id` (uniqueness checks are scoped to the **owner**, not the editor). Deletion stays owner-only.
+- Deleting an agent cascades and removes all of its share records.
+
+### Agent Channel Integrations (separate modules)
+
+These routes are served by the WhatsApp and Telegram modules, not by `AgentController`. They are listed here because they are **agent-scoped** and require a saved personal agent.
+
+| Module | Base route | Description |
+|--------|------------|-------------|
+| [WhatsApp](../whatsapp/README.md) | `/agents/:agentId/whatsapp-integration` | QR pairing, session status, disconnect/reconnect |
+| [Telegram](../telegram/) | `/agents/:agentId/telegram-integration` | Bot token, webhook, link codes |
+
+See each module's README for full endpoint and payload details.
 
 ### Admin (Default) Agents
 
@@ -143,6 +187,20 @@ Base route: `/admin/agents` — requires Bearer token + permissions.
 | `findDefaultAgentById(agentId)` | Get default agent by ID |
 | `updateDefault(agentId, dto)` | Update default agent. Strips knowledgeBases from update |
 | `deleteDefault(agentId)` | Delete default agent |
+
+### Sharing Methods (`AgentShareService`)
+
+| Method | Description |
+|--------|-------------|
+| `shareAgent(ownerId, agentId, dto)` | Upsert share grants for the given emails at one permission level. Rejects self-share; resolves recipients via `UserService.findByEmail` |
+| `getAgentShares(agentId)` | List everyone an agent is shared with (owner view) |
+| `updateSharePermission(agentId, shareId, dto)` | Change a share's `read`/`write` level |
+| `removeShare(agentId, shareId)` | Owner revokes a specific share |
+| `unshareFromSelf(userId, agentId)` | Recipient removes a shared agent from their own list |
+| `removeAllSharesForAgent(agentId)` | Cascade cleanup on agent delete |
+| `getShareInfoMapForUser(userId)` | `Map<agentId, shareInfo>` for the user — lets `getAllForUserResponse` tag shared agents |
+| `getSharePermission(userId, agentId)` | The user's `read`/`write` level on an agent, or `null` |
+| `getShareInfo(userId, agentId)` | Full `shareInfo` for a user on an agent, or `null` |
 
 ### Stream Integration Methods
 
@@ -217,6 +275,11 @@ Returned by all CRUD endpoints:
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  shareInfo?: {                       // present only on agents shared *with* the caller
+    shareId: string;
+    permission: 'read' | 'write';
+    sharedBy: { id: string; email: string; firstName?: string; lastName?: string };
+  };
 }
 ```
 
@@ -284,15 +347,83 @@ Final format sent to the AI streaming service via gRPC:
 
 This approach uses at most 3 DB queries regardless of the number of agents (agents query, prompt batch query, tools batch query).
 
+Channel integrations reuse the same agent identity when routing inbound messages:
+
+```
+WhatsApp DM  →  WhatsAppMessageService  →  agentIds: [agentId]
+                                           →  StreamService.startStream()
+                                           →  buildAgentsForStream() uses linked agent config
+```
+
+---
+
+## Channel Integrations
+
+Agents can be connected to external messaging channels. Each integration stores its own MongoDB document keyed by `agentId` (unique per channel). The Agent module does **not** embed connector state in the `agents` collection — integration modules own their schemas and import `AgentModule` for validation.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Agent Module                              │
+│  AgentService.findUserAgentById(userId, agentId)  ◄─────────────┼── ownership gate
+│  AgentService.buildAgentsForStream(userId)        ◄─────────────┼── gRPC payloads
+└───────────────────────────────┬─────────────────────────────────┘
+                                │ exports AgentService
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+┌───────────────┐     ┌─────────────────┐     ┌──────────────────┐
+│ WhatsAppModule│     │ TelegramModule  │     │ ConversationModule│
+│ agent_whatsapp│     │ agent_telegram  │     │ (stream / chat)   │
+│ _integrations │     │ _integrations   │     │                   │
+└───────────────┘     └─────────────────┘     └──────────────────┘
+```
+
+### WhatsApp integration
+
+| Aspect | Detail |
+|--------|--------|
+| **Module** | [`../whatsapp/`](../whatsapp/README.md) |
+| **Collection** | `agent_whatsapp_integrations` — one row per agent |
+| **Ownership** | `WhatsAppIntegrationService.assertAgentOwnership()` → `AgentService.findUserAgentById()` |
+| **Inbound flow** | DM → `WhatsAppMessageService` creates conversation → `StreamService` with `agentIds: [agentId]` |
+| **UI** | Frontend Connectors tab in agent edit modal |
+| **Prerequisite** | Agent must exist and belong to the current user before pairing |
+
+**Typical lifecycle:**
+
+1. User creates/saves agent via `POST /agents` or `PATCH /agents/:id`
+2. User opens Connectors tab → `POST /agents/:agentId/whatsapp-integration/connect`
+3. After QR scan, status becomes `CONNECTED`; inbound WhatsApp messages route to the linked agent
+4. On agent delete, disconnect WhatsApp first (integration is not cascade-deleted from agent CRUD)
+
+### Telegram integration
+
+| Aspect | Detail |
+|--------|--------|
+| **Module** | [`../telegram/`](../telegram/) |
+| **Collection** | `agent_telegram_integrations` |
+| **Pattern** | Same agent-scoped REST under `/agents/:agentId/telegram-integration` |
+| **Transport** | Telegram Bot API webhooks (vs Baileys WebSocket for WhatsApp) |
+
+### Agent deletion note
+
+Deleting an agent via `DELETE /agents/:id` does not automatically remove WhatsApp/Telegram integration documents. Clean up connectors explicitly through their module endpoints before or after agent deletion to avoid orphaned integration records.
+
 ---
 
 ## Error Codes
 
 | Code | Constant | Description |
 |------|----------|-------------|
-| ERR_2300 | `AGENT_NOT_FOUND` | Agent does not exist |
-| ERR_2301 | `AGENT_ALREADY_EXISTS` | Agent name already taken (per user or among defaults) |
-| ERR_2302 | `AGENT_FORBIDDEN` | User does not own this agent |
+| ERR_2400 | `CUSTOM_AGENT_NOT_FOUND` | Agent does not exist |
+| ERR_2401 | `CUSTOM_AGENT_ALREADY_EXISTS` | Agent name already taken (per user or among defaults) |
+| ERR_2402 | `CUSTOM_AGENT_FORBIDDEN` | User does not own / cannot access this agent |
+| ERR_2405 | `CUSTOM_AGENT_DEFAULT_READONLY` | Default agents are not editable via the user endpoints |
+| ERR_2408 | `CUSTOM_AGENT_SHARE_NOT_FOUND` | Share record does not exist |
+| ERR_2409 | `CUSTOM_AGENT_SHARE_SELF` | Cannot share an agent with yourself |
+| ERR_2410 | `CUSTOM_AGENT_SHARE_FORBIDDEN` | Not allowed to manage this share / insufficient share level |
+| ERR_2411 | `CUSTOM_AGENT_SHARE_USER_NOT_FOUND` | No user found for the provided email |
 
 ---
 
@@ -343,5 +474,16 @@ const grpcAgents = await this.agentService.buildAgentsForStream(userId, requestM
 | `isDefault` | `false` | `true` |
 | Knowledge bases | Allowed | Always `[]` |
 | Name uniqueness | Per user | Global |
-| Visibility | Owner only | All users |
-| Edit/Delete | Owner only | Admin only |
+| Visibility | Owner + users it's shared with | All users |
+| Edit/Delete | Owner (edit also: `write`-shared users) | Admin only |
+| Shareable | Yes (`read`/`write` by email) | No (already global) |
+| WhatsApp / Telegram | Personal agents only (owner configures connectors) | Not supported |
+
+---
+
+## Related Documentation
+
+- [WhatsApp Module](../whatsapp/README.md) — Baileys QR pairing, inbound routing, Socket.IO
+- [Telegram Module](../telegram/) — Bot token and webhook integration
+- [Conversation Module](../conversation/README.md) — `StreamService`, gRPC agent payloads
+- [Frontend Agent Module](../../../front/src/modules/agent/whatsapp/README.md) — WhatsApp connector UI

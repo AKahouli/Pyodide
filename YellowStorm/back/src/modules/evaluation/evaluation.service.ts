@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nest
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import axios from 'axios';
 import { Evaluation, EvaluationDocument } from './schemas/evaluation.schema';
 import { Dataset, DatasetDocument } from './schemas/dataset.schema';
@@ -12,6 +13,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 export class EvaluationService {
     private readonly logger = new Logger(EvaluationService.name);
     private readonly adkUrl: string;
+    private readonly adkApiKey: string;
 
     constructor(
         @InjectModel(Evaluation.name)
@@ -22,6 +24,7 @@ export class EvaluationService {
         private readonly configService: ConfigService,
     ) {
         this.adkUrl = this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8000';
+        this.adkApiKey = this.configService.get<string>('indexing.adkApiKey') || '';
     }
 
     // ==========================================
@@ -111,7 +114,8 @@ export class EvaluationService {
         const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
         const dataset = await this.findDatasetById(datasetId);
 
-        const idToken = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${authHeader}`;
+        // authHeader is no longer forwarded to ADK — service-to-service auth uses x-api-key.
+        void authHeader;
 
         const selectedJudgeModel = (() => {
             const jm = (judgeModel || '').trim();
@@ -133,7 +137,7 @@ export class EvaluationService {
                 reference_output: { messages: [{ role: 'assistant', content: item.reference_answer }] },
             })),
             trajectory_match_mode: mode,
-            session_id: `eval_${this.uuidv4()}_run_${runIndex}`,
+            session_id: `eval_${randomUUID()}_run_${runIndex}`,
             user_id: userId,
             threshold: threshold || 0.7,
             num_runs: 1,
@@ -144,7 +148,7 @@ export class EvaluationService {
             `${this.adkUrl}/evaluation-batch/execute_agent_evaluator`,
             adkRequest,
             {
-                headers: { 'Content-Type': 'application/json', Authorization: idToken },
+                headers: { 'Content-Type': 'application/json', 'x-api-key': this.adkApiKey },
                 responseType: 'stream',
                 timeout: 900000, // 15 minutes
             },
@@ -287,13 +291,6 @@ export class EvaluationService {
             if (!agent) throw new ForbiddenException(ErrorCode.FORBIDDEN);
         }
         await this.evaluationModel.findByIdAndDelete(id).exec();
-    }
-
-    private uuidv4() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-            var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
     }
 
     private extractScore(val: any): number {

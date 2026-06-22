@@ -8,7 +8,7 @@ from threading import Lock
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService, Session
-from google.adk.sessions.database_session_service import Base
+
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -303,12 +303,6 @@ class SessionHelper:
                 f"in session state for session {self.session_id}"
             )
 
-        # Add property_name and property_description to state for connector tool descriptions
-        # that use these as template variables (e.g., HubSpot's search_crm_objects)
-        # This fixes template substitution errors without affecting tool functionality
-        state["property_name"] = ""
-        state["property_description"] = ""
-
         return state
 
     async def _find_existing_session(self) -> Optional[Session]:
@@ -361,14 +355,6 @@ class SessionHelper:
             # Try to find existing session
             existing_session = await self._find_existing_session()
             if existing_session:
-                # Update existing session state with property_name and property_description
-                # to fix template substitution errors for connector tools
-                # Note: These changes are in-memory only for this session instance
-                # The callback add_timestamp_to_agent ensures they're present on each invocation
-                if "property_name" not in existing_session.state:
-                    existing_session.state["property_name"] = ""
-                if "property_description" not in existing_session.state:
-                    existing_session.state["property_description"] = ""
                 return existing_session
 
             # Create new session with state

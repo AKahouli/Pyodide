@@ -17,6 +17,10 @@ class StepToolScope:
     # sandbox VM. Derived from wired input documents' workspacePath plus any
     # playbook-level __playbook_workspace_paths present in the input context.
     workspace_ceph_paths: list[str]
+    # Workspace IDs harvested from the file refs wired into this step's input ports.
+    # Used to scope connector MCP tools to the dropped file's workspace instead of
+    # the playbook-level default, which may belong to a different workspace.
+    binding_workspace_ids: list[str]
 
 
 def build_step_tool_scope(
@@ -29,6 +33,8 @@ def build_step_tool_scope(
     code_interpreter_files: list[dict[str, str]] = []
     mounted_filenames: list[str] = []
     workspace_ceph_paths: list[str] = []
+    binding_workspace_ids: list[str] = []
+    seen_binding_workspace_ids: set[str] = set()
     seen_ceph_paths: set[str] = set()
     seen_doc_ids: set[str] = set()
     seen_files: set[tuple[str, str]] = set()
@@ -64,8 +70,13 @@ def build_step_tool_scope(
         for ref in refs:
             ref = _hydrate_file_ref(ref, workspace_context)
             _add_ceph_path(ref.get("workspace_path"))
+            ref_workspace_id = str(ref.get("workspace_id") or "").strip()
+            if ref_workspace_id and ref_workspace_id not in seen_binding_workspace_ids:
+                seen_binding_workspace_ids.add(ref_workspace_id)
+                binding_workspace_ids.append(ref_workspace_id)
             document_id = ref.get("document_id", "")
-            file_name = ref.get("file_name") or ref.get("filename", "")
+            file_name = _search_file_name(ref, workspace_context)
+
             search_file_name = file_name or document_id
             if search_file_name:
                 port_key = document_id or search_file_name
@@ -102,6 +113,7 @@ def build_step_tool_scope(
         workspace_context_mode=workspace_context_mode,
         mounted_filenames=mounted_filenames,
         workspace_ceph_paths=workspace_ceph_paths,
+        binding_workspace_ids=binding_workspace_ids,
     )
 
 
@@ -220,6 +232,26 @@ def _file_ref_from_dict(value: dict[str, Any]) -> dict[str, str] | None:
     filepath = _storage_filepath(value)
     filename = _display_filename(value)
     document_id = _document_id(value)
+    kind = str(value.get("kind") or "").strip().lower()
+    workspace_id = _workspace_id(value)
+    # Folder/workspace refs are workspace-scope only — their `name` is the folder
+    # or workspace label, not a real document filename. Keep the workspace_id so
+    # the connector MCP can be scoped, but skip filename/path so search tools
+    # don't filter on a non-document name.
+    if kind in ("folder", "workspace"):
+        if not workspace_id:
+            return None
+        return {
+            "document_id": "",
+            "filename": "",
+            "file_name": "",
+            "filepath": "",
+            "workspace_id": workspace_id,
+            "workspace_name": _workspace_name(value),
+            "workspace_path": _workspace_path(value),
+            "kind": kind,
+        }
+
     if not document_id and not filepath:
         return None
 
@@ -228,9 +260,10 @@ def _file_ref_from_dict(value: dict[str, Any]) -> dict[str, str] | None:
         "filename": filename,
         "file_name": _file_name(value) or filename,
         "filepath": filepath,
-        "workspace_id": _workspace_id(value),
+        "workspace_id": workspace_id,
         "workspace_name": _workspace_name(value),
         "workspace_path": _workspace_path(value),
+        "kind": kind or "document",
     }
 
 
@@ -267,6 +300,34 @@ def _hydrate_file_ref(
             }
 
     return ref
+
+
+def _search_file_name(
+    ref: dict[str, str],
+    workspace_context: list[dict[str, Any]],
+) -> str:
+    file_name = str(ref.get("file_name") or ref.get("filename") or "").strip()
+    if not file_name:
+        return ""
+
+    for workspace in workspace_context:
+        for document in workspace.get("documents", []):
+            candidate_id = str(
+                document.get("document_id")
+                or document.get("id")
+                or document.get("_id")
+                or ""
+            ).strip()
+            if candidate_id != file_name:
+                continue
+
+            resolved_name = str(
+                document.get("file_name") or document.get("filename") or ""
+            ).strip()
+            if resolved_name:
+                return resolved_name
+
+    return file_name
 
 
 def _storage_filepath(value: dict[str, Any]) -> str:

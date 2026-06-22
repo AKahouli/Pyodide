@@ -16,10 +16,11 @@ export interface AdminPlaybookSettings {
   approvalSuggestionMode: SuggestionMode;
   intentNormalizationLimits: PlaybookIntentNormalizationLimits;
   replayEligibilityConfidenceThreshold: number;
+  useDeterministicBlueprintBuilder: boolean;
 }
 
 export const DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS: PlaybookIntentNormalizationLimits = {
-  maxWorkflowPlanChanges: 100,
+  maxWorkflowPlanChanges: 500,
   maxInputPorts: 4,
   maxOutputPorts: 4,
   maxIteratorBodySteps: 12,
@@ -34,4 +35,5 @@ export const DEFAULT_ADMIN_PLAYBOOK_SETTINGS: AdminPlaybookSettings = {
   approvalSuggestionMode: 'auto',
   intentNormalizationLimits: DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
   replayEligibilityConfidenceThreshold: 70,
+  useDeterministicBlueprintBuilder: false,
 };

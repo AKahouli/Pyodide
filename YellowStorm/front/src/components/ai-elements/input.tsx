@@ -19,6 +19,7 @@ import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect'
 import { useCurrentConversation } from '@/modules/conversation/store';
 import { fetchTaggedAgents } from '@/modules/conversation/api';
 import { useAgents, useAgentStore } from '@/modules/agent';
+import { useTeams, useTeamStore } from '@/modules/team';
 import type { Agent } from '@/modules/agent/types';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
 import { useModuleTranslation } from '@/modules/localization';
@@ -50,7 +51,7 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }) => void;
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void;
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
@@ -90,7 +91,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(null);
   const [mentionAnchorPos, setMentionAnchorPos] = useState({ top: 0, left: 0 });
-  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' }>>(new Map());
+  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' | 'team' }>>(new Map());
   const [showCreateAgentDialog, setShowCreateAgentDialog] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
@@ -104,8 +105,13 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const agents = useAgents();
   const memoizedAgents = useMemo(() => agents, [agents]);
 
+  // Fetch teams (mentionable as a group; expands into its agents on the backend)
+  const teams = useTeams();
+  const memoizedTeams = useMemo(() => teams, [teams]);
+
   useEffect(() => {
     useAgentStore.getState().fetchAgents();
+    useTeamStore.getState().fetchTeams();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -243,7 +249,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   // Internal helper to insert a mention
   const insertMention = useCallback(
-    (item: { id: string; name: string; isMember?: boolean }, forcedStartIndex?: number | null) => {
+    (item: { id: string; name: string; isMember?: boolean; isTeam?: boolean }, forcedStartIndex?: number | null) => {
       const textarea = textareaRef.current;
       if (!textarea) return;
 
@@ -286,7 +292,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       }, 0);
 
       // Track this mention
-      setMentionMap((prev) => new Map(prev).set(item.name, { id: item.id, type: item.isMember ? 'member' : 'agent' }));
+      const mentionType = item.isTeam ? 'team' : item.isMember ? 'member' : 'agent';
+      setMentionMap((prev) => new Map(prev).set(item.name, { id: item.id, type: mentionType }));
 
       // Close popup
       setMentionPopupOpen(false);
@@ -298,7 +305,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   // Handle mention selection from popup
   const handleMentionSelect = useCallback(
-    (item: { id: string; name: string; isMember?: boolean }) => {
+    (item: { id: string; name: string; isMember?: boolean; isTeam?: boolean }) => {
       insertMention(item);
     },
     [insertMention],
@@ -448,6 +455,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       // Checks both typed mentions (mentionMap) and pasted @AgentName patterns
       const agentIdSet = new Set<string>();
       const memberIdSet = new Set<string>();
+      const teamIdSet = new Set<string>();
 
       if (message.text) {
         // Typed mentions tracked via popup selection
@@ -455,9 +463,18 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
           if (message.text.includes(`@${name}`)) {
             if (data.type === 'agent') {
               agentIdSet.add(data.id);
+            } else if (data.type === 'team') {
+              teamIdSet.add(data.id);
             } else {
               memberIdSet.add(data.id);
             }
+          }
+        }
+        // Pasted or untracked mentions — match against known teams (checked before
+        // agents so a team name isn't mistaken for a same-named agent)
+        for (const team of memoizedTeams) {
+          if (!teamIdSet.has(team.id) && message.text.includes(`@${team.name}`)) {
+            teamIdSet.add(team.id);
           }
         }
         // Pasted or untracked mentions — match against known agents
@@ -477,6 +494,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       }
       const agentIds = [...agentIdSet];
       const memberIds = [...memberIdSet];
+      const teamIds = [...teamIdSet];
 
       if (externalSubmit) {
         externalSubmit(
@@ -486,6 +504,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
           memberIds.length > 0 ? memberIds : undefined,
           selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined,
           selectedConnectorRepo || undefined,
+          teamIds.length > 0 ? teamIds : undefined,
         );
         setMentionMap(new Map());
         resetSelectedWorkspaceIds();
@@ -504,7 +523,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
+    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
@@ -612,6 +631,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         agents={memoizedAgents}
         sharedAgents={sharedAgents}
         members={members}
+        teams={memoizedTeams}
       />
 
       {showCreateAgentDialog && <CreateEditAgentDialog open={showCreateAgentDialog} onOpenChange={setShowCreateAgentDialog} agent={null} onSave={handleCreateAgentSave} saving={savingAgent} />}

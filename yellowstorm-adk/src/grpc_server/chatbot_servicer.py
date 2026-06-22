@@ -9,10 +9,8 @@ import json
 import base64
 import os
 import mimetypes
-import time
 import tempfile
 import shutil
-from datetime import timedelta
 from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
@@ -24,7 +22,6 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
-from src.routers.authentification import create_access_token
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
 from src.middleware.correlation import UserContext, user_ctx
@@ -45,6 +42,31 @@ from src.flow_engine.advisor.execution_advisor_service import evaluate_task_exec
 logger = get_logger(__name__)
 app_settings = get_settings()
 
+_MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
+def _message_to_dict(message: Any) -> Dict[str, Any]:
+    return MessageToDict(message, **_MESSAGE_TO_DICT_OPTIONS)
+
+
+def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
+    summaries = []
+    for skill in skills or []:
+        summaries.append(
+            {
+                "id": getattr(skill, "id", ""),
+                "name": getattr(skill, "name", ""),
+                "has_description": bool(getattr(skill, "description", "")),
+                "has_instructions": bool(getattr(skill, "instructions", "")),
+                "allowed_tool_count": len(getattr(skill, "allowed_tools", []) or []),
+                "file_count": len(getattr(skill, "files", []) or []),
+            }
+        )
+    return summaries
+
 
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
@@ -62,8 +84,7 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
-        self._access_token: Optional[str] = None
-        self._token_expires_at: float = 0
+        self._background_tasks: set[asyncio.Task] = set()
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
     async def AdvisePlaybookNode(
@@ -71,11 +92,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.AdvisePlaybookNodeRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.AdvisePlaybookNodeResponse":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = advise_playbook_node(payload)
 
         suggestions = []
@@ -139,11 +156,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.TaskAdvisorRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.TaskAdvisorResult":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = evaluate_task_execution(payload)
         token_reduction = result.get("estimated_token_reduction_pct")
         latency_reduction = result.get("estimated_latency_reduction_pct")
@@ -216,11 +229,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        return MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        return _message_to_dict(request)
 
     async def RunAgentTeam(
         self,
@@ -272,12 +281,14 @@ class ChatbotServicer(
             internal_request = await self._convert_agent_team_request_v2(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             # Start background processing task
             bg_task = asyncio.create_task(
@@ -414,6 +425,9 @@ class ChatbotServicer(
                     await get_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Queue get task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
@@ -426,6 +440,9 @@ class ChatbotServicer(
                     await bg_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Background task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during background task cleanup: {cleanup_error}"
@@ -517,12 +534,14 @@ class ChatbotServicer(
             internal_request = await self._convert_single_agent_request(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
@@ -610,7 +629,9 @@ class ChatbotServicer(
                 try:
                     await get_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
             if bg_task is not None and not bg_task.done():
@@ -618,7 +639,9 @@ class ChatbotServicer(
                 try:
                     await bg_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
             return
@@ -664,6 +687,15 @@ class ChatbotServicer(
         Returns:
             AgentSuggestion: Internal V1 Pydantic model (for backward compatibility)
         """
+        skill_summaries = _grpc_skill_summaries(getattr(pb_agent, "skills", []))
+        logger.info(
+            "gRPC agent skills received",
+            agent_id=pb_agent.id if pb_agent.id else "no_id",
+            agent_name=pb_agent.name,
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+
         # Extract workspace_names and brain_documents from repeated WorkspaceContext
         workspace_names = []
         workspace_ids = []
@@ -968,7 +1000,15 @@ class ChatbotServicer(
     @staticmethod
     def _build_skills(pb_request: Any) -> Optional[List[Dict[str, Any]]]:
         """Extract conversation-level skills selected by the user in the composer."""
-        if not getattr(pb_request, "skills", None):
+        skill_summaries = _grpc_skill_summaries(getattr(pb_request, "skills", []))
+        logger.info(
+            "gRPC conversation skills received",
+            request_type=type(pb_request).__name__,
+            conversation_id=getattr(pb_request, "conversation_id", ""),
+            skill_count=len(skill_summaries),
+            skills=skill_summaries,
+        )
+        if not skill_summaries:
             return None
         return [
             {
@@ -1332,26 +1372,6 @@ class ChatbotServicer(
             skills=skills,
         )
 
-    def _get_vectorstores_token(self) -> str:
-        """Generate an access token using create_access_token directly.
-
-        Uses a locally generated JWT (no network call), cached with 60s safety margin.
-        Thread-safe for concurrent requests since token generation is atomic.
-
-        Returns:
-            Access token string.
-        """
-        if self._access_token and time.time() < self._token_expires_at - 60:
-            return self._access_token
-
-        expire_minutes = app_settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        self._access_token = create_access_token(
-            data={"sub": app_settings.AUTH_USERNAME},
-            expires_delta=timedelta(minutes=expire_minutes),
-        )
-        self._token_expires_at = time.time() + (expire_minutes * 60)
-        return self._access_token
-
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
@@ -1460,11 +1480,16 @@ class ChatbotServicer(
             )
             return
 
-        token = self._get_vectorstores_token()
+        vectorstore_api_key = getattr(app_settings, "VECTORSTORE_API_KEY", "") or ""
+        if not vectorstore_api_key:
+            logger.error(
+                "[gRPC] VECTORSTORE_API_KEY not configured - skipping document indexing"
+            )
+            return
 
         index_url = f"{vectorstores_url.rstrip('/')}/vectorstores/indexDocumentFromAzureDatalake"
         headers = {
-            "Authorization": f"Bearer {token}",
+            "x-api-key": vectorstore_api_key,
             "Content-Type": "application/json",
             "correlation-id": conversation_id,
         }

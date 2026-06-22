@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "test": "vitest run --reporter=verbose",
     "test:cov": "vitest run --coverage --reporter=verbose --reporter=junit --outputFile=vitest-report.xml",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "preview": "vite preview",
     "release": "commit-and-tag-version",
     "release:minor": "commit-and-tag-version --release-as minor",
@@ -82,6 +84,7 @@
     "recharts": "^2.15.4",
     "remark-gfm": "^4.0.1",
     "shiki": "^3.21.0",
+    "socket.io-client": "^4.8.3",
     "sonner": "^2.0.7",
     "streamdown": "^2.0.1",
     "tailwind-merge": "^2.6.0",
@@ -94,6 +97,7 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -16,6 +16,8 @@ interface AgentCardSelectableProps {
   onDuplicate?: (agent: Agent) => void;
   onPublishA2A?: (agent: Agent) => void;
   onRevokeA2A?: (agent: Agent) => void;
+  onShare?: (agent: Agent) => void;
+  onUnshare?: (agent: Agent) => void;
   publishingA2A?: boolean;
 }
 
@@ -31,9 +33,12 @@ export function AgentCardSelectable({
   onDuplicate,
   onPublishA2A,
   onRevokeA2A,
+  onShare,
+  onUnshare,
   publishingA2A,
 }: AgentCardSelectableProps) {
-  const isSelectable = !agent.isDefault;
+  // Default and shared agents can't be bulk-selected (you don't own them).
+  const isSelectable = !agent.isDefault && !agent.shareInfo;
 
   const handleCardClick = () => {
     if (selectMode && isSelectable) {
@@ -80,6 +85,8 @@ export function AgentCardSelectable({
           onDuplicate={selectMode ? undefined : onDuplicate}
           onPublishA2A={selectMode ? undefined : onPublishA2A}
           onRevokeA2A={selectMode ? undefined : onRevokeA2A}
+          onShare={selectMode ? undefined : onShare}
+          onUnshare={selectMode ? undefined : onUnshare}
           publishingA2A={publishingA2A}
         />
       </div>

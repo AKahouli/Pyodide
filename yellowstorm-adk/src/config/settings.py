@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from typing import Optional, List, Dict
+from typing import Optional, List
 from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, field_validator
@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     NESTJS_JWT_SECRET: Optional[str] = None
+    ADK_API_KEY: str
+    VECTORSTORE_API_KEY: str
     # Ollama
     OLLAMA_API_BASE_URL: Optional[str] = None
     OLLAMA_API_KEY: Optional[str] = None
@@ -156,6 +158,12 @@ class Settings(BaseSettings):
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
 
+
+    GRPC_API_KEY: Optional[str] = None
+    GRPC_TLS_CERT_PATH: Optional[str] = None
+    GRPC_TLS_KEY_PATH: Optional[str] = None
+    GRPC_ALLOW_INSECURE: bool = False
+
     # A2A gateway (publish agents over the A2A protocol for Copilot Studio)
     A2A_DATABASE_URL: Optional[str] = None          # defaults to DATABASE_URL
     A2A_GRPC_TARGET: Optional[str] = None           # defaults to 127.0.0.1:GRPC_PORT
@@ -178,26 +186,6 @@ class Settings(BaseSettings):
     PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES: int = 128
     PLAYBOOK_GRAPH_CACHE_TTL_SECONDS: int = 900
 
-    # External API Configuration for specific brain_ids
-    EXTERNAL_API_BRAIN_IDS: List[str] = []  # Brain IDs requiring external routing
-    EXTERNAL_API_URL: str  # URL of external API endpoint
-    EXTERNAL_API_AGENT_NAME: str = (
-        "DPP_MOA"  # Default agent name for responses (fallback)
-    )
-    EXTERNAL_API_BRAIN_AGENT_MAPPING: Dict[
-        str, str
-    ] = {}  # Mapping of brain_id to agent_name
-
-    # Dynamic Authentication Configuration
-    EXTERNAL_API_AUTH_URL: Optional[str] = (
-        None  # Authentication endpoint URL for dynamic token generation
-    )
-    EXTERNAL_API_USERNAME: Optional[str] = (
-        None  # Username for external API authentication
-    )
-    EXTERNAL_API_PASSWORD: Optional[str] = (
-        None  # Password for external API authentication
-    )
     BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = [
         "67c99ad236081d40c152c23d"
     ]  # Brain IDs that enable base64 list processing
@@ -472,43 +460,6 @@ class Settings(BaseSettings):
     def validate_langfuse_public_key(cls, v):
         if not v or v.strip() == "":
             raise ValueError("LANGFUSE_PUBLIC_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("EXTERNAL_API_URL", mode="before")
-    @classmethod
-    def validate_external_api_url(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("EXTERNAL_API_URL is required and cannot be empty")
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "EXTERNAL_API_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("EXTERNAL_API_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("EXTERNAL_API_URL must be a valid URL")
-
-        return v
-
-    @field_validator("EXTERNAL_API_AUTH_URL", mode="before")
-    @classmethod
-    def validate_external_api_auth_url(cls, v):
-        if v and v.strip():
-            try:
-                parsed = urlparse(v)
-                if not parsed.scheme or not parsed.netloc:
-                    raise ValueError(
-                        "EXTERNAL_API_AUTH_URL must be a valid URL with scheme and domain"
-                    )
-                if parsed.scheme not in ("http", "https"):
-                    raise ValueError(
-                        "EXTERNAL_API_AUTH_URL must use http or https scheme"
-                    )
-            except Exception:
-                raise ValueError("EXTERNAL_API_AUTH_URL must be a valid URL")
         return v
 
     @field_validator("AUTH_USERNAME", mode="before")

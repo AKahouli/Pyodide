@@ -10,7 +10,7 @@ if "src.smart_rag.tools.utilities.connector_tools" not in sys.modules:
         import_connector_items_to_workspace_request=lambda *a, **kw: None,
     )
 
-from src.flow_engine.mcp import _normalize_mcp_response
+from src.flow_engine.mcp import _log_payload, _normalize_mcp_response
 
 try:
     from src.smart_rag.tools.utilities.connector_tools import (
@@ -196,3 +196,45 @@ def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload()
 
     assert normalized["result"] == payload
     assert "citation_sources" not in normalized
+
+
+def test_normalize_mcp_response_does_not_synthesize_read_section_citations():
+    payload = {
+        "source": "contract.pdf",
+        "file_name": "contract.pdf",
+        "content": "Warranty is two years.",
+        "blocks": [
+            {
+                "content": "Warranty is two years.",
+                "page_number": 4,
+                "file_name": "contract.pdf",
+                "source": "contract.pdf",
+            }
+        ],
+    }
+
+    normalized = _normalize_mcp_response(
+        payload,
+        fallback_text="fallback",
+        action_key="sharepoint_read_section",
+    )
+
+    assert normalized["file_name"] == "contract.pdf"
+    assert normalized["blocks"] == payload["blocks"]
+    assert "citation_sources" not in normalized
+
+
+def test_log_payload_redacts_image_base64_values():
+    logged = _log_payload(
+        {
+            "images": [
+                {
+                    "image_id": "img-1",
+                    "image_base64": "abc123",
+                }
+            ]
+        }
+    )
+
+    assert "abc123" not in logged
+    assert "[redacted base64 length=6]" in logged

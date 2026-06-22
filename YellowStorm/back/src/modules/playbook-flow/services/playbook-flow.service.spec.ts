@@ -910,7 +910,7 @@ describe('PlaybookFlowService', () => {
     const created = (flowModel as jest.Mock).mock.calls[0][0];
     expect(created.hitlPolicy).toMatchObject({ mode: 'auto', sensitivity: 'balanced' });
     expect(Array.isArray(created.hitlBlockers)).toBe(true);
-    expect(created.hitlBlockers.length).toBeGreaterThan(0);
+    expect(created.hitlBlockers).toEqual([]);
   });
 
   it('clone copies existing HITL policy and blockers for compatibility', async () => {

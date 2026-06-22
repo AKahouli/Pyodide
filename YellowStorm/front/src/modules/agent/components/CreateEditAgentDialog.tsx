@@ -27,6 +27,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -37,6 +38,9 @@ import {
 } from "./AgentFormSchema";
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
+import { AgentDeploymentSection } from "./AgentDeploymentSection";
+import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
+import { AgentConnectorFields } from './AgentConnectorFields';
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -58,6 +62,17 @@ function slugifyAgentName(value: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 }
+
+const AGENT_FORM_TABS = [
+  { value: 'identity', labelKey: 'createEdit.tabs.identity', tipKey: 'createEdit.tabs.identityTip' },
+  { value: 'behaviour', labelKey: 'createEdit.tabs.behaviour', tipKey: 'createEdit.tabs.behaviourTip' },
+  { value: 'knowledge', labelKey: 'createEdit.tabs.knowledge', tipKey: 'createEdit.tabs.knowledgeTip' },
+  { value: 'tools', labelKey: 'createEdit.tabs.tools', tipKey: 'createEdit.tabs.toolsTip' },
+  { value: 'skills', labelKey: 'createEdit.tabs.skills', tipKey: 'createEdit.tabs.skillsTip' },
+  { value: 'connectors', labelKey: 'createEdit.tabs.connectors', tipKey: 'createEdit.tabs.connectorsTip' },
+  { value: 'deployment', labelKey: 'createEdit.tabs.deployment', tipKey: 'createEdit.tabs.deploymentTip' },
+  { value: 'evaluation', labelKey: 'createEdit.tabs.evaluation', tipKey: 'createEdit.tabs.evaluationTip' },
+] as const;
 
 interface CreateEditAgentDialogProps {
   open: boolean;
@@ -132,6 +147,7 @@ export function CreateEditAgentDialog({
             skills: agent.skills || [],
             disabledSkills: agent.disabledSkills || [],
             connectors: agent.connectors || [],
+            connectorActionSelections: agent.connectorActionSelections || [],
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
           });
@@ -167,6 +183,7 @@ export function CreateEditAgentDialog({
   const watchedSkills = watch('skills');
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
+  const watchedConnectorActionSelections = watch('connectorActionSelections');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
@@ -180,6 +197,26 @@ export function CreateEditAgentDialog({
       setValue('disabledSkills', validDisabledSkills);
     }
   }, [inheritedSkillIds, setValue, watchedDisabledSkills]);
+
+  useEffect(() => {
+    const validSelections = watchedConnectorActionSelections
+      .filter((selection) => watchedConnectors.includes(selection.connectorId))
+      .map((selection) => {
+        const connector = availableConnectors.find((item) => item.id === selection.connectorId);
+        const enabledActionKeys = new Set((connector?.actions || [])
+          .filter((action) => action.isEnabled !== false)
+          .map((action) => action.key));
+        return {
+          connectorId: selection.connectorId,
+          actionKeys: selection.actionKeys.filter((key) => enabledActionKeys.has(key)),
+        };
+      })
+      .filter((selection) => selection.actionKeys.length > 0);
+
+    if (JSON.stringify(validSelections) !== JSON.stringify(watchedConnectorActionSelections)) {
+      setValue('connectorActionSelections', validSelections);
+    }
+  }, [availableConnectors, setValue, watchedConnectorActionSelections, watchedConnectors]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -205,15 +242,27 @@ export function CreateEditAgentDialog({
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
-              <TabsList className="shrink-0 w-full">
-                <TabsTrigger value="identity">{t('createEdit.tabs.identity')}</TabsTrigger>
-                <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
-                <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
-                <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
-                <TabsTrigger value="skills">{t('createEdit.tabs.skills')}</TabsTrigger>
-                <TabsTrigger value="connectors">{t('createEdit.tabs.connectors')}</TabsTrigger>
-                <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
-              </TabsList>
+              <TooltipProvider delayDuration={300}>
+                <div className="w-full shrink-0 overflow-x-auto">
+                  <TabsList className="inline-flex h-auto w-max max-w-none flex-nowrap justify-start gap-0.5">
+                    {AGENT_FORM_TABS.map((tab) => (
+                      <Tooltip key={tab.value}>
+                        <TooltipTrigger asChild>
+                          <TabsTrigger
+                            value={tab.value}
+                            className="shrink-0 flex-none px-2.5 sm:px-3"
+                          >
+                            {t(tab.labelKey)}
+                          </TabsTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs text-center">
+                          {t(tab.tipKey)}
+                        </TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </TabsList>
+                </div>
+              </TooltipProvider>
               <ScrollArea className="flex-1 min-h-0 mt-4">
                 <div className="pr-4">
                   {/* Identity Tab */}
@@ -477,28 +526,23 @@ export function CreateEditAgentDialog({
 
                 <TabsContent value="connectors" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
-                    <div className="space-y-2">
-                        <Label>{t('createEdit.fields.connectors')}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t('createEdit.fields.connectorsDescription')}
-                        </p>
-                      <MultiSelect
-                        options={availableConnectors.map((connector) => ({
-                          value: connector.id,
-                          label: connector.name,
-                          description: connector.description,
-                        }))}
-                        value={watchedConnectors}
-                        onValueChange={(val) => setValue('connectors', val)}
-                        placeholder={t('createEdit.fields.selectConnectors')}
-                        searchPlaceholder={t('createEdit.fields.searchConnectors')}
-                        emptyText={t('createEdit.fields.noConnectorsFound')}
-                      />
-                    </div>
+                    <AgentConnectorFields
+                      availableConnectors={availableConnectors}
+                      connectors={watchedConnectors}
+                      connectorActionSelections={watchedConnectorActionSelections}
+                      onConnectorsChange={(connectorIds) => setValue('connectors', connectorIds, { shouldDirty: true, shouldValidate: true })}
+                      onConnectorActionSelectionsChange={(selections) => setValue('connectorActionSelections', selections, { shouldDirty: true, shouldValidate: true })}
+                    />
 
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
+
+                <TabsContent value="deployment" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                </TabsContent>
+
                   {/* Evaluation Tab */}
                   <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <EvaluationTab agent={agent} />

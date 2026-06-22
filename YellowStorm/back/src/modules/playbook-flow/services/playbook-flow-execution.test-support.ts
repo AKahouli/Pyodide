@@ -89,6 +89,8 @@ export function createExecutionServiceForTests(overrides?: {
   };
   const agentService = {
     buildGrpcAgentsForPlaybook: jest.fn(),
+    buildGrpcConnectorRuntimeForPlaybook: jest.fn(),
+    buildGrpcSkillsForPlaybook: jest.fn(),
   };
   const validatorService = {
     validate: jest.fn(),

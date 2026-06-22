@@ -26,8 +26,33 @@ const PlaybookCanvasPage = React.lazy(() =>
 const PlaybookExecutionPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionPage").then((m) => ({ default: m.PlaybookExecutionPage }))
 );
+
+// Lazy-loaded Worky routes
+const WorkyPage = React.lazy(() =>
+  import("./modules/worky/components/WorkyPage").then((m) => ({ default: m.WorkyPage }))
+);
+const WorkyStreamPage = React.lazy(() =>
+  import("./modules/worky/components/WorkyStreamPage").then((m) => ({ default: m.WorkyStreamPage }))
+);
+const WorkyStreamReportPage = React.lazy(() =>
+  import("./modules/worky/components/StreamReportPage").then((m) => ({
+    default: m.StreamReportPage,
+  })),
+)
+
+const WorkyGovernanceAdminPage = React.lazy(() =>
+  import("./modules/worky/components/admin/WorkyGovernancePage").then((m) => ({
+    default: m.WorkyGovernancePage,
+  }))
+);
 const AgentHubPage = React.lazy(() =>
   import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
+);
+const TeamsPage = React.lazy(() =>
+  import("./modules/team").then((m) => ({ default: m.TeamsPage }))
+);
+const TeamOrgChartPage = React.lazy(() =>
+  import("./modules/team").then((m) => ({ default: m.TeamOrgChartPage }))
 );
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
@@ -56,6 +81,8 @@ import {
   DefaultAgentsPage,
   PlaybookPromptsPage,
   PlaybookSettingsPage,
+  WorkspaceSettingsPage,
+  TeamAutoBuilderPage,
   PermissionGuard,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
@@ -147,10 +174,50 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'worky',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'worky/:streamId',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyStreamPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'worky/:streamId/report',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyStreamReportPage />
+          </Suspense>
+        ),
+      },
+      {
         path: 'agents',
         element: (
           <Suspense fallback={null}>
             <AgentHubPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'teams',
+        element: (
+          <Suspense fallback={null}>
+            <TeamsPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'teams/:id',
+        element: (
+          <Suspense fallback={null}>
+            <TeamOrgChartPage />
           </Suspense>
         ),
       },
@@ -218,6 +285,30 @@ export const router = createHashRouter([
             element: (
               <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
                 <PlaybookSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'workspace-settings',
+            element: (
+              <PermissionGuard permissions={['workspaces.*', '*']}>
+                <WorkspaceSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'worky-governance',
+            element: (
+              <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
+                <WorkyGovernanceAdminPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'team-auto-builder',
+            element: (
+              <PermissionGuard permissions={['team_auto_builder.read', 'team_auto_builder.*', '*']}>
+                <TeamAutoBuilderPage />
               </PermissionGuard>
             ),
           },

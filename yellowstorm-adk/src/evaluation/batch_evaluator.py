@@ -135,7 +135,9 @@ class BatchEvaluator:
                 try:
                     await eval_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
 
             if error_msg:
                 logger.error(f"Run {run_index + 1} failed: {error_msg}")

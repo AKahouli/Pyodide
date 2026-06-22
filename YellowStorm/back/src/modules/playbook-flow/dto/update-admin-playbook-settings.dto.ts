@@ -1,14 +1,14 @@
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 class UpdatePlaybookIntentNormalizationLimitsDto {
-  @ApiPropertyOptional({ minimum: 1, maximum: 50 })
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(500)
   maxWorkflowPlanChanges?: number;
 
   @ApiPropertyOptional({ minimum: 1, maximum: 20 })
@@ -83,4 +83,9 @@ export class UpdateAdminPlaybookSettingsDto {
   @Min(0)
   @Max(100)
   replayEligibilityConfidenceThreshold?: number;
+
+  @ApiPropertyOptional({ description: 'Use the deterministic blueprint builder path for intent.analyze and realtime construction.' })
+  @IsOptional()
+  @IsBoolean()
+  useDeterministicBlueprintBuilder?: boolean;
 }

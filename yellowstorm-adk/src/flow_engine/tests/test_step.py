@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -28,11 +29,14 @@ sys.modules.setdefault("structlog.types", fake_structlog_types)
 fake_langgraph = types.ModuleType("langgraph")
 fake_langgraph_config = types.ModuleType("langgraph.config")
 fake_langgraph_types = types.ModuleType("langgraph.types")
+fake_langgraph_errors = types.ModuleType("langgraph.errors")
 fake_langgraph_config.get_stream_writer = lambda: (lambda event: None)
 fake_langgraph_types.interrupt = lambda *args, **kwargs: None
+fake_langgraph_errors.GraphInterrupt = type("GraphInterrupt", (Exception,), {})
 sys.modules.setdefault("langgraph", fake_langgraph)
 sys.modules.setdefault("langgraph.config", fake_langgraph_config)
 sys.modules.setdefault("langgraph.types", fake_langgraph_types)
+sys.modules.setdefault("langgraph.errors", fake_langgraph_errors)
 
 fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
@@ -417,6 +421,66 @@ class _FakeTool:
         return "4"
 
 
+class _ReadContentTool:
+    name = "read_content"
+    description = "Read document content"
+    args_schema = _CalculatorArgs
+
+    async def ainvoke(self, args):
+        image_base64 = base64.b64encode(b"\xff\xd8\xfffake-jpeg").decode("ascii")
+        return {
+            "file_name": "recipes.pdf",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "page": "1",
+                    "content": "<page_1>Recipe</page_1>",
+                    "images": [
+                        {
+                            "image_id": "img-1",
+                            "bbox": [1, 2, 3, 4],
+                            "image_base64": image_base64,
+                        },
+                        {
+                            "image_id": "img-2",
+                            "bbox": [5, 6, 7, 8],
+                            "image_base64": image_base64,
+                        },
+                    ],
+                }
+            ],
+        }
+
+
+class _ReadContentMcpImageTool:
+    name = "read_content"
+    description = "Read document content"
+    args_schema = _CalculatorArgs
+
+    async def ainvoke(self, args):
+        return {
+            "file_name": "recipes.pdf",
+            "images": [
+                {
+                    "image_id": "p1_b8",
+                    "image_content_index": 1,
+                }
+            ],
+            "__mcp_content_parts": [
+                {
+                    "type": "text",
+                    "text": '{"file_name":"recipes.pdf","images":[{"image_id":"p1_b8","image_content_index":1}]}',
+                },
+                {
+                    "type": "image",
+                    "data": "YWJjMTIz",
+                    "mimeType": "image/png",
+                    "decodedByteSize": 6,
+                },
+            ],
+        }
+
+
 class _ToolCallResponse:
     def __init__(self, content, tool_calls=None):
         self.choices = [
@@ -484,6 +548,158 @@ async def test_run_step_executes_bound_tools(monkeypatch):
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("I used the attached images.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentTool()],
+    )
+
+    assert output == "I used the attached images."
+    second_messages = calls[1]["messages"]
+    tool_message = next(message for message in second_messages if message.get("role") == "tool")
+    assert "image_base64" in tool_message["content"]
+    assert "image_description" not in tool_message["content"]
+    assert "img-1" in tool_message["content"]
+    assert "[1, 2, 3, 4]" in tool_message["content"]
+    assert not any(
+        message.get("role") == "user" and isinstance(message.get("content"), list)
+        for message in second_messages
+    )
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("The answer is in image p1_b8.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentMcpImageTool()],
+    )
+
+    assert output == "The answer is in image p1_b8."
+    second_messages = calls[1]["messages"]
+    tool_message = next(message for message in second_messages if message.get("role") == "tool")
+    assert "__mcp_content_parts" not in tool_message["content"]
+    assert "p1_b8" in tool_message["content"]
+
+    image_message = next(
+        message
+        for message in second_messages
+        if message.get("role") == "user" and isinstance(message.get("content"), list)
+    )
+    image_blocks = [
+        block
+        for block in image_message["content"]
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+    assert image_message["content"][0]["text"] == tool_message["content"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"] == "data:image/png;base64,YWJjMTIz"
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [
+                    {
+                        "id": "call-image",
+                        "type": "function",
+                        "function": {
+                            "name": "read_content",
+                            "arguments": '{"expression":"ignored"}',
+                        },
+                    },
+                    {
+                        "id": "call-calc",
+                        "type": "function",
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                        },
+                    },
+                ],
+            )
+        return _ToolCallResponse("Done.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read and calculate",
+        tools=[_ReadContentMcpImageTool(), _FakeTool()],
+    )
+
+    assert output == "Done."
+    assert calls[0]["parallel_tool_calls"] is False
+
+    second_messages = calls[1]["messages"]
+    assistant_index = next(
+        index
+        for index, message in enumerate(second_messages)
+        if message.get("role") == "assistant"
+    )
+    follow_up_messages = second_messages[assistant_index + 1:]
+    assert [message.get("role") for message in follow_up_messages[:2]] == ["tool", "tool"]
+    assert [message.get("tool_call_id") for message in follow_up_messages[:2]] == ["call-image", "call-calc"]
+    assert follow_up_messages[2].get("role") == "user"
 
 
 @pytest.mark.anyio
@@ -832,6 +1048,7 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
             "workspace_id": "workspace-1",
             "workspace_name": "workspace-1",
             "workspace_path": "user/workspace/doc-1",
+            "kind": "document",
         }
     ]
     assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
