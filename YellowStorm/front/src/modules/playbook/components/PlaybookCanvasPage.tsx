@@ -563,6 +563,38 @@ function PlaybookCanvasInner() {
     pageMode,
   ]);
 
+  // Detect externally-triggered executions (mail, schedule) while the page is
+  // idle. SSE covers this in the normal case, but if the start event is missed
+  // the page stays locked at idle until a manual refresh. This 5 s poll acts
+  // as a safety net: it is intentionally slower than the 2 s active-run poll.
+  const hasExternalTrigger = Boolean(playbook?.triggers.some((tr) => tr.enabled !== false));
+
+  useEffect(() => {
+    if (!id || isGeneratingRoute || !hasExternalTrigger || hasActiveExecution) return;
+
+    const intervalId = setInterval(() => {
+      void fetchExecutions(id).then(() => {
+        const latest = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        if (latest && (latest.status === 'running' || latest.status === 'queued' || latest.status === 'interrupted')) {
+          setPageMode('run');
+          setExecutionPanelOpen(true);
+          viewExecutionInPanel(latest.id);
+        }
+      });
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [
+    id,
+    isGeneratingRoute,
+    hasExternalTrigger,
+    hasActiveExecution,
+    fetchExecutions,
+    setPageMode,
+    setExecutionPanelOpen,
+    viewExecutionInPanel,
+  ]);
+
   const hasPendingOutputFormat = Boolean(playbook?.tasks.some(
     (t) => t.isCapturingOutputFormat || t.activeOutputFormatStatus === 'pending',
   ));
