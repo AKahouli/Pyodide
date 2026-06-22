@@ -1,4 +1,5 @@
-import { Copy, ExternalLink, Globe, Loader2, RefreshCw, Rocket } from 'lucide-react';
+import { useState } from 'react';
+import { Copy, ExternalLink, Globe, Loader2, RefreshCw, Rocket, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { ShareDeployDialog } from './ShareDeployDialog';
 
 /**
  * Publish/deploy control, rendered in the conv v2 RightPanel header (v2-only —
@@ -21,9 +23,14 @@ export function DeployControls() {
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
   const deploy = useConversationV2Store((s) => s.deploy);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const isDeploying = deployStatus === 'deploying';
   const isDeployed = deployStatus === 'deployed' && !!deployedUrl;
+  // Keep the globe (live URL) visible while an update is in flight — we still
+  // have the previous URL, so don't hide it just because status flipped back to
+  // 'deploying'.
+  const hasUrl = !!deployedUrl;
 
   const handleDeploy = async () => {
     try {
@@ -46,7 +53,7 @@ export function DeployControls() {
 
   return (
     <>
-      {isDeployed && (
+      {hasUrl && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant='ghost' size='icon-sm' className='shrink-0' aria-label={t('deploy.viewUrl')}>
@@ -77,6 +84,20 @@ export function DeployControls() {
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      {hasUrl && (
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          className='shrink-0'
+          onClick={() => setShareOpen(true)}
+          aria-label={t('share.title')}
+        >
+          <Share2 className='h-4 w-4' />
+        </Button>
+      )}
+
+      {hasUrl && <ShareDeployDialog open={shareOpen} onOpenChange={setShareOpen} />}
 
       <Button
         variant={isDeployed ? 'outline' : 'default'}

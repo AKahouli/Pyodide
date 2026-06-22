@@ -1,5 +1,5 @@
 import { apiClient, ApiResponse } from '@/lib/api';
-import type { AgentEvent, ListSessionsResponse } from './types';
+import type { AgentEvent, ListSessionsResponse, UserSearchResult } from './types';
 
 export interface ListSessionsParams { limit?: number; cursor?: string | null; q?: string }
 
@@ -143,6 +143,27 @@ export const conversationV2Api = {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
       {},
+    );
+    return res.data.data;
+  },
+  /** Search users to share the deployed app with (same endpoint as agent/team share). */
+  async searchUsers(query: string, limit = 8): Promise<UserSearchResult[]> {
+    const res = await apiClient.get<ApiResponse<UserSearchResult[]>>('/users/search', {
+      params: { q: query, limit },
+    });
+    return res.data.data;
+  },
+  /** Email the deployed app URL to the given recipients. Returns how many were sent.
+   *  `url` is a client-side fallback used when the backend has no persisted
+   *  deployed URL (front-only static demo). */
+  async shareDeployedApp(
+    sessionId: string,
+    emails: string[],
+    url?: string,
+  ): Promise<{ sent: number }> {
+    const res = await apiClient.post<ApiResponse<{ sent: number }>>(
+      `/conversation-v2/sessions/${sessionId}/share-deploy`,
+      { emails, url },
     );
     return res.data.data;
   },

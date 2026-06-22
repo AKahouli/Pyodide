@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,6 +12,7 @@ import {
   Patch,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -31,6 +33,8 @@ import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { ListSessionsDto } from './dto/list-sessions.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
+import { ShareDeployDto } from './dto/share-deploy.dto';
+import { EmailService } from '@modules/email';
 import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
@@ -50,6 +54,7 @@ export class ConversationV2Controller {
     private readonly eventStore: ConversationV2EventStoreService,
     private readonly workspaceService: WorkspaceService,
     private readonly config: ConfigService,
+    private readonly email: EmailService,
   ) {}
 
   @Post('sessions')
@@ -371,6 +376,51 @@ export class ConversationV2Controller {
         .catch(() => undefined);
       this.translateGrpcError(err);
     }
+  }
+
+  @Post('sessions/:id/share-deploy')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2OwnerGuard)
+  async shareDeploy(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: ShareDeployDto,
+  ): Promise<{ sent: number }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer) throw new NotFoundException('Session not found');
+    // Prefer the persisted deployed URL; fall back to the client-provided one
+    // (front-only static demo, where no real deploy persisted a URL).
+    const url = pointer.deployedUrl ?? body.url;
+    if (!url) {
+      throw new BadRequestException('App is not deployed yet');
+    }
+    if (!this.email.isAvailable()) {
+      throw new ServiceUnavailableException('Email service is not available');
+    }
+
+    const appName = pointer.title?.trim() || 'an app';
+    const subject = `${appName} has been shared with you`;
+    const html = `
+      <p>Hello,</p>
+      <p>An app built on ${this.config.get<string>('app.name', 'YelloStorm')} has been shared with you.</p>
+      <p><a href="${url}" target="_blank" rel="noreferrer">${url}</a></p>
+      <p>You can open it any time at the link above.</p>
+    `;
+    const text = `An app has been shared with you.\n\nOpen it here: ${url}\n`;
+
+    // Dedupe and send one email per recipient; tolerate individual failures so
+    // one bad address doesn't fail the whole batch.
+    const recipients = Array.from(new Set(body.emails.map((e) => e.trim().toLowerCase())));
+    const results = await Promise.all(
+      recipients.map((to) =>
+        this.email
+          .send({ to, subject, html, text })
+          .then((r) => r.success)
+          .catch(() => false),
+      ),
+    );
+    const sent = results.filter(Boolean).length;
+    return { sent };
   }
 
   @Get('share/v2/:token')

@@ -94,6 +94,15 @@
     "viewUrl": "View deployed URL",
     "menu": "Deployment options"
   },
+  "share": {
+    "title": "Share the app",
+    "searchPlaceholder": "Search a user by email…",
+    "searching": "Searching…",
+    "noResults": "No user found",
+    "remove": "Remove",
+    "cancel": "Cancel",
+    "send": "Send"
+  },
   "dialogs": {
     "rename": {
       "title": "Rename conversation",
@@ -146,6 +155,10 @@
       "error": "Deployment failed",
       "copied": "Link copied",
       "copyError": "Failed to copy link"
+    },
+    "share": {
+      "success": "App shared by email",
+      "error": "Failed to share the app"
     }
   }
 }

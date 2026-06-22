@@ -31,6 +31,13 @@ export type ToolContent =
   | { kind: 'webpage'; url: string; title?: string }
   | { kind: 'generic'; data: unknown };
 
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
 export interface FileInfo {
   id: string;
   name: string;

@@ -94,6 +94,15 @@
     "viewUrl": "Voir l'URL déployée",
     "menu": "Options de déploiement"
   },
+  "share": {
+    "title": "Partager l'application",
+    "searchPlaceholder": "Rechercher un utilisateur par email…",
+    "searching": "Recherche…",
+    "noResults": "Aucun utilisateur trouvé",
+    "remove": "Retirer",
+    "cancel": "Annuler",
+    "send": "Envoyer"
+  },
   "dialogs": {
     "rename": {
       "title": "Renommer la conversation",
@@ -146,6 +155,10 @@
       "error": "Échec du déploiement",
       "copied": "Lien copié",
       "copyError": "Impossible de copier le lien"
+    },
+    "share": {
+      "success": "Application partagée par email",
+      "error": "Impossible de partager l'application"
     }
   }
 }
