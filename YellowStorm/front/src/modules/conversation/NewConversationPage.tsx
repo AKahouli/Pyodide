@@ -7,6 +7,9 @@ import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import {
   PromptInput,
+  PromptInputActionMenu,
+  PromptInputActionMenuContent,
+  PromptInputActionMenuTrigger,
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
@@ -43,10 +46,14 @@ import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
 import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
+import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/modules/skill';
+import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
+import { getActiveSkills, getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
 
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
@@ -70,6 +77,11 @@ export function NewConversationPage() {
   // previously open conversation. Direct setState avoids PATCHing the old one.
   useEffect(() => {
     useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [] });
+    // The agent (v2) path keeps its own skill + connector selection in the
+    // conv-v2 store; reset both so selections from a previous v2 session don't
+    // leak into this new one.
+    useConversationV2Store.getState().setSelectedSkillIds([]);
+    useConversationV2Store.getState().setSelectedConnectorIds([]);
   }, []);
 
   const limitPlaceholder = useMemo(() => {
@@ -158,7 +170,16 @@ export function NewConversationPage() {
       }
 
       navigate(`/conversation-v2/${sessionId}`, {
-        state: { initialMessage: text, model: litellmModel },
+        state: {
+          initialMessage: text,
+          model: litellmModel,
+          // Carry the skill selection to the session page so the initial send
+          // ships it. Needed because the session loader hydrates (and would
+          // otherwise overwrite) selectedSkillIds from the brand-new — empty —
+          // pointer before the first message is sent.
+          skillIds: useConversationV2Store.getState().selectedSkillIds,
+          connectorIds: useConversationV2Store.getState().selectedConnectorIds,
+        },
       });
     } catch {
       toast.error(t('toasts.conversation.createError'));
@@ -337,6 +358,38 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
   const { t } = useModuleTranslation('conversation');
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
 
+  // Skills selected for the agent (v2) conversation. Kept in the conv-v2 store
+  // so the session page's initial send (and every later message) ships them.
+  const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
+  const selectedSkillIds = useConversationV2Store((s) => s.selectedSkillIds);
+  const toggleSelectedSkill = useConversationV2Store((s) => s.toggleSelectedSkill);
+
+  // Connectors selected for the agent (v2) conversation. Same store-backed
+  // pattern as skills, so the session page's initial send ships them.
+  const [connectors, setConnectors] = useState<ConnectorOption[]>([]);
+  const [connectorsLoading, setConnectorsLoading] = useState(false);
+  const [manageConnectorsOpen, setManageConnectorsOpen] = useState(false);
+  const selectedConnectorIds = useConversationV2Store((s) => s.selectedConnectorIds);
+  const toggleSelectedConnector = useConversationV2Store((s) => s.toggleSelectedConnector);
+
+  useEffect(() => {
+    setSkillsLoading(true);
+    getActiveSkills()
+      .then((data) => setSkills(data || []))
+      .catch((err) => console.error('Failed to fetch skills:', err))
+      .finally(() => setSkillsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    setConnectorsLoading(true);
+    getActiveConnectors()
+      .then((data) => setConnectors(data || []))
+      .catch((err) => console.error('Failed to fetch connectors:', err))
+      .finally(() => setConnectorsLoading(false));
+  }, []);
+
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -376,6 +429,24 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           />
         </PromptInputBody>
         <PromptInputFooter>
+          <PromptInputActionMenu>
+            <PromptInputActionMenuTrigger />
+            <PromptInputActionMenuContent>
+              <RecentConnectorsMenu
+                connectors={connectors}
+                loading={connectorsLoading}
+                onSelectConnector={(connector) => toggleSelectedConnector(connector.id)}
+                onOpenManage={() => setManageConnectorsOpen(true)}
+              />
+              <RecentSkillsMenu
+                skills={skills}
+                loading={skillsLoading}
+                selectedIds={selectedSkillIds}
+                onSelectSkill={(skill) => toggleSelectedSkill(skill.id)}
+                onOpenManage={() => setManageSkillsOpen(true)}
+              />
+            </PromptInputActionMenuContent>
+          </PromptInputActionMenu>
           <WorkspaceSelect
             selectedIds={selectedWorkspaceIds}
             onChange={setSelectedWorkspaceIds}
@@ -422,6 +493,31 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
           <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
         </PromptInputFooter>
       </PromptInput>
+      <SelectedConnectorsPills
+        connectors={connectors}
+        selectedIds={selectedConnectorIds}
+        onRemove={toggleSelectedConnector}
+      />
+      <SelectedSkillsPills
+        skills={skills}
+        selectedIds={selectedSkillIds}
+        onRemove={toggleSelectedSkill}
+      />
+      <ManageConnectorsDialog
+        open={manageConnectorsOpen}
+        onOpenChange={setManageConnectorsOpen}
+        connectors={connectors}
+        loading={connectorsLoading}
+        onUseConnector={(connector) => toggleSelectedConnector(connector.id)}
+      />
+      <ManageSkillsDialog
+        open={manageSkillsOpen}
+        onOpenChange={setManageSkillsOpen}
+        skills={skills}
+        loading={skillsLoading}
+        selectedIds={selectedSkillIds}
+        onToggleSkill={(skill) => toggleSelectedSkill(skill.id)}
+      />
     </PromptInputProvider>
   );
 }

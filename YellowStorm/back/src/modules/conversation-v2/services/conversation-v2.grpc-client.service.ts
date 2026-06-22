@@ -14,6 +14,8 @@ import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { Observable } from 'rxjs';
+import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
+import type { IGrpcConnector } from '@modules/connector/interfaces/connector.interface';
 import {
   ConversationV2Event,
   SessionWithEvents,
@@ -308,6 +310,8 @@ export class ConversationV2GrpcClientService
       repoName: string;
       repoUrl?: string;
     },
+    skills?: IGrpcSkill[],
+    connectors?: IGrpcConnector[],
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
       const request: Record<string, unknown> = {
@@ -325,6 +329,8 @@ export class ConversationV2GrpcClientService
           repo_url: connectorRepo.repoUrl ?? '',
         };
       }
+      if (skills?.length) request.skills = skills;
+      if (connectors?.length) request.connectors = connectors;
       // Pass metadata positionally (NOT `{ metadata }`) so grpc-js sends the
       // x-api-key header instead of treating it as call options.
       const call = this.client.Chat(

@@ -4,10 +4,9 @@ import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
-import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SkillLogo } from '@/modules/skill';
-import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card';
+import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SelectedSkillsPills } from '@/modules/skill';
 
-import { Pencil, X } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -42,66 +41,6 @@ function SketchBoardAttacher({ open, onOpenChange }: { open: boolean; onOpenChan
         onOpenChange(false);
       }}
     />
-  );
-}
-
-const MAX_VISIBLE_SKILL_PILLS = 3;
-
-/** Pills of the conversation's selected skills, shown under the input box.
- *  Shows up to 3; the rest collapse into a "+N" chip revealing them on hover.
- *  Each pill has an × to deselect the skill. */
-function SelectedSkillsPills({ skills, selectedIds, onRemove }: { skills: SkillOption[]; selectedIds: string[]; onRemove: (id: string) => void }) {
-  const selected = useMemo(
-    () => selectedIds.map((id) => skills.find((s) => s.id === id)).filter((s): s is SkillOption => Boolean(s)),
-    [selectedIds, skills],
-  );
-  if (selected.length === 0) return null;
-
-  const visible = selected.slice(0, MAX_VISIBLE_SKILL_PILLS);
-  const overflow = selected.slice(MAX_VISIBLE_SKILL_PILLS);
-
-  return (
-    <div className='flex flex-wrap items-center gap-1.5 px-1 pt-2'>
-      {visible.map((skill) => (
-        <span key={skill.id} className='inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 pl-1.5 pr-1 text-xs'>
-          <SkillLogo skill={skill} size={14} />
-          <span className='max-w-[140px] truncate'>{skill.name}</span>
-          <button
-            type='button'
-            onClick={() => onRemove(skill.id)}
-            className='rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground'
-            aria-label={`Retirer ${skill.name}`}>
-            <X className='size-3' />
-          </button>
-        </span>
-      ))}
-      {overflow.length > 0 && (
-        <HoverCard openDelay={100} closeDelay={150}>
-          <HoverCardTrigger asChild>
-            <span className='inline-flex cursor-default items-center rounded-full border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground'>
-              +{overflow.length}
-            </span>
-          </HoverCardTrigger>
-          <HoverCardContent className='w-60 p-1.5'>
-            <div className='flex flex-col gap-0.5'>
-              {overflow.map((skill) => (
-                <div key={skill.id} className='flex items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-muted'>
-                  <SkillLogo skill={skill} size={14} />
-                  <span className='flex-1 truncate'>{skill.name}</span>
-                  <button
-                    type='button'
-                    onClick={() => onRemove(skill.id)}
-                    className='rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground'
-                    aria-label={`Retirer ${skill.name}`}>
-                    <X className='size-3' />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </HoverCardContent>
-        </HoverCard>
-      )}
-    </div>
   );
 }
 
