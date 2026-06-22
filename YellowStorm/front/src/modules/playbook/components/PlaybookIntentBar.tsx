@@ -1,9 +1,8 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, Clock, FolderOpen, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
+import { ChevronDown, FolderOpen, GripVertical, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,7 +76,6 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
   history,
   autoApply,
   onValueChange,
-  onAutoApplyChange,
   onSubmit,
   onForceGenerate,
   onApplySuggestion,
@@ -459,12 +457,6 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
             </div>
           </Button>
           <div className="flex shrink-0 items-center gap-2 self-center">
-            {!collapsed ? (
-              <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
-                <span>{t('intentBar.actions.autoApply')}</span>
-              </label>
-            ) : null}
             <Button
               type="button"
               variant="ghost"
@@ -496,18 +488,6 @@ export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(fun
                 className="min-h-[40px] max-h-44 resize-y"
               />
               <div className="flex shrink-0 items-center gap-1.5 sm:w-full">
-                <Button
-                  type="button"
-                  variant={historyOpen ? 'secondary' : 'outline'}
-                  size="icon"
-                  disabled={history.length === 0}
-                  title={t('intentBar.history.title')}
-                  aria-label={t('intentBar.history.title')}
-                  aria-expanded={historyOpen}
-                  onClick={(e) => { e.stopPropagation(); setHistoryOpen((current) => !current); }}
-                >
-                  <Clock className="h-4 w-4" />
-                </Button>
                 <Button
                   type="button"
                   className="h-9 w-28 justify-center"

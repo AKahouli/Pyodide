@@ -269,6 +269,17 @@ export class PlaybookFlowController {
     return this.designService.getDesignMessages(id, userId);
   }
 
+  @Post(':id/design-messages')
+  @ApiOperation({ summary: 'Append a design message history entry for a flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async appendDesignMessage(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { userQuery: string; aiSummary: string; status?: 'completed' | 'failed'; error?: string | null },
+  ) {
+    return this.designService.appendDesignMessage(id, userId, body);
+  }
+
   @Delete(':id/design-messages')
   @ApiOperation({ summary: 'Clear design message memory for the current user' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)

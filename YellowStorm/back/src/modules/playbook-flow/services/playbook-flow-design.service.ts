@@ -192,6 +192,43 @@ export class PlaybookFlowDesignService {
     return messages.map((m) => this.mapMessageToResponse(m));
   }
 
+  async appendDesignMessage(
+    flowId: string,
+    userId: string,
+    body: { userQuery: string; aiSummary: string; status?: 'completed' | 'failed'; error?: string | null },
+  ): Promise<any> {
+    if (typeof body.userQuery !== 'string' || typeof body.aiSummary !== 'string') {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+    if (body.status !== undefined && !['completed', 'failed'].includes(body.status)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+    const userQuery = body.userQuery?.trim();
+    const aiSummary = body.aiSummary?.trim();
+    if (!userQuery || !aiSummary) throw new BadRequestException(ErrorCode.BAD_REQUEST);
+
+    const flow = await this.playbookFlowService.findById(flowId);
+    if (String(flow.ownerId) !== String(userId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN);
+    }
+
+    const message = await this.designMessageModel.create({
+      flowId: new Types.ObjectId(flowId),
+      createdBy: new Types.ObjectId(userId),
+      userQuery,
+      aiSummary,
+      snapshotBefore: {
+        nodes: (flow.nodes || []).map((n: any) => ({ ...n })),
+        controlEdges: (flow.controlEdges || []).map((e: any) => ({ ...e })),
+        dataBindings: (flow.dataBindings || []).map((b: any) => ({ ...b })),
+      },
+      status: body.status ?? 'completed',
+      error: body.error ?? null,
+    });
+
+    return this.mapMessageToResponse(message);
+  }
+
   async clearDesignMessages(flowId: string, userId: string): Promise<{ deletedCount: number }> {
     const flow = await this.playbookFlowService.findById(flowId);
     if (String(flow.ownerId) !== String(userId)) {
@@ -252,9 +289,12 @@ export class PlaybookFlowDesignService {
     return {
       id: (message._id || message.id).toString(),
       flowId: message.flowId?.toString?.() || message.flowId,
+      playbookId: message.flowId?.toString?.() || message.flowId,
       userQuery: message.userQuery,
       aiSummary: message.aiSummary || '',
+      snapshotBefore: message.snapshotBefore || { nodes: [], controlEdges: [], dataBindings: [] },
       status: message.status,
+      revertedFromMessageId: message.revertedFromMessageId?.toString?.() || message.revertedFromMessageId || null,
       error: message.error || null,
       createdAt: message.createdAt?.toISOString?.() || message.createdAt,
       updatedAt: message.updatedAt?.toISOString?.() || message.updatedAt,

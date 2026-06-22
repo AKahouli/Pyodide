@@ -577,7 +577,11 @@ export class PlaybookFlowService {
       patchedGraph.nodes as any,
       patchedGraph.controlEdges as any,
       patchedGraph.dataBindings as any,
-      { allowDraftRouters: true },
+      {
+        allowDraftRouters: true,
+        allowUnboundRequiredPorts: true,
+        allowIncompleteNodeOutputBindings: true,
+      },
     );
 
     const fields = dto.patch.fields;

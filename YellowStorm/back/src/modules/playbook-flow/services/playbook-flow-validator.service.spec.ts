@@ -353,6 +353,40 @@ describe('PlaybookFlowValidatorService', () => {
     }).not.toThrow();
   });
 
+  it('rejects unbound required ports by default', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any);
+    }).toThrow('Required port target-node.prompt has no data binding');
+  });
+
+  it('accepts unbound required ports when draft autosave validation allows them', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any, { allowUnboundRequiredPorts: true });
+    }).not.toThrow();
+  });
+
+  it('rejects incomplete node-output bindings by default', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [{
+        id: 'binding-1',
+        targetNode: 'target-node',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+      }] as any);
+    }).toThrow('Data binding binding-1 source node-output bindings require sourceNode and sourcePort');
+  });
+
+  it('accepts incomplete node-output bindings when draft autosave validation allows them', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [{
+        id: 'binding-1',
+        targetNode: 'target-node',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+      }] as any, { allowIncompleteNodeOutputBindings: true });
+    }).not.toThrow();
+  });
+
   it('still rejects runnable routers when a non-reserved label has no outgoing edge', () => {
     expect(() => {
       service.validate([

@@ -389,7 +389,11 @@ describe('PlaybookFlowService', () => {
         sourceNode: 'task-1',
         sourcePort: 'output',
       }],
-      { allowDraftRouters: true },
+      {
+        allowDraftRouters: true,
+        allowUnboundRequiredPorts: true,
+        allowIncompleteNodeOutputBindings: true,
+      },
     );
     expect(flowDocument.nodes).toEqual([
       expect.objectContaining({ id: 'task-1', label: 'Draft revised' }),

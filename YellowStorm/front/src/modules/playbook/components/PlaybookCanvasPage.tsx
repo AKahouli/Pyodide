@@ -99,7 +99,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { cancelPlaybookIntentConstruction, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
@@ -358,6 +358,8 @@ function PlaybookCanvasInner() {
   const [constructionId, setConstructionId] = useState<string | null>(null);
   const constructionAbortRef = useRef<AbortController | null>(null);
   const designerIntentRef = useRef('');
+  const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
+  const autoLayoutAfterGenerationRef = useRef<(() => void) | null>(null);
   const autoIntentRef = useRef<string | null>(null);
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
@@ -1326,12 +1328,12 @@ function PlaybookCanvasInner() {
     const task = layoutedTasks.find((candidate) => candidate.id === nodeId);
     if (!task) return;
 
-    void reactFlow.setCenter(task.positionX + 140, task.positionY + 90, {
+    void reactFlow.setCenter(task.positionX + 140 + (designerSidebarWidth / 2), task.positionY + 90, {
       zoom: 1.08,
       duration: 650,
     });
     scheduleChangeFeedbackCleanup();
-  }, [reactFlow, scheduleChangeFeedbackCleanup]);
+  }, [designerSidebarWidth, reactFlow, scheduleChangeFeedbackCleanup]);
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
@@ -1462,6 +1464,8 @@ function PlaybookCanvasInner() {
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
       anchorTask: PlaybookTask | null,
       order: number,
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ): PlaybookTask => {
       const matchedTemplate = findMatchingTemplate(title, description, templateType);
       const matchedNodeType = matchedTemplate?.nodeType
@@ -1529,6 +1533,8 @@ function PlaybookCanvasInner() {
           ? { ...matchedTemplate.retryPolicy }
           : null,
         modelId: matchedTemplate?.modelId ?? null,
+        toolBindings,
+        skillBindings,
       };
     };
 
@@ -1642,6 +1648,8 @@ function PlaybookCanvasInner() {
       nodeRefs?: string[],
       anchorSourceOutputPortId?: string | null,
       anchorTargetInputPortId?: string | null,
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ) => {
       const hasExplicitAnchors = Boolean(targetTaskId || nodeRef || (targetTaskIds || []).length || (nodeRefs || []).length);
       const anchorTaskIds = resolveAnchorTaskIds(targetTaskId, nodeRef, targetTaskIds, nodeRefs);
@@ -1663,7 +1671,19 @@ function PlaybookCanvasInner() {
         return false;
       }
 
-      const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, anchorTask, nextTasks.length);
+      const newTask = createIntentTask(
+        deterministicNodeId,
+        taskTitle,
+        taskDescription,
+        agentSlug,
+        templateType,
+        inputPorts,
+        outputPorts,
+        anchorTask,
+        nextTasks.length,
+        toolBindings,
+        skillBindings,
+      );
       nextTasks = [...nextTasks, newTask];
       changedNodeIds.add(newTask.id);
       newlyCreatedNodeIds.push(newTask.id);
@@ -2302,6 +2322,12 @@ function PlaybookCanvasInner() {
         change.targetTaskId,
         null,
         null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        change.task.toolBindings,
+        change.task.skillBindings,
       );
       reconcileRequiredNodeOutputBindings();
       reconcileUnboundRequiredInputsByPort();
@@ -2343,6 +2369,8 @@ function PlaybookCanvasInner() {
           change.anchor.nodeRefs,
           change.anchor.sourceOutputPortId,
           change.anchor.targetInputPortId,
+          change.task.toolBindings,
+          change.task.skillBindings,
         );
         continue;
       }
@@ -2502,19 +2530,59 @@ function PlaybookCanvasInner() {
 
   const handleSubmitIntentFromBar = useCallback(async () => {
     setIntentRequestOrigin('intent-bar');
-    await handleSubmitIntent();
+    const result = await handleSubmitIntent();
+    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
   }, [handleSubmitIntent]);
 
-  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string) => {
+  const handleForceGenerateIntentFromBar = useCallback(async (answerText?: string) => {
+    setIntentRequestOrigin('intent-bar');
+    const result = await handleForceGenerateIntent(answerText);
+    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
+  }, [handleForceGenerateIntent]);
+
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string) => {
     setIntentRequestOrigin('designer-sidebar');
     designerIntentRef.current = intentText;
-    await handleSubmitIntentText(intentText);
-  }, [handleSubmitIntentText]);
+    const result = await handleSubmitIntentText(intentText);
+    if (!id || result.status === 'skipped') return;
+    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
+    try {
+      await appendDesignMessage(id, {
+        userQuery: visibleUserQuery,
+        aiSummary: result.status === 'needs_clarification'
+          ? t('designer.intentClarificationSummary')
+          : result.status === 'failed'
+            ? (result.error || t('designer.intentFailedSummary'))
+            : t('designer.intentSavedSummary'),
+        status: result.status === 'failed' ? 'failed' : 'completed',
+        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      });
+    } catch (error) {
+      console.error('Failed to save Designer Assistant chat history', error);
+      showWarning(t('designer.intentSaveFailed'));
+    }
+  }, [handleSubmitIntentText, id, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
     setIntentRequestOrigin('designer-sidebar');
-    await handleForceGenerateIntentText(designerIntentRef.current, answerText);
-  }, [handleForceGenerateIntentText]);
+    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText);
+    if (!id || !answerText || result.status === 'skipped') return;
+    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
+    try {
+      await appendDesignMessage(id, {
+        userQuery: answerText,
+        aiSummary: result.status === 'failed'
+          ? (result.error || t('designer.intentFailedSummary'))
+          : t('designer.intentSavedSummary'),
+        status: result.status === 'failed' ? 'failed' : 'completed',
+        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      });
+      await usePlaybookStore.getState().fetchDesignMessages(id);
+    } catch (error) {
+      console.error('Failed to save Designer Assistant clarification history', error);
+      showWarning(t('designer.intentSaveFailed'));
+    }
+  }, [handleForceGenerateIntentText, id, t]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -2613,10 +2681,16 @@ function PlaybookCanvasInner() {
   });
 
   useEffect(() => {
+    autoLayoutAfterGenerationRef.current = handleAutoLayout;
+  }, [handleAutoLayout]);
+
+  useEffect(() => {
     if (!autoIntentRef.current) return;
     if (!playbook || !id || isGeneratingRoute || playbookLoading || playbook.id !== id) return;
     autoIntentRef.current = null;
-    handleSubmitIntent();
+    void handleSubmitIntent().then((result) => {
+      if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
+    });
   }, [playbook, playbookLoading, id, isGeneratingRoute, handleSubmitIntent]);
 
   useEffect(() => () => {
@@ -3060,7 +3134,7 @@ function PlaybookCanvasInner() {
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntentFromBar()}
-                  onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
+                  onForceGenerate={(answerText) => void handleForceGenerateIntentFromBar(answerText)}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
                     if (playbook) {
@@ -3124,8 +3198,15 @@ function PlaybookCanvasInner() {
               playbookId={id}
               intentDesign={intentRequestOrigin === 'designer-sidebar' ? intentDesign : null}
               intentLoading={intentLoading && intentRequestOrigin === 'designer-sidebar'}
+              autoApply={intentAutoApply}
+              history={intentHistory}
+              constructionStatus={constructionStatus}
               onSubmitDesignIntent={handleSubmitIntentFromDesigner}
               onAnswerDesignIntent={handleAnswerIntentFromDesigner}
+              onAutoApplyChange={setIntentAutoApply}
+              onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
+              onCancelConstruction={handleCancelIntentConstruction}
+              onWidthChange={setDesignerSidebarWidth}
             />
           </div>
 

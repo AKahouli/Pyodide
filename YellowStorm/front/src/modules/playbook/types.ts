@@ -468,6 +468,8 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   templateType?: string | null;
+  toolBindings?: ToolBinding[];
+  skillBindings?: TaskSkillBinding[];
   inputPorts?: Array<{
     id: string;
     name?: string | null;

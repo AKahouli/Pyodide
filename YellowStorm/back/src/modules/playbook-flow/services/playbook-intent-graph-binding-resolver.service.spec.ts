@@ -45,7 +45,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
     ]));
   });
 
-  it('drops mismatched edge ports instead of synthesizing unsafe bindings', () => {
+  it('keeps mismatched visual edges without synthesizing unsafe bindings', () => {
     const changes = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
@@ -64,7 +64,11 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([]);
+    expect(changes).toEqual([expect.objectContaining({
+      type: 'create_edge',
+      sourceOutputPortId: 'report',
+      targetInputPortId: 'payload',
+    })]);
   });
 
   it('drops edges that reference unknown ports on known tasks', () => {

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
 import {
@@ -23,15 +23,22 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentDesignResponse } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 
 interface Props {
   playbookId: string | undefined;
   intentDesign?: PlaybookIntentDesignResponse | null;
   intentLoading?: boolean;
-  onSubmitDesignIntent?: (intentText: string) => Promise<void> | void;
+  autoApply?: boolean;
+  history?: IntentSuggestionHistoryEntry[];
+  constructionStatus?: PlaybookIntentConstructionStatus;
+  onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string) => Promise<void> | void;
   onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
+  onAutoApplyChange?: (value: boolean) => void;
+  onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
+  onCancelConstruction?: () => void;
+  onWidthChange?: (width: number) => void;
 }
 
 interface InterruptEntry extends HumanFeedbackData {
@@ -122,7 +129,7 @@ function buildIntentTextWithHistory(intentText: string, messages: ReturnType<typ
     .filter((message) => message.status !== 'reverted')
     .flatMap((message) => {
       const timestamp = formatMessageTime(message.createdAt);
-      const prefix = timestamp ? `[${timestamp}] ` : '';
+      const prefix = timestamp ? `- [${timestamp}] ` : '- ';
       const assistantText = message.status === 'failed'
         ? `Assistant failed: ${normalizeHistoryLine(message.error || message.aiSummary)}`
         : `Assistant: ${normalizeHistoryLine(message.aiSummary)}`;
@@ -133,9 +140,10 @@ function buildIntentTextWithHistory(intentText: string, messages: ReturnType<typ
     })
     .join('\n');
 
-  if (!history) return normalizedIntent;
+  const currentRequest = `Current user request:\n- [${formatDateTime(new Date())}] User: ${normalizedIntent}`;
+  if (!history) return currentRequest;
 
-  return `Previous Designer Assistant chat history:\n${history}\n\nCurrent user request:\n${normalizedIntent}`;
+  return `Previous Designer Assistant chat history:\n${history}\n\n${currentRequest}`;
 }
 
 function normalizeHistoryLine(value: string) {
@@ -213,7 +221,20 @@ const SIDEBAR_DEFAULT_WIDTH = 576;
 const SIDEBAR_MIN_WIDTH = 384;
 const SIDEBAR_MAX_WIDTH_RATIO = 0.6;
 
-export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentLoading = false, onSubmitDesignIntent, onAnswerDesignIntent }: Props) {
+export function PlaybookDesignerPanel({
+  playbookId,
+  intentDesign = null,
+  intentLoading = false,
+  autoApply = false,
+  history = [],
+  constructionStatus = 'idle',
+  onSubmitDesignIntent,
+  onAnswerDesignIntent,
+  onAutoApplyChange,
+  onApplyHistorySuggestion,
+  onCancelConstruction,
+  onWidthChange,
+}: Props) {
   const { t } = useModuleTranslation('playbook');
 
   const designerOpen = useDesignerOpen();
@@ -268,6 +289,7 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
   const [selectedDesignResource, setSelectedDesignResource] = useState<PlaybookIntentClarificationResource | null>(null);
   const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
   const [designAnswer, setDesignAnswer] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [localInterruptThread, setLocalInterruptThread] = useState<{
     executionId: string;
     entries: InterruptEntry[];
@@ -414,6 +436,7 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
   const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
   const designIntentBusy = isDesigning || intentLoading;
+  const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
   const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
 
   useEffect(() => {
@@ -485,6 +508,10 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
     const mimeType = resource.mimeType ? `, mimeType=${resource.mimeType}` : '';
     return `${resource.name} [kind=${resource.kind}, id=${resource.id}, workspaceId=${resource.workspaceId}${workspaceName}${path}${mimeType}]`;
   }, []);
+
+  useEffect(() => {
+    onWidthChange?.(designerOpen ? sidebarWidth : 0);
+  }, [designerOpen, onWidthChange, sidebarWidth]);
 
   const getCurrentDesignAnswer = useCallback(() => {
     if (selectedDesignChoice === '__resource__' && selectedDesignResource) return getResourceAnswer(selectedDesignResource);
@@ -589,13 +616,25 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
     if (isDirty) await saveNow();
 
     try {
-      await onSubmitDesignIntent?.(buildIntentTextWithHistory(q, messages));
+      await onSubmitDesignIntent?.(buildIntentTextWithHistory(q, messages), q);
     } catch {
       setQuery(q);
       return;
     }
     await fetchDesignMessages(playbookId);
   }, [query, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent, fetchDesignMessages, messages]);
+
+  const handleDesignComposerKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.altKey || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }, []);
+
+  const handleApplyHistory = useCallback((entry: IntentSuggestionHistoryEntry) => {
+    if (entry.intent) setQuery(entry.intent);
+    onApplyHistorySuggestion?.(entry.suggestion);
+    setHistoryOpen(false);
+  }, [onApplyHistorySuggestion]);
 
   const handleRevert = useCallback(async (messageId: string) => {
     if (!playbookId) return;
@@ -933,6 +972,19 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
               );
             })}
 
+            {designQuestions.map((question) => {
+              const answer = designAnswers[question.id];
+              if (!answer) return null;
+              return (
+                <div key={`design-answer-${question.id}`} className="flex justify-end">
+                  <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
+                    <div className="mb-1 text-[11px] opacity-80">{question.question}</div>
+                    <p className="whitespace-pre-wrap">{answer}</p>
+                  </div>
+                </div>
+              );
+            })}
+
             {intentDesign?.status === 'needs_clarification' && currentDesignQuestion ? (
               <div className="flex justify-start">
                 <div className="max-w-[92%] space-y-3 rounded-2xl rounded-tl-sm border bg-muted/50 px-3 py-3 text-sm shadow-sm">
@@ -1117,17 +1169,62 @@ export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentL
       </div>
 
       {effectiveCopilotMode === 'design' ? (
-        <form className="border-t px-3 py-3 flex gap-2 shrink-0" onSubmit={handleSubmitDesign}>
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('designer.inputPlaceholder')}
-            disabled={designIntentBusy}
-            className="text-sm"
-          />
-          <Button type="submit" size="icon" disabled={!query.trim() || designIntentBusy || !onSubmitDesignIntent} className="shrink-0">
-            {designIntentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+        <form className="border-t px-3 py-3 shrink-0 space-y-2" onSubmit={handleSubmitDesign}>
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <label htmlFor="designer-auto-apply" className="flex items-center gap-2">
+              <Switch id="designer-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
+              <span>{t('intentBar.actions.autoApply')}</span>
+            </label>
+            <Button
+              type="button"
+              variant={historyOpen ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 gap-1.5 px-2"
+              disabled={history.length === 0 || !onApplyHistorySuggestion}
+              aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen((current) => !current)}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              {t('intentBar.history.title')}
+            </Button>
+          </div>
+          {historyOpen ? (
+            <div className="max-h-40 overflow-y-auto rounded-lg border bg-muted/20 p-2 space-y-1">
+              {history.map((entry) => (
+                <Button
+                  key={entry.id}
+                  type="button"
+                  variant="ghost"
+                  className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-left text-xs"
+                  onClick={() => handleApplyHistory(entry)}
+                >
+                  <span className="line-clamp-2">{entry.intent || entry.suggestion.label}</span>
+                </Button>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex gap-2">
+            <Textarea
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleDesignComposerKeyDown}
+              placeholder={t('designer.inputPlaceholder')}
+              disabled={designIntentBusy && !constructionActive}
+              rows={1}
+              className="max-h-32 min-h-10 resize-y text-sm"
+            />
+            <Button
+              type={constructionActive ? 'button' : 'submit'}
+              size="icon"
+              variant={constructionActive ? 'destructive' : 'default'}
+              disabled={constructionActive ? !onCancelConstruction : !query.trim() || designIntentBusy || !onSubmitDesignIntent}
+              className="shrink-0"
+              onClick={constructionActive ? onCancelConstruction : undefined}
+              aria-label={constructionActive ? t('intentBar.actions.stop') : t('designer.send')}
+            >
+              {constructionActive ? <X className="h-4 w-4" /> : designIntentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+          </div>
         </form>
       ) : composerInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">

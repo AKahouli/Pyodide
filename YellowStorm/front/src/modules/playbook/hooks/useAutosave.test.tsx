@@ -81,7 +81,7 @@ describe('useAutosave', () => {
     rerender();
 
     act(() => {
-      vi.advanceTimersByTime(1199);
+      vi.advanceTimersByTime(599);
     });
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
 
@@ -106,19 +106,29 @@ describe('useAutosave', () => {
     rerender();
 
     act(() => {
-      vi.advanceTimersByTime(600);
+      vi.advanceTimersByTime(599);
     });
+
+    expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
+
+    storeState.saveCurrentPlaybook.mockClear();
 
     storeState.dirtyVersion = 2;
     rerender();
 
     act(() => {
-      vi.advanceTimersByTime(1199);
+      vi.advanceTimersByTime(1499);
     });
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
 
     act(() => {
-      vi.advanceTimersByTime(1801);
+      vi.advanceTimersByTime(1);
     });
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
   });
@@ -153,6 +163,69 @@ describe('useAutosave', () => {
 
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
     expect(result.current.hasIncompleteBindings).toBe(true);
+  });
+
+  it('still autosaves while bindings are incomplete', () => {
+    storeState.currentPlaybook = {
+      tasks: [],
+      dataBindings: [{
+        id: 'binding-1',
+        targetNode: 'target-1',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+      }],
+    };
+
+    const { result, rerender } = renderHook(() => useAutosave());
+    storeState.isDirty = true;
+    storeState.dirtyVersion = 1;
+    rerender();
+
+    act(() => {
+      vi.advanceTimersByTime(599);
+    });
+
+    expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'autosave' });
+    expect(result.current.hasIncompleteBindings).toBe(true);
+  });
+
+  it('still autosaves while required ports are unbound', () => {
+    storeState.currentPlaybook = {
+      tasks: [{
+        id: 'task-1',
+        type: 'agent',
+        name: 'Task 1',
+        position: { x: 0, y: 0 },
+        inputPorts: [{ id: 'prompt', name: 'Prompt', type: 'string', required: true }],
+      } as PlaybookTask],
+      dataBindings: [],
+    };
+
+    const { result, rerender } = renderHook(() => useAutosave());
+    storeState.isDirty = true;
+    storeState.dirtyVersion = 1;
+    rerender();
+
+    act(() => {
+      vi.advanceTimersByTime(599);
+    });
+
+    expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'autosave' });
+    expect(result.current.hasUnboundRequiredPorts).toBe(true);
   });
 
   it('reports autosave conflicts to the autosave actor', async () => {

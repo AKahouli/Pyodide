@@ -81,7 +81,7 @@ describe('PlaybookIntentBar', () => {
     expect(onSubmit).toHaveBeenCalled();
   });
 
-  it('renders auto-apply off by default and allows toggling', () => {
+  it('does not render the auto-apply control in the floating bar', () => {
     const onAutoApplyChange = vi.fn();
 
     render(
@@ -92,10 +92,8 @@ describe('PlaybookIntentBar', () => {
       />,
     );
 
-    const autoApplySwitch = screen.getByRole('switch', { name: 'intentBar.actions.autoApply' });
-    expect(autoApplySwitch).toHaveAttribute('data-state', 'unchecked');
-    fireEvent.click(autoApplySwitch);
-    expect(onAutoApplyChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole('switch', { name: 'intentBar.actions.autoApply' })).not.toBeInTheDocument();
+    expect(onAutoApplyChange).not.toHaveBeenCalled();
   });
 
   it('does not render the helper hint line under the title', () => {
@@ -407,11 +405,9 @@ describe('PlaybookIntentBar', () => {
     expect(onPositionChange).toHaveBeenCalledWith({ x: 30, y: 25 });
   });
 
-  it('shows applied suggestions in the inline history panel with the same card layout', () => {
+  it('records applied suggestions for sidebar history', () => {
     const onApplySuggestion = vi.fn();
     const onRecordHistory = vi.fn();
-    const onValueChange = vi.fn();
-    const onApplyHistorySuggestion = vi.fn();
 
     render(
       <PlaybookIntentBar
@@ -419,8 +415,6 @@ describe('PlaybookIntentBar', () => {
         selectedTask={selectedTask}
         autoApply={false}
         value="Improve this step"
-        onValueChange={onValueChange}
-        onApplyHistorySuggestion={onApplyHistorySuggestion}
         suggestions={[
           {
             id: 's1',
@@ -465,19 +459,6 @@ describe('PlaybookIntentBar', () => {
     expect(onApplySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
     expect(onRecordHistory).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }), 'Improve this step');
 
-    fireEvent.click(screen.getByRole('button', { name: 'intentBar.history.title' }));
-
-    expect(screen.getByText('intentBar.history.title')).toBeInTheDocument();
-    expect(screen.getByText('Add validation step')).toBeInTheDocument();
-    expect(screen.getAllByText('Improve this step').length).toBeGreaterThanOrEqual(2);
-
-    fireEvent.click(screen.getByText('Add validation step'));
-    expect(screen.getByText('intentBar.history.confirmTitle')).toBeInTheDocument();
-    expect(onApplySuggestion).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByText('intentBar.history.confirmApply'));
-    expect(onValueChange).toHaveBeenCalledWith('Improve this step');
-    expect(onApplyHistorySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
     expect(onApplySuggestion).toHaveBeenCalledTimes(1);
   });
 

@@ -1859,6 +1859,17 @@ export async function getDesignMessages(id: string): Promise<DesignMessage[]> {
   return response.data.data;
 }
 
+export async function appendDesignMessage(
+  id: string,
+  data: { userQuery: string; aiSummary: string; status?: 'completed' | 'failed'; error?: string | null },
+): Promise<DesignMessage> {
+  const response = await apiClient.post<ApiResponse<DesignMessage>>(
+    API_ENDPOINTS.playbooks.designMessages(id),
+    data,
+  );
+  return response.data.data;
+}
+
 export async function clearDesignMessages(id: string): Promise<ClearDesignMessagesResult> {
   const response = await apiClient.delete<ApiResponse<ClearDesignMessagesResult>>(
     API_ENDPOINTS.playbooks.clearDesignMessages(id),

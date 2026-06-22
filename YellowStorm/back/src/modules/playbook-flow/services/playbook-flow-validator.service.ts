@@ -18,6 +18,8 @@ interface ValidationError {
 
 interface ValidateOptions {
   allowDraftRouters?: boolean;
+  allowUnboundRequiredPorts?: boolean;
+  allowIncompleteNodeOutputBindings?: boolean;
 }
 
 @Injectable()
@@ -34,8 +36,10 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkRouterTerminalRoute(nodes, controlEdges));
     errors.push(...this.checkCycleRouterPresence(nodes, controlEdges));
     errors.push(...this.checkIteratorContainerDag(nodes, controlEdges));
-    errors.push(...this.checkBindingEndpoints(nodes, dataBindings));
-    errors.push(...this.checkRequiredDataBindings(nodes, dataBindings));
+    errors.push(...this.checkBindingEndpoints(nodes, dataBindings, options));
+    if (!options.allowUnboundRequiredPorts) {
+      errors.push(...this.checkRequiredDataBindings(nodes, dataBindings));
+    }
     errors.push(...this.checkDuplicateDataBindings(dataBindings));
     errors.push(...this.checkBindingSourceReachable(nodes, controlEdges, dataBindings));
     errors.push(...this.checkPreviousIterationOnCycle(nodes, controlEdges, dataBindings));
@@ -333,7 +337,7 @@ export class PlaybookFlowValidatorService {
     return errors;
   }
 
-  private checkBindingEndpoints(nodes: FlowNode[], bindings: DataBinding[]): ValidationError[] {
+  private checkBindingEndpoints(nodes: FlowNode[], bindings: DataBinding[], options: ValidateOptions): ValidationError[] {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const errors: ValidationError[] = [];
 
@@ -354,6 +358,9 @@ export class PlaybookFlowValidatorService {
       }
 
       if (!binding.sourceNode || !binding.sourcePort) {
+        if (options.allowIncompleteNodeOutputBindings) {
+          continue;
+        }
         errors.push({ rule: 7, message: `Data binding ${binding.id} source node-output bindings require sourceNode and sourcePort` });
         continue;
       }

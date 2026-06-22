@@ -50,12 +50,17 @@ interface PlaybookIntentFlowDeps {
 }
 
 interface PlaybookIntentFlowApi {
-  handleSubmitIntent: () => Promise<void>;
-  handleSubmitIntentText: (intentText: string) => Promise<void>;
-  handleForceGenerateIntent: (answerText?: string) => Promise<void>;
-  handleForceGenerateIntentText: (intentText: string, answerText?: string) => Promise<void>;
+  handleSubmitIntent: () => Promise<IntentSubmitResult>;
+  handleSubmitIntentText: (intentText: string) => Promise<IntentSubmitResult>;
+  handleForceGenerateIntent: (answerText?: string) => Promise<IntentSubmitResult>;
+  handleForceGenerateIntentText: (intentText: string, answerText?: string) => Promise<IntentSubmitResult>;
   handleApplyAdvisorIntent: ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => Promise<void>;
 }
+
+export type IntentSubmitResult = {
+  status: 'completed' | 'failed' | 'needs_clarification' | 'skipped';
+  error?: string;
+};
 
 export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookIntentFlowApi {
   const {
@@ -243,7 +248,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
   const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string) => {
     const normalizedIntent = buildIntentWithDesignAnswer(intentText, answerText || '');
     if (!id || !playbook || normalizedIntent.length < 3) {
-      return;
+      return { status: 'skipped' as const };
     }
     setIntentLoading(true);
     setIntentError('');
@@ -254,10 +259,10 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
         if (applied) {
           setLastIntentSuggestions([]);
           setIntentSuggestions([]);
-          return;
+          return { status: 'completed' as const };
         }
       } catch (error) {
-        if (constructionAbortRef?.current?.signal.aborted) return;
+        if (constructionAbortRef?.current?.signal.aborted) return { status: 'skipped' as const };
         setConstructionStatus?.('failed');
         setConstructionProgress?.('');
         if ((error as { appliedDelta?: boolean }).appliedDelta) {
@@ -267,23 +272,26 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       }
 
       await generateIntentSuggestions(normalizedIntent, resolveSelectedTaskId(), { applyBest: true });
+      return { status: 'completed' as const };
     } catch (error) {
+      const message = error instanceof Error ? error.message : t('intentBar.error');
       setIntentSuggestions([]);
       setLastIntentSuggestions([]);
-      setIntentError(error instanceof Error ? error.message : t('intentBar.error'));
+      setIntentError(message);
+      return { status: 'failed' as const, error: message };
     } finally {
       setIntentLoading(false);
     }
   }, [buildIntentWithDesignAnswer, constructionAbortRef, generateIntentSuggestions, id, playbook, resolveSelectedTaskId, runRealtimeConstruction, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
 
   const handleForceGenerateIntent = useCallback(async (answerText?: string) => {
-    await handleForceGenerateIntentText(intentValue, answerText);
+    return handleForceGenerateIntentText(intentValue, answerText);
   }, [handleForceGenerateIntentText, intentValue]);
 
   const handleSubmitIntentText = useCallback(async (intentText: string) => {
     const normalizedIntent = intentText.trim();
     if (!id || !playbook || normalizedIntent.length < 3) {
-      return;
+      return { status: 'skipped' as const };
     }
 
     const resolvedSelectedTaskId = resolveSelectedTaskId();
@@ -298,10 +306,10 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
           if (applied) {
             setLastIntentSuggestions([]);
             setIntentSuggestions([]);
-            return;
+            return { status: 'completed' as const };
           }
         } catch (error) {
-          if (constructionAbortRef?.current?.signal.aborted) return;
+          if (constructionAbortRef?.current?.signal.aborted) return { status: 'skipped' as const };
           setConstructionStatus?.('failed');
           setConstructionProgress?.('');
           if ((error as { appliedDelta?: boolean }).appliedDelta) {
@@ -316,22 +324,25 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
         const design = await assessPlaybookIntentDesign(id, { intent: normalizedIntent, selectedTaskId: resolvedSelectedTaskId });
         if (design.status !== 'ready_to_generate') {
           setIntentDesign(design);
-          return;
+          return { status: 'needs_clarification' as const };
         }
       }
 
       await generateIntentSuggestions(normalizedIntent, resolvedSelectedTaskId);
+      return { status: 'completed' as const };
     } catch (error) {
+      const message = error instanceof Error ? error.message : t('intentBar.error');
       setIntentSuggestions([]);
       setLastIntentSuggestions([]);
-      setIntentError(error instanceof Error ? error.message : t('intentBar.error'));
+      setIntentError(message);
+      return { status: 'failed' as const, error: message };
     } finally {
       setIntentLoading(false);
     }
   }, [assessPlaybookIntentDesign, constructionAbortRef, generateIntentSuggestions, id, intentAutoApply, isDirty, playbook, resolveSelectedTaskId, runRealtimeConstruction, saveNow, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
 
   const handleSubmitIntent = useCallback(async () => {
-    await handleSubmitIntentText(intentValue);
+    return handleSubmitIntentText(intentValue);
   }, [handleSubmitIntentText, intentValue]);
 
   const handleApplyAdvisorIntent = useCallback(async ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => {
