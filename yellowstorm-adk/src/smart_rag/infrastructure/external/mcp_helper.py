@@ -322,20 +322,6 @@ class MCPHelper:
 
         return toolsets
 
-    VECTORSTORE_BASE_TOOLS = [
-        'get_document_strategy',
-        'read_content',
-        'search',
-        'get_document_map',
-        'search_sections',
-        'search_blocks',
-        'read_section',
-        'read_blocks',
-        'expand_context',
-        'read_page',
-    ]
-    VECTORSTORE_DEEP_SEARCH_TOOL = 'search_relevant_documents'
-
     @staticmethod
     def create_vectorstore_toolsets_with_deep_search(
         brain_ids: Optional[List[str]] = None,
@@ -348,37 +334,16 @@ class MCPHelper:
         headers = {}
         if brain_ids:
             headers["X-Brain-ID"] = ",".join(brain_ids)
-
-        tool_filter = list(MCPHelper.VECTORSTORE_BASE_TOOLS)
         if deep_search:
             headers["X-Deep-Search"] = "true"
 
         logger.info(
-            "Attaching vectorstore MCP toolset at %s (deep_search=%s tool_filter=%s)",
+            "Attaching vectorstore MCP toolset at %s (deep_search=%s)",
             app_settings.VECTORSTORE_MCP_URL,
             deep_search,
-            tool_filter,
         )
 
-        configs = [{'type': 'vectorstore', 'headers': headers, 'tool_filter': tool_filter}]
-
-        if deep_search:
-            cg_url = getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None)
-            if cg_url:
-                logger.info(
-                    "Attaching community-graph MCP toolset at %s for deep search",
-                    cg_url,
-                )
-                configs.append({
-                    'type': 'community_graph',
-                    'url': cg_url,
-                    'tool_filter': [MCPHelper.VECTORSTORE_DEEP_SEARCH_TOOL],
-                })
-            else:
-                logger.warning(
-                    "COMMUNITY_GRAPH_MCP_URL not configured, "
-                    "search_relevant_documents will not be available"
-                )
+        configs = [{'type': 'vectorstore', 'headers': headers}]
 
         toolsets = []
         for config in configs:
@@ -387,8 +352,7 @@ class MCPHelper:
                 if not mcp_type:
                     continue
                 connection_params = MCPHelper.create_mcp_config(mcp_type, **config)
-                tf = config.get('tool_filter')
-                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type, tool_filter=tf)
+                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type)
                 toolsets.append(toolset)
             except Exception as e:
                 logger.error(f"Failed to create {mcp_type} toolset: {str(e)}", exc_info=True)

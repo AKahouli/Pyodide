@@ -1690,7 +1690,7 @@ def _create_deep_search_tool() -> Optional[StructuredTool]:
             result = await call_mcp_tool(
                 "streamable_http",
                 mcp_url,
-                {},
+                {"X-Deep-Search": "true"},
                 "search_relevant_documents",
                 {"query": query, "workspace_id": workspace_id, "top_k": top_k},
             )
@@ -1834,8 +1834,6 @@ def _create_connector_mcp_tools(
 
         for action in actions:
             action_key = action.get("action_key", "")
-            if action_key == "search_relevant_documents" and not deep_search:
-                continue
             action_label = action.get("label") or action_key
             action_description = (
                 action.get("description") or f"Connector action '{action_key}'"

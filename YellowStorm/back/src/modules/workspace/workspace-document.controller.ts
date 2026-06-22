@@ -81,7 +81,7 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: MulterFile,
-    @Body() body?: { folderId?: string },
+    @Body() body?: { folderId?: string; deepSearch?: string },
   ) {
     return this.workspaceDocumentService.uploadSmallFile(
       workspaceId,
@@ -90,6 +90,7 @@ export class WorkspaceDocumentController {
       file.originalname,
       file.mimetype,
       body?.folderId,
+      body?.deepSearch === 'true',
     );
   }
 
@@ -130,6 +131,7 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       dto.documentId,
+      dto.deepSearch,
     );
   }
 
@@ -190,11 +192,13 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @Param('sessionId') sessionId: string,
+    @Query('deepSearch') deepSearch?: string,
   ) {
     return this.workspaceDocumentService.completeBulkUpload(
       workspaceId,
       user._id.toString(),
       sessionId,
+      deepSearch === 'true',
     );
   }
 

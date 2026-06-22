@@ -215,6 +215,7 @@ export interface CommunityGraphData {
     ll_concepts: string[];
     community_id: string | null;
     file_name: string;
+    metadata: Record<string, unknown>;
   }>;
   edges: Array<{
     source: string;
@@ -448,11 +449,15 @@ export async function uploadSmallFile(
   file: File,
   onProgress?: (progress: number) => void,
   folderId?: string,
+  deepSearch?: boolean,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
   if (folderId) {
     formData.append('folderId', folderId);
+  }
+  if (deepSearch) {
+    formData.append('deepSearch', 'true');
   }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
@@ -521,9 +526,13 @@ export async function initiateBulkUpload(
 export async function completeBulkUpload(
   workspaceId: string,
   sessionId: string,
+  deepSearch?: boolean,
 ): Promise<BulkUploadSession> {
+  const params = deepSearch ? { deepSearch: 'true' } : undefined;
   const response = await apiClient.post<ApiResponse<BulkUploadSession>>(
     API_ENDPOINTS.workspaceDocuments.bulkComplete(workspaceId, sessionId),
+    undefined,
+    { params },
   );
   return response.data.data;
 }
