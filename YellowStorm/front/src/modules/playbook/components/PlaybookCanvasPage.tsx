@@ -2519,19 +2519,13 @@ function PlaybookCanvasInner() {
     setAdvisorAutopilotEnabled((playbook.advisorAutopilotEnabled ?? false) === true);
   }, [playbook?.advisorAutopilotEnabled]);
 
-  const handleToggleDeepSearch = useCallback(async () => {
+  const handleToggleDeepSearch = useCallback(() => {
     if (!id || !playbook) return;
     const currentDeepSearch = playbook.tasks.some((t) => t.deepSearch);
     const newValue = !currentDeepSearch;
     updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
     toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
-    try {
-      await updatePlaybook(id, { deepSearch: newValue });
-    } catch (err) {
-      console.error('Failed to toggle deep search:', err);
-      toast.error('Failed to toggle deep search');
-    }
-  }, [id, playbook, updatePlaybook, updateTasks, t]);
+  }, [id, playbook, updateTasks, t]);
 
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
