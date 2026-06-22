@@ -2521,7 +2521,8 @@ function PlaybookCanvasInner() {
 
   const handleToggleDeepSearch = useCallback(async () => {
     if (!id || !playbook) return;
-    const newValue = !playbook.deepSearch;
+    const currentDeepSearch = playbook.tasks.some((t) => t.deepSearch);
+    const newValue = !currentDeepSearch;
     updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
     toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
     try {
@@ -2984,7 +2985,7 @@ function PlaybookCanvasInner() {
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
-                  deepSearch={playbook.deepSearch}
+                  deepSearch={playbook.tasks.some((t) => t.deepSearch)}
                   onToggleDeepSearch={() => { void handleToggleDeepSearch(); }}
                 />
                 </ConnectionDragContext.Provider>
