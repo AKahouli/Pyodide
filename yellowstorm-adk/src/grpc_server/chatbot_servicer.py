@@ -1067,6 +1067,7 @@ class ChatbotServicer(
             agent_mode="mono",
             connector_repo=self._build_connector_repo(pb_request),
             skills=self._build_skills(pb_request),
+            deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
         )
 
     async def _convert_agent_team_request_v2(

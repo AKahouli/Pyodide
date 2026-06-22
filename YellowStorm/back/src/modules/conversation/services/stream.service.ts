@@ -676,6 +676,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         : [{ workspace_id: conversationId, workspace_name: conversationId, workspace_documents: [] }],
       attached_files: attachedFiles,
       previous_attached_files: previousAttachedFiles,
+      deep_search_enabled: request.deepSearchEnabled ?? false,
       ...(request.connectorRepo
         ? {
             connector_repo: {

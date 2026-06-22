@@ -720,6 +720,11 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
     workspace_ids = list(getattr(config, "brain_ids", None) or []) or None
 
     try:
+        auth_headers = dict(mcp.get("auth_headers") or {})
+        agent_tools = agent_config.get("tools") or []
+        if any(isinstance(t, dict) and t.get("name") == "deep_search" or t == "deep_search" for t in agent_tools):
+            auth_headers["X-Deep-Search"] = "true"
+
         toolsets = MCPHelper.create_toolsets([{
             "type": "mcp",
             "transport_type": "streamable_http",
@@ -727,7 +732,7 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
             "user_id": config.user_id,
             "file_names": explicit_file_names,
             "workspace_ids": workspace_ids,
-            "auth_headers": mcp.get("auth_headers") or {},
+            "auth_headers": auth_headers,
         }])
         if toolsets:
             if not hasattr(agent, "tools") or agent.tools is None:
