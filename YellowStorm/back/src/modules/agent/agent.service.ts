@@ -1310,7 +1310,12 @@ export class AgentService {
     allAgents: IAgentForStream[],
     pingedAgents: IAgentForStream[] = [],
   ): IAgentForStream | undefined {
-    const matches = (a: IAgentForStream) => a.agentTypeSlug === slug;
+    // Agent-type slugs are generated with spaces → "_" (see AgentTypeService.generateSlug),
+    // so a type named "Mono Agent" becomes "mono_agent". Canonicalize hyphens/underscores/
+    // whitespace so lookup constants (e.g. "mono-agent") match regardless of separator.
+    const canon = (value: string) => (value || '').toLowerCase().replace(/[-_\s]+/g, '_');
+    const target = canon(slug);
+    const matches = (a: IAgentForStream) => canon(a.agentTypeSlug) === target;
 
     // 1. If the user pinged an agent of this type, use it (first one if multiple)
     const pinged = pingedAgents.find(matches);
