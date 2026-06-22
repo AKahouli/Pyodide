@@ -4,6 +4,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
   function createService(): PlaybookFlowIntentConstructionService {
     return new PlaybookFlowIntentConstructionService({
       normalizeConstructionSuggestions: jest.fn().mockReturnValue([]),
+      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
     } as any);
   }
 
@@ -11,6 +12,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
     const normalizeConstructionSuggestions = jest.fn().mockReturnValue([]);
     const service = new PlaybookFlowIntentConstructionService({
       normalizeConstructionSuggestions,
+      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
     } as any);
 
     (service as any).normalizeRawSuggestions(
@@ -62,6 +64,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
         effectiveSettings: { useDeterministicBlueprintBuilder: useBlueprint },
         limits: { maxWorkflowPlanChanges: 500, maxInputPorts: 4, maxOutputPorts: 4, maxIteratorBodySteps: 12, maxIteratorBodyEdges: 50 },
         validationContext,
+        availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
         nodeTemplates: [],
         httpClient: { post: jest.fn() },
         flow: {},
@@ -76,6 +79,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const normalizeConstructionSuggestions = jest.fn();
       const service = new PlaybookFlowIntentConstructionService({
         normalizeConstructionSuggestions,
+        buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
       } as any);
 
       const raw = JSON.stringify({

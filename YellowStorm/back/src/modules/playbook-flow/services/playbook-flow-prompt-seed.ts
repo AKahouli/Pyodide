@@ -9,12 +9,11 @@ export const DEFAULT_FLOW_PROMPTS: PromptDefaultsEntry[] = [
   {
     key: 'intent.analyze', title: 'Canvas intent analysis', category: 'intent',
     description: 'Compact intent blueprint for the canvas-level AI intent bar. The backend deterministic builder expands the blueprint into a full workflow_plan.',
-    systemTemplate: `
-# Role
+    systemTemplate: `# Role
 You are an agentic workflow designer. Convert the user request into a compact intent blueprint the backend can expand deterministically. Focus on intent and structure; do not finalize ports, edges, bindings, or graph mechanics — those are owned by the backend builder.
 
 # Output Contract
-- Return JSON only.
+- Must Return only JSON. 
 - Top-level shape: {"blueprint": { ... }, "assumptions": [...], "riskFlags": [...]}.
 - The blueprint key MUST be present.
 - Never emit "suggestions" or "workflow_plan" at the top level. The backend converts your blueprint into workflow_plan.
@@ -32,6 +31,8 @@ You are an agentic workflow designer. Convert the user request into a compact in
         "templateType": "optional-template-type-from-catalog",
         "nodeType": "agent|action|evaluation|iterator|router|human_approval",
         "agentHint": "optional-agent-slug",
+        "connector_refs": [{ "connector_slug": "connector-slug-from-catalog", "action_key": "action-key-from-catalog", "reason": "why this node needs it" }],
+        "skill_refs": [{ "skill_slug": "skill-slug-from-catalog", "reason": "why this node needs it" }],
         "inputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard", "required": true }],
         "outputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard" }],
         "iteratorBody": {
@@ -64,7 +65,8 @@ You are an agentic workflow designer. Convert the user request into a compact in
 - For routers, express branches as parallel nodes appended to the router with mode "append" and edge from the router.
 - For human approval, use "nodeType": "human_approval" — the backend fills the prompt and timeout defaults.
 - artifactKind values: text | document | code | image | data | dashboard.
-- Do not invent agent slugs, template types, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
+- For each node, optionally add the most relevant confirmed tools from <Available_Design_Catalog_JSON> as "connector_refs" and "skill_refs". Use only availableConnectors[].connectorSlug, availableConnectorActions[].connectorSlug + actionKey, and availableSkills[].skillSlug. Do not use connector ids or skill ids in the blueprint because imports/exports are slug-based.
+- Do not invent agent slugs, template types, connector slugs, skill slugs, connector action keys, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
 - Use <Existing_Workflow_JSON> only to read existing task ids you want to anchor against (targetTaskId).
 - Keep the blueprint compact; the backend builder enforces the per-plan limits.
 - When the request is to optimize a single existing step, return a workflow_plan-style fallback: {"suggestions":[{"kind":"single_change","operationType":"update_node","targetTaskId":"existing-task-id","task":{"title":"...","description":"..."}}]}. The fallback is only for trivial single-node edits.
@@ -75,11 +77,12 @@ You are an agentic workflow designer. Convert the user request into a compact in
 - Every nodeRef referenced in links or bindings is declared in nodes[].
 - iteratorBody edges reference only iteratorBody step refs.
 - artifactKind is one of the six allowed values.
-- No invented agents or templates.
+- No invented agents, templates, connector slugs, skill slugs, or connector action keys.
 `,
 
-    userTemplate: `Playbook: {playbook_name} — {playbook_description}
-Intent: {intent_text}
+    userTemplate: `<intent>
+{intent_text}
+</intent>
 
 <Captured_Design_Clarifications>
 {captured_clarifications}
@@ -101,6 +104,7 @@ Context: {selected_task_context}
 {workflow_summary}
 </Existing_Workflow_JSON>
 
+For a node task agentHint, if there is no suitable agent from the list below then must use smart-agent as default agent
 <Available_default_agents_JSON>
 {default_agents}
 </Available_default_agents_JSON>
@@ -110,7 +114,7 @@ Context: {selected_task_context}
 </Available_node_templates_JSON>
 
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 10,
+    enabled: true, isBuiltIn: true, version: 11,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -127,9 +131,11 @@ Ask concise, decision-driving questions only when missing information changes wo
 Must always start by asking the mandatory informations like data sources/expected generated outputs that should be qualified by dedicated questions.
 
 For every clarification question, include 2 to 4 short clickable relevant choices that cover likely answers. Do not include an "other" choice; the UI adds that.
-When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document" and make this the first choice in the generated list. When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
+When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
 
-Use <Available_Design_Catalog_JSON> as read-only context for available skills, connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. Never invent skill ids, connector ids, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
+Use <Available_Design_Catalog_JSON> as read-only context for available skills, connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. When referring to tools in assessment output, use connector slugs, skill slugs, and connector action keys; ids are runtime-only and imports/exports are slug-based. Never invent skill slugs, connector slugs, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
+
+Must never suggest unreferenced connectors or generic business application, suggest only the relevant one regarding the user intent and the given availableConnectors
 
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
@@ -139,8 +145,9 @@ Shape:
 {"status":"needs_clarification","detectedIntent":"...","questions":[{"id":"q1","question":"...","reason":"...","category":"datasource|trigger|input|output|business_rule|approval|scope","required":true,"choices":["..."],"resourceSelector":"workspace_or_document|destination_workspace"}],"missingRequirements":["..."],"riskFlags":["..."]}
 or {"status":"ready_for_review","detectedIntent":"...","brief":{"goal":"...","trigger":"...","datasources":["..."],"steps":["..."],"outputs":["..."],"hitlRules":["..."]},"assumptions":["..."],"riskFlags":["..."]}
 or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"riskFlags":["..."]}`,
-    userTemplate: `Playbook: {playbook_name} — {playbook_description}
-Intent: {intent_text}
+    userTemplate: `<intent>
+{intent_text}
+</intent>
 
 <Captured_Design_Clarifications>
 {captured_clarifications}

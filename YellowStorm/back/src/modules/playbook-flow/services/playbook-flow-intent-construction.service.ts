@@ -156,6 +156,7 @@ export class PlaybookFlowIntentConstructionService {
         context: context.validationContext,
         limits: context.limits,
         templates: context.nodeTemplates,
+        designCatalog: this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog),
         selectedNodeId: context.selectedNodeId,
       });
       if (built.dropped.length) {

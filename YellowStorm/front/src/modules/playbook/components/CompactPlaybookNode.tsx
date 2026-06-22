@@ -1,5 +1,5 @@
 import { Bot } from 'lucide-react';
-import { type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 
 import { Badge } from '@/components/ui/badge';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
@@ -22,6 +22,20 @@ export function CompactPlaybookNode({ data: rawData, selected }: NodeProps) {
         selected ? 'border-[#ffcd03] ring-2 ring-[#ffcd03]/50' : 'border-border',
       )}
     >
+      <Handle
+        id="compact-target"
+        type="target"
+        position={Position.Left}
+        className="!h-2 !w-2 !border-0 !bg-transparent !opacity-0"
+        isConnectable={false}
+      />
+      <Handle
+        id="compact-source"
+        type="source"
+        position={Position.Right}
+        className="!h-2 !w-2 !border-0 !bg-transparent !opacity-0"
+        isConnectable={false}
+      />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold leading-5 text-card-foreground">

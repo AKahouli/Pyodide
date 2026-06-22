@@ -42,7 +42,31 @@ interface BuildOptions {
   context: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
   templates: BuilderNodeTemplate[];
+  designCatalog?: BuilderDesignCatalog;
   selectedNodeId: string | null;
+}
+
+export interface BuilderDesignCatalog {
+  connectors?: BuilderCatalogConnector[];
+  connectorActions?: BuilderCatalogConnectorAction[];
+  skills?: BuilderCatalogSkill[];
+}
+
+export interface BuilderCatalogConnector {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface BuilderCatalogConnectorAction {
+  connectorSlug: string;
+  actionKey: string;
+}
+
+export interface BuilderCatalogSkill {
+  id: string;
+  slug: string;
+  name: string;
 }
 
 interface BuildResult {
@@ -142,6 +166,8 @@ export class PlaybookIntentGraphBuilderService {
       ...(node.templateType || template?.type ? { templateType: node.templateType || template?.type || null } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
+      ...(node.connectorRefs?.length ? { toolBindings: this.buildToolBindings(node, options, dropped) } : {}),
+      ...(node.skillRefs?.length ? { skillBindings: this.buildSkillBindings(node, options, dropped) } : {}),
       ...(descriptor.runtimeKind === 'iterator' && node.iteratorBody ? { iteratorBody: this.buildIteratorBody(node.iteratorBody, options, dropped) } : {}),
     };
 
@@ -157,6 +183,72 @@ export class PlaybookIntentGraphBuilderService {
       },
       task,
     };
+  }
+
+  private buildToolBindings(
+    node: PlaybookIntentBlueprintNode,
+    options: BuildOptions,
+    dropped: Array<{ rule: string; itemId: string }>,
+  ): NonNullable<PlaybookIntentTaskDraft['toolBindings']> {
+    const connectors = new Map((options.designCatalog?.connectors || []).map((connector) => [connector.slug, connector]));
+    const actionKeys = new Set((options.designCatalog?.connectorActions || []).map((action) => `${action.connectorSlug}:${action.actionKey}`));
+    const bindings = [] as NonNullable<PlaybookIntentTaskDraft['toolBindings']>;
+    const bindingsBySlug = new Map<string, NonNullable<PlaybookIntentTaskDraft['toolBindings']>[number]>();
+    for (const ref of node.connectorRefs || []) {
+      const connector = connectors.get(ref.connectorSlug);
+      if (!connector) {
+        this.recordDrop(dropped, 'builder_connector_ref_unknown_slug', `${node.ref}:${ref.connectorSlug}`);
+        continue;
+      }
+      if (!actionKeys.has(`${ref.connectorSlug}:${ref.actionKey}`)) {
+        this.recordDrop(dropped, 'builder_connector_ref_unknown_action', `${node.ref}:${ref.connectorSlug}.${ref.actionKey}`);
+        continue;
+      }
+      const existing = bindingsBySlug.get(ref.connectorSlug);
+      if (existing) {
+        existing.actions.push({ actionKey: ref.actionKey, isEnabled: true });
+        continue;
+      }
+      const binding = {
+        id: this.safeBindingId('tool', node.ref, ref.connectorSlug),
+        connectorId: connector.id,
+        connectorSlug: connector.slug,
+        connectorName: connector.name,
+        actions: [{ actionKey: ref.actionKey, isEnabled: true }],
+        isEnabled: true,
+      };
+      bindingsBySlug.set(ref.connectorSlug, binding);
+      bindings.push(binding);
+    }
+    return bindings;
+  }
+
+  private buildSkillBindings(
+    node: PlaybookIntentBlueprintNode,
+    options: BuildOptions,
+    dropped: Array<{ rule: string; itemId: string }>,
+  ): NonNullable<PlaybookIntentTaskDraft['skillBindings']> {
+    const skills = new Map((options.designCatalog?.skills || []).map((skill) => [skill.slug, skill]));
+    const bindings = [] as NonNullable<PlaybookIntentTaskDraft['skillBindings']>;
+    for (const ref of node.skillRefs || []) {
+      const skill = skills.get(ref.skillSlug);
+      if (!skill) {
+        this.recordDrop(dropped, 'builder_skill_ref_unknown_slug', `${node.ref}:${ref.skillSlug}`);
+        continue;
+      }
+      bindings.push({
+        id: this.safeBindingId('skill', node.ref, ref.skillSlug),
+        skillId: skill.id,
+        skillSlug: skill.slug,
+        skillName: skill.name,
+        isEnabled: true,
+      });
+    }
+    return bindings;
+  }
+
+  private safeBindingId(...parts: string[]): string {
+    return parts.join('-').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'binding';
   }
 
   private buildIteratorBody(
@@ -219,6 +311,11 @@ export class PlaybookIntentGraphBuilderService {
     const kind = (node as PlaybookIntentBlueprintNode).nodeType as PlaybookIntentBlueprintNodeKind | undefined;
     if (!kind) return undefined;
     return candidates.find((template) => template.nodeType === kind);
+  }
+
+  private recordDrop(dropped: Array<{ rule: string; itemId: string }>, rule: string, itemId: string): void {
+    dropped.push({ rule, itemId });
+    this.logger.warn(`playbook_intent_builder_drop rule=${rule} item=${itemId}`);
   }
 
   private resolveAgentSlug(node: PlaybookIntentBlueprintNode, template: BuilderNodeTemplate | undefined): string | null {

@@ -3,15 +3,17 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
-import type { HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution } from '../types';
+import type { DesignMessage, HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse } from '../types';
 
 type StoreSnapshot = {
   currentPlaybook: Playbook | null;
   currentExecution: PlaybookExecution | null;
+  designMessages: DesignMessage[];
   copilotMode: 'design' | 'interrupt';
   designerOpen: boolean;
   resumeExecution: ReturnType<typeof vi.fn>;
   disableHitlBlocker: ReturnType<typeof vi.fn>;
+  fetchDesignMessages: ReturnType<typeof vi.fn>;
   selectStep: ReturnType<typeof vi.fn>;
   setDesignerOpen: ReturnType<typeof vi.fn>;
   setCopilotMode: ReturnType<typeof vi.fn>;
@@ -23,10 +25,12 @@ const updateNodeHitlPolicyMock = vi.fn();
 const storeState: StoreSnapshot = {
   currentPlaybook: null,
   currentExecution: null,
+  designMessages: [],
   copilotMode: 'interrupt',
   designerOpen: true,
   resumeExecution: vi.fn(),
   disableHitlBlocker: vi.fn(),
+  fetchDesignMessages: vi.fn(),
   selectStep: vi.fn(),
   setDesignerOpen: vi.fn(),
   setCopilotMode: vi.fn(),
@@ -80,9 +84,10 @@ vi.mock('@/components/ui/tooltip', () => ({
 }));
 
 vi.mock('../store', () => ({
-  usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-    fetchDesignMessages: vi.fn(),
+    usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+    fetchDesignMessages: storeState.fetchDesignMessages,
     designPlaybook: vi.fn(),
+    clearDesignMessages: vi.fn(),
     revertToSnapshot: vi.fn(),
     resumeExecution: storeState.resumeExecution,
     disableHitlBlocker: storeState.disableHitlBlocker,
@@ -92,7 +97,7 @@ vi.mock('../store', () => ({
     stopExecution: vi.fn(),
     isStopping: false,
   }),
-  useDesignMessages: () => [],
+  useDesignMessages: () => storeState.designMessages,
   useDesignMessagesLoading: () => false,
   useIsDesigning: () => false,
   useDesignerOpen: () => storeState.designerOpen,
@@ -249,10 +254,12 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     vi.clearAllMocks();
     storeState.currentPlaybook = buildPlaybook();
     storeState.currentExecution = null;
+    storeState.designMessages = [];
     storeState.copilotMode = 'interrupt';
     storeState.designerOpen = true;
     storeState.resumeExecution = vi.fn().mockResolvedValue(undefined);
     storeState.disableHitlBlocker = vi.fn().mockResolvedValue(undefined);
+    storeState.fetchDesignMessages = vi.fn().mockResolvedValue(undefined);
     storeState.selectStep = vi.fn();
     storeState.setDesignerOpen = vi.fn();
     storeState.setCopilotMode = vi.fn();
@@ -610,5 +617,151 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     expect(storeState.setCopilotMode).toHaveBeenCalledWith('interrupt');
     expect(storeState.setDesignerOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('submits design-mode sidebar messages through the intent callback', async () => {
+    const user = userEvent.setup();
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add a lead scoring step{Enter}');
+
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith('Add a lead scoring step');
+  });
+
+  it('submits design-mode sidebar messages with timestamped chat history context', async () => {
+    const user = userEvent.setup();
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [
+      {
+        id: 'message-1',
+        playbookId: 'playbook-1',
+        userQuery: 'leadgen\npipeline',
+        aiSummary: 'Which Telegram source\nshould I use?',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:34:05',
+        updatedAt: '2026-06-21T22:34:05',
+      },
+      {
+        id: 'message-reverted',
+        playbookId: 'playbook-1',
+        userQuery: 'unused reverted request',
+        aiSummary: 'unused reverted reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'reverted',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:35:05',
+        updatedAt: '2026-06-21T22:35:05',
+      },
+      {
+        id: 'message-2',
+        playbookId: 'playbook-1',
+        userQuery: 'add exports',
+        aiSummary: 'Export failed.',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'failed',
+        revertedFromMessageId: null,
+        error: 'Missing output schema',
+        createdAt: '2026-06-21T22:36:05',
+        updatedAt: '2026-06-21T22:36:05',
+      },
+    ];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add scoring{Enter}');
+
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Previous Designer Assistant chat history:',
+      '[2026-06-21 22:34:05] User: leadgen pipeline',
+      '[2026-06-21 22:34:05] Assistant: Which Telegram source should I use?',
+      '[2026-06-21 22:36:05] User: add exports',
+      '[2026-06-21 22:36:05] Assistant failed: Missing output schema',
+      '',
+      'Current user request:',
+      'Add scoring',
+    ].join('\n'));
+  });
+
+  it('restores the design-mode draft when intent submission fails', async () => {
+    const user = userEvent.setup();
+    const onSubmitDesignIntent = vi.fn().mockRejectedValue(new Error('submit failed'));
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+    storeState.fetchDesignMessages.mockClear();
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add scoring{Enter}');
+
+    await waitFor(() => expect(screen.getByPlaceholderText('designer.inputPlaceholder')).toHaveValue('Add scoring'));
+    expect(storeState.fetchDesignMessages).not.toHaveBeenCalled();
+  });
+
+  it('renders design message timestamps with date and seconds', () => {
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [{
+      id: 'message-1',
+      playbookId: 'playbook-1',
+      userQuery: 'leadgen pipeline',
+      aiSummary: 'Created a lead workflow.',
+      snapshotBefore: { tasks: [], edges: [] },
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-21T22:34:05',
+      updatedAt: '2026-06-21T22:34:05',
+    }];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    expect(screen.getByText('2026-06-21 22:34:05')).toBeInTheDocument();
+  });
+
+  it('renders design clarification choices inside the assistant pane', async () => {
+    const user = userEvent.setup();
+    const onAnswerDesignIntent = vi.fn().mockResolvedValue(undefined);
+    const intentDesign: PlaybookIntentDesignResponse = {
+      status: 'needs_clarification',
+      detectedIntent: 'Build lead search',
+      missingRequirements: [],
+      riskFlags: [],
+      questions: [{
+        id: 'region',
+        question: 'Which region should I search?',
+        reason: 'The workflow needs a target market.',
+        category: 'scope',
+        required: true,
+        choices: ['France', 'Germany'],
+      }],
+    };
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" intentDesign={intentDesign} onAnswerDesignIntent={onAnswerDesignIntent} />);
+
+    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /France/ }));
+    await user.click(screen.getByRole('button', { name: 'intentBar.design.generate' }));
+
+    expect(onAnswerDesignIntent).toHaveBeenCalledWith('Which region should I search?: France');
+  });
+
+  it('renders a left-edge resize handle', () => {
+    const { container } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    const handle = container.querySelector('.cursor-ew-resize') as HTMLElement;
+    expect(handle).toBeTruthy();
+  });
+
+  it('defaults the sidebar width to 576px (1.5x the previous 384px)', () => {
+    const { container } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    const handle = container.querySelector('.cursor-ew-resize') as HTMLElement;
+    const panel = handle.parentElement as HTMLElement;
+    expect(panel.style.width).toBe('576px');
   });
 });

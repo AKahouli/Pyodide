@@ -34,6 +34,88 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result!.dropped).toEqual([]);
   });
 
+  it('accepts connector and skill refs with slug-based snake_case fields', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Catalog refs',
+        nodes: [{
+          ref: 'search_files',
+          label: 'Search files',
+          purpose: 'Find source documents',
+          connector_refs: [{ connector_slug: 'google-drive', action_key: 'search', reason: 'Find files' }],
+          skill_refs: [{ skill_slug: 'summarize-documents', reason: 'Summarize matches' }],
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].connectorRefs).toEqual([
+      { connectorSlug: 'google-drive', actionKey: 'search', reason: 'Find files' },
+    ]);
+    expect(result.blueprint.nodes[0].skillRefs).toEqual([
+      { skillSlug: 'summarize-documents', reason: 'Summarize matches' },
+    ]);
+    expect(result.dropped).toEqual([]);
+  });
+
+  it('drops malformed connector and skill refs', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Bad refs',
+        nodes: [{
+          ref: 'search_files',
+          label: 'Search files',
+          connector_refs: [{ connector_slug: 'google-drive' }, { action_key: 'search' }],
+          skill_refs: [{}],
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].connectorRefs).toEqual([]);
+    expect(result.blueprint.nodes[0].skillRefs).toEqual([]);
+    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+      'blueprint_connector_ref_missing_fields',
+      'blueprint_skill_ref_missing_fields',
+    ]));
+  });
+
+  it('accepts camelCase refs and drops duplicates per node', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Catalog refs',
+        nodes: [{
+          ref: 'search_files',
+          label: 'Search files',
+          purpose: 'Find source documents',
+          connectorRefs: [
+            { connectorSlug: 'google-drive', actionKey: 'search' },
+            { connectorSlug: 'google-drive', actionKey: 'search' },
+          ],
+          skillRefs: [
+            { skillSlug: 'summarize-documents' },
+            { skillSlug: 'summarize-documents' },
+          ],
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].connectorRefs).toEqual([
+      { connectorSlug: 'google-drive', actionKey: 'search', reason: null },
+    ]);
+    expect(result.blueprint.nodes[0].skillRefs).toEqual([
+      { skillSlug: 'summarize-documents', reason: null },
+    ]);
+    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+      'blueprint_connector_ref_duplicate',
+      'blueprint_skill_ref_duplicate',
+    ]));
+  });
+
   it('returns null for malformed JSON', () => {
     expect(service.parse('not-json')).toBeNull();
   });

@@ -350,6 +350,7 @@ export const API_ENDPOINTS = {
     designOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}`,
     cancelDesignOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}/cancel`,
     designMessages: (id: string) => `/playbooks/${id}/design-messages`,
+    clearDesignMessages: (id: string) => `/playbooks/${id}/design-messages`,
     revertDesign: (id: string, msgId: string) => `/playbooks/${id}/design-messages/${msgId}/revert`,
     cloneShare: (id: string) => `/playbooks/${id}/clone-share`,
     clone: (id: string) => `/playbooks/${id}/clone`,

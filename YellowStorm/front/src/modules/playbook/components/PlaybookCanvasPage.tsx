@@ -71,7 +71,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
-import { CompactPlaybookNode } from './CompactPlaybookNode';
+
 import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
@@ -148,7 +148,7 @@ import {
   hasPendingJudgeEvaluations,
 } from '../utils/playbook-canvas-status';
 import { showError, showWarning } from '@/lib/notifications';
-import { layoutCompactCanvasNodes } from '../utils/compact-canvas-layout';
+
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
@@ -156,6 +156,7 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 type CanvasViewMode = 'expanded' | 'compact';
+type IntentRequestOrigin = 'intent-bar' | 'designer-sidebar';
 
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
@@ -351,10 +352,12 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
+  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('intent-bar');
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
   const constructionAbortRef = useRef<AbortController | null>(null);
+  const designerIntentRef = useRef('');
   const autoIntentRef = useRef<string | null>(null);
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
@@ -660,7 +663,6 @@ function PlaybookCanvasInner() {
     playbookIteratorContainer: PlaybookIteratorContainerNode,
     playbookRouter: RouterNode,
     playbookHumanApproval: HumanApprovalNode,
-    compactPlaybookNode: CompactPlaybookNode,
   }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
@@ -780,13 +782,16 @@ function PlaybookCanvasInner() {
     });
   }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
+  const isCompactCanvas = canvasViewMode === 'compact';
+
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,
     data: {
       ...(node.data as PlaybookNodeData),
       isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
+      isCompact: isCompactCanvas,
     },
-  })), [liveNodes, recentlyChangedNodeIds]);
+  })), [liveNodes, recentlyChangedNodeIds, isCompactCanvas]);
 
   // Style edges based on source node status
   const styledControlEdges = useMemo(() => {
@@ -849,44 +854,13 @@ function PlaybookCanvasInner() {
     return [...styledControlEdges, ...dataLayerEdges];
   }, [dataBindingsVisible, playbook, styledControlEdges]);
 
-  const isCompactCanvas = canvasViewMode === 'compact';
-  const visibleCanvasEdges = useMemo(() => {
-    if (!isCompactCanvas) return liveEdges;
-    return styledControlEdges.map((edge) => ({
-      ...edge,
-      sourceHandle: null,
-      targetHandle: null,
-      selectable: false,
-      data: {
-        ...(edge.data || {}),
-        label: undefined,
-      },
-      style: {
-        ...(edge.style || {}),
-        strokeWidth: 1.5,
-      },
-    }));
-  }, [isCompactCanvas, liveEdges, styledControlEdges]);
-
-  const visibleCanvasNodes = useMemo(() => {
-    if (!isCompactCanvas) return canvasNodes;
-    const compactNodes = canvasNodes
-      .filter((node) => node.id !== TRIGGER_NODE_ID)
-      .map((node) => ({
-        ...node,
-        type: 'compactPlaybookNode',
-        draggable: false,
-      }));
-    return layoutCompactCanvasNodes(compactNodes, visibleCanvasEdges);
-  }, [canvasNodes, isCompactCanvas, visibleCanvasEdges]);
-
   useEffect(() => {
     if (!playbook?.id) return;
     const frame = window.requestAnimationFrame(() => {
       void reactFlow.fitView({ padding: isCompactCanvas ? 0.18 : 0.12, duration: 250 });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [canvasViewMode, isCompactCanvas, playbook?.id, reactFlow]);
+  }, [canvasViewMode, playbook?.id, reactFlow]);
 
   const {
     handleAddStep,
@@ -2462,7 +2436,7 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleForceGenerateIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntent, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
@@ -2493,6 +2467,22 @@ function PlaybookCanvasInner() {
     setConstructionId,
     constructionAbortRef,
   });
+
+  const handleSubmitIntentFromBar = useCallback(async () => {
+    setIntentRequestOrigin('intent-bar');
+    await handleSubmitIntent();
+  }, [handleSubmitIntent]);
+
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string) => {
+    setIntentRequestOrigin('designer-sidebar');
+    designerIntentRef.current = intentText;
+    await handleSubmitIntentText(intentText);
+  }, [handleSubmitIntentText]);
+
+  const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
+    setIntentRequestOrigin('designer-sidebar');
+    await handleForceGenerateIntentText(designerIntentRef.current, answerText);
+  }, [handleForceGenerateIntentText]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -2959,8 +2949,8 @@ function PlaybookCanvasInner() {
               <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
-                  nodes={visibleCanvasNodes}
-                  edges={visibleCanvasEdges}
+                  nodes={canvasNodes}
+                  edges={liveEdges}
                   onNodesChange={onNodesChange}
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
@@ -2987,8 +2977,8 @@ function PlaybookCanvasInner() {
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"
-                  nodesDraggable={!isSaving && !isCompactCanvas}
-                  nodesConnectable={!isSaving && !isCompactCanvas}
+                  nodesDraggable={!isSaving}
+                  nodesConnectable={!isSaving}
                   elementsSelectable={!isSaving}
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
@@ -3028,7 +3018,7 @@ function PlaybookCanvasInner() {
                   loading={intentLoading}
                   value={intentValue}
                   suggestions={intentSuggestions}
-                  design={intentDesign}
+                  design={intentRequestOrigin === 'intent-bar' ? intentDesign : null}
                   error={intentError}
                   history={intentHistory}
                   collapsed={intentBarCollapsed}
@@ -3037,7 +3027,7 @@ function PlaybookCanvasInner() {
                   onPositionChange={handleIntentBarPositionChange}
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
-                  onSubmit={() => void handleSubmitIntent()}
+                  onSubmit={() => void handleSubmitIntentFromBar()}
                   onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
@@ -3098,7 +3088,13 @@ function PlaybookCanvasInner() {
                 subtitle={t('canvas.designingHint')}
               />
             )}
-            <PlaybookDesignerPanel playbookId={id} />
+            <PlaybookDesignerPanel
+              playbookId={id}
+              intentDesign={intentRequestOrigin === 'designer-sidebar' ? intentDesign : null}
+              intentLoading={intentLoading && intentRequestOrigin === 'designer-sidebar'}
+              onSubmitDesignIntent={handleSubmitIntentFromDesigner}
+              onAnswerDesignIntent={handleAnswerIntentFromDesigner}
+            />
           </div>
 
           {isExecutionPanelVisible && (

@@ -18,6 +18,13 @@ const DEFAULT_LIMITS: EffectiveFlowDesignSettings['intentNormalizationLimits'] =
   maxIteratorBodyEdges: 24,
 };
 
+const EMPTY_AVAILABLE_DESIGN_CATALOG = {
+  availableSkills: [],
+  availableConnectors: [],
+  availableConnectorActions: [],
+  availableWorkspaces: [],
+};
+
 function createService(overrides: Partial<{
   flowService: PlaybookFlowService;
   settingsService: PlaybookFlowSettingsService;
@@ -141,6 +148,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
       nodeTemplates: [],
     });
 
@@ -182,6 +190,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
       nodeTemplates: [],
     });
 
@@ -222,6 +231,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
       nodeTemplates: [],
     });
 
@@ -264,13 +274,14 @@ describe('PlaybookFlowIntentService normalization', () => {
       } as unknown as PlaybookFlowNodeTemplateService,
       skillService: {
         findAllActive: jest.fn().mockResolvedValue([
-          { id: 'skill-1', name: 'Summarize', description: 'Summarize documents', categoryName: 'Writing' },
+          { id: 'skill-1', name: 'summarize-documents', description: 'Summarize documents', categoryName: 'Writing' },
         ]),
       },
       connectorService: {
         findAllActive: jest.fn().mockResolvedValue([
           {
             id: 'connector-1',
+            slug: 'google-drive',
             name: 'Google Drive',
             description: 'Drive access',
             categoryName: 'Storage',
@@ -297,10 +308,11 @@ describe('PlaybookFlowIntentService normalization', () => {
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
 
     expect(catalog).toEqual({
-      availableSkills: [{ id: 'skill-1', name: 'Summarize', description: 'Summarize documents', category: 'Writing' }],
-      availableConnectors: [{ id: 'connector-1', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableSkills: [{ id: 'skill-1', skillSlug: 'summarize-documents', name: 'summarize-documents', description: 'Summarize documents', category: 'Writing' }],
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
+        connectorSlug: 'google-drive',
         connectorName: 'Google Drive',
         actionKey: 'search',
         label: 'Search files',
@@ -345,6 +357,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
       nodeTemplates: [],
     });
 
@@ -379,6 +392,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
       nodeTemplates: [],
     });
 
@@ -481,7 +495,7 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(prompt?.systemTemplate).toContain('"blueprint"');
     expect(prompt?.systemTemplate).toContain('sourceKind');
     expect(prompt?.systemTemplate).toContain('"constant"');
-    expect(prompt?.version).toBe(10);
+    expect(prompt?.version).toBe(11);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
@@ -948,6 +962,7 @@ describe('PlaybookFlowIntentService normalization', () => {
           systemPrompt: '',
           userPrompt: '',
           promptVariables: {},
+          availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
           validationContext: makeContext(),
         },
       });
@@ -983,6 +998,7 @@ describe('PlaybookFlowIntentService normalization', () => {
           promptVariables: {},
           validationContext: ctx,
           limits: DEFAULT_LIMITS,
+          availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
           nodeTemplates: [],
         },
       });

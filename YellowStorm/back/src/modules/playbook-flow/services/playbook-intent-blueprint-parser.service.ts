@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   PlaybookIntentBlueprint,
   PlaybookIntentBlueprintBinding,
+  PlaybookIntentBlueprintConnectorRef,
   PlaybookIntentBlueprintIteratorBody,
   PlaybookIntentBlueprintIteratorStep,
   PlaybookIntentBlueprintLink,
@@ -9,6 +10,7 @@ import {
   PlaybookIntentBlueprintNodeKind,
   PlaybookIntentBlueprintParseResult,
   PlaybookIntentBlueprintPort,
+  PlaybookIntentBlueprintSkillRef,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
 
 const SUPPORTED_NODE_KINDS: PlaybookIntentBlueprintNodeKind[] = [
@@ -138,12 +140,74 @@ export class PlaybookIntentBlueprintParserService {
         agentHint: this.asString(raw.agentHint) || null,
         inputPorts,
         outputPorts,
+        connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, dropped, ref),
+        skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, dropped, ref),
         anchor,
         ...(nodeType === 'iterator' ? { iteratorBody: this.parseIteratorBody(raw.iteratorBody, dropped, ref) } : {}),
       });
       seenRefs.add(ref);
     }
 
+    return accepted;
+  }
+
+  private parseConnectorRefs(
+    value: unknown,
+    dropped: Array<{ rule: string; itemId: string }>,
+    ownerRef: string,
+  ): PlaybookIntentBlueprintConnectorRef[] {
+    if (!Array.isArray(value)) return [];
+    const accepted: PlaybookIntentBlueprintConnectorRef[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+      if (!item || typeof item !== 'object') {
+        this.recordDrop(dropped, 'blueprint_connector_ref_invalid', ownerRef);
+        continue;
+      }
+      const raw = item as Record<string, unknown>;
+      const connectorSlug = this.asString(raw.connector_slug ?? raw.connectorSlug);
+      const actionKey = this.asString(raw.action_key ?? raw.actionKey);
+      if (!connectorSlug || !actionKey) {
+        this.recordDrop(dropped, 'blueprint_connector_ref_missing_fields', `${ownerRef}:${connectorSlug || '?'}.${actionKey || '?'}`);
+        continue;
+      }
+      const key = `${connectorSlug}:${actionKey}`;
+      if (seen.has(key)) {
+        this.recordDrop(dropped, 'blueprint_connector_ref_duplicate', `${ownerRef}:${key}`);
+        continue;
+      }
+      seen.add(key);
+      accepted.push({ connectorSlug, actionKey, reason: this.asString(raw.reason) || null });
+    }
+    return accepted;
+  }
+
+  private parseSkillRefs(
+    value: unknown,
+    dropped: Array<{ rule: string; itemId: string }>,
+    ownerRef: string,
+  ): PlaybookIntentBlueprintSkillRef[] {
+    if (!Array.isArray(value)) return [];
+    const accepted: PlaybookIntentBlueprintSkillRef[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+      if (!item || typeof item !== 'object') {
+        this.recordDrop(dropped, 'blueprint_skill_ref_invalid', ownerRef);
+        continue;
+      }
+      const raw = item as Record<string, unknown>;
+      const skillSlug = this.asString(raw.skill_slug ?? raw.skillSlug);
+      if (!skillSlug) {
+        this.recordDrop(dropped, 'blueprint_skill_ref_missing_fields', `${ownerRef}:?`);
+        continue;
+      }
+      if (seen.has(skillSlug)) {
+        this.recordDrop(dropped, 'blueprint_skill_ref_duplicate', `${ownerRef}:${skillSlug}`);
+        continue;
+      }
+      seen.add(skillSlug);
+      accepted.push({ skillSlug, reason: this.asString(raw.reason) || null });
+    }
     return accepted;
   }
 

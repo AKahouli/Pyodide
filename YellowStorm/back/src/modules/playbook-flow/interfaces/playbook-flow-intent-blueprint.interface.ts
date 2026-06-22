@@ -42,12 +42,25 @@ export interface PlaybookIntentBlueprintNode {
   agentHint?: string | null;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
+  connectorRefs?: PlaybookIntentBlueprintConnectorRef[];
+  skillRefs?: PlaybookIntentBlueprintSkillRef[];
   iteratorBody?: PlaybookIntentBlueprintIteratorBody;
   anchor?: {
     mode?: 'append' | 'before' | 'after' | 'as_input';
     targetTaskId?: string | null;
     targetRef?: string | null;
   };
+}
+
+export interface PlaybookIntentBlueprintConnectorRef {
+  connectorSlug: string;
+  actionKey: string;
+  reason?: string | null;
+}
+
+export interface PlaybookIntentBlueprintSkillRef {
+  skillSlug: string;
+  reason?: string | null;
 }
 
 export interface PlaybookIntentBlueprintLink {

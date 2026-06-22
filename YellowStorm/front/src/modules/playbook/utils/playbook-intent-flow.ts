@@ -51,7 +51,9 @@ interface PlaybookIntentFlowDeps {
 
 interface PlaybookIntentFlowApi {
   handleSubmitIntent: () => Promise<void>;
+  handleSubmitIntentText: (intentText: string) => Promise<void>;
   handleForceGenerateIntent: (answerText?: string) => Promise<void>;
+  handleForceGenerateIntentText: (intentText: string, answerText?: string) => Promise<void>;
   handleApplyAdvisorIntent: ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => Promise<void>;
 }
 
@@ -97,11 +99,11 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     return resolvedSelectedTaskId;
   }, [playbook?.tasks, selectStep, selectedStepId]);
 
-  const buildIntentWithDesignAnswer = useCallback((answerText: string) => {
+  const buildIntentWithDesignAnswer = useCallback((intentText: string, answerText: string) => {
     const normalizedAnswer = answerText.trim();
-    if (!normalizedAnswer) return intentValue.trim();
-    return `${intentValue.trim()}\n\nClarifications:\n${normalizedAnswer}`;
-  }, [intentValue]);
+    if (!normalizedAnswer) return intentText.trim();
+    return `${intentText.trim()}\n\nClarifications:\n${normalizedAnswer}`;
+  }, []);
 
   const runIntentAnalysis = useCallback(async (
     intent: string,
@@ -238,8 +240,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     }
   }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, playbook?.name, runIntentAnalysis, setIntentSuggestions, setLastIntentSuggestions]);
 
-  const handleForceGenerateIntent = useCallback(async (answerText?: string) => {
-    const normalizedIntent = buildIntentWithDesignAnswer(answerText || '');
+  const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string) => {
+    const normalizedIntent = buildIntentWithDesignAnswer(intentText, answerText || '');
     if (!id || !playbook || normalizedIntent.length < 3) {
       return;
     }
@@ -274,8 +276,12 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     }
   }, [buildIntentWithDesignAnswer, constructionAbortRef, generateIntentSuggestions, id, playbook, resolveSelectedTaskId, runRealtimeConstruction, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
 
-  const handleSubmitIntent = useCallback(async () => {
-    const normalizedIntent = intentValue.trim();
+  const handleForceGenerateIntent = useCallback(async (answerText?: string) => {
+    await handleForceGenerateIntentText(intentValue, answerText);
+  }, [handleForceGenerateIntentText, intentValue]);
+
+  const handleSubmitIntentText = useCallback(async (intentText: string) => {
+    const normalizedIntent = intentText.trim();
     if (!id || !playbook || normalizedIntent.length < 3) {
       return;
     }
@@ -322,7 +328,11 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     } finally {
       setIntentLoading(false);
     }
-  }, [assessPlaybookIntentDesign, constructionAbortRef, generateIntentSuggestions, id, intentAutoApply, intentValue, isDirty, playbook, resolveSelectedTaskId, runRealtimeConstruction, saveNow, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
+  }, [assessPlaybookIntentDesign, constructionAbortRef, generateIntentSuggestions, id, intentAutoApply, isDirty, playbook, resolveSelectedTaskId, runRealtimeConstruction, saveNow, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
+
+  const handleSubmitIntent = useCallback(async () => {
+    await handleSubmitIntentText(intentValue);
+  }, [handleSubmitIntentText, intentValue]);
 
   const handleApplyAdvisorIntent = useCallback(async ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => {
     if (!id || !playbook) return;
@@ -370,7 +380,9 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
 
   return {
     handleSubmitIntent,
+    handleSubmitIntentText,
     handleForceGenerateIntent,
+    handleForceGenerateIntentText,
     handleApplyAdvisorIntent,
   };
 }

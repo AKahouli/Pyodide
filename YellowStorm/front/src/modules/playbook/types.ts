@@ -721,6 +721,7 @@ export interface ToolBindingAction {
 export interface ToolBinding {
   id: string;
   connectorId: string;
+  connectorSlug?: string;
   connectorName?: string;
   actions: ToolBindingAction[];
   credentialId?: string | null;
@@ -732,6 +733,7 @@ export interface ToolBinding {
 export interface TaskSkillBinding {
   id: string;
   skillId: string;
+  skillSlug?: string;
   skillName?: string;
   isEnabled?: boolean;
 }
@@ -2017,6 +2019,10 @@ export interface DesignPlaybookData {
   query: string;
 }
 
+export interface ClearDesignMessagesResult {
+  deletedCount: number;
+}
+
 export type DesignOperationStatus = 'queued' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
 
 export interface DesignOperation {
@@ -2478,6 +2484,7 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  clearDesignMessages: (playbookId: string) => Promise<void>;
   assessPlaybookIntentDesign: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentDesignResponse>;
   requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;

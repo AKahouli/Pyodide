@@ -16,6 +16,7 @@ import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.s
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
 import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
@@ -41,21 +42,24 @@ interface ResolvedDesignResourceBindingValue extends ResolvedDesignResource {
   documentId?: string;
 }
 
-interface AvailableDesignCatalog {
+export interface AvailableDesignCatalog {
   availableSkills: Array<{
     id: string;
+    skillSlug: string;
     name: string;
     description: string;
     category?: string | null;
   }>;
   availableConnectors: Array<{
     id: string;
+    connectorSlug: string;
     name: string;
     description: string;
     category?: string | null;
   }>;
   availableConnectorActions: Array<{
     connectorId: string;
+    connectorSlug: string;
     connectorName: string;
     actionKey: string;
     label: string;
@@ -109,6 +113,21 @@ export interface PlaybookIntentTaskDraft {
     id: string;
     name?: string | null;
     artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+  }>;
+  toolBindings?: Array<{
+    id: string;
+    connectorId: string;
+    connectorSlug?: string;
+    connectorName?: string;
+    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    isEnabled?: boolean;
+  }>;
+  skillBindings?: Array<{
+    id: string;
+    skillId: string;
+    skillSlug?: string;
+    skillName?: string;
+    isEnabled?: boolean;
   }>;
   iteratorBody?: {
     steps: Array<{
@@ -248,6 +267,7 @@ export interface PlaybookIntentAnalysisContext {
   promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
+  availableDesignCatalog: AvailableDesignCatalog;
   nodeTemplates: Array<{ id: string; type: string; key: string; nodeType: string; title: string; description?: string; category: string;
     inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
     outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
@@ -415,6 +435,7 @@ export class PlaybookFlowIntentService {
       promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
+      availableDesignCatalog,
       nodeTemplates: nodeTemplates.items.map((template) => ({
         id: template.id,
         type: template.type,
@@ -442,6 +463,25 @@ export class PlaybookFlowIntentService {
     };
   }
 
+  buildGraphBuilderDesignCatalog(catalog: AvailableDesignCatalog): BuilderDesignCatalog {
+    return {
+      connectors: catalog.availableConnectors.map((connector) => ({
+        id: connector.id,
+        slug: connector.connectorSlug,
+        name: connector.name,
+      })),
+      connectorActions: catalog.availableConnectorActions.map((action) => ({
+        connectorSlug: action.connectorSlug,
+        actionKey: action.actionKey,
+      })),
+      skills: catalog.availableSkills.map((skill) => ({
+        id: skill.id,
+        slug: skill.skillSlug,
+        name: skill.name,
+      })),
+    };
+  }
+
   private async buildAvailableDesignCatalog(ownerId: string): Promise<AvailableDesignCatalog> {
     const [skills, connectors, workspaces] = await Promise.all([
       this.skillService?.findAllActive() ?? Promise.resolve([]),
@@ -455,12 +495,14 @@ export class PlaybookFlowIntentService {
     return {
       availableSkills: skills.map((skill) => ({
         id: skill.id,
+        skillSlug: skill.name,
         name: skill.name,
         description: skill.description || '',
         category: skill.categoryName ?? null,
       })),
       availableConnectors: connectors.map((connector) => ({
         id: connector.id,
+        connectorSlug: connector.slug,
         name: connector.name,
         description: connector.description || '',
         category: connector.categoryName ?? null,
@@ -470,6 +512,7 @@ export class PlaybookFlowIntentService {
           .filter((action) => action.isEnabled !== false)
           .map((action) => ({
             connectorId: connector.id,
+            connectorSlug: connector.slug,
             connectorName: connector.name,
             actionKey: action.key,
             label: action.label || action.key,
@@ -637,6 +680,7 @@ export class PlaybookFlowIntentService {
             context: args.context.validationContext,
             limits: args.context.limits,
             templates: args.context.nodeTemplates,
+            designCatalog: this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog),
             selectedNodeId: args.context.selectedNodeId,
           });
           if (buildResult.dropped.length) {

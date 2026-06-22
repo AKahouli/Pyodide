@@ -411,13 +411,17 @@ function fetchPlaybookDetail(id: string, view: 'base' | 'enriched') {
 
 function fetchDesignMessageList(playbookId: string) {
   if (!playbookFeatures.queryEnabled) {
-    return api.getDesignMessages(playbookId);
+    return api.getDesignMessages(playbookId).then(sortDesignMessagesChronologically);
   }
 
   return playbookQueryClient.fetchQuery({
     queryKey: playbookKeys.designMessages(playbookId),
-    queryFn: () => api.getDesignMessages(playbookId),
+    queryFn: () => api.getDesignMessages(playbookId).then(sortDesignMessagesChronologically),
   });
+}
+
+function sortDesignMessagesChronologically(messages: DesignMessage[]) {
+  return [...messages].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
 }
 
 function fetchPlaybookExecutionHistory(playbookId: string) {
@@ -4454,6 +4458,18 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           }
         } catch (err) {
           set({ isDesigning: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearDesignMessages: async (playbookId) => {
+        try {
+          await api.clearDesignMessages(playbookId);
+          playbookQueryClient.setQueryData(playbookKeys.designMessages(playbookId), []);
+          set({ designMessages: [] });
+          toast.success(tPlaybook('store.toasts.designMemoryCleared', 'Assistant memory cleared'));
+        } catch (err) {
           handleApiError(err);
           throw err;
         }

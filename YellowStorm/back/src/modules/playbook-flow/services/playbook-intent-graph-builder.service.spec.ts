@@ -134,6 +134,137 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(suggestion.impact.edgesToCreate).toBe(1);
   });
 
+  it('resolves connector and skill refs into drag-drop equivalent bindings', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Use catalog',
+      summary: '',
+      nodes: [{
+        ref: 'search_files',
+        label: 'Search files',
+        purpose: 'Find documents',
+        connectorRefs: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
+        skillRefs: [{ skillSlug: 'summarize-documents' }],
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [],
+      designCatalog: {
+        connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
+        connectorActions: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
+        skills: [{ id: 'skill-1', slug: 'summarize-documents', name: 'Summarize Documents' }],
+      },
+      selectedNodeId: null,
+    });
+
+    const createChange = result.suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(createChange?.task.toolBindings).toEqual([{
+      id: 'tool-search-files-google-drive',
+      connectorId: 'connector-1',
+      connectorSlug: 'google-drive',
+      connectorName: 'Google Drive',
+      actions: [{ actionKey: 'search', isEnabled: true }],
+      isEnabled: true,
+    }]);
+    expect(createChange?.task.skillBindings).toEqual([{
+      id: 'skill-search-files-summarize-documents',
+      skillId: 'skill-1',
+      skillSlug: 'summarize-documents',
+      skillName: 'Summarize Documents',
+      isEnabled: true,
+    }]);
+  });
+
+  it('groups multiple connector actions into one drag-drop equivalent binding per connector', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Use catalog',
+      summary: '',
+      nodes: [{
+        ref: 'search_files',
+        label: 'Search files',
+        purpose: 'Find documents',
+        connectorRefs: [
+          { connectorSlug: 'google-drive', actionKey: 'search' },
+          { connectorSlug: 'google-drive', actionKey: 'read' },
+        ],
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [],
+      designCatalog: {
+        connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
+        connectorActions: [
+          { connectorSlug: 'google-drive', actionKey: 'search' },
+          { connectorSlug: 'google-drive', actionKey: 'read' },
+        ],
+        skills: [],
+      },
+      selectedNodeId: null,
+    });
+
+    const createChange = result.suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(createChange?.task.toolBindings).toEqual([expect.objectContaining({
+      connectorId: 'connector-1',
+      connectorSlug: 'google-drive',
+      actions: [
+        { actionKey: 'search', isEnabled: true },
+        { actionKey: 'read', isEnabled: true },
+      ],
+    })]);
+  });
+
+  it('drops connector and skill refs that are not in the design catalog', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Use catalog',
+      summary: '',
+      nodes: [{
+        ref: 'search_files',
+        label: 'Search files',
+        purpose: 'Find documents',
+        connectorRefs: [
+          { connectorSlug: 'missing-connector', actionKey: 'search' },
+          { connectorSlug: 'google-drive', actionKey: 'missing' },
+        ],
+        skillRefs: [{ skillSlug: 'missing-skill' }],
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [],
+      designCatalog: {
+        connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
+        connectorActions: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
+        skills: [],
+      },
+      selectedNodeId: null,
+    });
+
+    const createChange = result.suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(createChange?.task.toolBindings).toEqual([]);
+    expect(createChange?.task.skillBindings).toEqual([]);
+    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+      'builder_connector_ref_unknown_slug',
+      'builder_connector_ref_unknown_action',
+      'builder_skill_ref_unknown_slug',
+    ]));
+  });
+
   it('does not inherit required flags from template input ports', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Template node',

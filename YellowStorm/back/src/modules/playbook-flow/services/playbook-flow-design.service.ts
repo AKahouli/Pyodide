@@ -186,10 +186,23 @@ export class PlaybookFlowDesignService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN);
     }
     const messages = await this.designMessageModel
-      .find({ flowId: new Types.ObjectId(flowId) })
+      .find({ flowId: new Types.ObjectId(flowId), createdBy: new Types.ObjectId(userId) })
       .sort({ createdAt: -1 })
       .lean();
     return messages.map((m) => this.mapMessageToResponse(m));
+  }
+
+  async clearDesignMessages(flowId: string, userId: string): Promise<{ deletedCount: number }> {
+    const flow = await this.playbookFlowService.findById(flowId);
+    if (String(flow.ownerId) !== String(userId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN);
+    }
+
+    const result = await this.designMessageModel.deleteMany({
+      flowId: new Types.ObjectId(flowId),
+      createdBy: new Types.ObjectId(userId),
+    });
+    return { deletedCount: result.deletedCount ?? 0 };
   }
 
   async revertToSnapshot(flowId: string, msgId: string, userId: string) {
@@ -202,8 +215,12 @@ export class PlaybookFlowDesignService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid message ID');
     }
 
-    const message = await this.designMessageModel.findById(msgId);
-    if (!message || String(message.flowId) !== String(flowId)) {
+    const message = await this.designMessageModel.findOne({
+      _id: new Types.ObjectId(msgId),
+      flowId: new Types.ObjectId(flowId),
+      createdBy: new Types.ObjectId(userId),
+    });
+    if (!message) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Design message not found');
     }
 
