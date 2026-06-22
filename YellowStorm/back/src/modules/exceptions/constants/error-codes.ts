@@ -61,6 +61,7 @@ export enum ErrorCode {
   CHAT_GRPC_UNAVAILABLE = 'ERR_1417',
   CHAT_WORKSPACE_FAILED = 'ERR_1418',
   CHAT_SHARE_REVOKED = 'ERR_1419',
+  CHAT_GRPC_UNAUTHENTICATED = 'ERR_1420',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -411,6 +412,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
   [ErrorCode.CHAT_WORKSPACE_FAILED]: 'Failed to create conversation workspace.',
   [ErrorCode.CHAT_SHARE_REVOKED]: 'This shared conversation has been revoked.',
+  [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
+    'AI service rejected the request (authentication failed).',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',

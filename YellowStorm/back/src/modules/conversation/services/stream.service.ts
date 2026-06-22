@@ -34,6 +34,10 @@ import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
+import {
+  buildGrpcChannelCredentials,
+  createGrpcMetadata,
+} from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
 
 interface StreamRequest {
@@ -140,10 +144,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
 
-      this.chatbotClient = new chatbotPackage.ChatbotService(
-        grpcUrl,
-        grpc.credentials.createInsecure(),
+      const { credentials, options } = buildGrpcChannelCredentials(
+        this.configService,
+        (msg) => this.logger.warn(msg),
       );
+
+      this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, credentials, options);
 
       // Test connection
       const deadline = new Date(Date.now() + 5000);
@@ -853,17 +859,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         logOpts,
       );
 
-      // Create metadata with user header for LiteLLM logging
-      const metadata = new grpc.Metadata();
+      // Create metadata with user header for LiteLLM logging + shared API key
+      const metadata = createGrpcMetadata(this.configService);
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
       // No absolute deadline - we use idle timeout instead.
-      // RunSingleAgent for the mono-agent / single-tagged-agent case,
-      // RunAgentTeam when multiple agents were tagged.
-      const call = useSingleAgent
-        ? this.chatbotClient.RunSingleAgent(grpcRequest, { metadata })
-        : this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
+      // Pass metadata as the positional metadata arg — wrapping it as
+      // `{ metadata }` makes grpc-js treat it as call options and silently
+      // drop the headers (x-api-key + user).
+      const call = this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -1175,12 +1180,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           logOpts,
         );
 
+        // UNAUTHENTICATED (16) means a wrong/missing/rotated API key, not a
+        // transient outage. Surface it distinctly instead of the generic
+        // stream-failed so it doesn't get mistaken for "AI service down".
+        const errorCode =
+          error?.code === grpc.status.UNAUTHENTICATED
+            ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED
+            : ErrorCode.CHAT_STREAM_FAILED;
+
         this.handleStreamError(
           userId,
           conversationId,
           messageId,
           streamKey,
-          ErrorCode.CHAT_STREAM_FAILED,
+          errorCode,
           requestId,
         );
         reject(error);
@@ -1423,6 +1436,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private getErrorMessage(code: ErrorCode): string {
     const messages: Record<string, string> = {
       [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
+      [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
+        'AI service rejected the request (authentication failed).',
       [ErrorCode.CHAT_STREAM_LIMIT]: 'Maximum concurrent streams reached.',
       [ErrorCode.CHAT_STREAM_FAILED]: 'AI stream failed unexpectedly.',
       [ErrorCode.CHAT_STREAM_TIMEOUT]: 'AI stream timed out.',
@@ -1566,15 +1581,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Create metadata with user header for LiteLLM logging
-      const metadata = new grpc.Metadata();
+      // Create metadata with user header for LiteLLM logging + shared API key
+      const metadata = createGrpcMetadata(this.configService);
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
       const deadline = new Date(Date.now() + 60000); // 60s timeout
       this.chatbotClient.GenerateConversationName(
         { query, model: modelId || '' },
-        { deadline, metadata },
+        metadata,
+        { deadline },
         (err: Error | null, response: { conversation_name: string }) => {
           if (err) reject(err);
           else resolve(response);

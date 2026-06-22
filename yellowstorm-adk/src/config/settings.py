@@ -158,6 +158,12 @@ class Settings(BaseSettings):
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
 
+
+    GRPC_API_KEY: Optional[str] = None
+    GRPC_TLS_CERT_PATH: Optional[str] = None
+    GRPC_TLS_KEY_PATH: Optional[str] = None
+    GRPC_ALLOW_INSECURE: bool = False
+
     # A2A gateway (publish agents over the A2A protocol for Copilot Studio)
     A2A_DATABASE_URL: Optional[str] = None          # defaults to DATABASE_URL
     A2A_GRPC_TARGET: Optional[str] = None           # defaults to 127.0.0.1:GRPC_PORT
