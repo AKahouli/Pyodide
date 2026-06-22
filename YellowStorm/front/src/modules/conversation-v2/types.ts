@@ -28,6 +28,7 @@ export type ToolContent =
   | { kind: 'file'; path: string; content: string; language?: string; operation?: 'read' | 'write' | 'edit' | string }
   | { kind: 'search'; query: string; results: Array<{ title: string; url: string; snippet: string }> }
   | { kind: 'mcp'; server: string; tool: string; result: unknown }
+  | { kind: 'webpage'; url: string; title?: string }
   | { kind: 'generic'; data: unknown };
 
 export interface FileInfo {

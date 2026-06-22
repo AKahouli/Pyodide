@@ -84,6 +84,16 @@
       "more": "Autres actions"
     }
   },
+  "deploy": {
+    "publish": "Publier",
+    "publishing": "Publication…",
+    "update": "Mettre à jour",
+    "liveUrl": "URL en ligne",
+    "copy": "Copier le lien",
+    "open": "Ouvrir",
+    "viewUrl": "Voir l'URL déployée",
+    "menu": "Options de déploiement"
+  },
   "dialogs": {
     "rename": {
       "title": "Renommer la conversation",
@@ -130,6 +140,12 @@
     "workspaces": {
       "loadListError": "Impossible de charger les workspaces",
       "loadDocumentsError": "Impossible de charger les documents"
+    },
+    "deploy": {
+      "success": "Application déployée",
+      "error": "Échec du déploiement",
+      "copied": "Lien copié",
+      "copyError": "Impossible de copier le lien"
     }
   }
 }

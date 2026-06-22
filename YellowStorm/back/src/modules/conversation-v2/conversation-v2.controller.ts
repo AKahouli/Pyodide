@@ -144,6 +144,9 @@ export class ConversationV2Controller {
     lastEventAt: Date;
     eventCount: number;
     systemWorkspaceId: string | null;
+    deployStatus: string;
+    deployedUrl: string | null;
+    lastDeployedAt: string | null;
   }> {
     const pointer = await this.sessions.getOne(user.id, id);
     if (!pointer) throw new NotFoundException('Session not found');
@@ -158,6 +161,11 @@ export class ConversationV2Controller {
       systemWorkspaceId:
         (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
           .systemWorkspaceId?.toString() ?? null,
+      deployStatus: pointer.deployStatus ?? 'idle',
+      deployedUrl: pointer.deployedUrl ?? null,
+      lastDeployedAt: pointer.lastDeployedAt
+        ? new Date(pointer.lastDeployedAt).toISOString()
+        : null,
     };
   }
 
@@ -313,6 +321,54 @@ export class ConversationV2Controller {
       await this.grpcClient.resumeSession(user.id, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
+      this.translateGrpcError(err);
+    }
+  }
+
+  @Post('sessions/:id/deploy')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2OwnerGuard)
+  async deploySession(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<{
+    deployStatus: string;
+    deployedUrl: string | null;
+    lastDeployedAt: string | null;
+  }> {
+    const pointer = await this.sessions.getOne(user.id, id);
+    if (!pointer || !pointer.aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
+    // Mark in-flight first so a reload mid-deploy resumes the loader state.
+    await this.sessions.setDeployState(user.id, id, { deployStatus: 'deploying' });
+    try {
+      let result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
+      // TEMP terrain stub: Manus doesn't implement Deploy yet, so the gRPC call
+      // returns null (UNIMPLEMENTED). Synthesize a placeholder URL so the full
+      // Publish → deployed UI flow is demoable now. REMOVE this fallback once
+      // Manus ships the Deploy RPC — the real URL will then flow through.
+      if (!result) {
+        result = {
+          url: `https://${id}.preview.yellowstorm.app`,
+          deployedAt: Math.floor(Date.now() / 1000),
+        };
+      }
+      const lastDeployedAt = new Date(result.deployedAt * 1000);
+      await this.sessions.setDeployState(user.id, id, {
+        deployStatus: 'deployed',
+        deployedUrl: result.url,
+        lastDeployedAt,
+      });
+      return {
+        deployStatus: 'deployed',
+        deployedUrl: result.url,
+        lastDeployedAt: lastDeployedAt.toISOString(),
+      };
+    } catch (err) {
+      await this.sessions
+        .setDeployState(user.id, id, { deployStatus: 'error' })
+        .catch(() => undefined);
       this.translateGrpcError(err);
     }
   }

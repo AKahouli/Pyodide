@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { AgentEvent, ConversationV2PointerSummary } from './types';
 import { conversationV2Api } from './api';
+import type { DeployStatus } from './api';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
@@ -20,6 +21,11 @@ interface State {
   systemWorkspaceId: string | null;
   /** workspaceIds attached to this session (read-only here; set on session load). */
   workspaceIds: string[];
+  /** App-deployment ("Publish") state for the current session. Hydrated from
+   *  getSession on load; `deploying` is set locally while the deploy POST is
+   *  in flight (drives the header button's loader). */
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -113,6 +119,11 @@ interface Actions {
    */
   hydrateSelectedModelForSession: (sessionId: string) => void;
   setWorkspaceIds: (ids: string[]) => void;
+  /** Apply deploy state hydrated from getSession (on session load/switch). */
+  setDeployState: (state: { deployStatus: DeployStatus; deployedUrl: string | null }) => void;
+  /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
+   *  then 'deployed' (+ url) or 'error' once the backend responds. */
+  deploy: () => Promise<void>;
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
@@ -137,6 +148,8 @@ const initial: State = {
   lastSequence: 0,
   systemWorkspaceId: null,
   workspaceIds: [],
+  deployStatus: 'idle',
+  deployedUrl: null,
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -271,6 +284,8 @@ function freshViewState(): Partial<State> {
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
+    deployStatus: 'idle',
+    deployedUrl: null,
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -443,6 +458,37 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
+      setDeployState: ({ deployStatus, deployedUrl }) =>
+        set({ deployStatus, deployedUrl }, false, 'setDeployState'),
+      deploy: async () => {
+        const id = get().sessionId;
+        if (!id) return;
+        set({ deployStatus: 'deploying' }, false, 'deploy/start');
+        // TEMP static demo: fake the deployment (loader → success) entirely on
+        // the front, no backend/Manus needed. Set FAKE_DEPLOY = false to use the
+        // real `POST /sessions/:id/deploy` path.
+        const FAKE_DEPLOY: boolean = true;
+        try {
+          if (FAKE_DEPLOY) {
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+            set(
+              { deployStatus: 'deployed', deployedUrl: 'https://example.com' },
+              false,
+              'deploy/done(fake)',
+            );
+            return;
+          }
+          const r = await conversationV2Api.deploySession(id);
+          set(
+            { deployStatus: r.deployStatus, deployedUrl: r.deployedUrl },
+            false,
+            'deploy/done',
+          );
+        } catch (err) {
+          set({ deployStatus: 'error' }, false, 'deploy/error');
+          throw err;
+        }
+      },
       clearTypewriter: () =>
         set(
           { typewriterSessionId: null, typewriterName: null },

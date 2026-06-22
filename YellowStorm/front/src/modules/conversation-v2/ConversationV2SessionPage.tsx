@@ -34,6 +34,7 @@ export default function ConversationV2SessionPage() {
     switchToSession,
     setSystemWorkspaceId,
     setWorkspaceIds,
+    setDeployState,
     replayEvents,
     setStreaming,
     streamError,
@@ -45,6 +46,7 @@ export default function ConversationV2SessionPage() {
       switchToSession: s.switchToSession,
       setSystemWorkspaceId: s.setSystemWorkspaceId,
       setWorkspaceIds: s.setWorkspaceIds,
+      setDeployState: s.setDeployState,
       replayEvents: s.replayEvents,
       setStreaming: s.setStreaming,
       streamError: s.streamError,
@@ -94,6 +96,10 @@ export default function ConversationV2SessionPage() {
           if (cancelled) return;
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
+          setDeployState({
+            deployStatus: pointer.deployStatus ?? 'idle',
+            deployedUrl: pointer.deployedUrl ?? null,
+          });
         } catch {
           /* keep the cached view */
         }
@@ -111,6 +117,10 @@ export default function ConversationV2SessionPage() {
 
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
+        setDeployState({
+          deployStatus: pointer.deployStatus ?? 'idle',
+          deployedUrl: pointer.deployedUrl ?? null,
+        });
 
         const collected: AgentEvent[] = [];
         let since = 0;
@@ -141,7 +151,28 @@ export default function ConversationV2SessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+
+  // TEMP dev preview: once the session is loaded, inject a fake `webpage` tool
+  // event and open the right panel so a refresh shows the WebPageToolView with
+  // example.com. Client-side only (not persisted). Remove when done previewing.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (loading || notFound || !sessionId) return;
+    const id = 'preview-webpage';
+    useConversationV2Store.getState().handleEvent({
+      type: 'tool',
+      event_id: id,
+      timestamp: Math.floor(Date.now() / 1000),
+      tool_call_id: id,
+      name: 'webpage',
+      status: 'completed',
+      function: 'webpage_show',
+      args: { url: 'https://example.com' },
+      content: { kind: 'webpage', url: 'https://example.com', title: 'Example' },
+    } as AgentEvent);
+    useConversationV2Store.getState().openToolPanel(id);
+  }, [loading, notFound, sessionId]);
 
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send

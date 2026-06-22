@@ -8,6 +8,7 @@ import { ShellToolView } from './ShellToolView';
 import { FileToolView } from './FileToolView';
 import { SearchToolView } from './SearchToolView';
 import { McpToolView } from './McpToolView';
+import { WebPageToolView } from './WebPageToolView';
 import { GenericToolView } from './GenericToolView';
 
 type ToolEvent = Extract<AgentEvent, { type: 'tool' }>;
@@ -81,6 +82,8 @@ function ToolBody({ event, isLive }: { event: ToolEvent; isLive: boolean }) {
       return <SearchToolView content={content} />;
     case 'mcp':
       return <McpToolView content={content} />;
+    case 'webpage':
+      return <WebPageToolView content={content} />;
     case 'generic':
       return <GenericToolView content={content} />;
     default:

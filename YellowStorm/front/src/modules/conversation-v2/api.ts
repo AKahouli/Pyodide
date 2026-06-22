@@ -3,6 +3,14 @@ import type { AgentEvent, ListSessionsResponse } from './types';
 
 export interface ListSessionsParams { limit?: number; cursor?: string | null; q?: string }
 
+export type DeployStatus = 'idle' | 'deploying' | 'deployed' | 'error';
+
+export interface DeployState {
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
+  lastDeployedAt: string | null;
+}
+
 export interface SessionPointer {
   sessionId: string;
   title: string;
@@ -12,6 +20,9 @@ export interface SessionPointer {
   lastEventAt: string;
   eventCount: number;
   systemWorkspaceId: string | null;
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
+  lastDeployedAt: string | null;
 }
 
 export interface PersistedEventEnvelope {
@@ -122,6 +133,18 @@ export const conversationV2Api = {
   },
   async deleteSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/sessions/${sessionId}`);
+  },
+  /**
+   * Publish/deploy the session's app. Blocking — resolves once the deployment
+   * finishes with the live URL. The button shows a loader while this is in
+   * flight. Re-invoking redeploys (the "Update" action).
+   */
+  async deploySession(sessionId: string): Promise<DeployState> {
+    const res = await apiClient.post<ApiResponse<DeployState>>(
+      `/conversation-v2/sessions/${sessionId}/deploy`,
+      {},
+    );
+    return res.data.data;
   },
   async listWorkspaceDocuments(
     sessionId: string,

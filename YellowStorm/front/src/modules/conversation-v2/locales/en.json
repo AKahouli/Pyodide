@@ -84,6 +84,16 @@
       "more": "More actions"
     }
   },
+  "deploy": {
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "update": "Update",
+    "liveUrl": "Live URL",
+    "copy": "Copy link",
+    "open": "Open",
+    "viewUrl": "View deployed URL",
+    "menu": "Deployment options"
+  },
   "dialogs": {
     "rename": {
       "title": "Rename conversation",
@@ -130,6 +140,12 @@
     "workspaces": {
       "loadListError": "Failed to load workspaces",
       "loadDocumentsError": "Failed to load documents"
+    },
+    "deploy": {
+      "success": "App deployed",
+      "error": "Deployment failed",
+      "copied": "Link copied",
+      "copyError": "Failed to copy link"
     }
   }
 }

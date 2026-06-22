@@ -11,6 +11,12 @@ export type ConversationV2SessionStatus =
   | 'completed'
   | 'error';
 
+export type ConversationV2DeployStatus =
+  | 'idle'
+  | 'deploying'
+  | 'deployed'
+  | 'error';
+
 @Schema({ timestamps: true, collection: 'conversation_v2_sessions' })
 export class ConversationV2Session extends Document {
   @Prop({ required: true })
@@ -45,6 +51,23 @@ export class ConversationV2Session extends Document {
 
   @Prop({ type: Date, default: null })
   deletedAt!: Date | null;
+
+  // App-deployment ("Publish") state. 'idle' until the user publishes; the
+  // actual deploy (taking the session's app live on a public URL) is performed
+  // by Manus over the gRPC Deploy RPC. deployedUrl/lastDeployedAt hold the
+  // result so the header can show "Update" + the live URL after a reload.
+  @Prop({
+    type: String,
+    enum: ['idle', 'deploying', 'deployed', 'error'],
+    default: 'idle',
+  })
+  deployStatus!: ConversationV2DeployStatus;
+
+  @Prop({ type: String, default: null })
+  deployedUrl!: string | null;
+
+  @Prop({ type: Date, default: null })
+  lastDeployedAt!: Date | null;
 
   // Workspace ObjectIds the user attached to this session via the frontend selector.
   // Persisted so the UI can re-display the selection on session reload. Access is
