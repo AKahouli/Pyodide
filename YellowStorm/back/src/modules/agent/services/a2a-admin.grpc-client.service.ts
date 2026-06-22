@@ -19,6 +19,10 @@ import {
   RotateKeyResult,
   SetAgentEnabledResult,
 } from '../types/a2a-admin.types';
+import {
+  buildGrpcChannelCredentials,
+  createGrpcMetadata,
+} from '../../../common/grpc/grpc-security.util';
 
 /**
  * gRPC client for the `a2a_admin.A2AAdminService`. The management API is served
@@ -55,15 +59,16 @@ export class A2AAdminGrpcClientService
     const proto = grpc.loadPackageDefinition(packageDef) as any;
     const url = this.config.get<string>('a2aAdmin.grpcUrl')!;
     const maxMsg = this.config.get<number>('a2aAdmin.grpcMaxMessageBytes')!;
-    this.client = new proto.a2a_admin.A2AAdminService(
-      url,
-      grpc.credentials.createInsecure(),
-      {
-        'grpc.max_send_message_length': maxMsg,
-        'grpc.max_receive_message_length': maxMsg,
-        'grpc.keepalive_time_ms': 30_000,
-      },
+    const { credentials, options: tlsOptions } = buildGrpcChannelCredentials(
+      this.config,
+      (msg) => this.logger.warn(msg),
     );
+    this.client = new proto.a2a_admin.A2AAdminService(url, credentials, {
+      ...tlsOptions,
+      'grpc.max_send_message_length': maxMsg,
+      'grpc.max_receive_message_length': maxMsg,
+      'grpc.keepalive_time_ms': 30_000,
+    });
     this.logger.log(`A2AAdmin gRPC client initialised against ${url}`);
 
     // Initial readiness probe so the first /health call has accurate state.
@@ -180,7 +185,7 @@ export class A2AAdminGrpcClientService
     return new Promise((resolve, reject) => {
       this.client.PublishAgent(
         { agent, user_id: userId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
@@ -211,7 +216,7 @@ export class A2AAdminGrpcClientService
     return new Promise((resolve, reject) => {
       this.client.RotateKey(
         { agent_id: agentId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
@@ -242,7 +247,7 @@ export class A2AAdminGrpcClientService
     return new Promise((resolve, reject) => {
       this.client.RevokeAgent(
         { agent_id: agentId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
@@ -263,7 +268,7 @@ export class A2AAdminGrpcClientService
     return new Promise((resolve, reject) => {
       this.client.SetAgentEnabled(
         { agent_id: agentId, enabled },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
@@ -281,7 +286,7 @@ export class A2AAdminGrpcClientService
     return new Promise((resolve, reject) => {
       this.client.GetAgent(
         { agent_id: agentId },
-        new grpc.Metadata(),
+        createGrpcMetadata(this.config),
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,

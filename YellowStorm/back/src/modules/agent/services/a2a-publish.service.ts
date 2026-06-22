@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../../logger';
+import { stripTrailingChar } from '@common/utils';
 import { Agent, AgentDocument } from '../schemas/agent.schema';
 import { AgentService } from '../agent.service';
 import { A2AAdminGrpcClientService } from './a2a-admin.grpc-client.service';
@@ -46,7 +47,7 @@ export class A2APublishService {
    * an absolute, reachable URL. Falls back to the relative path if unset.
    */
   private toAbsoluteCardUrl(cardPath: string): string {
-    const base = this.config.get<string>('a2aAdmin.apiAdkUrl', '').replace(/\/+$/, '');
+    const base = stripTrailingChar(this.config.get<string>('a2aAdmin.apiAdkUrl', ''), '/');
     if (!base || !cardPath) return cardPath;
     return `${base}${cardPath}`;
   }

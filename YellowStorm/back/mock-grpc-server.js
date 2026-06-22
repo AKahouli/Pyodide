@@ -854,7 +854,7 @@ console.log(fibonacci(10)); // 55`;
       return curr;
     }
     function calculate() {
-      const n = parseInt(document.getElementById('num').value) || 10;
+      const n = Number.parseInt(document.getElementById('num').value) || 10;
       const result = fibonacci(n);
       document.getElementById('result').textContent = 'F(' + n + ') = ' + result;
       const seq = [];

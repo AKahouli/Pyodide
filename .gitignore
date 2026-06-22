@@ -54,5 +54,9 @@ tmp_pymongo
 .history
 .claude/settings.local.json
 .venv/
-
 __pycache__/
+
+.qa/
+.qa-screenshots/
+qa-screenshots/
+qa_screenshots/

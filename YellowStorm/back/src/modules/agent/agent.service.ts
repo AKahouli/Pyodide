@@ -12,7 +12,7 @@ import { QueryAgentDto } from './dto/query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
@@ -1243,15 +1243,21 @@ export class AgentService {
   }
 
   private normalizeSlug(value: string): string {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
+    return stripLeadingTrailingChar(
+      collapseRepeatedChar(
+        collapseWhitespace(
+          value
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim(),
+          '-',
+        )
+          .replace(/[^a-z0-9-]/g, '-'),
+        '-',
+      ),
+      '-',
+    );
   }
 
   private async ensureSlugUniqueness(
@@ -1304,7 +1310,12 @@ export class AgentService {
     allAgents: IAgentForStream[],
     pingedAgents: IAgentForStream[] = [],
   ): IAgentForStream | undefined {
-    const matches = (a: IAgentForStream) => a.agentTypeSlug === slug;
+    // Agent-type slugs are generated with spaces → "_" (see AgentTypeService.generateSlug),
+    // so a type named "Mono Agent" becomes "mono_agent". Canonicalize hyphens/underscores/
+    // whitespace so lookup constants (e.g. "mono-agent") match regardless of separator.
+    const canon = (value: string) => (value || '').toLowerCase().replace(/[-_\s]+/g, '_');
+    const target = canon(slug);
+    const matches = (a: IAgentForStream) => canon(a.agentTypeSlug) === target;
 
     // 1. If the user pinged an agent of this type, use it (first one if multiple)
     const pinged = pingedAgents.find(matches);

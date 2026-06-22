@@ -186,7 +186,7 @@ export class PlaybookFlowValidatorService {
       if (routers.length === 0) {
         errors.push({
           rule: 6,
-          message: `Cycle ${component.sort().join(' -> ')} must include a router`,
+          message: `Cycle ${[...component].sort((a, b) => a.localeCompare(b)).join(' -> ')} must include a router`,
         });
         continue;
       }
@@ -195,7 +195,7 @@ export class PlaybookFlowValidatorService {
       if (!hasBoundedRouter) {
         errors.push({
           rule: 6,
-          message: `Cycle ${component.sort().join(' -> ')} must include a router with maxIterations > 0`,
+          message: `Cycle ${[...component].sort((a, b) => a.localeCompare(b)).join(' -> ')} must include a router with maxIterations > 0`,
         });
       }
     }

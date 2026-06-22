@@ -303,56 +303,50 @@ async def handle_interrupt_after(
 
     logger.info("[hitl] Review required after execution", node_id=node_id)
     review_transcript: list[dict[str, str]] = []
-    review_round = 0
+    review_round = 1
 
-    while True:
-        review_round += 1
-        payload = _build_interrupt_payload(
-            "review_request",
-            (
-                f"Task '{label}' completed. Please review the result."
-                if review_round == 1
-                else f"Review the revised result for task '{label}'."
-            ),
-            node_id=node_id,
-            label=label,
-            node_description=node_description,
-            result_text=output,
-            round_number=review_round,
-            transcript=review_transcript,
-            resumable_actions=["reply", "approve", "reject", "skip"],
-        )
-        writer({"type": "NodeSuspended", "node_id": node_id, "payload": payload})
-        response = interrupt(payload)
-        action = normalize_interrupt_action(response, "review_request")
+    payload = _build_interrupt_payload(
+        "review_request",
+        f"Task '{label}' completed. Please review the result.",
+        node_id=node_id,
+        label=label,
+        node_description=node_description,
+        result_text=output,
+        round_number=review_round,
+        transcript=review_transcript,
+        resumable_actions=["reply", "approve", "reject", "skip"],
+    )
+    writer({"type": "NodeSuspended", "node_id": node_id, "payload": payload})
+    response = interrupt(payload)
+    action = normalize_interrupt_action(response, "review_request")
 
-        if action == "skip":
-            result.skipped = True
-            return result
-
-        if action == "reject":
-            result.failed = True
-            result.error_msg = extract_interrupt_message(response) or "Task result rejected by human"
-            return result
-
-        if action == "approve":
-            return result
-
-        feedback = extract_interrupt_message(response)
-        if not feedback:
-            return result
-
-        context_entry = build_human_context_entry(
-            response,
-            node_id=node_id,
-            label=label,
-            interrupt_type="review_request",
-            message=payload["message"],
-        )
-        if context_entry:
-            result.human_context.append(context_entry)
-        review_transcript.append({"role": "assistant", "content": output})
-        review_transcript.append({"role": "user", "content": feedback})
-        result.updated_description = f"{node_description}\n\nHuman Review Feedback: {feedback}"
-        result.needs_reexec = True
+    if action == "skip":
+        result.skipped = True
         return result
+
+    if action == "reject":
+        result.failed = True
+        result.error_msg = extract_interrupt_message(response) or "Task result rejected by human"
+        return result
+
+    if action == "approve":
+        return result
+
+    feedback = extract_interrupt_message(response)
+    if not feedback:
+        return result
+
+    context_entry = build_human_context_entry(
+        response,
+        node_id=node_id,
+        label=label,
+        interrupt_type="review_request",
+        message=payload["message"],
+    )
+    if context_entry:
+        result.human_context.append(context_entry)
+    review_transcript.append({"role": "assistant", "content": output})
+    review_transcript.append({"role": "user", "content": feedback})
+    result.updated_description = f"{node_description}\n\nHuman Review Feedback: {feedback}"
+    result.needs_reexec = True
+    return result

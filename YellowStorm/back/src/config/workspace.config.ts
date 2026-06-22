@@ -3,22 +3,22 @@ import { DEFAULT_ALLOWED_MIME_TYPES } from '../modules/document/constants/mime-t
 
 export default registerAs('workspace', () => ({
   // File limits
-  maxFileSizeMb: parseInt(process.env.WORKSPACE_MAX_FILE_SIZE_MB || '500', 10),
-  maxFilesPerBulkUpload: parseInt(
+  maxFileSizeMb: Number.parseInt(process.env.WORKSPACE_MAX_FILE_SIZE_MB || '500', 10),
+  maxFilesPerBulkUpload: Number.parseInt(
     process.env.WORKSPACE_MAX_FILES_PER_BULK_UPLOAD || '50',
     10,
   ),
-  smallFileThresholdMb: parseInt(
+  smallFileThresholdMb: Number.parseInt(
     process.env.WORKSPACE_SMALL_FILE_THRESHOLD_MB || '10',
     10,
   ),
 
   // Session management
-  uploadSessionTtlMinutes: parseInt(
+  uploadSessionTtlMinutes: Number.parseInt(
     process.env.WORKSPACE_UPLOAD_SESSION_TTL_MINUTES || '60',
     10,
   ),
-  sasUrlExpiryMinutes: parseInt(
+  sasUrlExpiryMinutes: Number.parseInt(
     process.env.WORKSPACE_SAS_URL_EXPIRY_MINUTES || '60',
     10,
   ),

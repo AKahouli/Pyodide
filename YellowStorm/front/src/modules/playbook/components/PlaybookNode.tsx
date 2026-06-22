@@ -469,6 +469,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isEnabled = !isExplicitlyDisabled;
   const isSelected = Boolean(selected);
   const isRecentlyChanged = data.isRecentlyChanged === true;
+  const isCompact = data.isCompact === true;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
@@ -737,6 +738,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           handles={false}
           className={cn(
             'group',
+            isCompact && '!w-[200px]',
             ringClass,
             selectedClass,
             disabledClass,
@@ -753,6 +755,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           {/* Input ports — left side */}
           <div className="absolute left-0 inset-y-0 z-10 w-0 pointer-events-none">
           {inputPorts.map((port, idx) => {
+            if (isCompact) {
+              return (
+                <div key={port.id} className="absolute left-0 -translate-y-1/2" style={{ top: `${getPortTopPercent(idx, inputPorts.length)}%` }}>
+                  <Handle id={port.id} type="target" position={Position.Left} className="!h-2 !w-2 !opacity-0" />
+                </div>
+              );
+            }
             const isPortDragTarget = isDragOver && dragOverPortId === port.id;
             const portColors = PORT_COLORS[port.artifactKind];
             const boundFile = portFileMap[port.id];
@@ -811,25 +820,34 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
           {/* Output ports — right side */}
           <div className="absolute right-0 inset-y-0 z-10 w-0 pointer-events-none">
-          {outputPorts.map((port, idx) => (
-            <div
-              key={port.id}
-              className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
-              style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
-            >
-              <Handle
-                id={port.id}
-                type="source"
-                position={Position.Right}
-                className="!w-3 !h-3"
-                style={{ ...getOutputPortStyle(port), top: 0 }}
-              />
-              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
-                onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
-                onDelete={() => handleDeleteOutputPort(port.id)}
-              />
-            </div>
-          ))}
+          {outputPorts.map((port, idx) => {
+            if (isCompact) {
+              return (
+                <div key={port.id} className="absolute right-0 -translate-y-1/2" style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}>
+                  <Handle id={port.id} type="source" position={Position.Right} className="!h-2 !w-2 !opacity-0" />
+                </div>
+              );
+            }
+            return (
+              <div
+                key={port.id}
+                className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+                style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
+              >
+                <Handle
+                  id={port.id}
+                  type="source"
+                  position={Position.Right}
+                  className="!w-3 !h-3"
+                  style={{ ...getOutputPortStyle(port), top: 0 }}
+                />
+                <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
+                  onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
+                  onDelete={() => handleDeleteOutputPort(port.id)}
+                />
+              </div>
+            );
+          })}
           </div>
 
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
@@ -846,22 +864,24 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 </NodeTitle>
               </div>
               <div className="flex items-center gap-1">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        actions?.onAdvise?.(id);
-                      }}
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t('nodeAdvisor.open')}</TooltipContent>
-                </Tooltip>
+                {!isCompact && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          actions?.onAdvise?.(id);
+                        }}
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{t('nodeAdvisor.open')}</TooltipContent>
+                  </Tooltip>
+                )}
                 {status && (
                   <div className="flex items-center justify-center">
                     <PlaybookStatusBadge status={status} size="xs" />
@@ -871,6 +891,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             </div>
           </NodeHeader>
 
+          {isCompact ? (
+            <NodeContent className="px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <Bot className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className={cn('truncate text-[10px]', agent ? 'text-foreground' : 'italic text-muted-foreground')}>
+                  {agent?.name || t('node.noAgent')}
+                </span>
+              </div>
+            </NodeContent>
+          ) : (
           <NodeContent className="p-3 space-y-2.5">
             <div className="flex items-center gap-2">
               {isActionMode ? (
@@ -1168,6 +1198,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             </div>
           </NodeContent>
+          )}
           {isStepRunning && (
             <div className="absolute inset-0 rounded-md pointer-events-none z-10 animate-running-node-glow" />
           )}

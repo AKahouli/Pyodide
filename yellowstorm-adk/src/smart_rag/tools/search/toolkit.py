@@ -1007,7 +1007,7 @@ class SearchToolkit:
         response_text_content.append({
             "page_content": document_data["page_content"],
             "filename": document_data["metadata"]["source"],
-            "text_order": len(self.sources_text) - 1 if existing_entry else len(self.sources_text) - 1,
+            "text_order": len(self.sources_text) - 1,
             "source_reference": reference
         })
 
@@ -1066,7 +1066,7 @@ class SearchToolkit:
         response_text_content.append({
             "page_content": page_content,
             "filename": modified_document_data["metadata"]["source"],
-            "text_order": len(self.sources_text) - 1 if existing_entry else len(self.sources_text) - 1,
+            "text_order": len(self.sources_text) - 1,
             "source_reference": reference
         })
 

@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { DragEvent, Dispatch, SetStateAction } from 'react';
 import type { Node } from '@xyflow/react';
 
-import { cloneRouterConfig } from './helpers/router-template';
+import { buildRouterOutputPorts, cloneRouterConfig } from './helpers/router-template';
 import type { ConnectorDropPayload } from '../components/PlaybookNode';
 import type { SkillDropPayload } from '../components/SkillSidebar';
 import type { PlaybookTask, TaskSkillBinding, TaskTemplate, ToolBinding } from '../types';
@@ -187,7 +187,7 @@ export function usePlaybookCanvasNodeHandlers({
       const isRouterTemplate = template.nodeType === 'router';
       const routerConfig = isRouterTemplate ? cloneRouterConfig(template.routerConfig) : null;
       const outputPorts = isRouterTemplate
-        ? routerConfig!.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' as const }))
+        ? buildRouterOutputPorts(routerConfig!)
         : template.outputPorts.map((p) => ({ ...p }));
 
       const newTask: PlaybookTask = {

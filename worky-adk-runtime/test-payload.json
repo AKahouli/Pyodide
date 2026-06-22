@@ -1,0 +1,14 @@
+{
+  "owner_message": "say hi in 3 words",
+  "context_snapshot": {
+    "streamId": "aaaaaaaaaaaaaaaaaaaaaaaa",
+    "planVersion": 0,
+    "budget": { "limitUsd": 0, "spendUsd": 0 },
+    "board": {},
+    "ownerMemoryRef": null,
+    "streamMemoryRef": null,
+    "latestMessageId": null
+  },
+  "manager_model_id": "gpt-5.4-mini",
+  "worker_model_id": "gpt-5.4-mini"
+}

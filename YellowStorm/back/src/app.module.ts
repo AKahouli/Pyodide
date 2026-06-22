@@ -15,8 +15,11 @@ import litellmConfig from './config/litellm.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import playbookFlowConfig from './config/playbook-flow.config';
+import grpcSecurityConfig from './config/grpc-security.config';
+import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
 import whatsappConfig from './config/whatsapp.config';
+import workyConfig from './config/worky.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -58,6 +61,7 @@ import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from './modules/whatsapp';
+import { WorkyModule } from './modules/worky';
 
 @Module({
   imports: [
@@ -65,7 +69,7 @@ import { WhatsAppModule } from './modules/whatsapp';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, telegramConfig, whatsappConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -115,6 +119,7 @@ import { WhatsAppModule } from './modules/whatsapp';
     HealthModule,
     EvaluationModule,
     WidgetChatModule,
+    WorkyModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, stripLeadingTrailingChar } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
@@ -15,7 +15,12 @@ import {
   DynamicHeaderSource,
 } from './schemas/connector.schema';
 import { ConnectorCategory } from './schemas/connector-category.schema';
-import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
+import {
+  IConnectorResponse,
+  IMcpInspectResult,
+  IGrpcConnector,
+} from './interfaces/connector.interface';
+import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
 @Injectable()
@@ -31,6 +36,8 @@ export class ConnectorService {
     private readonly connectorCategoryModel: Model<ConnectorCategory>,
     private readonly logger: LoggerService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
+    @Inject('ConnectorAuthService')
+    private readonly connectorAuthService: ConnectorAuthService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -127,6 +134,78 @@ export class ConnectorService {
       .exec();
 
     return connectors.map((c) => this.toResponse(c));
+  }
+
+  /**
+   * Resolve connectors by id and map them to the gRPC `ConnectorBinding` wire
+   * shape, with per-user auth resolved (OAuth token / credential + dynamic
+   * identity headers). Mirrors the v1 agent runtime binding (agent.service
+   * `buildConnectorBindings`) but targets the conv-v2 proto, where the action
+   * parameter schema travels as a JSON string. Connectors with no enabled
+   * action are dropped.
+   */
+  async findByIdsForGrpc(ids: string[], userId: string): Promise<IGrpcConnector[]> {
+    const connectors = await this.findByIds(ids);
+
+    const bindings: IGrpcConnector[] = [];
+    for (const connector of connectors) {
+      const actions = (connector.actions || [])
+        .filter((action) => action.isEnabled !== false)
+        .map((action) => ({
+          action_key: action.key,
+          label: action.label || action.key,
+          description: action.description || '',
+          parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
+        }));
+      if (actions.length === 0) continue;
+
+      let authHeaders: Record<string, string> = {};
+      let authEnv: Record<string, string> = {};
+
+      if (userId && connector.authSourceType === 'connected_app' && connector.connectedAppKey) {
+        try {
+          const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+            authSourceType: connector.authSourceType,
+            connectedAppKey: connector.connectedAppKey,
+            runtimeAuthConfig: connector.runtimeAuthConfig || {},
+          });
+          authHeaders = auth.headers;
+          authEnv = auth.env;
+        } catch (err) {
+          this.logger.warn('Failed to resolve connector auth for conv-v2 runtime', {
+            connector_id: connector.id,
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      if (userId) {
+        try {
+          const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+            userId,
+            connector.dynamicHeaders || [],
+          );
+          authHeaders = { ...authHeaders, ...dynamicHeaders };
+        } catch (err) {
+          this.logger.warn('Failed to resolve connector dynamic headers for conv-v2 runtime', {
+            connector_id: connector.id,
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      bindings.push({
+        connector_id: connector.id,
+        connector_name: connector.name,
+        mcp_transport_type: connector.mcpTransportType || '',
+        mcp_server_url: connector.mcpServerUrl || '',
+        auth_headers: authHeaders,
+        auth_env: authEnv,
+        actions,
+      });
+    }
+
+    return bindings;
   }
 
   async findAllActive(): Promise<IConnectorResponse[]> {
@@ -402,17 +481,18 @@ export class ConnectorService {
 
   private humanizeToolName(name: string): string {
     return name
-      .replace(/_/g, ' ')
-      .replace(/-/g, ' ')
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   private slugify(text: string): string {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 64);
+    return stripLeadingTrailingChar(
+      text
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9]+/g, '-'),
+      '-',
+    ).slice(0, 64);
   }
 
   private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {

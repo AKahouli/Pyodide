@@ -153,6 +153,14 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_SHARE_EXPIRY_DAYS: Joi.number().min(1).max(365).default(30),
   CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
 
+  // Shared gRPC channel security (conversation, a2a-admin, playbook-flow all
+  // dial the same AI service, so these are one shared cert + key).
+  CONVERSATION_GRPC_API_KEY: Joi.string().optional(),
+  CONVERSATION_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
+  CONVERSATION_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
+  CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
+  CONVERSATION_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
+
   // Conversation V2 (Manus)
   CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
@@ -160,6 +168,13 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_SSE_HEARTBEAT_MS: Joi.number().default(15000),
   CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
   CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
+
+  // Conversation V2 gRPC channel security (separate AI service → own cert + key).
+  CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
+  CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
+  CONVERSATION_V2_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
@@ -242,4 +257,15 @@ export const configValidationSchema = Joi.object({
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
   LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
+
+  // Worky (Chief of Staff) — Part 1
+  WORKY_RUNTIME_BASE_URL: Joi.string()
+    .uri()
+    .default('http://worky-adk-runtime:8011'),
+  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(300000).default(120000),
+  WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
+  WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
+  WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
+  WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
+  WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
 });

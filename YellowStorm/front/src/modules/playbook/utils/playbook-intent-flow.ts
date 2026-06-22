@@ -11,6 +11,8 @@ import type {
   PlaybookIntentSuggestion,
 } from '../types';
 import { getTopIntentSuggestion } from './playbook-intent';
+import { usePlaybookStore } from '../store';
+import { getUnboundRequiredPorts } from './required-port-validation';
 import { useModuleTranslation } from '@/modules/localization';
 
 const AUTO_APPLY_MIN_CONFIDENCE = 0.75;
@@ -39,6 +41,7 @@ interface PlaybookIntentFlowDeps {
   addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
   previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
   showError: (message: string) => void;
+  showWarning: (message: string) => void;
   getCurrentDefinitionRevision: () => number;
   setConstructionStatus?: (status: PlaybookIntentConstructionStatus) => void;
   setConstructionProgress?: (message: string) => void;
@@ -48,7 +51,9 @@ interface PlaybookIntentFlowDeps {
 
 interface PlaybookIntentFlowApi {
   handleSubmitIntent: () => Promise<void>;
+  handleSubmitIntentText: (intentText: string) => Promise<void>;
   handleForceGenerateIntent: (answerText?: string) => Promise<void>;
+  handleForceGenerateIntentText: (intentText: string, answerText?: string) => Promise<void>;
   handleApplyAdvisorIntent: ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => Promise<void>;
 }
 
@@ -76,6 +81,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setIntentSuggestions,
     setLastIntentSuggestions,
     showError,
+    showWarning,
     startPlaybookIntentConstruction,
     streamPlaybookIntentConstruction,
     setConstructionStatus,
@@ -93,11 +99,11 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     return resolvedSelectedTaskId;
   }, [playbook?.tasks, selectStep, selectedStepId]);
 
-  const buildIntentWithDesignAnswer = useCallback((answerText: string) => {
+  const buildIntentWithDesignAnswer = useCallback((intentText: string, answerText: string) => {
     const normalizedAnswer = answerText.trim();
-    if (!normalizedAnswer) return intentValue.trim();
-    return `${intentValue.trim()}\n\nClarifications:\n${normalizedAnswer}`;
-  }, [intentValue]);
+    if (!normalizedAnswer) return intentText.trim();
+    return `${intentText.trim()}\n\nClarifications:\n${normalizedAnswer}`;
+  }, []);
 
   const runIntentAnalysis = useCallback(async (
     intent: string,
@@ -193,6 +199,17 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       return true;
     }
     if (lastSequence > 0) {
+      const currentPlaybook = usePlaybookStore.getState().currentPlaybook;
+      const unboundRequiredPorts = currentPlaybook
+        ? getUnboundRequiredPorts(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [])
+        : [];
+      if (unboundRequiredPorts.length > 0) {
+        console.warn('[IntentApply] Skipped construction save with unbound required inputs:', unboundRequiredPorts);
+        showWarning(t('intentBar.invalidRequiredBindings'));
+        setConstructionStatus?.('completed');
+        setConstructionProgress?.(t('intentBar.construction.completed'));
+        return appliedDelta;
+      }
       await saveConstruction({
         expectedDefinitionRevision: getCurrentDefinitionRevision(),
         clientMutationId: `intent-construction-${construction.constructionId}`,
@@ -201,7 +218,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setConstructionStatus?.('completed');
     setConstructionProgress?.(t('intentBar.construction.completed'));
     return appliedDelta;
-  }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
+  }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, showWarning, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
   const generateIntentSuggestions = useCallback(async (normalizedIntent: string, selectedTaskId?: string, options?: { applyBest?: boolean }) => {
     const analysis = await runIntentAnalysis(normalizedIntent, selectedTaskId, { includeFallback: options?.applyBest });
@@ -223,8 +240,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     }
   }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, playbook?.name, runIntentAnalysis, setIntentSuggestions, setLastIntentSuggestions]);
 
-  const handleForceGenerateIntent = useCallback(async (answerText?: string) => {
-    const normalizedIntent = buildIntentWithDesignAnswer(answerText || '');
+  const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string) => {
+    const normalizedIntent = buildIntentWithDesignAnswer(intentText, answerText || '');
     if (!id || !playbook || normalizedIntent.length < 3) {
       return;
     }
@@ -259,8 +276,12 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     }
   }, [buildIntentWithDesignAnswer, constructionAbortRef, generateIntentSuggestions, id, playbook, resolveSelectedTaskId, runRealtimeConstruction, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
 
-  const handleSubmitIntent = useCallback(async () => {
-    const normalizedIntent = intentValue.trim();
+  const handleForceGenerateIntent = useCallback(async (answerText?: string) => {
+    await handleForceGenerateIntentText(intentValue, answerText);
+  }, [handleForceGenerateIntentText, intentValue]);
+
+  const handleSubmitIntentText = useCallback(async (intentText: string) => {
+    const normalizedIntent = intentText.trim();
     if (!id || !playbook || normalizedIntent.length < 3) {
       return;
     }
@@ -307,7 +328,11 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     } finally {
       setIntentLoading(false);
     }
-  }, [assessPlaybookIntentDesign, constructionAbortRef, generateIntentSuggestions, id, intentAutoApply, intentValue, isDirty, playbook, resolveSelectedTaskId, runRealtimeConstruction, saveNow, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
+  }, [assessPlaybookIntentDesign, constructionAbortRef, generateIntentSuggestions, id, intentAutoApply, isDirty, playbook, resolveSelectedTaskId, runRealtimeConstruction, saveNow, setConstructionProgress, setConstructionStatus, setIntentDesign, setIntentError, setIntentLoading, setIntentSuggestions, setLastIntentSuggestions, t]);
+
+  const handleSubmitIntent = useCallback(async () => {
+    await handleSubmitIntentText(intentValue);
+  }, [handleSubmitIntentText, intentValue]);
 
   const handleApplyAdvisorIntent = useCallback(async ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => {
     if (!id || !playbook) return;
@@ -355,7 +380,9 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
 
   return {
     handleSubmitIntent,
+    handleSubmitIntentText,
     handleForceGenerateIntent,
+    handleForceGenerateIntentText,
     handleApplyAdvisorIntent,
   };
 }

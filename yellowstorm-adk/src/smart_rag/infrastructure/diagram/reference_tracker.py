@@ -1,6 +1,6 @@
 import asyncio
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 class DiagramReferenceTracker:
     """Global tracker for diagram references per session with thread safety."""
@@ -30,7 +30,7 @@ class DiagramReferenceTracker:
                 "html_content": html_content,
                 "diagram_request": diagram_request,
                 "title": title,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "reference_tag": f"[diagram_{reference}]"
             }
 

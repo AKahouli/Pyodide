@@ -73,6 +73,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
+
 import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
@@ -150,16 +151,20 @@ import {
 } from '../utils/playbook-canvas-status';
 import { showError, showWarning } from '@/lib/notifications';
 
+
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
 }
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
+type CanvasViewMode = 'expanded' | 'compact';
+type IntentRequestOrigin = 'intent-bar' | 'designer-sidebar';
 
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
   const { t } = useModuleTranslation('playbook');
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
 
@@ -351,10 +356,12 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
+  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('intent-bar');
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
   const constructionAbortRef = useRef<AbortController | null>(null);
+  const designerIntentRef = useRef('');
   const autoIntentRef = useRef<string | null>(null);
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
@@ -558,6 +565,38 @@ function PlaybookCanvasInner() {
     fetchExecution,
     fetchExecutions,
     pageMode,
+  ]);
+
+  // Detect externally-triggered executions (mail, schedule) while the page is
+  // idle. SSE covers this in the normal case, but if the start event is missed
+  // the page stays locked at idle until a manual refresh. This 5 s poll acts
+  // as a safety net: it is intentionally slower than the 2 s active-run poll.
+  const hasExternalTrigger = Boolean(playbook?.triggers.some((tr) => tr.enabled !== false));
+
+  useEffect(() => {
+    if (!id || isGeneratingRoute || !hasExternalTrigger || hasActiveExecution) return;
+
+    const intervalId = setInterval(() => {
+      void fetchExecutions(id).then(() => {
+        const latest = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        if (latest && (latest.status === 'running' || latest.status === 'queued' || latest.status === 'interrupted')) {
+          setPageMode('run');
+          setExecutionPanelOpen(true);
+          viewExecutionInPanel(latest.id);
+        }
+      });
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [
+    id,
+    isGeneratingRoute,
+    hasExternalTrigger,
+    hasActiveExecution,
+    fetchExecutions,
+    setPageMode,
+    setExecutionPanelOpen,
+    viewExecutionInPanel,
   ]);
 
   const hasPendingOutputFormat = Boolean(playbook?.tasks.some(
@@ -779,6 +818,17 @@ function PlaybookCanvasInner() {
     });
   }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
+  const isCompactCanvas = canvasViewMode === 'compact';
+
+  const canvasNodes = useMemo(() => liveNodes.map((node) => ({
+    ...node,
+    data: {
+      ...(node.data as PlaybookNodeData),
+      isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
+      isCompact: isCompactCanvas,
+    },
+  })), [liveNodes, recentlyChangedNodeIds, isCompactCanvas]);
+
   // Style edges based on source node status
   const styledControlEdges = useMemo(() => {
     if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
@@ -839,6 +889,14 @@ function PlaybookCanvasInner() {
 
     return [...styledControlEdges, ...dataLayerEdges];
   }, [dataBindingsVisible, playbook, styledControlEdges]);
+
+  useEffect(() => {
+    if (!playbook?.id) return;
+    const frame = window.requestAnimationFrame(() => {
+      void reactFlow.fitView({ padding: isCompactCanvas ? 0.18 : 0.12, duration: 250 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasViewMode, playbook?.id, reactFlow]);
 
   const {
     handleAddStep,
@@ -1457,19 +1515,19 @@ function PlaybookCanvasInner() {
               errorStrategy: 'stop',
             }
           : undefined,
-        inputPorts: matchedTemplate
-          ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
-          : isIterator
+        inputPorts: genericInputPorts.length > 0
+          ? genericInputPorts
+          : matchedTemplate
+            ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
+            : isIterator
             ? getDefaultIteratorInputPorts()
-            : genericInputPorts.length > 0
-              ? genericInputPorts
             : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
-        outputPorts: matchedTemplate
-          ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
-          : isIterator
+        outputPorts: genericOutputPorts.length > 0
+          ? genericOutputPorts
+          : matchedTemplate
+            ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
+            : isIterator
             ? getDefaultIteratorOutputPorts()
-            : genericOutputPorts.length > 0
-              ? genericOutputPorts
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
         retryPolicy: matchedTemplate?.retryPolicy
           ? { ...matchedTemplate.retryPolicy }
@@ -1808,6 +1866,43 @@ function PlaybookCanvasInner() {
       });
     };
 
+    const mirrorNodeOutputBindingEdge = (
+      resolvedTargetId: string,
+      targetPort: string,
+      resolvedSourceId: string,
+      sourcePort: string,
+    ) => {
+      nextEdges = nextEdges.filter((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
+        const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+        const matchesTargetPort = edge.target === resolvedTargetId
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetPort;
+        const matchesBinding = matchesTargetPort
+          && edge.source === resolvedSourceId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourcePort;
+        if (isConditionalEdge || matchesBinding) {
+          return true;
+        }
+        if (matchesTargetPort) {
+          changedEdgeIds.add(edge.id);
+        }
+        return !matchesTargetPort;
+      });
+
+      if (!nextEdges.some((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        return edge.source === resolvedSourceId
+          && edge.target === resolvedTargetId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourcePort
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetPort;
+      })) {
+        nextEdges = [
+          ...nextEdges,
+          markEdgeChanged(createProgrammaticEdge(resolvedSourceId, resolvedTargetId, sourcePort, targetPort)),
+        ];
+      }
+    };
+
     const upsertNodeOutputBinding = (
       resolvedTargetId: string,
       targetPort: string,
@@ -1860,6 +1955,9 @@ function PlaybookCanvasInner() {
           iteration,
         },
       ];
+
+      mirrorNodeOutputBindingEdge(resolvedTargetId, targetPort, resolvedSourceId, sourcePort);
+
     };
 
     const upsertConstantBinding = (
@@ -1892,6 +1990,7 @@ function PlaybookCanvasInner() {
           constantValue,
         },
       ];
+
     };
 
     const removeNodeOutputBinding = (
@@ -1931,6 +2030,16 @@ function PlaybookCanvasInner() {
           }
           return !matchesTargetPort;
         });
+      }
+
+      if (nextEdges.some((edge) => {
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        return edge.source === sourceId
+          && edge.target === targetId
+          && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourceOutputPortId
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId;
+      })) {
+        return;
       }
 
       nextEdges = [
@@ -2331,11 +2440,17 @@ function PlaybookCanvasInner() {
       console.warn('[IntentApply] Warnings:', applicationWarnings);
     }
 
-    warnInvalidRequiredInputs();
+    const unboundRequiredInputs = findUnboundRequiredInputs();
+    if (unboundRequiredInputs.length > 0) {
+      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundRequiredInputs);
+      if (shouldSave) {
+        showWarning(t('intentBar.invalidRequiredBindings'));
+      }
+    }
 
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     if (shouldClearSuggestions) setIntentSuggestions([]);
-    if (shouldSave) {
+    if (shouldSave && unboundRequiredInputs.length === 0) {
       void saveCurrentPlaybook({
         expectedDefinitionRevision: suggestionBaseDefinitionRevision,
         clientMutationId: suggestionApplicationKey,
@@ -2357,7 +2472,7 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleForceGenerateIntent, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntent, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
@@ -2381,6 +2496,7 @@ function PlaybookCanvasInner() {
     addIntentSuggestionHistoryEntry,
     previewAdvisorRemediation,
     showError,
+    showWarning,
     getCurrentDefinitionRevision,
     setConstructionStatus,
     setConstructionProgress,
@@ -2388,13 +2504,21 @@ function PlaybookCanvasInner() {
     constructionAbortRef,
   });
 
-  const canvasNodes = useMemo(() => liveNodes.map((node) => ({
-    ...node,
-    data: {
-      ...(node.data as PlaybookNodeData),
-      isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
-    },
-  })), [liveNodes, recentlyChangedNodeIds]);
+  const handleSubmitIntentFromBar = useCallback(async () => {
+    setIntentRequestOrigin('intent-bar');
+    await handleSubmitIntent();
+  }, [handleSubmitIntent]);
+
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string) => {
+    setIntentRequestOrigin('designer-sidebar');
+    designerIntentRef.current = intentText;
+    await handleSubmitIntentText(intentText);
+  }, [handleSubmitIntentText]);
+
+  const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
+    setIntentRequestOrigin('designer-sidebar');
+    await handleForceGenerateIntentText(designerIntentRef.current, answerText);
+  }, [handleForceGenerateIntentText]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -2912,6 +3036,32 @@ function PlaybookCanvasInner() {
                 >
                   <Controls position="bottom-left" />
                 </Canvas>
+                <div
+                  className="absolute right-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
+                  role="group"
+                  aria-label={t('canvas.view.groupLabel')}
+                >
+                  <Button
+                    type="button"
+                    variant={canvasViewMode === 'expanded' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-8 rounded-full px-3 text-xs"
+                    aria-pressed={canvasViewMode === 'expanded'}
+                    onClick={() => setCanvasViewMode('expanded')}
+                  >
+                    {t('canvas.view.expanded')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={canvasViewMode === 'compact' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-8 rounded-full px-3 text-xs"
+                    aria-pressed={canvasViewMode === 'compact'}
+                    onClick={() => setCanvasViewMode('compact')}
+                  >
+                    {t('canvas.view.compact')}
+                  </Button>
+                </div>
                 {intentLoading ? <PlaybookIntentGhostNode progress={constructionProgress} /> : null}
                 <PlaybookIntentBar
                   ref={intentBarRef}
@@ -2919,7 +3069,7 @@ function PlaybookCanvasInner() {
                   loading={intentLoading}
                   value={intentValue}
                   suggestions={intentSuggestions}
-                  design={intentDesign}
+                  design={intentRequestOrigin === 'intent-bar' ? intentDesign : null}
                   error={intentError}
                   history={intentHistory}
                   collapsed={intentBarCollapsed}
@@ -2928,7 +3078,7 @@ function PlaybookCanvasInner() {
                   onPositionChange={handleIntentBarPositionChange}
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
-                  onSubmit={() => void handleSubmitIntent()}
+                  onSubmit={() => void handleSubmitIntentFromBar()}
                   onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
@@ -2991,7 +3141,13 @@ function PlaybookCanvasInner() {
                 subtitle={t('canvas.designingHint')}
               />
             )}
-            <PlaybookDesignerPanel playbookId={id} />
+            <PlaybookDesignerPanel
+              playbookId={id}
+              intentDesign={intentRequestOrigin === 'designer-sidebar' ? intentDesign : null}
+              intentLoading={intentLoading && intentRequestOrigin === 'designer-sidebar'}
+              onSubmitDesignIntent={handleSubmitIntentFromDesigner}
+              onAnswerDesignIntent={handleAnswerIntentFromDesigner}
+            />
           </div>
 
           {isExecutionPanelVisible && (

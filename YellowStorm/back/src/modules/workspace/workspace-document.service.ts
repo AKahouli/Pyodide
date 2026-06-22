@@ -12,7 +12,7 @@ import {
   DocumentStatus,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
 import { IndexingService } from '../indexing/indexing.service';
 import {
   UploadSession,
@@ -87,11 +87,12 @@ export class WorkspaceDocumentService {
    * Sanitize filename for storage
    */
   private sanitizeFilename(filename: string): string {
-    return filename
-      .replace(/[/\\:\0]/g, '_')
-      .replace(/^[\s.]+|[\s.]+$/g, '')
-      .replace(/[_\s]+/g, '_')
-      .substring(0, 255);
+    const normalized = collapseCharSet(
+      stripLeadingTrailingWhitespaceOrDot(filename.replace(/[/\\:\0]/g, '_')),
+      '_ \t\n\r\f\v',
+      '_',
+    );
+    return normalized.substring(0, 255);
   }
 
   /**

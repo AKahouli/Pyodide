@@ -558,14 +558,14 @@ Rules:
     members: Array<{ agentId: string; parentAgentId: string | null; order: number }>;
   } {
     let jsonStr = content.trim();
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1].trim();
+    const fencedContent = this.extractMarkdownCodeFenceContent(jsonStr);
+    if (fencedContent) {
+      jsonStr = fencedContent.trim();
     }
     if (!jsonStr.startsWith('{')) {
-      const objectMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (objectMatch) {
-        jsonStr = objectMatch[0];
+      const objectText = this.extractBalancedJsonObject(jsonStr);
+      if (objectText) {
+        jsonStr = objectText;
       }
     }
     const parsed = JSON.parse(jsonStr);
@@ -880,5 +880,69 @@ Rules:
       positionX: (m.positionX as number) ?? 0,
       positionY: (m.positionY as number) ?? 0,
     };
+  }
+
+  private extractMarkdownCodeFenceContent(text: string): string | null {
+    const fenceStart = text.indexOf('```');
+    if (fenceStart === -1) {
+      return null;
+    }
+
+    let contentStart = fenceStart + 3;
+    if (text.slice(contentStart, contentStart + 4).toLowerCase() === 'json') {
+      contentStart += 4;
+    }
+    while (contentStart < text.length && this.isAsciiWhitespace(text[contentStart])) {
+      contentStart++;
+    }
+
+    const fenceEnd = text.indexOf('```', contentStart);
+    if (fenceEnd === -1) {
+      return null;
+    }
+
+    return text.slice(contentStart, fenceEnd);
+  }
+
+  private extractBalancedJsonObject(text: string): string | null {
+    const start = text.indexOf('{');
+    if (start === -1) {
+      return null;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let isEscaped = false;
+
+    for (let index = start; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (isEscaped) {
+          isEscaped = false;
+        } else if (char === '\\') {
+          isEscaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return text.slice(start, index + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private isAsciiWhitespace(char: string): boolean {
+    return char === ' ' || char === '\t' || char === '\n' || char === '\r' || char === '\f' || char === '\v';
   }
 }

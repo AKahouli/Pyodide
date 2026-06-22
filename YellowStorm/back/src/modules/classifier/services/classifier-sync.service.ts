@@ -17,6 +17,7 @@ import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { ClassifierAccessService } from './classifier-access.service';
+import { stripTrailingChar } from '@common/utils';
 
 export interface SyncZipResult {
   filename: string;
@@ -195,11 +196,12 @@ export class ClassifierSyncService {
 
   private sanitizeSegment(input: string | undefined): string {
     if (!input) return '';
-    return input
-      .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
-      .replace(/\.+$/, '')
-      .trim()
-      .slice(0, 200);
+    return stripTrailingChar(
+      input
+        .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+        .trim(),
+      '.',
+    ).slice(0, 200);
   }
 
   private dedupeFileName(segments: string[], candidate: string, used: Set<string>): string {

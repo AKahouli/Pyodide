@@ -558,7 +558,7 @@ export class AuthService {
       return 15 * 60 * 1000; // Default 15 minutes
     }
 
-    const value = parseInt(match[1], 10);
+    const value = Number.parseInt(match[1], 10);
     const unit = match[2];
 
     switch (unit) {

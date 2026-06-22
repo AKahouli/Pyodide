@@ -38,6 +38,7 @@ function buildDeps(preview: AdvisorRemediationPreviewResponse) {
     addIntentSuggestionHistoryEntry: vi.fn(),
     previewAdvisorRemediation: vi.fn().mockResolvedValue(preview),
     showError: vi.fn(),
+    showWarning: vi.fn(),
     getCurrentDefinitionRevision: vi.fn(() => 7),
   };
 }

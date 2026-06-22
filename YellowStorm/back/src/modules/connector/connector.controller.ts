@@ -68,8 +68,8 @@ export class ConnectorController {
   ) {
     return this.connectorUserService.getRepositories(user.id.toString(), appKey, {
       search,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 30,
+      page: page ? Number.parseInt(page, 10) : 1,
+      limit: limit ? Number.parseInt(limit, 10) : 30,
     });
   }
 

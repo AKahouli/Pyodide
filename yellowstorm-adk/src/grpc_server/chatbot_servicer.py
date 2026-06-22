@@ -42,6 +42,15 @@ from src.flow_engine.advisor.execution_advisor_service import evaluate_task_exec
 logger = get_logger(__name__)
 app_settings = get_settings()
 
+_MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
+def _message_to_dict(message: Any) -> Dict[str, Any]:
+    return MessageToDict(message, **_MESSAGE_TO_DICT_OPTIONS)
+
 
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     summaries = []
@@ -75,6 +84,7 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
+        self._background_tasks: set[asyncio.Task] = set()
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
     async def AdvisePlaybookNode(
@@ -82,11 +92,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.AdvisePlaybookNodeRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.AdvisePlaybookNodeResponse":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = advise_playbook_node(payload)
 
         suggestions = []
@@ -150,11 +156,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.TaskAdvisorRequest",
         context: grpc.aio.ServicerContext,
     ) -> "chatbot_pb2.TaskAdvisorResult":
-        payload = MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        payload = _message_to_dict(request)
         result = evaluate_task_execution(payload)
         token_reduction = result.get("estimated_token_reduction_pct")
         latency_reduction = result.get("estimated_latency_reduction_pct")
@@ -227,11 +229,7 @@ class ChatbotServicer(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        return MessageToDict(
-            request,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
+        return _message_to_dict(request)
 
     async def RunAgentTeam(
         self,
@@ -283,12 +281,14 @@ class ChatbotServicer(
             internal_request = await self._convert_agent_team_request_v2(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             # Start background processing task
             bg_task = asyncio.create_task(
@@ -425,6 +425,9 @@ class ChatbotServicer(
                     await get_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Queue get task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
@@ -437,6 +440,9 @@ class ChatbotServicer(
                     await bg_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Background task cancelled successfully")
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during background task cleanup: {cleanup_error}"
@@ -528,12 +534,14 @@ class ChatbotServicer(
             internal_request = await self._convert_single_agent_request(request)
 
             if internal_request.attached_files:
-                asyncio.create_task(
+                index_task = asyncio.create_task(
                     self._index_attached_documents(
                         internal_request.attached_files,
                         request.conversation_id,
                     )
                 )
+                self._background_tasks.add(index_task)
+                index_task.add_done_callback(self._background_tasks.discard)
 
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
@@ -621,7 +629,9 @@ class ChatbotServicer(
                 try:
                     await get_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
             if bg_task is not None and not bg_task.done():
@@ -629,7 +639,9 @@ class ChatbotServicer(
                 try:
                     await bg_task
                 except asyncio.CancelledError:
-                    pass
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
             return

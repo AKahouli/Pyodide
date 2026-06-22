@@ -61,6 +61,7 @@ export enum ErrorCode {
   CHAT_GRPC_UNAVAILABLE = 'ERR_1417',
   CHAT_WORKSPACE_FAILED = 'ERR_1418',
   CHAT_SHARE_REVOKED = 'ERR_1419',
+  CHAT_GRPC_UNAUTHENTICATED = 'ERR_1420',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -315,6 +316,42 @@ export enum ErrorCode {
   CONNECTED_APP_OAUTH_FAILED = 'ERR_3004',
   CONNECTED_APP_TOKEN_REFRESH_FAILED = 'ERR_3005',
   CONNECTED_APP_DISABLED = 'ERR_3007',
+
+  // Worky (Chief of Staff) errors (3500-3599) — Part 1
+  WORKY_STREAM_NOT_FOUND = 'ERR_3500',
+  WORKY_STREAM_FORBIDDEN = 'ERR_3501',
+  WORKY_STREAM_INVALID_STATE = 'ERR_3502',
+  WORKY_RUNTIME_UNAVAILABLE = 'ERR_3503',
+  WORKY_SERVICE_AUTH_FAILED = 'ERR_3504',
+  WORKY_IDEMPOTENCY_REPLAY = 'ERR_3505',
+  // Part 2
+  WORKY_INVALID_PLAN_DELTA = 'ERR_3506',
+  WORKY_STALE_PLAN_VERSION = 'ERR_3507',
+  WORKY_CYCLIC_DEPENDENCY = 'ERR_3508',
+  WORKY_STREAM_PHASE_INVALID = 'ERR_3509',
+  WORKY_INTERACTION_NOT_FOUND = 'ERR_3510',
+  WORKY_INTERACTION_FORBIDDEN = 'ERR_3511',
+  WORKY_INTERACTION_ALREADY_RESPONDED = 'ERR_3512',
+  // Part 3
+  WORKY_TASK_NOT_FOUND = 'ERR_3513',
+  WORKY_TASK_INVALID_STATE = 'ERR_3514',
+  WORKY_GOVERNANCE_LEVEL_REJECTED = 'ERR_3515',
+  WORKY_GOVERNANCE_DENIED = 'ERR_3516',
+  WORKY_WORKER_BINDING_FAILED = 'ERR_3517',
+  WORKY_SCHEDULED_EVENT_NOT_FOUND = 'ERR_3518',
+  WORKY_START_VALIDATION_FAILED = 'ERR_3519',
+  // Part 4
+  WORKY_HUMAN_ASSIGNMENT_AMBIGUOUS = 'ERR_3520',
+  WORKY_HUMAN_ASSIGNMENT_UNRESOLVED = 'ERR_3521',
+  WORKY_BUDGET_EXHAUSTED = 'ERR_3522',
+  WORKY_BUDGET_RESERVATION_CONFLICT = 'ERR_3523',
+  WORKY_BUDGET_DECISION_NOT_FOUND = 'ERR_3524',
+  WORKY_REPORT_NOT_FOUND = 'ERR_3525',
+  WORKY_REPORT_GENERATION_FAILED = 'ERR_3526',
+  WORKY_MEMORY_PROPOSAL_NOT_FOUND = 'ERR_3527',
+  WORKY_OWNER_MEMORY_FORBIDDEN = 'ERR_3528',
+  WORKY_REPLAN_REJECTED = 'ERR_3529',
+  WORKY_NO_DEFAULT_MODEL = 'ERR_3530',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -375,6 +412,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
   [ErrorCode.CHAT_WORKSPACE_FAILED]: 'Failed to create conversation workspace.',
   [ErrorCode.CHAT_SHARE_REVOKED]: 'This shared conversation has been revoked.',
+  [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
+    'AI service rejected the request (authentication failed).',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',
@@ -555,6 +594,40 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTED_APP_OAUTH_FAILED]: 'OAuth authentication with the app failed.',
   [ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED]: 'Failed to refresh app token. Please reconnect.',
   [ErrorCode.CONNECTED_APP_DISABLED]: 'This connected app is currently disabled.',
+  [ErrorCode.WORKY_STREAM_NOT_FOUND]: 'Worky stream not found.',
+  [ErrorCode.WORKY_STREAM_FORBIDDEN]: 'You do not have access to this Worky stream.',
+  [ErrorCode.WORKY_STREAM_INVALID_STATE]: 'Worky stream is not in a state that allows this operation.',
+  [ErrorCode.WORKY_RUNTIME_UNAVAILABLE]: 'Worky runtime is currently unavailable.',
+  [ErrorCode.WORKY_SERVICE_AUTH_FAILED]: 'Worky service authentication failed.',
+  [ErrorCode.WORKY_IDEMPOTENCY_REPLAY]: 'Worky callback has already been processed.',
+  [ErrorCode.WORKY_INVALID_PLAN_DELTA]: 'The plan delta is invalid.',
+  [ErrorCode.WORKY_STALE_PLAN_VERSION]: 'The plan version is stale; refetch the latest plan and retry.',
+  [ErrorCode.WORKY_CYCLIC_DEPENDENCY]: 'The plan delta would introduce a task dependency cycle.',
+  [ErrorCode.WORKY_STREAM_PHASE_INVALID]: 'Worky stream is not in a phase that allows this operation.',
+  [ErrorCode.WORKY_INTERACTION_NOT_FOUND]: 'Worky interaction not found.',
+  [ErrorCode.WORKY_INTERACTION_FORBIDDEN]: 'You do not have access to this Worky interaction.',
+  [ErrorCode.WORKY_INTERACTION_ALREADY_RESPONDED]: 'Worky interaction has already been responded to.',
+  [ErrorCode.WORKY_TASK_NOT_FOUND]: 'Worky task not found.',
+  [ErrorCode.WORKY_TASK_INVALID_STATE]: 'Worky task is in an invalid state for this operation.',
+  [ErrorCode.WORKY_GOVERNANCE_LEVEL_REJECTED]: 'Requested governance level is invalid for this policy.',
+  [ErrorCode.WORKY_GOVERNANCE_DENIED]: 'Action denied by governance policy.',
+  [ErrorCode.WORKY_WORKER_BINDING_FAILED]: 'Ephemeral worker binding could not be created.',
+  [ErrorCode.WORKY_SCHEDULED_EVENT_NOT_FOUND]: 'Worky scheduled event not found.',
+  [ErrorCode.WORKY_START_VALIDATION_FAILED]: 'Start Stream validation failed.',
+  [ErrorCode.WORKY_HUMAN_ASSIGNMENT_AMBIGUOUS]:
+    'Multiple users match the human reference. Owner must disambiguate.',
+  [ErrorCode.WORKY_HUMAN_ASSIGNMENT_UNRESOLVED]:
+    'No user matches the human reference. Owner must invite or clarify.',
+  [ErrorCode.WORKY_BUDGET_EXHAUSTED]: 'Stream budget exhausted; owner decision required.',
+  [ErrorCode.WORKY_BUDGET_RESERVATION_CONFLICT]: 'Concurrent budget reservation conflict; retry.',
+  [ErrorCode.WORKY_BUDGET_DECISION_NOT_FOUND]: 'Budget decision interaction not found.',
+  [ErrorCode.WORKY_REPORT_NOT_FOUND]: 'Worky execution report not found.',
+  [ErrorCode.WORKY_REPORT_GENERATION_FAILED]: 'Worky execution report generation failed.',
+  [ErrorCode.WORKY_MEMORY_PROPOSAL_NOT_FOUND]: 'Worky owner memory proposal not found.',
+  [ErrorCode.WORKY_OWNER_MEMORY_FORBIDDEN]: 'You do not have access to this owner memory entry.',
+  [ErrorCode.WORKY_REPLAN_REJECTED]: 'Plan-delta replan was rejected by the auto-apply guard.',
+  [ErrorCode.WORKY_NO_DEFAULT_MODEL]:
+    'No model is configured for this Worky stream. Select a model in the prompt bar or set a default in Admin > Models.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

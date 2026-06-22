@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { LoggerService } from '../logger';
+import { randomBackoffJitter } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -234,7 +235,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
     const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
 
     // Add jitter (±10%) to prevent thundering herd
-    const jitter = 0.9 + Math.random() * 0.2;
+    const jitter = randomBackoffJitter();
     const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
     const delayWithJitter = exponentialDelay * jitter;
 

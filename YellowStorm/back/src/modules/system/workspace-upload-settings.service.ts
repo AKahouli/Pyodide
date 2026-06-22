@@ -20,7 +20,7 @@ import {
 } from './interfaces/workspace-upload-settings.interface';
 
 const SUPPORTED_EXTENSIONS = new Set(Object.keys(EXTENSION_MIME_TYPES));
-const SUPPORTED_EXTENSIONS_LIST = Object.keys(EXTENSION_MIME_TYPES).sort();
+const SUPPORTED_EXTENSIONS_LIST = Object.keys(EXTENSION_MIME_TYPES).sort((a, b) => a.localeCompare(b));
 
 @Injectable()
 export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {

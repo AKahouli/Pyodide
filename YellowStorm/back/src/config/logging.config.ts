@@ -27,12 +27,12 @@ export default registerAs('logging', () => {
 
     // Buffer configuration
     buffer: {
-      maxSize: parseInt(process.env.LOGGING_BUFFER_SIZE || '100', 10),
-      flushIntervalMs: parseInt(process.env.LOGGING_FLUSH_INTERVAL_MS || '60000', 10),
+      maxSize: Number.parseInt(process.env.LOGGING_BUFFER_SIZE || '100', 10),
+      flushIntervalMs: Number.parseInt(process.env.LOGGING_FLUSH_INTERVAL_MS || '60000', 10),
     },
 
     // Log retention (TTL in days)
-    ttlDays: parseInt(process.env.LOGGING_TTL_DAYS || '30', 10),
+    ttlDays: Number.parseInt(process.env.LOGGING_TTL_DAYS || '30', 10),
 
     // Enable/disable persistence
     persistenceEnabled: process.env.LOGGING_PERSISTENCE_ENABLED !== 'false',
@@ -46,7 +46,7 @@ export default registerAs('logging', () => {
     displayOnlyContexts,
 
     // Connection pool settings (smaller pool for logging)
-    maxPoolSize: parseInt(process.env.LOGGING_MAX_POOL_SIZE || '3', 10),
+    maxPoolSize: Number.parseInt(process.env.LOGGING_MAX_POOL_SIZE || '3', 10),
     minPoolSize: 1,
   };
 });
