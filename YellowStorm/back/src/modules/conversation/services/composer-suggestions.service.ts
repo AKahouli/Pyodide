@@ -17,10 +17,6 @@ export interface ComposerSuggestionsAdkResult {
 
 @Injectable()
 export class ComposerSuggestionsService {
-  /** Reuse ADK token briefly; ADK access tokens are ~30m — refresh before expiry to avoid /token on every keystroke. */
-  private adkTokenCache: { token: string; expiresAtMs: number } | null = null;
-  private static readonly ADK_TOKEN_CACHE_MS = 25 * 60 * 1000;
-
   /** Cache agent prompts to avoid DB queries on every keystroke. */
   private agentPromptCache: { agentId: string; prompt: string; expiresAt: number } | null = null;
   private static readonly AGENT_PROMPT_CACHE_MS = 5 * 60 * 1000; // 5 minutes
@@ -35,60 +31,15 @@ export class ComposerSuggestionsService {
     this.logger.setContext(ComposerSuggestionsService.name);
   }
 
-  /**
-   * ADK validates JWTs issued by POST /token (Redis users), not YellowStorm user JWTs.
-   * Use the same service credentials as document indexing (INDEXING_API_USERNAME/PASSWORD).
-   */
-  private async getAdkAccessToken(adkBaseUrl: string): Promise<string> {
-    const now = Date.now();
-    if (
-      this.adkTokenCache &&
-      this.adkTokenCache.expiresAtMs > now + 30_000
-    ) {
-      return this.adkTokenCache.token;
-    }
-
-    const username = this.configService.get<string>('indexing.username') || '';
-    const password = this.configService.get<string>('indexing.password') || '';
-    if (!username.trim() || !password.trim()) {
-      this.logger.error('ADK /token credentials missing (indexing.username/password)');
+  private getAdkApiKey(): string {
+    const key = (this.configService.get<string>('indexing.adkApiKey') || '').trim();
+    if (!key) {
+      this.logger.error('ADK_API_KEY is not configured');
       throw new BadGatewayException(
-        'ADK credentials not configured. Set INDEXING_API_USERNAME and INDEXING_API_PASSWORD (ADK /token user, same as indexing).',
+        'ADK credentials not configured. Set ADK_API_KEY to authenticate with the ADK.',
       );
     }
-
-    const params = new URLSearchParams();
-    params.append('username', username);
-    params.append('password', password);
-
-    try {
-      const response = await axios.post<{ access_token?: string }>(`${adkBaseUrl}/token`, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 15000,
-      });
-      const token = response.data?.access_token;
-      if (!token?.trim()) {
-        this.logger.error('ADK /token returned no access_token');
-        throw new BadGatewayException('ADK authentication response invalid');
-      }
-      const trimmed = token.trim();
-      this.adkTokenCache = {
-        token: trimmed,
-        expiresAtMs: now + ComposerSuggestionsService.ADK_TOKEN_CACHE_MS,
-      };
-      return trimmed;
-    } catch (err) {
-      this.adkTokenCache = null;
-      if (axios.isAxiosError(err)) {
-        const ax = err as AxiosError<{ detail?: string }>;
-        this.logger.error('ADK /token failed', {
-          status: ax.response?.status,
-          message: ax.response?.data?.detail || ax.message,
-        });
-        throw new BadGatewayException('Could not authenticate with ADK (check INDEXING_API_* credentials)');
-      }
-      throw err;
-    }
+    return key;
   }
 
   /**
@@ -218,7 +169,7 @@ export class ComposerSuggestionsService {
       throw new BadGatewayException('Composer suggestions model is not configured');
     }
 
-    const bearer = `Bearer ${await this.getAdkAccessToken(adkUrl)}`;
+    const apiKey = this.getAdkApiKey();
 
     // Log the agent metadata being used
     this.logger.warn('Composer suggestions using agent', {
@@ -243,7 +194,7 @@ export class ComposerSuggestionsService {
         `${adkUrl}/chatbots/chat_completion`,
         { message, model, temperature: 0.4, max_tokens: 768 },
         {
-          headers: { 'Content-Type': 'application/json', Authorization: bearer },
+          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
           timeout: 60_000,
         },
       );
@@ -257,15 +208,11 @@ export class ComposerSuggestionsService {
       if (!axios.isAxiosError(err)) throw err;
 
       const ax = err as AxiosError<{ detail?: string }>;
-      if (ax.response?.status === 401) {
-        this.adkTokenCache = null;
-      }
-
       const status = ax.response?.status;
       if (status) {
         const suffix =
           status === 401
-            ? ' (ADK rejected the token; ensure INDEXING_API_USERNAME/PASSWORD match an ADK Redis user)'
+            ? ' (ADK rejected the API key; ensure ADK_API_KEY matches the ADK server configuration)'
             : '';
         throw new BadGatewayException(`Suggestions service error (${status})${suffix}`);
       }

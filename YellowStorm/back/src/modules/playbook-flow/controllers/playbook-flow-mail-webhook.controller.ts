@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Req, Res, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Query, Req, Res, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
@@ -32,9 +32,18 @@ export class PlaybookFlowMailWebhookController {
   @Public()
   @HttpCode(202)
   async receiveWebhook(
+    @Query('validationToken') validationToken: string | undefined,
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    // Microsoft Graph sends the subscription validation handshake as a POST
+    // (not GET) with ?validationToken=<token>. Must respond 200 text/plain
+    // with the token verbatim within 10 seconds.
+    if (validationToken) {
+      res.setHeader('Content-Type', 'text/plain');
+      return res.status(HttpStatus.OK).send(validationToken);
+    }
+
     try {
       const body = req.body as { value?: Array<Record<string, any>> };
       const result = await this.webhookService.handleNotifications(body);

@@ -2,9 +2,10 @@ import { useCallback } from 'react';
 import type { DragEvent, Dispatch, SetStateAction } from 'react';
 import type { Node } from '@xyflow/react';
 
-import { cloneRouterConfig } from './helpers/router-template';
+import { buildRouterOutputPorts, cloneRouterConfig } from './helpers/router-template';
 import type { ConnectorDropPayload } from '../components/PlaybookNode';
-import type { PlaybookTask, TaskTemplate, ToolBinding } from '../types';
+import type { SkillDropPayload } from '../components/SkillSidebar';
+import type { PlaybookTask, TaskSkillBinding, TaskTemplate, ToolBinding } from '../types';
 
 export interface PlaybookBindingModalState {
   open: boolean;
@@ -24,8 +25,13 @@ interface PlaybookCanvasNodeHandlersOptions {
   setEditorOpen: (open: boolean) => void;
   setBindingModalState: Dispatch<SetStateAction<PlaybookBindingModalState | null>>;
   addToolBindingToTask: (taskId: string, binding: ToolBinding) => void;
+  addSkillBindingToTask: (taskId: string, binding: TaskSkillBinding) => void;
   routerNodeDefaultTitle: string;
   humanApprovalNodeDefaultTitle: string;
+  showWarning: (message: string) => void;
+  warnings: {
+    dropSkillOnTask: string;
+  };
 }
 
 interface PlaybookCanvasNodeHandlers {
@@ -37,6 +43,8 @@ interface PlaybookCanvasNodeHandlers {
   handleCloneNode: (nodeId: string) => void;
   handleConnectorDrop: (taskId: string, payload: ConnectorDropPayload) => void;
   handleConnectorDragStart: (payload: ConnectorDropPayload) => void;
+  handleSkillDrop: (taskId: string, payload: SkillDropPayload) => void;
+  handleSkillDragStart: (payload: SkillDropPayload) => void;
   handleBindingModalSave: (taskId: string, binding: ToolBinding) => void;
   handleCanvasDrop: (e: DragEvent) => void;
 }
@@ -57,8 +65,11 @@ export function usePlaybookCanvasNodeHandlers({
   setEditorOpen,
   setBindingModalState,
   addToolBindingToTask,
+  addSkillBindingToTask,
   routerNodeDefaultTitle,
   humanApprovalNodeDefaultTitle,
+  showWarning,
+  warnings,
 }: PlaybookCanvasNodeHandlersOptions): PlaybookCanvasNodeHandlers {
   const getCenter = () => taskCenterStyleOffset(reactFlowScreenToFlowPosition);
 
@@ -176,7 +187,7 @@ export function usePlaybookCanvasNodeHandlers({
       const isRouterTemplate = template.nodeType === 'router';
       const routerConfig = isRouterTemplate ? cloneRouterConfig(template.routerConfig) : null;
       const outputPorts = isRouterTemplate
-        ? routerConfig!.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' as const }))
+        ? buildRouterOutputPorts(routerConfig!)
         : template.outputPorts.map((p) => ({ ...p }));
 
       const newTask: PlaybookTask = {
@@ -301,6 +312,22 @@ export function usePlaybookCanvasNodeHandlers({
     void payload;
   }, []);
 
+  const handleSkillDrop = useCallback(
+    (taskId: string, payload: SkillDropPayload) => {
+      addSkillBindingToTask(taskId, {
+        id: crypto.randomUUID(),
+        skillId: payload.skillId,
+        skillName: payload.skillName,
+        isEnabled: true,
+      });
+    },
+    [addSkillBindingToTask],
+  );
+
+  const handleSkillDragStart = useCallback((payload: SkillDropPayload) => {
+    void payload;
+  }, []);
+
   const handleBindingModalSave = useCallback(
     (taskId: string, binding: ToolBinding) => {
       addToolBindingToTask(taskId, binding);
@@ -316,6 +343,10 @@ export function usePlaybookCanvasNodeHandlers({
         const raw = e.dataTransfer.getData('application/json');
         if (!raw) return;
         const payload = JSON.parse(raw);
+        if (payload?.type === 'skill' && payload?.skillId) {
+          showWarning(warnings.dropSkillOnTask);
+          return;
+        }
         if (payload?.type !== 'connector' || !payload?.connectorId) return;
 
         const taskId = crypto.randomUUID();
@@ -360,7 +391,7 @@ export function usePlaybookCanvasNodeHandlers({
         return;
       }
     },
-    [playbook?.tasks, reactFlowScreenToFlowPosition, addNode, setBindingModalState],
+    [addNode, playbook?.tasks, reactFlowScreenToFlowPosition, setBindingModalState, showWarning, warnings.dropSkillOnTask],
   );
 
   return {
@@ -372,6 +403,8 @@ export function usePlaybookCanvasNodeHandlers({
     handleCloneNode,
     handleConnectorDrop,
     handleConnectorDragStart,
+    handleSkillDrop,
+    handleSkillDragStart,
     handleBindingModalSave,
     handleCanvasDrop,
   };

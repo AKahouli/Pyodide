@@ -9,12 +9,21 @@ import type {
   AgentType,
   AgentTelegramIntegration,
   AgentTelegramIntegrationInput,
+  AgentWhatsAppConnectResponse,
+  AgentWhatsAppIntegration,
+  AgentWhatsAppPairingResponse,
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
+  ConnectorActionOption,
   A2APublishResult,
   A2ARotateKeyResult,
   A2ARevokeResult,
+  WidgetTokenResponse,
+  ShareAgentData,
+  AgentShareEntry,
+  AgentPermissionLevel,
+  UserSearchResult,
 } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
@@ -49,6 +58,80 @@ export async function updateAgent(id: string, data: UpdateAgentData): Promise<Ag
 
 export async function deleteAgent(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.agents.byId(id));
+}
+
+/**
+ * Update a default (admin-created) agent.
+ *
+ * The user-facing `PATCH /agents/:id` rejects default agents with
+ * CUSTOM_AGENT_DEFAULT_READONLY, so admins holding `agents.update` go through
+ * the admin endpoint instead. Permission enforcement stays on the backend.
+ */
+export async function updateDefaultAgent(id: string, data: UpdateAgentData): Promise<Agent> {
+  const response = await apiClient.patch<ApiResponse<Agent>>(
+    API_ENDPOINTS.adminAgents.byId(id),
+    data
+  );
+  return response.data.data;
+}
+
+/**
+ * Delete a default (admin-created) agent via the admin endpoint.
+ * Requires the caller to hold `agents.delete` (enforced server-side).
+ */
+export async function deleteDefaultAgent(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminAgents.byId(id));
+}
+
+// ===== Agent sharing =====
+
+/** Share an agent with one or more users by email, at one permission level. */
+export async function shareAgent(agentId: string, data: ShareAgentData): Promise<AgentShareEntry[]> {
+  const response = await apiClient.post<ApiResponse<AgentShareEntry[]>>(
+    API_ENDPOINTS.agents.shares(agentId),
+    data,
+  );
+  return response.data.data;
+}
+
+/** List everyone an agent is shared with (owner only). */
+export async function getAgentShares(agentId: string): Promise<AgentShareEntry[]> {
+  const response = await apiClient.get<ApiResponse<AgentShareEntry[]>>(
+    API_ENDPOINTS.agents.shares(agentId),
+  );
+  return response.data.data;
+}
+
+/** Change a share's permission level (owner only). */
+export async function updateAgentSharePermission(
+  agentId: string,
+  shareId: string,
+  permission: AgentPermissionLevel,
+): Promise<AgentShareEntry> {
+  const response = await apiClient.patch<ApiResponse<AgentShareEntry>>(
+    API_ENDPOINTS.agents.shareById(agentId, shareId),
+    { permission },
+  );
+  return response.data.data;
+}
+
+/** Revoke a share (owner only). */
+export async function removeAgentShare(agentId: string, shareId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.shareById(agentId, shareId));
+}
+
+/** Remove an agent that was shared with the current user from their own list. */
+export async function unshareAgent(agentId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.unshare(agentId));
+}
+
+/** Autocomplete search for users to share an agent with. */
+export async function searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
+  const response = await apiClient.get<ApiResponse<UserSearchResult[]>>(
+    API_ENDPOINTS.users.search,
+    { params: { q: query, limit } },
+  );
+  return response.data.data;
 }
 
 /**
@@ -121,6 +204,7 @@ export interface ConnectorOption {
   categoryId?: string | null;
   /** Resolved category name; used to exclude "System" connectors. */
   categoryName?: string | null;
+  actions?: ConnectorActionOption[];
 }
 
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {
@@ -154,6 +238,61 @@ export async function deleteAgentTelegramIntegration(agentId: string): Promise<v
   await apiClient.delete(API_ENDPOINTS.agents.telegramIntegration(agentId));
 }
 
+export async function getAgentWhatsAppIntegration(
+  agentId: string,
+): Promise<AgentWhatsAppIntegration | null> {
+  const response = await apiClient.get<ApiResponse<AgentWhatsAppIntegration | null>>(
+    API_ENDPOINTS.agents.whatsappIntegration(agentId),
+  );
+  return response.data.data;
+}
+
+export async function connectAgentWhatsApp(
+  agentId: string,
+): Promise<AgentWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<AgentWhatsAppConnectResponse>>(
+    API_ENDPOINTS.agents.whatsappConnect(agentId),
+  );
+  return response.data.data;
+}
+
+export async function getAgentWhatsAppPairing(
+  agentId: string,
+  sessionId: string,
+): Promise<AgentWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<AgentWhatsAppPairingResponse>>(
+    API_ENDPOINTS.agents.whatsappPairing(agentId, sessionId),
+  );
+  return response.data.data;
+}
+
+export async function reconnectAgentWhatsApp(
+  agentId: string,
+  sessionId: string,
+): Promise<AgentWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<AgentWhatsAppIntegration>>(
+    API_ENDPOINTS.agents.whatsappReconnect(agentId, sessionId),
+  );
+  return response.data.data;
+}
+
+export async function disconnectAgentWhatsAppSession(
+  agentId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.whatsappSession(agentId, sessionId));
+}
+
+export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.agents.whatsappIntegration(agentId));
+}
+
+export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.widgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
 
 // Re-export evaluation API functions
 export * from './evaluation-api';

@@ -70,6 +70,39 @@ export class ConnectedAppTokenService {
     return this.getValidToken(userId, appKey);
   }
 
+  /**
+   * Resolves a valid M365 access token by trying all known app keys in order.
+   * Returns both the token and the app key it was found under so callers can
+   * persist the correct key. Falls back gracefully when the stored mailboxAppKey
+   * doesn't match the actual connection key (e.g. 'microsoft' vs 'microsoft365').
+   */
+  async getM365ValidToken(userId: string, preferredAppKey?: string): Promise<{ token: string; appKey: string }> {
+    const keysToTry = preferredAppKey
+      ? [preferredAppKey, ...M365_MAIL_APP_KEYS.filter((k) => k !== preferredAppKey)]
+      : M365_MAIL_APP_KEYS;
+
+    for (const appKey of keysToTry) {
+      const connection = await this.connectionModel
+        .findOne({ userId: new Types.ObjectId(userId), appKey, status: ConnectionStatus.ACTIVE })
+        .exec();
+      if (!connection) continue;
+
+      const now = new Date();
+      if (connection.tokenExpiresAt && connection.tokenExpiresAt.getTime() - TOKEN_EXPIRY_BUFFER_MS < now.getTime()) {
+        const token = await this.refreshAccessToken(connection, appKey);
+        return { token, appKey };
+      }
+
+      await this.connectionModel.updateOne({ _id: connection._id }, { $set: { lastUsedAt: now } });
+      return { token: this.cryptoService.decrypt(connection.accessToken), appKey };
+    }
+
+    throw new NotFoundException(
+      ErrorCode.CONNECTED_APP_NOT_CONNECTED,
+      `User is not connected to any Microsoft 365 app`,
+    );
+  }
+
   async getMailboxCapability(userId: string): Promise<MailboxCapabilityResponse> {
     for (const appKey of M365_MAIL_APP_KEYS) {
       const connection = await this.connectionModel

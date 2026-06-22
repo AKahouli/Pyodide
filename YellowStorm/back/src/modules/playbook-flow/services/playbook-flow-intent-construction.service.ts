@@ -6,6 +6,10 @@ import { DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS } from '@modules/system/in
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartResult, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
 import { PlaybookFlowIntentService, type IntentNormalizationLimits, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
+import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
+import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
+import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -25,7 +29,14 @@ export class PlaybookFlowIntentConstructionService {
   private readonly jobs = new Map<string, PlaybookIntentConstructionJob>();
   private readonly logger = new Logger(PlaybookFlowIntentConstructionService.name);
 
-  constructor(private readonly intentService: PlaybookFlowIntentService) {}
+  constructor(
+    private readonly intentService: PlaybookFlowIntentService,
+    private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
+    private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
+      new PlaybookIntentNodeBuildRegistryService(),
+      new PlaybookIntentGraphBindingResolverService(),
+    ),
+  ) {}
 
   async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentConstructionStartResult> {
     const normalizedFlowId = String(flowId);
@@ -83,6 +94,7 @@ export class PlaybookFlowIntentConstructionService {
     job.status = 'running';
     try {
       this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Planning workflow construction' });
+      const useBlueprint = context.effectiveSettings.useDeterministicBlueprintBuilder;
       const response = await context.httpClient.post('/v1/chat/completions', {
         model: context.model,
         temperature: 0.2,
@@ -97,14 +109,24 @@ export class PlaybookFlowIntentConstructionService {
       for await (const content of this.readChatCompletionStream(response.data)) {
         if (job.abortController.signal.aborted) return;
         raw += content;
+        if (useBlueprint) continue;
         const partialSuggestions = this.normalizePartialSuggestions(raw, dto, context);
         emittedDeltaCount = await this.emitSuggestions(job, partialSuggestions, emittedDeltaCount);
       }
 
-      const suggestions = this.normalizeRawSuggestions(raw, dto, context);
-      await this.emitSuggestions(job, suggestions, emittedDeltaCount);
-      job.status = 'completed';
-      this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
+      if (useBlueprint) {
+        const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
+        await this.emitSuggestions(job, suggestions);
+        if (job.abortController.signal.aborted) return;
+        job.status = 'completed';
+        this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
+      } else {
+        const suggestions = this.normalizeRawSuggestions(raw, dto, context);
+        await this.emitSuggestions(job, suggestions, emittedDeltaCount);
+        if (job.abortController.signal.aborted) return;
+        job.status = 'completed';
+        this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
+      }
       this.scheduleCleanup(job);
     } catch (error) {
       if (job.abortController.signal.aborted) return;
@@ -116,14 +138,46 @@ export class PlaybookFlowIntentConstructionService {
     }
   }
 
+  private buildBlueprintSuggestions(
+    raw: string,
+    context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>,
+    dto: RequestPlaybookFlowIntentDto,
+  ): PlaybookIntentSuggestion[] {
+    if (!this.blueprintParser.hasBlueprintShape(raw)) {
+      return this.normalizeRawSuggestions(raw, dto, context);
+    }
+    const parsed = this.blueprintParser.parse(raw);
+    if (!parsed) {
+      return this.normalizeRawSuggestions(raw, dto, context);
+    }
+    try {
+      const built = this.graphBuilder.build({
+        blueprint: parsed.blueprint,
+        context: context.validationContext,
+        limits: context.limits,
+        templates: context.nodeTemplates,
+        designCatalog: this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog),
+        selectedNodeId: context.selectedNodeId,
+      });
+      if (built.dropped.length) {
+        this.logger.warn(`playbook_intent_builder_dropped items=${built.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
+      }
+      return [built.suggestion];
+    } catch (error) {
+      this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
+      return this.normalizeRawSuggestions(raw, dto, context);
+    }
+  }
+
   private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0): Promise<number> {
     const deltas = suggestions.flatMap((suggestion) => this.buildSuggestionDeltas(suggestion));
     for (let index = emittedDeltaCount; index < deltas.length; index += 1) {
       if (job.abortController.signal.aborted) return emittedDeltaCount;
       const suggestion = deltas[index];
       const changes = suggestion.kind === 'workflow_plan' ? suggestion.changes : [];
-      const hasNode = suggestion.kind === 'single_change' || changes.some((change) => change.type === 'create_node' || change.type === 'update_node' || change.type === 'delete_node');
-      const type = hasNode ? 'node_delta' : changes.some((change) => change.type.includes('data_binding')) ? 'data_binding_delta' : 'edge_delta';
+      const latestChange = changes[changes.length - 1];
+      const hasNode = suggestion.kind === 'single_change' || latestChange?.type === 'create_node' || latestChange?.type === 'update_node' || latestChange?.type === 'delete_node';
+      const type = hasNode ? 'node_delta' : latestChange?.type.includes('data_binding') ? 'data_binding_delta' : 'edge_delta';
       this.emit(job, { type, constructionId: job.id, playbookId: job.flowId, suggestion, nodeIndex: type === 'node_delta' ? index + 1 : undefined, totalNodes: type === 'node_delta' ? deltas.length : undefined } as PlaybookIntentConstructionEvent);
       await this.waitForNextDelta(job.abortController.signal);
     }

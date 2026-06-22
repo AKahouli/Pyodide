@@ -68,7 +68,7 @@ class AgentSuggestionGenerator:
                 name: str
                 description: str
                 prompt: str
-                tools: Optional[List[Literal["calculator", "search", "search_web", "in_memory"]]]
+                tools: Optional[List[Literal["calculator", "search", "search_web", "in_memory"]]] = None
 
             class SuggestionsResponse(BaseModel):
                 suggestions: List[SuggestionSchema] = Field(default=[], description="List of newly suggested agents")

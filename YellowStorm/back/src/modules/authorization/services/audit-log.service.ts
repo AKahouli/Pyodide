@@ -132,7 +132,7 @@ export class AuditLogService {
         features.add(parts[0]);
       }
     }
-    return Array.from(features).sort();
+    return Array.from(features).sort((a, b) => a.localeCompare(b));
   }
 
   /**

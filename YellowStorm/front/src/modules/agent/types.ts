@@ -18,6 +18,7 @@ export interface Agent {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -28,6 +29,48 @@ export interface Agent {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Present when the agent was shared with the current user (non-owner). */
+  shareInfo?: SharedAgentInfo;
+}
+
+export type AgentPermissionLevel = 'read' | 'write';
+
+/** Info about an agent shared with the current user (non-owner). */
+export interface SharedAgentInfo {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  sharedBy: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
+export interface ShareAgentData {
+  emails: string[];
+  permission: AgentPermissionLevel;
+}
+
+/** A single share entry on an agent (owner's view of who it's shared with). */
+export interface AgentShareEntry {
+  shareId: string;
+  permission: AgentPermissionLevel;
+  user: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  createdAt: string;
+}
+
+/** A user returned by the autocomplete search when sharing an agent. */
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 /**
@@ -53,6 +96,13 @@ export interface A2ARevokeResult {
   revoked: boolean;
 }
 
+/** Plain widget token returned once on creation for embed deployment. */
+export interface WidgetTokenResponse {
+  id: string;
+  token: string;
+  agentId: string;
+}
+
 /**
  * Read-side representation of a Telegram integration for an agent.
  * The bot token is never returned by the backend; `hasToken` only signals
@@ -76,6 +126,34 @@ export interface AgentTelegramIntegrationInput {
   botToken?: string;
 }
 
+export type AgentWhatsAppIntegrationStatus =
+  | 'PAIRING'
+  | 'CONNECTED'
+  | 'DISCONNECTED'
+  | 'FAILED';
+
+export interface AgentWhatsAppIntegration {
+  status: AgentWhatsAppIntegrationStatus;
+  sessionId?: string;
+  phoneNumber?: string;
+  displayName?: string;
+  lastActivityAt?: string;
+  errorMessage?: string;
+  updatedAt?: string;
+}
+
+export interface AgentWhatsAppConnectResponse {
+  sessionId: string;
+  status: 'PAIRING';
+  qrCode?: string;
+  pairingCode?: string;
+}
+
+export interface AgentWhatsAppPairingResponse {
+  qrCode?: string;
+  pairingCode?: string;
+}
+
 export interface AgentType {
   id: string;
   name: string;
@@ -96,6 +174,18 @@ export interface SkillOption {
   categoryId?: string | null;
   /** Resolved category name; used to exclude "System" skills. */
   categoryName?: string | null;
+}
+
+export interface ConnectorActionOption {
+  key: string;
+  label: string;
+  description: string;
+  isEnabled: boolean;
+}
+
+export interface AgentConnectorActionSelection {
+  connectorId: string;
+  actionKeys: string[];
 }
 
 export interface AgentState {
@@ -201,6 +291,8 @@ export interface AgentActions {
   createAgent: (data: CreateAgentData) => Promise<Agent>;
   updateAgent: (id: string, data: UpdateAgentData) => Promise<Agent>;
   deleteAgent: (id: string) => Promise<void>;
+  /** Remove an agent shared with the current user from their own list. */
+  unshareAgent: (id: string) => Promise<void>;
   bulkDeleteAgents: (
     ids: string[],
     onProgress?: (done: number, total: number) => void,
@@ -246,6 +338,7 @@ export interface CreateAgentData {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -265,6 +358,7 @@ export interface UpdateAgentData {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

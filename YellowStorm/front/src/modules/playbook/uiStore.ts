@@ -31,6 +31,7 @@ export interface PlaybookUiState {
   executionDetailTab: string;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
+  skillSidebarOpen: boolean;
   nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
 }
@@ -45,6 +46,7 @@ export interface PlaybookUiActions {
   openExecutionDetailTab: (tab: string, taskId?: string) => void;
   setWorkspaceExplorerOpen: (open: boolean) => void;
   setConnectorSidebarOpen: (open: boolean) => void;
+  setSkillSidebarOpen: (open: boolean) => void;
   setNodeEditorOpen: (open: boolean) => void;
   reset: () => void;
 }
@@ -60,6 +62,7 @@ export const initialPlaybookUiState: PlaybookUiState = {
   executionDetailTab: 'results',
   workspaceExplorerOpen: readBooleanPreference(WORKSPACE_EXPLORER_KEY),
   connectorSidebarOpen: false,
+  skillSidebarOpen: false,
   nodeEditorOpen: false,
   pageMode: 'design',
 };
@@ -74,7 +77,7 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
       setCopilotMode: (mode) => set({ copilotMode: mode }),
       setExecutionPanelOpen: (open) => {
         set(open
-          ? { executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, nodeEditorOpen: false }
+          ? { executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, skillSidebarOpen: false, nodeEditorOpen: false }
           : { executionPanelOpen: false });
         writeBooleanPreference(EXEC_PANEL_KEY, open);
       },
@@ -85,6 +88,7 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
           executionPanelOpen: true,
           workspaceExplorerOpen: false,
           connectorSidebarOpen: false,
+          skillSidebarOpen: false,
           nodeEditorOpen: false,
           pageMode: 'run',
           ...(taskId ? { selectedStepId: taskId } : {}),
@@ -93,15 +97,18 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
       },
       setWorkspaceExplorerOpen: (open) => {
         set(open
-          ? { workspaceExplorerOpen: true, connectorSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
+          ? { workspaceExplorerOpen: true, connectorSidebarOpen: false, skillSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
           : { workspaceExplorerOpen: false });
         writeBooleanPreference(WORKSPACE_EXPLORER_KEY, open);
       },
       setConnectorSidebarOpen: (open) => set(open
-        ? { connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
+        ? { connectorSidebarOpen: true, skillSidebarOpen: false, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
         : { connectorSidebarOpen: false }),
+      setSkillSidebarOpen: (open) => set(open
+        ? { skillSidebarOpen: true, connectorSidebarOpen: false, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false }
+        : { skillSidebarOpen: false }),
       setNodeEditorOpen: (open) => set(open
-        ? { nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false }
+        ? { nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, skillSidebarOpen: false, executionPanelOpen: false }
         : { nodeEditorOpen: false }),
       reset: () => set({
         ...initialPlaybookUiState,
@@ -122,3 +129,4 @@ export const usePageMode = () => usePlaybookUiStore((s) => s.pageMode);
 export const useWorkspaceExplorerOpen = () => usePlaybookUiStore((s) => s.workspaceExplorerOpen);
 export const useNodeEditorOpen = () => usePlaybookUiStore((s) => s.nodeEditorOpen);
 export const useConnectorSidebarOpen = () => usePlaybookUiStore((s) => s.connectorSidebarOpen);
+export const useSkillSidebarOpen = () => usePlaybookUiStore((s) => s.skillSidebarOpen);

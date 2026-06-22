@@ -8,6 +8,7 @@ import { RateLimitSkip } from '../rate-limiter';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
+import { CorsSettingsValue } from './schemas/system-setting.schema';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
@@ -191,6 +192,41 @@ export class SystemController {
         defaultColorTheme: body.defaultColorTheme,
         themes: body.themes,
       },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return result;
+  }
+
+  @Get('cors')
+  @Public()
+  @SkipMaintenance()
+  @RateLimitSkip()
+  @ApiOperation({ summary: 'Get CORS settings' })
+  async getCorsSettings(): Promise<CorsSettingsValue & { updatedAt?: string; updatedBy?: string }> {
+    const settings = await this.systemService.getCorsSettings();
+    return settings;
+  }
+
+  @Post('cors')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions('system.cors')
+  @SkipMaintenance()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set CORS settings', description: 'Requires system.cors permission.' })
+  async setCorsSettings(
+    @Body() body: { origins: Array<{ origin: string; enabled: boolean }> },
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<CorsSettingsValue> {
+    const result = await this.systemService.setCorsSettings(body.origins, user._id.toString());
+
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.cors',
+      metadata: { origins: body.origins },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });

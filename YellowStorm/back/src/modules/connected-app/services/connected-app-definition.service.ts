@@ -10,6 +10,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { collapseRepeatedChar, collapseWhitespace } from '@common/utils';
 import { CreateConnectedAppDefinitionDto, DEFAULT_COMMON_APP_KEYS } from '../dto/create-connected-app-definition.dto';
 import { UpdateConnectedAppDefinitionDto } from '../dto/update-connected-app-definition.dto';
 import {
@@ -301,12 +302,16 @@ export class ConnectedAppDefinitionService {
   }
 
   async suggestAppKey(displayName: string): Promise<string> {
-    const slug = displayName
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '')
-      .replace(/-+/g, '-');
+    const slug = collapseRepeatedChar(
+      collapseWhitespace(
+        displayName
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9-]/g, ''),
+        '-',
+      ),
+      '-',
+    );
 
     let baseKey = slug;
     let counter = 1;

@@ -1,17 +1,18 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from './schemas/agent.schema';
-import { IAgentResponse, IAgentForStream, IGrpcAgent } from './interfaces/agent.interface';
+import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
+import { AgentShareService } from './services/agent-share.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
@@ -19,8 +20,15 @@ import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
+import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
+import { TeamService } from '../team/team.service';
+
+/** Agent-type slug of the orchestrating manager agent. */
+const MANAGER_SLUG = 'manager';
+/** Agent-type slug of the single default agent sent when no agent is tagged. */
+const MONO_AGENT_SLUG = 'mono-agent';
 
 @Injectable()
 export class AgentService {
@@ -37,6 +45,9 @@ export class AgentService {
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => TeamService))
+    private readonly teamService: TeamService,
+    private readonly agentShareService: AgentShareService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -87,6 +98,10 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
+      connectorActionSelections: this.normalizeConnectorActionSelections(
+        dto.connectors,
+        dto.connectorActionSelections,
+      ),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -159,11 +174,20 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
     }
 
-    if (agent.createdBy.toString() !== userId) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    const isOwner = agent.createdBy.toString() === userId;
+    let shareInfo: ISharedAgentInfo | undefined;
+    if (!isOwner) {
+      // Non-owners may read the agent only if it was shared with them.
+      const info = await this.agentShareService.getShareInfo(userId, agentId);
+      if (!info) {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+      }
+      shareInfo = info;
     }
 
-    return this.toResponse(agent);
+    const response = this.toResponse(agent);
+    if (shareInfo) response.shareInfo = shareInfo;
+    return response;
   }
 
   async updatePersonal(userId: string, agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
@@ -177,8 +201,13 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
     }
 
-    if (agent.createdBy.toString() !== userId) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    // Owner or a user the agent was shared with at the 'write' level may update it.
+    const ownerId = agent.createdBy.toString();
+    if (ownerId !== userId) {
+      const permission = await this.agentShareService.getSharePermission(userId, agentId);
+      if (permission !== 'write') {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+      }
     }
 
     // Validate agent type if changing
@@ -189,10 +218,10 @@ export class AgentService {
       }
     }
 
-    // Check name uniqueness if changing
+    // Uniqueness is scoped to the agent's owner, not the (possibly shared) editor.
     if (dto.name && dto.name !== agent.name) {
       const duplicate = await this.agentModel
-        .findOne({ name: dto.name, createdBy: new Types.ObjectId(userId) })
+        .findOne({ name: dto.name, createdBy: new Types.ObjectId(ownerId) })
         .lean()
         .exec();
       if (duplicate) {
@@ -203,13 +232,13 @@ export class AgentService {
     const normalizedSlug = dto.slug ? this.normalizeSlug(dto.slug) : undefined;
 
     if (normalizedSlug && normalizedSlug !== agent.slug) {
-      await this.ensureSlugUniqueness(normalizedSlug, false, userId, agentId);
+      await this.ensureSlugUniqueness(normalizedSlug, false, ownerId, agentId);
     }
 
     // Ensure only one default-for-type per user per agent type
     if (dto.isDefaultForType === true) {
       const effectiveAgentTypeId = dto.agentType || agent.agentType.toString();
-      await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, userId, agentId);
+      await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, ownerId, agentId);
     }
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
@@ -241,6 +270,12 @@ export class AgentService {
     }
     if (dto.connectors) {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.connectorActionSelections) {
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
+        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+        dto.connectorActionSelections,
+      );
     }
 
     const updated = await this.agentModel
@@ -278,6 +313,12 @@ export class AgentService {
     }
 
     await this.agentModel.findByIdAndDelete(agentId).exec();
+
+    // Keep teams consistent: drop this agent from any team that referenced it.
+    await this.teamService.removeAgentFromAllTeams(agentId);
+
+    // Drop any shares pointing at the now-deleted agent.
+    await this.agentShareService.removeAllSharesForAgent(agentId);
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -331,6 +372,10 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
+      connectorActionSelections: this.normalizeConnectorActionSelections(
+        dto.connectors,
+        dto.connectorActionSelections,
+      ),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -492,6 +537,12 @@ export class AgentService {
     if (dto.connectors) {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
     }
+    if (dto.connectorActionSelections) {
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
+        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+        dto.connectorActionSelections,
+      );
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -612,29 +663,31 @@ export class AgentService {
       pingedAgents = [];
     }
 
-    // Resolve exactly one manager (priority: pinged > personal default > first personal > admin default > first admin)
-    const isManager = (a: IAgentForStream) => a.agentTypeSlug === 'manager';
-    const manager = this.resolveManager(finalUserAgents, pingedAgents);
-
-    const hasGroupMembers = groupMembers && groupMembers.length > 0;
+    // Resolve the roster based on how many agents the user tagged:
+    //   - 0 tagged  → send only the mono-agent (the default-available agent of type "mono-agent")
+    //   - 1 tagged  → send only that agent (no manager, even if the agent itself is a manager)
+    //   - 2+ tagged → send those agents + the default available manager
     let filteredAgents: IAgentForStream[];
+    let selectedManager: IAgentForStream | undefined;
 
-    if (pingedAgents.length > 0) {
-      // User tagged specific agents: send pinged non-managers + the resolved manager
-      filteredAgents = pingedAgents.filter((a) => !isManager(a));
-      if (manager) {
-        filteredAgents.push(manager);
-      }
+    if (pingedAgents.length === 0) {
+      // No agents tagged: send the single mono-agent
+      const monoAgent = this.resolveDefaultAgentBySlug(MONO_AGENT_SLUG, finalUserAgents);
+      filteredAgents = monoAgent ? [monoAgent] : [];
+    } else if (pingedAgents.length === 1) {
+      // Exactly one agent tagged: send only that agent
+      filteredAgents = [...pingedAgents];
     } else {
-      // No agents tagged: send all admin default agents + the resolved manager
-      const adminAgents = finalUserAgents.filter((a) => a.isDefault && !isManager(a));
-      filteredAgents = [...adminAgents];
-      if (manager) {
+      // More than one agent tagged: send those agents + the default available manager
+      filteredAgents = [...pingedAgents];
+      const manager = this.resolveManager(finalUserAgents, pingedAgents);
+      if (manager && !filteredAgents.some((a) => a.id === manager.id)) {
         filteredAgents.push(manager);
       }
+      selectedManager = manager;
     }
 
-    // Safety net: if still empty (no admin agents and no manager found), send all
+    // Safety net: if nothing resolved (e.g. no mono-agent configured), send all available agents
     if (filteredAgents.length === 0) {
       filteredAgents = finalUserAgents;
     }
@@ -642,9 +695,10 @@ export class AgentService {
     this.logger.log('Agents filtered for stream', {
       userId,
       filteredCount: filteredAgents.length,
+      taggedCount: pingedAgents.length,
       mentionedIds: agentIds,
-      managerId: manager?.id,
-      managerName: manager?.name,
+      managerId: selectedManager?.id,
+      managerName: selectedManager?.name,
     });
 
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
@@ -664,15 +718,6 @@ export class AgentService {
     if (allToolIds.length > 0) {
       const fetched = await this.toolService.findByIds(allToolIds);
       for (const t of fetched) toolsMap.set(t.id, t);
-    }
-
-    const allSkillIds = [
-      ...new Set(filteredAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
-    ];
-    const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
-      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
@@ -702,8 +747,29 @@ export class AgentService {
       ),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    const agentsWithConnectorSkills = filteredAgents.map((agent) => ({
+      ...agent,
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, [
+        ...(agent.connectorIds || []),
+        ...(selectedConnectorId ? [selectedConnectorId] : []),
+      ]),
+    }));
+    const allSkillIds = [
+      ...new Set(
+        agentsWithConnectorSkills.flatMap((a) => [
+          ...(a.agentTypeSkillIds ?? []),
+          ...(a.skillIds ?? []),
+          ...(a.connectorSkillIds ?? []),
+        ]),
+      ),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
 
-    const grpcAgents = await Promise.all(filteredAgents.map(async (agent) => {
+    const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
         .filter(Boolean) as IToolResponse[];
@@ -722,7 +788,12 @@ export class AgentService {
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
       ];
-      const connectorBindings = await this.buildConnectorBindings(connectorsMap, effectiveConnectorIds, userId);
+      const connectorBindings = await this.buildConnectorBindings(
+        connectorsMap,
+        effectiveConnectorIds,
+        userId,
+        this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+      );
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
@@ -831,12 +902,18 @@ export class AgentService {
 
     const streamAgents = agents.map((agent) => this.toStreamAgent(agent));
 
+    // Resolve the admin's default model once so inherited (empty) agent.model
+    // values fall back to it instead of becoming a hardcoded "gpt-4o-mini"
+    // on the ADK side (which 400s on the current Azure deployment).
+    const inheritedDefaultModelId = fallbackModelId
+      || this.modelsService.getModelIdentifier(await this.modelsService.getDefaultModel());
+
     // Batch-resolve prompts
     const promptPairs = streamAgents
       .filter((a) => !a.ignorePrePrompt && a.agentTypeId)
       .map((a) => ({
         agentTypeId: a.agentTypeId,
-        modelId: a.model || fallbackModelId || '',
+        modelId: a.model || inheritedDefaultModelId,
       }));
     const promptMap = await this.agentTypeService.resolvePromptsInBatch(promptPairs);
 
@@ -848,19 +925,10 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
-    const allSkillIds = [
-      ...new Set(streamAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
-    ];
-    const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
-      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
-    }
-
     // Batch-resolve models
     const allModelIds = [...new Set(
       streamAgents
-        .map((a) => a.model || fallbackModelId)
+        .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
     const modelMap = new Map<string, string>();
@@ -877,16 +945,39 @@ export class AgentService {
       ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    const agentsWithConnectorSkills = streamAgents.map((agent) => ({
+      ...agent,
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
+    }));
+    const allSkillIds = [
+      ...new Set(
+        agentsWithConnectorSkills.flatMap((a) => [
+          ...(a.agentTypeSkillIds ?? []),
+          ...(a.skillIds ?? []),
+          ...(a.connectorSkillIds ?? []),
+        ]),
+      ),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
 
     const grpcAgents = await Promise.all(
-      streamAgents.map(async (agent) => {
+      agentsWithConnectorSkills.map(async (agent) => {
         const agentTools = agent.toolIds
           .map((id) => toolsMap.get(id))
           .filter(Boolean) as IToolResponse[];
-        const connectorBindings = await this.buildConnectorBindings(connectorsMap, agent.connectorIds || [], userId);
+        const connectorBindings = await this.buildConnectorBindings(
+          connectorsMap,
+          agent.connectorIds || [],
+          userId,
+          this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+        );
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
-        const effectiveModelId = agent.model || fallbackModelId || '';
+        const effectiveModelId = agent.model || inheritedDefaultModelId;
         const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
@@ -949,21 +1040,136 @@ export class AgentService {
     return grpcAgents;
   }
 
-  async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
-    const agents = await this.agentModel
-      .find({
-        isActive: true,
-        $or: [
-          { createdBy: new Types.ObjectId(userId), isDefault: false },
-          { isDefault: true },
-        ],
-      })
-      .populate('agentType', 'name skills')
-      .sort({ isDefault: -1, createdAt: -1 })
-      .lean()
-      .exec();
+  async buildGrpcConnectorRuntimeForPlaybook(
+    userId: string,
+    toolBindings: Record<string, unknown>[],
+  ): Promise<{
+    connectorIds: string[];
+    connector_bindings: Record<string, unknown>[];
+    tools: Record<string, unknown>[];
+    skills: Record<string, unknown>[];
+  }> {
+    const normalizedBindings = toolBindings
+      .filter((binding) => binding && typeof binding === 'object')
+      .map((binding) => binding as Record<string, unknown>);
 
-    return agents.map((a) => this.toResponse(a));
+    if (normalizedBindings.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorIds: string[] = [];
+    const actionKeysByConnectorId = new Map<string, Set<string>>();
+    const fixedParamsByConnectorId = new Map<string, Record<string, unknown>>();
+
+    for (const binding of normalizedBindings) {
+      if (binding.isEnabled === false) {
+        continue;
+      }
+
+      const connectorId = String(binding.connectorId || '').trim();
+      if (!connectorId) {
+        this.logger.warn('Skipping playbook connector binding without connector id', { userId });
+        continue;
+      }
+
+      const enabledActionKeys = new Set(
+        (Array.isArray(binding.actions) ? binding.actions : [])
+          .filter((action) => action && typeof action === 'object' && (action as Record<string, unknown>).isEnabled !== false)
+          .map((action) => String((action as Record<string, unknown>).actionKey || '').trim())
+          .filter(Boolean),
+      );
+
+      if (enabledActionKeys.size === 0) {
+        this.logger.warn('Skipping playbook connector binding without enabled actions', { userId, connectorId });
+        continue;
+      }
+
+      connectorIds.push(connectorId);
+      actionKeysByConnectorId.set(connectorId, enabledActionKeys);
+
+      if (binding.fixedParams && typeof binding.fixedParams === 'object' && !Array.isArray(binding.fixedParams)) {
+        fixedParamsByConnectorId.set(connectorId, binding.fixedParams as Record<string, unknown>);
+      }
+    }
+
+    const uniqueConnectorIds = [...new Set(connectorIds)];
+    if (uniqueConnectorIds.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
+    const connectorBindings = await this.buildConnectorBindings(
+      connectorsMap,
+      uniqueConnectorIds,
+      userId,
+      actionKeysByConnectorId,
+      fixedParamsByConnectorId,
+    );
+    const connectorSkillIds = this.getConnectorSkillIds(connectorsMap, uniqueConnectorIds);
+    const skills = await this.buildGrpcSkillsForPlaybook(connectorSkillIds);
+
+    return {
+      connectorIds: uniqueConnectorIds,
+      connector_bindings: connectorBindings,
+      tools: this.buildConnectorToolDefs(connectorBindings),
+      skills,
+    };
+  }
+
+  async buildGrpcSkillsForPlaybook(skillIds: string[]): Promise<Record<string, unknown>[]> {
+    const uniqueSkillIds = [...new Set(skillIds.map((skillId) => skillId.trim()).filter(Boolean))];
+    if (uniqueSkillIds.length === 0) {
+      return [];
+    }
+
+    const skills = await this.skillService.findByIds(uniqueSkillIds);
+    const resolvedSkillIds = new Set(skills.map((skill) => skill.id));
+    const missingSkillIds = uniqueSkillIds.filter((skillId) => !resolvedSkillIds.has(skillId));
+    if (missingSkillIds.length > 0) {
+      this.logger.warn('Missing playbook runtime skills', { skillIds: missingSkillIds });
+    }
+    return skills.map((skill) => this.toGrpcSkill(skill));
+  }
+
+  async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
+    const [agents, shareMap] = await Promise.all([
+      this.agentModel
+        .find({
+          isActive: true,
+          $or: [
+            { createdBy: new Types.ObjectId(userId), isDefault: false },
+            { isDefault: true },
+          ],
+        })
+        .populate('agentType', 'name skills')
+        .sort({ isDefault: -1, createdAt: -1 })
+        .lean()
+        .exec(),
+      this.agentShareService.getShareInfoMapForUser(userId),
+    ]);
+
+    const owned = agents.map((a) => this.toResponse(a));
+
+    // Append agents shared with the user (active only), tagged with shareInfo.
+    if (shareMap.size > 0) {
+      const sharedAgents = await this.agentModel
+        .find({
+          _id: { $in: Array.from(shareMap.keys()).map((id) => new Types.ObjectId(id)) },
+          isActive: true,
+        })
+        .populate('agentType', 'name skills')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+
+      for (const doc of sharedAgents) {
+        const response = this.toResponse(doc);
+        response.shareInfo = shareMap.get(response.id);
+        owned.push(response);
+      }
+    }
+
+    return owned;
   }
 
   async findByIds(ids: string[], userId: string): Promise<IAgentResponse[]> {
@@ -975,6 +1181,25 @@ export class AgentService {
           { createdBy: new Types.ObjectId(userId), isDefault: false },
           { isDefault: true },
         ],
+      })
+      .populate('agentType', 'name skills')
+      .lean()
+      .exec();
+
+    return agents.map((a) => this.toResponse(a));
+  }
+
+  /**
+   * Fetch agents by id WITHOUT an ownership filter. Used to populate agent
+   * details on a team the caller has verified team-level access to (e.g. a
+   * shared team) but whose agents they may not own. Callers must enforce that
+   * team-level access themselves before calling this.
+   */
+  async findByIdsUnrestricted(ids: string[]): Promise<IAgentResponse[]> {
+    const agents = await this.agentModel
+      .find({
+        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+        isActive: true,
       })
       .populate('agentType', 'name skills')
       .lean()
@@ -1018,15 +1243,21 @@ export class AgentService {
   }
 
   private normalizeSlug(value: string): string {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
+    return stripLeadingTrailingChar(
+      collapseRepeatedChar(
+        collapseWhitespace(
+          value
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim(),
+          '-',
+        )
+          .replace(/[^a-z0-9-]/g, '-'),
+        '-',
+      ),
+      '-',
+    );
   }
 
   private async ensureSlugUniqueness(
@@ -1056,40 +1287,52 @@ export class AgentService {
 
   /**
    * Resolve exactly ONE manager agent to include in the stream.
-   * Priority (highest → lowest):
-   *   1. A manager explicitly pinged by the user (from mentionedAgentIds)
-   *   2. User's personal default-for-type manager
-   *   3. First personal manager in the list
-   *   4. Admin default-for-type manager
-   *   5. First admin manager in the list
+   * See {@link resolveDefaultAgentBySlug} for the resolution priority.
    */
   private resolveManager(
     allAgents: IAgentForStream[],
     pingedAgents: IAgentForStream[],
   ): IAgentForStream | undefined {
-    const isManager = (a: IAgentForStream) => a.agentTypeSlug === 'manager';
+    return this.resolveDefaultAgentBySlug(MANAGER_SLUG, allAgents, pingedAgents);
+  }
 
-    // 1. If the user pinged a manager, use it (first one if multiple)
-    const pingedManager = pingedAgents.find(isManager);
-    if (pingedManager) return pingedManager;
+  /**
+   * Resolve exactly ONE agent of a given agent-type slug to include in the stream.
+   * Priority (highest → lowest):
+   *   1. An agent of this type explicitly pinged by the user (from mentionedAgentIds)
+   *   2. User's personal default-for-type agent of this type
+   *   3. First personal agent of this type in the list
+   *   4. Admin default-for-type agent of this type
+   *   5. First admin agent of this type in the list
+   */
+  private resolveDefaultAgentBySlug(
+    slug: string,
+    allAgents: IAgentForStream[],
+    pingedAgents: IAgentForStream[] = [],
+  ): IAgentForStream | undefined {
+    const matches = (a: IAgentForStream) => a.agentTypeSlug === slug;
 
-    // Separate all managers into personal vs admin
-    const personalManagers = allAgents.filter((a) => isManager(a) && !a.isDefault);
-    const adminManagers = allAgents.filter((a) => isManager(a) && a.isDefault);
+    // 1. If the user pinged an agent of this type, use it (first one if multiple)
+    const pinged = pingedAgents.find(matches);
+    if (pinged) return pinged;
 
-    // 2. User's personal default-for-type manager
-    const personalDefault = personalManagers.find((a) => a.isDefaultForType);
+    // Separate all matching agents into personal vs admin
+    const personal = allAgents.filter((a) => matches(a) && !a.isDefault);
+    const admin = allAgents.filter((a) => matches(a) && a.isDefault);
+
+    // 2. User's personal default-for-type agent
+    const personalDefault = personal.find((a) => a.isDefaultForType);
     if (personalDefault) return personalDefault;
 
-    // 3. First personal manager
-    if (personalManagers.length > 0) return personalManagers[0];
+    // 3. First personal agent
+    if (personal.length > 0) return personal[0];
 
-    // 4. Admin default-for-type manager
-    const adminDefault = adminManagers.find((a) => a.isDefaultForType);
+    // 4. Admin default-for-type agent
+    const adminDefault = admin.find((a) => a.isDefaultForType);
     if (adminDefault) return adminDefault;
 
-    // 5. First admin manager
-    if (adminManagers.length > 0) return adminManagers[0];
+    // 5. First admin agent
+    if (admin.length > 0) return admin[0];
 
     return undefined;
   }
@@ -1144,6 +1387,7 @@ export class AgentService {
       connectors: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
@@ -1200,6 +1444,7 @@ export class AgentService {
       connectorIds: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
       agentTypeSkillIds,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
@@ -1211,12 +1456,110 @@ export class AgentService {
     skillsMap: Map<string, ISkillResponse>,
   ): ISkillResponse[] {
     const disabled = new Set(agent.disabledSkillIds ?? []);
-    const skillIds = [...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? [])])];
+    const skillIds = [
+      ...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? []), ...(agent.connectorSkillIds ?? [])]),
+    ];
 
     return skillIds
       .filter((id) => !disabled.has(id))
       .map((id) => skillsMap.get(id))
       .filter(Boolean) as ISkillResponse[];
+  }
+
+  private getConnectorSkillIds(
+    connectorsMap: Map<string, IConnectorResponse>,
+    connectorIds: string[],
+  ): string[] {
+    return [...new Set(
+      connectorIds
+        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
+        .flat()
+        .filter(Boolean) as string[],
+    )];
+  }
+
+  private toConnectorActionSelectionResponses(
+    value: unknown,
+  ): Array<{ connectorId: string; actionKeys: string[] }> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return null;
+        }
+
+        const record = entry as {
+          connector?: { toString(): string } | string;
+          connectorId?: string;
+          actionKeys?: unknown;
+        };
+        const connectorId = record.connectorId || record.connector?.toString() || '';
+        const actionKeys = Array.isArray(record.actionKeys)
+          ? [...new Set(record.actionKeys.filter((key): key is string => typeof key === 'string' && key.trim().length > 0))]
+          : [];
+
+        if (!connectorId || actionKeys.length === 0) {
+          this.logger.warn('Dropping invalid connector action selection response', {
+            connectorId: connectorId || '<missing-connector-id>',
+            reason: !connectorId ? 'missing_connector_id' : 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return { connectorId, actionKeys };
+      })
+      .filter(Boolean) as Array<{ connectorId: string; actionKeys: string[] }>;
+  }
+
+  private normalizeConnectorActionSelections(
+    connectorIds: string[] | undefined,
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+    if (!connectorIds?.length || !selections?.length) {
+      return [];
+    }
+
+    const allowedConnectorIds = new Set(connectorIds);
+    return selections
+      .map((selection) => {
+        if (!allowedConnectorIds.has(selection.connectorId)) {
+          this.logger.warn('Dropping connector action selection outside attached connectors', {
+            connectorId: selection.connectorId,
+            reason: 'connector_not_attached',
+          });
+          return null;
+        }
+
+        const actionKeys = [...new Set((selection.actionKeys || []).filter((key) => key?.trim()))];
+        if (actionKeys.length === 0) {
+          this.logger.warn('Dropping connector action selection without action keys', {
+            connectorId: selection.connectorId,
+            reason: 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return {
+          connector: new Types.ObjectId(selection.connectorId),
+          actionKeys,
+        };
+      })
+      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+  }
+
+  private buildConnectorActionKeysByConnectorId(
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Map<string, Set<string>> | undefined {
+    if (!selections?.length) {
+      return undefined;
+    }
+
+    return new Map(
+      selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
+    );
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
@@ -1273,8 +1616,8 @@ export class AgentService {
     );
   }
 
-  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, any>> {
-    const connectorsMap = new Map<string, any>();
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
+    const connectorsMap = new Map<string, IConnectorResponse>();
     if (connectorIds.length === 0) {
       return connectorsMap;
     }
@@ -1284,13 +1627,20 @@ export class AgentService {
       connectorsMap.set(connector.id, connector);
     }
 
+    const missingConnectorIds = connectorIds.filter((connectorId) => !connectorsMap.has(connectorId));
+    if (missingConnectorIds.length > 0) {
+      this.logger.warn('Missing playbook runtime connectors', { connectorIds: missingConnectorIds });
+    }
+
     return connectorsMap;
   }
 
   private async buildConnectorBindings(
-    connectorsMap: Map<string, any>,
+    connectorsMap: Map<string, IConnectorResponse>,
     connectorIds: string[] = [],
     userId?: string,
+    actionKeysByConnectorId?: Map<string, Set<string>>,
+    fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
   ): Promise<Record<string, unknown>[]> {
     const bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
@@ -1300,12 +1650,17 @@ export class AgentService {
         connector_name: connector.name,
         actions: (connector.actions || [])
           .filter((action: any) => action.isEnabled !== false)
+          .filter((action: any) => {
+            const allowedActionKeys = actionKeysByConnectorId?.get(connector.id);
+            return !allowedActionKeys || allowedActionKeys.has(action.key);
+          })
           .map((action: any) => ({
             action_key: action.key,
             label: action.label || action.key,
             description: action.description || '',
             parameter_schema: action.parameterSchema || {},
           })),
+        fixed_params: fixedParamsByConnectorId?.get(connector.id) || {},
         mcp_transport_type: connector.mcpTransportType || '',
         mcp_server_url: connector.mcpServerUrl || '',
         mcp_server_config: connector.mcpServerConfig || {},

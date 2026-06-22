@@ -1,18 +1,36 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '@common/utils';
 
 export type AgentDocument = HydratedDocument<Agent>;
 
+@Schema({ _id: false })
+export class AgentConnectorActionSelection {
+  @Prop({ type: Types.ObjectId, ref: 'Connector', required: true })
+  connector!: Types.ObjectId;
+
+  @Prop({ type: [String], default: [] })
+  actionKeys!: string[];
+}
+
+const AgentConnectorActionSelectionSchema = SchemaFactory.createForClass(AgentConnectorActionSelection);
+
 function deriveAgentSlug(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+  return stripLeadingTrailingChar(
+    collapseRepeatedChar(
+      collapseWhitespace(
+        value
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .trim(),
+        '-',
+      )
+        .replace(/[^a-z0-9-]/g, '-'),
+      '-',
+    ),
+    '-',
+  );
 }
 
 @Schema({
@@ -61,6 +79,9 @@ export class Agent extends Document {
 
   @Prop({ type: [Types.ObjectId], ref: 'Connector', default: [] })
   connectors!: Types.ObjectId[];
+
+  @Prop({ type: [AgentConnectorActionSelectionSchema], default: [] })
+  connectorActionSelections!: AgentConnectorActionSelection[];
 
   @Prop({ default: false, index: true })
   isDefault!: boolean;

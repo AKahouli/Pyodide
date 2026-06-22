@@ -42,6 +42,7 @@ The conversation module provides:
 - **Content Reporting**: Report problematic AI responses with admin review workflow
 - **Timing Metrics**: Track time to first chunk, first token, and total duration
 - **Agent Integration**: Dynamic agent building with manager resolution for gRPC requests
+- **Mono-Agent gRPC**: `RunSingleAgent` / `RunSingleAgentRequest` for single-agent flows (e.g. WhatsApp inbound replies — no manager, no SSE)
 - **Email Invitations**: Automatic email notifications for participants invited to group conversations
 - **Group @mentions**: Persisted mention records per member, `mention_created` SSE to mentioned users, and PATCH to mark mentions seen
 
@@ -361,6 +362,17 @@ class StreamService implements OnModuleInit, OnModuleDestroy {
   startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string): Promise<void>
   stopStream(userId: string, conversationId: string, messageId: string): Promise<void>
 
+  // Mono-agent gRPC (no SSE gateway — used by WhatsApp module)
+  runSingleAgentStream(params: {
+    userId: string
+    username: string
+    conversationId: string
+    messageId: string
+    linkedAgentId: string
+    query: string
+    requestId?: string
+  }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }>
+
   // Name generation
   generateConversationNameAsync(userId: string, conversationId: string, query: string, modelId?: string): void
 
@@ -553,6 +565,7 @@ Located at `proto/chatbot.proto`:
 ```protobuf
 service ChatbotService {
     rpc RunAgentTeam(RunAgentTeamRequest) returns (stream StreamChunk);
+    rpc RunSingleAgent(RunSingleAgentRequest) returns (stream StreamChunk);
     rpc GenerateConversationName(GenerateConversationNameRequest) returns (GenerateConversationNameResponse);
 }
 
@@ -578,6 +591,20 @@ message RunAgentTeamRequest {
     string agent_mode = 9;                              // "manual"
     repeated AttachedFile attached_files = 10;           // Files attached in this turn
     repeated Document previous_attached_files = 11;      // Already-indexed files from previous turns
+}
+
+// Mono-agent: one specialized agent runs directly (no manager / no agent_mode).
+// ADK sets agent_mode=mono internally. Used by WhatsApp inbound replies.
+message RunSingleAgentRequest {
+    UserContext user_context = 1;
+    string conversation_id = 2;
+    string query = 3;
+    Agent agent = 4;                                     // Single agent to run
+    repeated WorkspaceContext workspace_context = 5;
+    repeated AttachedFile attached_files = 6;
+    repeated Document previous_attached_files = 7;
+    ConnectorRepo connector_repo = 8;
+    repeated Skill skills = 9;
 }
 
 message AttachedFile {
@@ -667,7 +694,7 @@ const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
 this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, grpc.credentials.createInsecure());
 ```
 
-### Stream Execution
+### Stream Execution (`RunAgentTeam`)
 
 ```typescript
 // StreamService.executeGrpcStream()
@@ -689,6 +716,38 @@ this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, grpc.credentials
    - Record partial usage
    - Send stream_error via SSE
 ```
+
+### Mono-Agent Stream Execution (`RunSingleAgent`)
+
+Used when a **single linked agent** must run without manager orchestration and without SSE delivery (WhatsApp module today).
+
+```typescript
+// StreamService.runSingleAgentStream() → executeSingleAgentGrpcStream()
+1. Build one IGrpcAgent via AgentService.buildGrpcAgentsForPlaybook([linkedAgentId])
+2. Resolve brain contexts + workspace context + previous_attached_files
+3. Assemble RunSingleAgentRequest:
+   {
+     user_context, conversation_id, query,
+     agent,              // single agent (not agents[])
+     workspace_context,
+     attached_files: [],
+     previous_attached_files
+   }
+4. chatbotClient.RunSingleAgent(request, { metadata: { user: username } })
+5. Buffer StreamChunk components server-side (add/update/delete)
+6. On 'end': MessageService.completeAIMessage() — no SSE, no usage gateway events
+7. On error/timeout: MessageService.markStreamFailed()
+```
+
+| Aspect | `RunAgentTeam` | `RunSingleAgent` |
+|--------|----------------|------------------|
+| Agents | `repeated Agent` + manager | Single `Agent` |
+| `agent_mode` | Yes (`manual`, etc.) | Omitted (ADK uses `mono`) |
+| SSE delivery | Yes (`StreamGatewayService`) | No |
+| Typical caller | Web chat `startStream()` | `WhatsAppStreamService` |
+| Idle timeout | `conversation.grpcTimeoutMs` (120s) | `conversation.grpcTimeoutMs` (120s) |
+
+**Proto requirement:** `chatbot.proto` must include `RunSingleAgent` in `ChatbotService`. If the RPC is missing from the loaded proto, the gRPC client will not expose `RunSingleAgent` at runtime (`is not a function`). Restart the backend after proto changes.
 
 ---
 
@@ -1090,7 +1149,7 @@ PATCH  /api/v1/reports/:id/status               Update report status
 7. Return { userMessage } immediately
 ```
 
-### gRPC Stream Processing
+### gRPC Stream Processing (`RunAgentTeam`)
 
 ```
 1. chatbotClient.RunAgentTeam(request)
@@ -1111,6 +1170,22 @@ PATCH  /api/v1/reports/:id/status               Update report status
    ├── Send stream_complete via SSE
    └── Cleanup stream state
 ```
+
+### WhatsApp Mono-Agent Flow (`RunSingleAgent`)
+
+```
+1. WhatsAppMessageService routes inbound DM
+2. MessageService.createUserMessage + createAIPlaceholder
+3. WhatsAppStreamService.runStream()
+4. StreamService.runSingleAgentStream()
+   ├── buildGrpcAgentsForPlaybook([linkedAgentId])
+   ├── Build RunSingleAgentRequest
+   └── chatbotClient.RunSingleAgent(request)
+5. Buffer chunks → MessageService.completeAIMessage()
+6. WhatsApp extracts reply text → Baileys sendMessage
+```
+
+See [WhatsApp Module](../whatsapp/README.md) for pairing, bindings, and outbound delivery.
 
 ### Regenerate Flow
 

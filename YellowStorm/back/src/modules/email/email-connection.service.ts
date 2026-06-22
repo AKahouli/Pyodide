@@ -5,6 +5,7 @@ import { Transporter } from 'nodemailer';
 import SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { LoggerService } from '../logger';
+import { randomBackoffJitter, stripTrailingChar } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -142,33 +143,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       // Close existing transporter if any
       await this.closeTransporter();
 
-      // Build transport options
-      const transportOptions: Record<string, unknown> = {
-        host: this.smtpHost,
-        port: this.smtpPort,
-        secure: this.smtpSecure,
-        connectionTimeout: this.connectionTimeoutMs,
-        socketTimeout: this.socketTimeoutMs,
-      };
-
-      // Add pool options if enabled
-      if (this.poolEnabled) {
-        transportOptions.pool = true;
-        transportOptions.maxConnections = this.poolMaxConnections;
-        transportOptions.maxMessages = this.poolMaxMessages;
-      }
-
-      // Add authentication if credentials provided
-      if (this.smtpUser && this.smtpPassword) {
-        transportOptions.auth = {
-          user: this.smtpUser,
-          pass: this.smtpPassword,
-        };
-      }
-
-      this.transporter = nodemailer.createTransport(
-        transportOptions as SMTPTransport.Options,
-      );
+      this.transporter = nodemailer.createTransport(this.buildSmtpTransportOptions());
 
       // Verify connection
       await this.transporter.verify();
@@ -223,7 +198,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
         auth: {
           clientId: this.outlookClientId,
           clientSecret: this.outlookClientSecret,
-          authority: `${this.outlookAuthority}/${this.outlookTenantId}`,
+          authority: `${this.resolveHttpsAuthority(this.outlookAuthority)}/${this.outlookTenantId}`,
         },
       });
 
@@ -364,6 +339,72 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private buildSmtpTransportOptions(): SMTPTransport.Options {
+    const options: SMTPTransport.Options = {
+      host: this.resolveSmtpHost(this.smtpHost),
+      port: this.smtpPort,
+      secure: this.smtpSecure,
+      connectionTimeout: this.connectionTimeoutMs,
+      socketTimeout: this.socketTimeoutMs,
+      tls: {
+        minVersion: 'TLSv1.2',
+      },
+    };
+
+    // Port 587 uses STARTTLS; require upgrade instead of plaintext SMTP.
+    if (!this.smtpSecure && this.smtpPort === 587) {
+      options.requireTLS = true;
+    }
+
+    if (this.smtpUser && this.smtpPassword) {
+      options.auth = {
+        user: this.smtpUser,
+        pass: this.smtpPassword,
+      };
+    }
+
+    if (!this.poolEnabled) {
+      return options;
+    }
+
+    return {
+      ...options,
+      pool: true,
+      maxConnections: this.poolMaxConnections,
+      maxMessages: this.poolMaxMessages,
+    } as SMTPTransport.Options;
+  }
+
+  private resolveSmtpHost(host: string): string {
+    const trimmed = host.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower.startsWith('http://')) {
+      throw new Error('SMTP host must not use the http:// protocol');
+    }
+
+    if (lower.startsWith('https://')) {
+      return trimmed.slice('https://'.length);
+    }
+
+    return trimmed;
+  }
+
+  private resolveHttpsAuthority(authority: string): string {
+    const trimmed = stripTrailingChar(authority.trim(), '/');
+    const lower = trimmed.toLowerCase();
+
+    if (lower.startsWith('http://')) {
+      throw new Error('Azure AD authority must use https://');
+    }
+
+    if (lower.startsWith('https://')) {
+      return trimmed;
+    }
+
+    return `https://${trimmed}`;
+  }
+
   private startHealthCheck(): void {
     if (!this.healthCheckConfig.enabled || !this.isAvailable()) {
       return;
@@ -425,7 +466,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
     const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
 
     // Add jitter (±10%) to prevent thundering herd
-    const jitter = 0.9 + Math.random() * 0.2;
+    const jitter = randomBackoffJitter();
     const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
     const delayWithJitter = exponentialDelay * jitter;
 

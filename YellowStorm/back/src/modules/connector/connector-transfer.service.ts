@@ -6,6 +6,7 @@ import { ConnectorService } from './connector.service';
 import { M365TransferAdapter } from './adapters/m365-transfer.adapter';
 import { WorkspaceDocumentService } from '../workspace/workspace-document.service';
 import { DocumentService } from '../document/document.service';
+import { stripLeadingTrailingChar } from '@common/utils';
 
 export interface TransferResult {
   success: boolean;
@@ -90,10 +91,10 @@ export class ConnectorTransferService {
   }
 
   private sanitizePathSegment(value: string): string {
-    return value
-      .replace(/[^a-zA-Z0-9._-]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .toLowerCase();
+    return stripLeadingTrailingChar(
+      value.replace(/[^a-zA-Z0-9._-]+/g, '_'),
+      '_',
+    ).toLowerCase();
   }
 
   private buildCollisionFilename(filename: string, sourcePath: string, usedNames: Set<string>): string {

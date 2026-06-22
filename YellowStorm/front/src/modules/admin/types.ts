@@ -4,6 +4,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import type { ModuleTranslationKey } from '@/modules/localization';
+import type { AgentConnectorActionSelection } from '@/modules/agent/types';
 
 export interface AdminMenuItem {
   id: string;
@@ -153,6 +154,21 @@ export interface RegistrationStatus {
 
 export interface SetRegistrationRequest {
   enabled: boolean;
+}
+
+export interface CorsOriginEntry {
+  origin: string;
+  enabled: boolean;
+}
+
+export interface CorsSettings {
+  origins: CorsOriginEntry[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface SetCorsSettingsRequest {
+  origins: CorsOriginEntry[];
 }
 
 export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
@@ -397,6 +413,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         value: 'system.registration',
         labelKey: 'roles.permissions.items.system.registration.label',
         descriptionKey: 'roles.permissions.items.system.registration.description',
+      },
+      {
+        value: 'system.cors',
+        labelKey: 'roles.permissions.items.system.cors.label',
+        descriptionKey: 'roles.permissions.items.system.cors.description',
       },
       {
         value: 'system.*',
@@ -927,6 +948,7 @@ export interface AdminPlaybookSettings {
     maxIteratorBodyEdges: number;
   };
   replayEligibilityConfidenceThreshold: number;
+  useDeterministicBlueprintBuilder: boolean;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
@@ -937,11 +959,12 @@ export interface UpdateAdminPlaybookSettingsRequest {
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
   replayEligibilityConfidenceThreshold?: number;
+  useDeterministicBlueprintBuilder?: boolean;
 }
 
 // Playbook Prompt Types
 
-import type { PlaybookIteratorConfig } from '@/modules/playbook';
+import type { PlaybookIteratorConfig, PlaybookNodeType, RouterConfig } from '@/modules/playbook';
 
 export interface PlaybookPromptResponse {
   id: string;
@@ -985,7 +1008,7 @@ export interface PlaybookNodeTemplateResponse {
   id: string;
   key: string;
   type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1000,6 +1023,7 @@ export interface PlaybookNodeTemplateResponse {
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -1014,7 +1038,7 @@ export interface PlaybookNodeTemplateListResponse {
 export interface CreatePlaybookNodeTemplateRequest {
   key: string;
   type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1029,13 +1053,14 @@ export interface CreatePlaybookNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 
 export interface UpdatePlaybookNodeTemplateRequest {
   key?: string;
   type?: string;
-  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType?: PlaybookNodeType;
   title?: string;
   description?: string;
   icon?: string;
@@ -1050,6 +1075,7 @@ export interface UpdatePlaybookNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 
@@ -1129,6 +1155,7 @@ export interface AgentResponse {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1162,6 +1189,7 @@ export interface CreateAgentRequest {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1181,6 +1209,7 @@ export interface UpdateAgentRequest {
   skills?: string[];
   disabledSkills?: string[];
   connectors?: string[];
+  connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1538,4 +1567,33 @@ export interface ConnectorOAuthStatusResponse {
   connectedAt?: string;
   disconnectedAt?: string;
   providerEmail?: string;
+}
+
+// Workspace Upload Settings Types
+
+export interface WorkspaceUploadSettingsResponse {
+  allowedExtensions: string[];
+  supportedExtensions: string[];
+  updatedAt?: string;
+}
+
+export interface UpdateWorkspaceUploadSettingsRequest {
+  allowedExtensions: string[];
+}
+
+// ===== Team Auto-Builder =====
+
+export interface TeamAutoBuilderConfigResponse {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface UpsertTeamAutoBuilderConfigRequest {
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  isEnabled: boolean;
 }

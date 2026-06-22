@@ -396,7 +396,7 @@ export class ModelsService implements OnApplicationBootstrap {
   }
 
   getModelIdentifier(model: Pick<ModelResponse, 'id' | 'litellmModel'> | null | undefined): string {
-    return model?.id || model?.litellmModel || '';
+    return model?.litellmModel || model?.id || '';
   }
 
   private toModelResponse(model: AiModelDocument | Record<string, unknown>): ModelResponse {

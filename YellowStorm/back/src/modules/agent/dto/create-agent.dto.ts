@@ -10,8 +10,11 @@ import {
   MaxLength,
   Min,
   Max,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
 
 export class CreateAgentDto {
   @ApiProperty({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
@@ -96,6 +99,16 @@ export class CreateAgentDto {
   @IsArray()
   @IsMongoId({ each: true })
   connectors?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Optional per-connector action restrictions. Missing selection means all connector tools are allowed.',
+    type: [AgentConnectorActionSelectionDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AgentConnectorActionSelectionDto)
+  connectorActionSelections?: AgentConnectorActionSelectionDto[];
 
   @ApiPropertyOptional({ description: 'Whether the agent is active', default: true })
   @IsOptional()

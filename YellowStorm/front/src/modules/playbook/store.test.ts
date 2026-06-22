@@ -87,6 +87,39 @@ describe('playbook store', () => {
     expect(state.playbooksLoading).toBe(false);
   });
 
+  it('sorts fetched design messages chronologically for the sidebar thread', async () => {
+    apiMock.getDesignMessages.mockResolvedValueOnce([
+      {
+        id: 'm2',
+        playbookId: 'p1',
+        userQuery: 'second',
+        aiSummary: 'second reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:01:00.000Z',
+        updatedAt: '2026-06-21T22:01:00.000Z',
+      },
+      {
+        id: 'm1',
+        playbookId: 'p1',
+        userQuery: 'first',
+        aiSummary: 'first reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:00:00.000Z',
+        updatedAt: '2026-06-21T22:00:00.000Z',
+      },
+    ]);
+
+    await usePlaybookStore.getState().fetchDesignMessages('p1');
+
+    expect(usePlaybookStore.getState().designMessages.map((message) => message.id)).toEqual(['m1', 'm2']);
+  });
+
   it('skips no-op saves when the serialized payload hash matches the baseline', async () => {
     const playbook = makePlaybook({ id: 'p1', name: 'Stable' });
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
@@ -1372,7 +1405,11 @@ describe('playbook store', () => {
         sourceKind: 'constant',
         constantValue: expect.objectContaining({
           text: 'ws-1',
+          id: 'ws-1',
+          label: 'Workspace',
+          name: 'Workspace',
           workspaceId: 'ws-1',
+          workspaceName: 'Workspace',
           kind: 'workspace',
         }),
       }),
@@ -1448,6 +1485,10 @@ describe('playbook store', () => {
       expect.objectContaining({
         constantValue: expect.objectContaining({
           text: '/docs/spec.md',
+          id: 'doc-1',
+          documentId: 'doc-1',
+          label: 'Spec',
+          name: 'Spec',
           workspaceId: 'ws-1',
           path: '/docs/spec.md',
           kind: 'document',

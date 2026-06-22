@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2 } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -23,10 +23,15 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, InterruptType } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentDesignResponse } from '../types';
+import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 
 interface Props {
   playbookId: string | undefined;
+  intentDesign?: PlaybookIntentDesignResponse | null;
+  intentLoading?: boolean;
+  onSubmitDesignIntent?: (intentText: string) => Promise<void> | void;
+  onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
 }
 
 interface InterruptEntry extends HumanFeedbackData {
@@ -98,7 +103,43 @@ function historyEntryToInterruptEntry(entry: HitlHistoryEntry): InterruptEntry {
 function formatMessageTime(value: string | null | undefined) {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return formatDateTime(date);
+}
+
+function formatDateTime(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function buildIntentTextWithHistory(intentText: string, messages: ReturnType<typeof useDesignMessages>) {
+  const normalizedIntent = intentText.trim();
+  const history = messages
+    .filter((message) => message.status !== 'reverted')
+    .flatMap((message) => {
+      const timestamp = formatMessageTime(message.createdAt);
+      const prefix = timestamp ? `[${timestamp}] ` : '';
+      const assistantText = message.status === 'failed'
+        ? `Assistant failed: ${normalizeHistoryLine(message.error || message.aiSummary)}`
+        : `Assistant: ${normalizeHistoryLine(message.aiSummary)}`;
+      return [
+        `${prefix}User: ${normalizeHistoryLine(message.userQuery)}`,
+        `${prefix}${assistantText}`,
+      ];
+    })
+    .join('\n');
+
+  if (!history) return normalizedIntent;
+
+  return `Previous Designer Assistant chat history:\n${history}\n\nCurrent user request:\n${normalizedIntent}`;
+}
+
+function normalizeHistoryLine(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
 }
 
 function hasHumanAnswer(entry: InterruptEntry) {
@@ -168,7 +209,11 @@ function mergeInterruptThreads(localEntries: InterruptEntry[], computedEntries: 
   return merged;
 }
 
-export function PlaybookDesignerPanel({ playbookId }: Props) {
+const SIDEBAR_DEFAULT_WIDTH = 576;
+const SIDEBAR_MIN_WIDTH = 384;
+const SIDEBAR_MAX_WIDTH_RATIO = 0.6;
+
+export function PlaybookDesignerPanel({ playbookId, intentDesign = null, intentLoading = false, onSubmitDesignIntent, onAnswerDesignIntent }: Props) {
   const { t } = useModuleTranslation('playbook');
 
   const designerOpen = useDesignerOpen();
@@ -195,7 +240,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const selectedStepId = useSelectedStep();
 
   const fetchDesignMessages = usePlaybookStore((s) => s.fetchDesignMessages);
-  const designPlaybook = usePlaybookStore((s) => s.designPlaybook);
+  const clearDesignMessages = usePlaybookStore((s) => s.clearDesignMessages);
   const revertToSnapshot = usePlaybookStore((s) => s.revertToSnapshot);
   const resumeExecution = usePlaybookStore((s) => s.resumeExecution);
   const disableHitlBlocker = usePlaybookStore((s) => s.disableHitlBlocker);
@@ -216,6 +261,13 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const [rememberFeedback, setRememberFeedback] = useState(false);
   const [showRejectReason, setShowRejectReason] = useState(false);
   const [showInterruptOptions, setShowInterruptOptions] = useState(false);
+  const [isClearingDesignMemory, setIsClearingDesignMemory] = useState(false);
+  const [designStepIndex, setDesignStepIndex] = useState(0);
+  const [designAnswers, setDesignAnswers] = useState<Record<string, string>>({});
+  const [selectedDesignChoice, setSelectedDesignChoice] = useState('');
+  const [selectedDesignResource, setSelectedDesignResource] = useState<PlaybookIntentClarificationResource | null>(null);
+  const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
+  const [designAnswer, setDesignAnswer] = useState('');
   const [localInterruptThread, setLocalInterruptThread] = useState<{
     executionId: string;
     entries: InterruptEntry[];
@@ -228,6 +280,33 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollCount = useRef(0);
   const interruptComposerRef = useRef<HTMLTextAreaElement>(null);
+
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const resizeDragging = useRef(false);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+
+  const onResizeStart = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    resizeDragging.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = sidebarWidth;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, [sidebarWidth]);
+
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!resizeDragging.current) return;
+    const dx = resizeStartX.current - e.clientX;
+    const maxWidth = Math.floor(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO);
+    setSidebarWidth(Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH, resizeStartWidth.current + dx)));
+  }, []);
+
+  const onResizeEnd = useCallback((e: React.PointerEvent) => {
+    if (!resizeDragging.current) return;
+    resizeDragging.current = false;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }, []);
 
   const interruptedTask = currentExecution?.taskResults.find(
     (taskResult) => taskResult.taskId === (currentExecution.interruptPayload?.taskId || currentExecution.currentInterruptTaskId || selectedStepId),
@@ -331,7 +410,11 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     ? 'interrupt'
     : copilotMode;
 
-  const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (isDesigning ? 1 : 0) : interruptThread.length;
+  const designQuestions = intentDesign?.status === 'needs_clarification' ? intentDesign.questions : [];
+  const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
+  const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
+  const designIntentBusy = isDesigning || intentLoading;
+  const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
 
   useEffect(() => {
     if (designerOpen && copilotMode === 'design' && playbookId) {
@@ -388,9 +471,117 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     return () => window.cancelAnimationFrame(frame);
   }, [activeInterruptEntry?.interruptId, activeInterruptEntry?.interruptType, copilotMode, designerOpen]);
 
+  useEffect(() => {
+    setDesignStepIndex(0);
+    setDesignAnswers({});
+    setSelectedDesignChoice('');
+    setSelectedDesignResource(null);
+    setDesignAnswer('');
+  }, [intentDesign]);
+
+  const getResourceAnswer = useCallback((resource: PlaybookIntentClarificationResource) => {
+    const workspaceName = resource.workspaceName ? `, workspaceName=${resource.workspaceName}` : '';
+    const path = resource.path ? `, path=${resource.path}` : '';
+    const mimeType = resource.mimeType ? `, mimeType=${resource.mimeType}` : '';
+    return `${resource.name} [kind=${resource.kind}, id=${resource.id}, workspaceId=${resource.workspaceId}${workspaceName}${path}${mimeType}]`;
+  }, []);
+
+  const getCurrentDesignAnswer = useCallback(() => {
+    if (selectedDesignChoice === '__resource__' && selectedDesignResource) return getResourceAnswer(selectedDesignResource);
+    if (selectedDesignChoice === '__custom__') return designAnswer.trim();
+    return selectedDesignChoice.trim();
+  }, [designAnswer, getResourceAnswer, selectedDesignChoice, selectedDesignResource]);
+
+  const getCapturedRequirements = useCallback((includeCurrent: boolean) => {
+    const answers = { ...designAnswers };
+    if (includeCurrent && currentDesignQuestion) {
+      const currentAnswer = getCurrentDesignAnswer();
+      if (currentAnswer) answers[currentDesignQuestion.id] = currentAnswer;
+    }
+
+    return designQuestions
+      .map((question) => {
+        const answer = answers[question.id]?.trim();
+        return answer ? `${question.question}: ${answer}` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }, [currentDesignQuestion, designAnswers, designQuestions, getCurrentDesignAnswer]);
+
+  const loadDesignAnswer = useCallback((questionId: string | undefined, answers: Record<string, string>) => {
+    const question = designQuestions.find((item) => item.id === questionId);
+    const answer = questionId ? answers[questionId] || '' : '';
+    if (!answer) {
+      setSelectedDesignChoice('');
+      setSelectedDesignResource(null);
+      setDesignAnswer('');
+      return;
+    }
+    if (question?.choices?.includes(answer)) {
+      setSelectedDesignChoice(answer);
+      setSelectedDesignResource(null);
+      setDesignAnswer('');
+      return;
+    }
+    setSelectedDesignChoice('__custom__');
+    setSelectedDesignResource(null);
+    setDesignAnswer(answer);
+  }, [designQuestions]);
+
+  const saveCurrentDesignAnswer = useCallback(() => {
+    if (!currentDesignQuestion) return '';
+    const answer = getCurrentDesignAnswer();
+    if (answer) setDesignAnswers((current) => ({ ...current, [currentDesignQuestion.id]: answer }));
+    return answer;
+  }, [currentDesignQuestion, getCurrentDesignAnswer]);
+
+  const handleBackDesign = useCallback(() => {
+    if (designStepIndex <= 0) return;
+    const currentAnswer = saveCurrentDesignAnswer();
+    const nextAnswers = currentDesignQuestion && currentAnswer
+      ? { ...designAnswers, [currentDesignQuestion.id]: currentAnswer }
+      : designAnswers;
+    const previousQuestion = designQuestions[designStepIndex - 1];
+    setDesignAnswers(nextAnswers);
+    setDesignStepIndex((current) => Math.max(0, current - 1));
+    loadDesignAnswer(previousQuestion?.id, nextAnswers);
+  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, loadDesignAnswer, saveCurrentDesignAnswer]);
+
+  const handleContinueDesign = useCallback(() => {
+    const currentAnswer = saveCurrentDesignAnswer();
+    if (!currentAnswer) return;
+    if (!isLastDesignQuestion) {
+      const nextQuestion = designQuestions[designStepIndex + 1];
+      const nextAnswers = currentDesignQuestion
+        ? { ...designAnswers, [currentDesignQuestion.id]: currentAnswer }
+        : designAnswers;
+      setDesignStepIndex((current) => current + 1);
+      setDesignAnswers(nextAnswers);
+      loadDesignAnswer(nextQuestion?.id, nextAnswers);
+      return;
+    }
+    void onAnswerDesignIntent?.(getCapturedRequirements(true));
+  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onAnswerDesignIntent, saveCurrentDesignAnswer]);
+
+  const handleSelectDesignChoice = useCallback((choice: string) => {
+    setSelectedDesignChoice(choice);
+    if (choice !== '__custom__') setDesignAnswer('');
+    if (choice !== '__resource__') setSelectedDesignResource(null);
+  }, []);
+
+  const handleSelectDesignResource = useCallback((resource: PlaybookIntentClarificationResource) => {
+    setSelectedDesignResource(resource);
+    setSelectedDesignChoice('__resource__');
+    setDesignAnswer('');
+  }, []);
+
+  const handleSkipDesign = useCallback(() => {
+    void onAnswerDesignIntent?.(getCapturedRequirements(true));
+  }, [getCapturedRequirements, onAnswerDesignIntent]);
+
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
-    if (!query.trim() || !playbookId || isDesigning) return;
+    if (!query.trim() || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
 
     const q = query.trim();
     setQuery('');
@@ -398,11 +589,13 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     if (isDirty) await saveNow();
 
     try {
-      await designPlaybook(playbookId, { query: q });
+      await onSubmitDesignIntent?.(buildIntentTextWithHistory(q, messages));
     } catch {
-      // handled in store
+      setQuery(q);
+      return;
     }
-  }, [query, playbookId, isDesigning, isDirty, saveNow, designPlaybook]);
+    await fetchDesignMessages(playbookId);
+  }, [query, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent, fetchDesignMessages, messages]);
 
   const handleRevert = useCallback(async (messageId: string) => {
     if (!playbookId) return;
@@ -412,6 +605,20 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       // handled in store
     }
   }, [playbookId, revertToSnapshot]);
+
+  const handleClearDesignMemory = useCallback(async () => {
+    if (!playbookId || messages.length === 0 || isClearingDesignMemory) return;
+    if (!window.confirm(t('designer.clearMemoryConfirm'))) return;
+
+    setIsClearingDesignMemory(true);
+    try {
+      await clearDesignMessages(playbookId);
+    } catch {
+      // handled in store
+    } finally {
+      setIsClearingDesignMemory(false);
+    }
+  }, [clearDesignMessages, isClearingDesignMemory, messages.length, playbookId, t]);
 
   const handleInterruptSubmit = useCallback(async (
     action: 'reply' | 'approve' | 'reject',
@@ -556,6 +763,12 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const pendingInterruptTaskTitle = interruptedTask?.nodeTitle || playbookTaskTitle || interruptPayload?.taskTitle || t('copilot.pendingTaskFallback');
   const interruptContextText = getInterruptContextText(activeInterruptEntry);
   const showInterruptReopen = !designerOpen && effectiveCopilotMode === 'interrupt' && (activeInterruptEntry || interruptThread.length > 0 || currentExecution?.waitingForHumanInput);
+  const canContinueDesign = Boolean(
+    selectedDesignChoice
+    && (selectedDesignChoice !== '__custom__' || designAnswer.trim().length > 0)
+    && (selectedDesignChoice !== '__resource__' || selectedDesignResource)
+    && (!isLastDesignQuestion || onAnswerDesignIntent),
+  );
 
   return (
     <>
@@ -577,9 +790,17 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         </Button>
       )}
       <div
-        className="absolute right-0 inset-y-0 w-80 sm:w-96 z-40 border-l bg-background flex flex-col transition-transform duration-300"
-        style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)' }}
+        className="absolute right-0 inset-y-0 z-40 border-l bg-background flex flex-col transition-transform duration-300"
+        style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)', width: sidebarWidth }}
       >
+      <div
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
+        className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 hover:bg-primary/30 active:bg-primary/50 transition-colors"
+        style={{ touchAction: 'none' }}
+      />
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -615,6 +836,19 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {effectiveCopilotMode === 'design' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              disabled={messages.length === 0 || messagesLoading || isDesigning || isClearingDesignMemory}
+              onClick={() => void handleClearDesignMemory()}
+              title={t('designer.clearMemory')}
+              aria-label={t('designer.clearMemory')}
+            >
+              {isClearingDesignMemory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          )}
           {effectiveCopilotMode === 'interrupt' && playbookId && currentExecution && (
             <Button
               variant="ghost"
@@ -652,7 +886,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                       <Undo2 className="h-3 w-3" />
                       <span>{t('designer.revertedLabel')}</span>
                       <span className="text-muted-foreground/60">
-                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatMessageTime(msg.createdAt)}
                       </span>
                     </div>
                   </div>
@@ -679,7 +913,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                           <p className="text-sm">{msg.aiSummary}</p>
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs text-muted-foreground">
-                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {formatMessageTime(msg.createdAt)}
                             </span>
                             <Button
                               variant="outline"
@@ -699,7 +933,77 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
               );
             })}
 
-            {isDesigning && (
+            {intentDesign?.status === 'needs_clarification' && currentDesignQuestion ? (
+              <div className="flex justify-start">
+                <div className="max-w-[92%] space-y-3 rounded-2xl rounded-tl-sm border bg-muted/50 px-3 py-3 text-sm shadow-sm">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      <span>{t('intentBar.design.step', { current: designStepIndex + 1, total: designQuestions.length })}</span>
+                    </div>
+                    <p className="font-medium">{currentDesignQuestion.question}</p>
+                    {currentDesignQuestion.reason ? <p className="text-xs text-muted-foreground">{currentDesignQuestion.reason}</p> : null}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {(currentDesignQuestion.choices ?? []).map((choice, index) => (
+                      <Button
+                        key={choice}
+                        type="button"
+                        variant={selectedDesignChoice === choice ? 'default' : 'outline'}
+                        className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                        onClick={() => handleSelectDesignChoice(choice)}
+                      >
+                        <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{index + 1}.</span>
+                        <span>{choice}</span>
+                      </Button>
+                    ))}
+                    {currentDesignQuestion.resourceSelector ? (
+                      <Button
+                        type="button"
+                        variant={selectedDesignChoice === '__resource__' ? 'default' : 'outline'}
+                        className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                        onClick={() => setResourcePickerOpen(true)}
+                      >
+                        <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + 1}.</span>
+                        <FolderOpen className="mr-2 h-4 w-4 shrink-0" />
+                        <span>{selectedDesignResource ? selectedDesignResource.name : t(`intentBar.design.resource.${currentDesignQuestion.resourceSelector}`)}</span>
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant={selectedDesignChoice === '__custom__' ? 'default' : 'outline'}
+                      className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                      onClick={() => handleSelectDesignChoice('__custom__')}
+                    >
+                      <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + (currentDesignQuestion.resourceSelector ? 2 : 1)}.</span>
+                      <span>{t('intentBar.design.other')}</span>
+                    </Button>
+                  </div>
+                  {selectedDesignChoice === '__custom__' ? (
+                    <Textarea
+                      value={designAnswer}
+                      onChange={(event) => setDesignAnswer(event.target.value)}
+                      placeholder={t('intentBar.design.answerPlaceholder')}
+                      rows={2}
+                      className="resize-y"
+                    />
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={handleBackDesign} disabled={designIntentBusy || designStepIndex === 0}>
+                      {t('intentBar.design.back')}
+                    </Button>
+                    <Button type="button" size="sm" onClick={handleContinueDesign} disabled={designIntentBusy || !canContinueDesign}>
+                      {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={designIntentBusy || !onAnswerDesignIntent}>
+                      {t('intentBar.design.skip')}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {designIntentBusy && intentDesign?.status !== 'needs_clarification' && (
               <div className="flex justify-start">
                 <div className="bg-muted rounded-lg rounded-tl-sm px-3 py-2">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -818,11 +1122,11 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('designer.inputPlaceholder')}
-            disabled={isDesigning}
+            disabled={designIntentBusy}
             className="text-sm"
           />
-          <Button type="submit" size="icon" disabled={!query.trim() || isDesigning} className="shrink-0">
-            <Send className="h-4 w-4" />
+          <Button type="submit" size="icon" disabled={!query.trim() || designIntentBusy || !onSubmitDesignIntent} className="shrink-0">
+            {designIntentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </form>
       ) : composerInterruptEntry ? (
@@ -1038,6 +1342,14 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
         </div>
       ) : null}
       </div>
+      {currentDesignQuestion?.resourceSelector ? (
+        <PlaybookClarificationResourcePicker
+          open={resourcePickerOpen}
+          mode={currentDesignQuestion.resourceSelector}
+          onOpenChange={setResourcePickerOpen}
+          onSelect={handleSelectDesignResource}
+        />
+      ) : null}
     </>
   );
 }

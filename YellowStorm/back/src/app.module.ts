@@ -18,6 +18,8 @@ import playbookFlowConfig from './config/playbook-flow.config';
 import grpcSecurityConfig from './config/grpc-security.config';
 import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
+import whatsappConfig from './config/whatsapp.config';
+import workyConfig from './config/worky.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -46,6 +48,7 @@ import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
+import { TeamModule } from './modules/team/team.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
@@ -56,6 +59,9 @@ import { ConnectorModule } from './modules/connector/connector.module';
 import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
+import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
+import { WhatsAppModule } from './modules/whatsapp';
+import { WorkyModule } from './modules/worky';
 
 @Module({
   imports: [
@@ -63,7 +69,7 @@ import { TelegramModule } from './modules/telegram';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -100,16 +106,20 @@ import { TelegramModule } from './modules/telegram';
     SkillModule,
     AgentTypeModule,
     AgentModule,
+    TeamModule,
     PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,
     ConnectedAppModule,
     ConnectorModule,
     TelegramModule,
+    WhatsAppModule,
     ProjectModule,
     ClassifierModule,
     HealthModule,
     EvaluationModule,
+    WidgetChatModule,
+    WorkyModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

@@ -22,7 +22,6 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarInset: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarTriggerMobile: () => <button type='button'>trigger</button>,
 }));
-vi.mock('@/components/mode-toggle', () => ({ ModeToggle: () => <div>mode toggle</div> }));
 vi.mock('@/modules/auth/components/LandingPage', () => ({ LandingPage: () => <div>landing page</div> }));
 
 describe('RootGuard', () => {

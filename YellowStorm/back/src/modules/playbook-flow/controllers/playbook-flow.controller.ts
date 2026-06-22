@@ -269,6 +269,16 @@ export class PlaybookFlowController {
     return this.designService.getDesignMessages(id, userId);
   }
 
+  @Delete(':id/design-messages')
+  @ApiOperation({ summary: 'Clear design message memory for the current user' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async clearDesignMessages(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.designService.clearDesignMessages(id, userId);
+  }
+
   @Post(':id/design-messages/:msgId/revert')
   @ApiOperation({ summary: 'Revert flow to a prior design snapshot' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
@@ -322,6 +332,17 @@ export class PlaybookFlowController {
     @Body() dto: RequestPlaybookFlowIntentDto,
   ) {
     return this.playbookFlowIntentService.analyze(id, userId, dto);
+  }
+
+  @Post(':id/intent-design')
+  @ApiOperation({ summary: 'Assess playbook intent requirements before manual generation' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async assessIntentDesign(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: RequestPlaybookFlowIntentDto,
+  ) {
+    return this.playbookFlowIntentService.assessDesign(id, userId, dto);
   }
 
   @Post(':id/intent-constructions')

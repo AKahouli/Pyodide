@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { buildGrpcNodeMetadata, PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { buildGrpcNodeMetadata, PlaybookFlowExecutionService, toGrpcStruct } from './playbook-flow-execution.service';
 
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
@@ -7,6 +7,10 @@ import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 
 import { createExecutionServiceForTests } from './playbook-flow-execution.test-support';
+
+function structFields(value: Record<string, unknown>): Record<string, unknown> {
+  return (toGrpcStruct(value) as { fields: Record<string, unknown> }).fields;
+}
 
 describe('buildGrpcNodeMetadata', () => {
   it('maps explicit node HITL fields to ADK metadata keys', () => {
@@ -894,6 +898,11 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     });
     (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
     agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+    agentService.buildGrpcConnectorRuntimeForPlaybook.mockResolvedValue({
+      connectorIds: [],
+      connector_bindings: [],
+      tools: [],
+    });
 
     await (service as any).callGrpcRunFromCheckpoint(
       'exec-replay',
@@ -909,6 +918,174 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     const sentContext = runFromCheckpoint.mock.calls[0][0].input_context.fields;
     expect(sentContext.brief).toEqual(expect.any(Object));
     expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+  });
+
+  it('adds task-scoped connector runtime metadata to replay checkpoints', async () => {
+    const call = new EventEmitter();
+    const runFromCheckpoint = jest.fn().mockReturnValue(call);
+    const snapshot = {
+      nodes: [{
+        id: 'step-1',
+        kind: 'step',
+        label: 'Step 1',
+        metadata: {
+          assignedAgentId: 'agent-1',
+          toolBindings: [{
+            id: 'tb-1',
+            connectorId: 'conn-2',
+            actions: [{ actionKey: 'issues', isEnabled: true }],
+          }],
+        },
+      }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+    const { service, agentService } = createExecutionServiceForTests();
+    (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([{
+      id: 'agent-1',
+      name: 'Agent 1',
+      description: 'desc',
+      prompt: 'prompt',
+      agent_type: 'specialist',
+      tools: [{ name: 'calculator', description: 'Math helper' }],
+      agent_params: { params: { user_id: 'owner-1', session_id: 'exec-replay', connector_bindings_json: '[]' } },
+      connector_bindings: [],
+      connectorIds: [],
+      brain_context: [],
+      chatbot: { model: 'gpt-4o-mini' },
+    }]);
+    agentService.buildGrpcConnectorRuntimeForPlaybook.mockResolvedValue({
+      connectorIds: ['conn-2'],
+      connector_bindings: [{ connector_id: 'conn-2', connector_name: 'GitHub', actions: [{ action_key: 'issues', description: 'List issues' }] }],
+      tools: [{ name: 'connector_conn-2_issues', description: 'GitHub connector action issues' }],
+      skills: [{ id: 'skill-2', name: 'Connector skill', description: 'Added via connector' }],
+    });
+
+    await (service as any).callGrpcRunFromCheckpoint(
+      'exec-replay',
+      'flow-1',
+      'owner-1',
+      'exec-source',
+      snapshot,
+      {},
+      'step-1',
+      0,
+    );
+
+    expect(agentService.buildGrpcConnectorRuntimeForPlaybook).toHaveBeenCalledWith('owner-1', [expect.objectContaining({ connectorId: 'conn-2' })]);
+    const nodeMetadata = runFromCheckpoint.mock.calls[0][0].snapshot.nodes[0].metadata;
+    expect(nodeMetadata.fields).toEqual(expect.objectContaining({
+      assignedAgentId: { kind: 'stringValue', stringValue: 'agent-1' },
+      toolBindings: structFields({
+        toolBindings: [{
+          id: 'tb-1',
+          connectorId: 'conn-2',
+          actions: [{ actionKey: 'issues', isEnabled: true }],
+        }],
+      }).toolBindings,
+      agent_tools: structFields({
+        agent_tools: [
+          { name: 'calculator', description: 'Math helper' },
+          { name: 'connector_conn-2_issues', description: 'GitHub connector action issues' },
+        ],
+      }).agent_tools,
+      agent_params: structFields({
+        agent_params: {
+          user_id: 'owner-1',
+          session_id: 'exec-replay',
+          connector_bindings_json: JSON.stringify([
+            { connector_id: 'conn-2', connector_name: 'GitHub', actions: [{ action_key: 'issues', description: 'List issues' }] },
+          ]),
+        },
+      }).agent_params,
+      connector_bindings: structFields({
+        connector_bindings: [
+          { connector_id: 'conn-2', connector_name: 'GitHub', actions: [{ action_key: 'issues', description: 'List issues' }] },
+        ],
+      }).connector_bindings,
+      connector_ids: structFields({ connector_ids: ['conn-2'] }).connector_ids,
+      skills: structFields({
+        skills: [
+          { id: 'skill-2', name: 'Connector skill', description: 'Added via connector' },
+        ],
+      }).skills,
+    }));
+  });
+
+  it('adds task-scoped skill runtime metadata to replay checkpoints', async () => {
+    const call = new EventEmitter();
+    const runFromCheckpoint = jest.fn().mockReturnValue(call);
+    const snapshot = {
+      nodes: [{
+        id: 'step-1',
+        kind: 'step',
+        label: 'Step 1',
+        metadata: {
+          assignedAgentId: 'agent-1',
+          skillBindings: [{
+            id: 'sb-1',
+            skillId: 'skill-2',
+            skillName: 'Dropped skill',
+            isEnabled: true,
+          }],
+        },
+      }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+    const { service, agentService } = createExecutionServiceForTests();
+    (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([{
+      id: 'agent-1',
+      name: 'Agent 1',
+      description: 'desc',
+      prompt: 'prompt',
+      agent_type: 'specialist',
+      tools: [{ name: 'calculator', description: 'Math helper' }],
+      skills: [{ id: 'skill-1', name: 'Existing skill', description: 'Already on agent' }],
+      agent_params: { params: { user_id: 'owner-1', session_id: 'exec-replay', connector_bindings_json: '[]' } },
+      connector_bindings: [],
+      connectorIds: [],
+      brain_context: [],
+      chatbot: { model: 'gpt-4o-mini' },
+    }]);
+    agentService.buildGrpcConnectorRuntimeForPlaybook.mockResolvedValue({ connectorIds: [], connector_bindings: [], tools: [], skills: [] });
+    agentService.buildGrpcSkillsForPlaybook.mockResolvedValue([
+      { id: 'skill-2', name: 'Dropped skill', description: 'Added at runtime' },
+    ]);
+
+    await (service as any).callGrpcRunFromCheckpoint(
+      'exec-replay',
+      'flow-1',
+      'owner-1',
+      'exec-source',
+      snapshot,
+      {},
+      'step-1',
+      0,
+    );
+
+    expect(agentService.buildGrpcSkillsForPlaybook).toHaveBeenCalledWith(['skill-2']);
+    const nodeMetadata = runFromCheckpoint.mock.calls[0][0].snapshot.nodes[0].metadata;
+    expect(nodeMetadata.fields).toEqual(expect.objectContaining({
+      skillBindings: structFields({
+        skillBindings: [{
+          id: 'sb-1',
+          skillId: 'skill-2',
+          skillName: 'Dropped skill',
+          isEnabled: true,
+        }],
+      }).skillBindings,
+      skills: structFields({
+        skills: [
+          { id: 'skill-1', name: 'Existing skill', description: 'Already on agent' },
+          { id: 'skill-2', name: 'Dropped skill', description: 'Added at runtime' },
+        ],
+      }).skills,
+    }));
   });
 
   it('does not start gRPC when a claimed execution is cancelled before launch', async () => {

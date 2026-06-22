@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
 
 import grpc
+from google.protobuf.json_format import MessageToDict
 from langgraph.checkpoint.base import copy_checkpoint
 from langgraph.types import Command
 from structlog import get_logger
@@ -116,6 +117,16 @@ def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 by_id[key] = blocker
     return list(by_id.values())
 
+
+_MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
+def _request_to_log_payload(request: Any) -> dict[str, Any]:
+    return MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+
 try:
     from src.grpc_generated import playbook_flow_pb2 as pb
     from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc
@@ -135,10 +146,22 @@ class PlaybookFlowRuntimeServicer:
         execution_id = request.execution_id
         flow_id = request.flow_id
 
-        logger.info("[grpc] Run request received", execution_id=execution_id, flow_id=flow_id)
-
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
+        logger.info(
+            "[gRPC IN] Playbook Run request received",
+            execution_id=execution_id,
+            flow_id=flow_id,
+            owner_id=str(getattr(request, "owner_id", "") or ""),
+            node_count=len(snapshot.get("nodes", [])),
+            control_edge_count=len(snapshot.get("control_edges", [])),
+            data_binding_count=len(snapshot.get("data_bindings", [])),
+            input_context_keys=sorted(input_context.keys()),
+            seeded_task_output_count=len(getattr(request, "seeded_task_outputs", []) or []),
+            requested_recursion_limit=int(getattr(request.settings, "recursion_limit", 0) or 0),
+            requested_max_parallelism=int(getattr(request.settings, "max_parallelism", 0) or 0),
+            request_payload=_request_to_log_payload(request),
+        )
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
 
@@ -235,7 +258,7 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_step_resume = False
                             active.pending_interrupt = None
                         yield event
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
                     logger.info("[grpc] Run cancelled", execution_id=execution_id)
                     return
                 finally:
@@ -252,7 +275,7 @@ class PlaybookFlowRuntimeServicer:
                 if should_emit_fallback_completion(saw_terminal_event):
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
             logger.info("[grpc] Run cancelled while awaiting control input", execution_id=execution_id)
             return
         except Exception as exc:
@@ -295,11 +318,14 @@ class PlaybookFlowRuntimeServicer:
         payload = struct_to_dict(request.payload)
 
         logger.info(
-            "[grpc] ResumeFromStep request received",
+            "[gRPC IN] ResumeFromStep request received",
             execution_id=execution_id,
             node_id=node_id,
             iteration=iteration,
             interrupt_id=interrupt_id,
+            action=str(getattr(request, "action", "") or ""),
+            payload_keys=sorted(payload.keys()),
+            request_payload=_request_to_log_payload(request),
         )
         active = self._active_executions.get(execution_id)
         if active is None:
@@ -431,7 +457,7 @@ class PlaybookFlowRuntimeServicer:
                             active.waiting_for_step_resume = False
                             active.pending_interrupt = None
                         yield event
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
                     logger.info("[grpc] RunFromCheckpoint cancelled", execution_id=execution_id)
                     return
                 finally:
@@ -448,7 +474,7 @@ class PlaybookFlowRuntimeServicer:
                 if should_emit_fallback_completion(saw_terminal_event):
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
             logger.info("[grpc] RunFromCheckpoint cancelled while awaiting control input", execution_id=execution_id)
             return
         except Exception as exc:

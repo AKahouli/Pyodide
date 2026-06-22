@@ -23,7 +23,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import * as workspaceApi from '@/modules/workspace/api';
-import { validateFiles, ACCEPT_EXTENSIONS, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { validateFiles, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import type { Workspace, WorkspaceDocument, IndexingStatus } from '@/modules/workspace/types';
 import type { InputFile, PlaybookResourceKind } from '../types';
 import type { ArtifactKind } from '../types';
@@ -59,6 +60,7 @@ interface DragPayload {
   artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
+    workspaceName?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
@@ -150,6 +152,7 @@ export function WorkspaceExplorerSidebar() {
   const isOpen = useWorkspaceExplorerOpen();
   const setOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
   const { t } = useModuleTranslation('playbook');
+  const { accept } = useAllowedUploadExtensions();
 
   // Workspace state
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -382,6 +385,7 @@ export function WorkspaceExplorerSidebar() {
   // Drag handlers
   const handleDragStart = useCallback(
     (e: React.DragEvent, document: WorkspaceDocument) => {
+      const workspaceName = workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name;
       const artifactKind = !document.isFolder
         ? inferArtifactKind(document.filename, document.mimeType)
         : undefined;
@@ -398,10 +402,12 @@ export function WorkspaceExplorerSidebar() {
         metadata: document.isFolder
           ? {
               workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
               folderpath: document.path,
             }
           : {
               workspaceId: activeWorkspaceId ?? undefined,
+              workspaceName,
               documentId: document.id,
               filename: document.filename,
               filepath: document.path,
@@ -412,7 +418,7 @@ export function WorkspaceExplorerSidebar() {
       e.dataTransfer.setData('application/json', JSON.stringify(payload));
       e.dataTransfer.effectAllowed = 'copy';
     },
-    [activeWorkspaceId],
+    [activeWorkspaceId, workspaces],
   );
 
   const handleWorkspaceDragStart = useCallback(
@@ -425,6 +431,7 @@ export function WorkspaceExplorerSidebar() {
         workspaceId: workspace.id,
         metadata: {
           workspaceId: workspace.id,
+          workspaceName: workspace.name,
         },
       };
       e.dataTransfer.setData('application/json', JSON.stringify(payload));
@@ -616,7 +623,7 @@ export function WorkspaceExplorerSidebar() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPT_EXTENSIONS}
+            accept={accept}
             multiple
             className="hidden"
             onChange={handleFileChange}

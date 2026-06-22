@@ -22,6 +22,7 @@ export interface UseAgentOperationsResult {
   editingAgent: Agent | null;
   viewingAgent: Agent | null;
   deletingAgent: Agent | null;
+  sharingAgent: Agent | null;
   showCreateEditDialog: boolean;
   saving: boolean;
   duplicating: boolean;
@@ -32,6 +33,8 @@ export interface UseAgentOperationsResult {
   openEdit: (agent: Agent) => void;
   openView: (agent: Agent) => void;
   setDeletingAgent: (agent: Agent | null) => void;
+  setSharingAgent: (agent: Agent | null) => void;
+  unshareAgent: (agent: Agent) => Promise<void>;
   setShowCreateEditDialog: (open: boolean) => void;
   setViewingAgent: (agent: Agent | null) => void;
   setA2aResult: (result: A2ADialogState | null) => void;
@@ -48,6 +51,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
     createAgent,
     updateAgent,
     deleteAgent,
+    unshareAgent: unshareAgentInStore,
     publishAgentToA2A,
     rotateAgentA2AKey,
     revokeAgentA2A,
@@ -58,6 +62,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [viewingAgent, setViewingAgent] = useState<Agent | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
+  const [sharingAgent, setSharingAgent] = useState<Agent | null>(null);
   const [saving, setSaving] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [a2aResult, setA2aResult] = useState<A2ADialogState | null>(null);
@@ -97,6 +102,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         };
@@ -133,6 +139,19 @@ export function useAgentOperations(): UseAgentOperationsResult {
     }
   }, [deletingAgent, deleteAgent, t]);
 
+  const unshareAgent = useCallback(
+    async (agent: Agent) => {
+      try {
+        await unshareAgentInStore(agent.id);
+      } catch (err) {
+        toast.error(t('share.errors.removeFailed'), {
+          description: err instanceof Error ? err.message : t('list.errors.unknownError'),
+        });
+      }
+    },
+    [unshareAgentInStore, t],
+  );
+
   const duplicateAgent = useCallback(
     async (agent: Agent) => {
       setDuplicating(true);
@@ -157,6 +176,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           skills: agent.skills,
           disabledSkills: agent.disabledSkills,
           connectors: agent.connectors,
+          connectorActionSelections: agent.connectorActionSelections,
           isActive: agent.isActive,
           isDefaultForType: false,
         });
@@ -233,6 +253,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
     editingAgent,
     viewingAgent,
     deletingAgent,
+    sharingAgent,
     showCreateEditDialog,
     saving,
     duplicating,
@@ -243,6 +264,8 @@ export function useAgentOperations(): UseAgentOperationsResult {
     openEdit,
     openView,
     setDeletingAgent,
+    setSharingAgent,
+    unshareAgent,
     setShowCreateEditDialog,
     setViewingAgent,
     setA2aResult,

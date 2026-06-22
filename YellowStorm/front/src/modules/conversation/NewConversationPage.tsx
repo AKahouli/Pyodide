@@ -36,7 +36,7 @@ import {
   useResetSelectedWorkspaceIds,
 } from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
-import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupChatButton } from './components/GroupChatButton';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
@@ -51,6 +51,7 @@ import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect'
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
   const [mode, setMode] = useState<Mode>('chat');
+  const { accept } = useAllowedUploadExtensions();
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
@@ -179,6 +180,7 @@ export function NewConversationPage() {
       repoName: string;
       repoUrl?: string;
     },
+    teamIds?: string[],
   ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
@@ -215,6 +217,7 @@ export function NewConversationPage() {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
+        teamIds: teamIds?.length ? teamIds : undefined,
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
         skillIds: useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds
@@ -253,7 +256,7 @@ export function NewConversationPage() {
                   onFilesAdded={handleFilesAdded}
                   onFileRemoved={handleFileRemoved}
                   uploadingFiles={uploadFiles}
-                  accept={ACCEPT_EXTENSIONS}
+                  accept={accept}
                   maxFiles={5}
                   showWorkspaceSelect={true}
                   belowTextarea={

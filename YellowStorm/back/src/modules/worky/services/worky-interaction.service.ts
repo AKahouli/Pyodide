@@ -1,0 +1,149 @@
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import {
+  WorkyInteraction,
+  WorkyInteractionDocument,
+} from '../schemas/worky-interaction.schema';
+import {
+  WorkyStream,
+  WorkyStreamDocument,
+} from '../schemas/worky-stream.schema';
+import { LoggerService } from '../../logger';
+import {
+  ConflictException,
+  NotFoundException,
+} from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { RespondWorkyInteractionDto } from '../dto/respond-worky-interaction.dto';
+import { WorkyEventService } from './worky-event.service';
+
+export interface RespondInteractionInput {
+  userId: string;
+  interactionId: string;
+  dto: RespondWorkyInteractionDto;
+}
+
+export interface RespondInteractionResult {
+  interactionId: string;
+  streamId: string;
+  status: 'responded' | 'canceled';
+  response: string;
+  verdict: 'approved' | 'rejected' | null;
+  followUpTurnStarted: boolean;
+}
+
+/**
+ * Interaction lifecycle. Part 2 covers:
+ *   - `respond`: records the owner's answer, marks the interaction as
+ *     `responded` (or `canceled`), emits `interaction.responded` over
+ *     SSE, and triggers a follow-up planning turn so the Manager can
+ *     resolve and re-delta.
+ *
+ * Future Parts extend with approval-gate resolution (Part 3) and
+ * budget-decision interactions (Part 4).
+ */
+@Injectable()
+export class WorkyInteractionService {
+  constructor(
+    @InjectModel(WorkyInteraction.name)
+    private readonly interactions: Model<WorkyInteractionDocument>,
+    @InjectModel(WorkyStream.name)
+    private readonly streams: Model<WorkyStreamDocument>,
+    private readonly events: WorkyEventService,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(WorkyInteractionService.name);
+  }
+
+  async respond(input: RespondInteractionInput): Promise<RespondInteractionResult> {
+    const interaction = await this.interactions
+      .findById(input.interactionId)
+      .exec();
+    if (!interaction) {
+      throw new NotFoundException(
+        ErrorCode.WORKY_INTERACTION_NOT_FOUND,
+        'Worky interaction not found.',
+      );
+    }
+    if (interaction.status !== 'pending') {
+      throw new ConflictException(
+        ErrorCode.WORKY_INTERACTION_ALREADY_RESPONDED,
+        'Worky interaction is no longer pending.',
+      );
+    }
+    const cancel = input.dto.cancel === true;
+    const responseContent = cancel ? '' : input.dto.content;
+    interaction.status = cancel ? 'canceled' : 'responded';
+    interaction.response = responseContent;
+    interaction.respondedAt = new Date();
+    await interaction.save();
+
+    // For approval-like interactions, derive a verdict from the
+    // `approve` flag and emit it as part of the event so the runtime
+    // can re-bind tools (approved) or trigger replan (rejected). The
+    // verdict is also returned to the controller.
+    //
+    // `replan_review` is treated as approval-like because the
+    // controller uses `verdict === 'approved'` as the gate for
+    // `applyApproved()` (canonical §17.4). If we leave the verdict
+    // null for replan_review, the apply path is dead code.
+    const isApprovalLike =
+      interaction.type === 'approval' || interaction.type === 'replan_review';
+    const verdict: 'approved' | 'rejected' | null =
+      isApprovalLike && !cancel
+        ? input.dto.approve === false
+          ? 'rejected'
+          : 'approved'
+        : null;
+
+    // Resolve the stream owner so the SSE frame reaches the
+    // connection that actually subscribed. `WorkyEventService.emit`
+    // keys pipes by `${userId}:${streamId}`; broadcasting under
+    // `streamId` would never reach the owner's open SSE pipe.
+    const stream = await this.streams
+      .findById(interaction.streamId)
+      .select({ ownerUserId: 1 })
+      .lean()
+      .exec();
+    const ownerUserId = stream?.ownerUserId.toString() ?? '';
+    if (!ownerUserId) {
+      this.logger.warn('interaction.responded: stream not found; dropping SSE', {
+        interactionId: (interaction._id as Types.ObjectId).toString(),
+        streamId: interaction.streamId.toString(),
+      });
+    }
+    this.events.emit(ownerUserId, interaction.streamId.toString(), {
+      type: 'interaction.responded',
+      emittedAt: Date.now(),
+      payload: {
+        interactionId: (interaction._id as Types.ObjectId).toString(),
+        type: interaction.type,
+        taskId: interaction.taskId ? interaction.taskId.toString() : null,
+        status: interaction.status,
+        response: responseContent,
+        verdict,
+        blocksTaskIds: (interaction.blocksTaskIds ?? []).map((id) => id.toString()),
+      },
+    });
+    this.logger.log('Worky interaction responded', {
+      interactionId: (interaction._id as Types.ObjectId).toString(),
+      streamId: interaction.streamId.toString(),
+      status: interaction.status,
+      type: interaction.type,
+      verdict,
+    });
+    return {
+      interactionId: (interaction._id as Types.ObjectId).toString(),
+      streamId: interaction.streamId.toString(),
+      status: interaction.status as 'responded' | 'canceled',
+      response: responseContent,
+      verdict,
+      // The follow-up turn is started by the controller; the service
+      // only marks the interaction. Keeping the seam explicit lets the
+      // controller test the planning-relay side without mocking the
+      // interaction service.
+      followUpTurnStarted: false,
+    };
+  }
+}

@@ -233,6 +233,20 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
+  // WhatsApp
+  WHATSAPP_ENABLED: Joi.boolean().default(true),
+  WHATSAPP_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(4000),
+  WHATSAPP_PAIRING_TIMEOUT_MS: Joi.number().min(60000).max(1800000).default(300000),
+  WHATSAPP_RECONNECT_INITIAL_DELAY_MS: Joi.number().min(500).max(60000).default(1000),
+  WHATSAPP_RECONNECT_MAX_DELAY_MS: Joi.number().min(1000).max(600000).default(120000),
+  WHATSAPP_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).max(50).default(10),
+  WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
+  WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
+  WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
+  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
+  WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
+  WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
+
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
@@ -243,4 +257,15 @@ export const configValidationSchema = Joi.object({
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
   LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
+
+  // Worky (Chief of Staff) — Part 1
+  WORKY_RUNTIME_BASE_URL: Joi.string()
+    .uri()
+    .default('http://worky-adk-runtime:8011'),
+  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(300000).default(120000),
+  WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
+  WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
+  WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
+  WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
+  WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
 });

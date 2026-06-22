@@ -128,7 +128,7 @@ class ToolFactory:
             )
             tools = [toolkit.perform_web_search]
 
-        if settings.CSRD_BRAIN_ID in brain_ids:
+        if toolkit is not None and settings.CSRD_BRAIN_ID in brain_ids:
             # Generate CSRD search function wrapper
             csrd_wrapper, csrd_tool_schema = toolkit.generate_search_function(
                 csrd_json(),

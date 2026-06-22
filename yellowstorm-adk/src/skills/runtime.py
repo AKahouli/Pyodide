@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any, Dict, List, Optional
 
 from src.logger.logging import get_logger
@@ -72,8 +73,8 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
         catalog_skill_names.append(name)
         lines.extend([
             "  <skill>",
-            f"    <name>{name}</name>",
-            f"    <description>{description}</description>",
+            f"    <name>{escape(name)}</name>",
+            f"    <description>{escape(description)}</description>",
             "  </skill>",
         ])
     lines.extend([

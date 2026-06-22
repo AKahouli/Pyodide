@@ -117,6 +117,20 @@ export const Permissions = {
   PLAYBOOK_EXECUTE: 'playbook.execute',
   PLAYBOOK_ALL: 'playbook.*',
 
+  // Team Auto-Builder
+  TEAM_AUTO_BUILDER_READ: 'team_auto_builder.read',
+  TEAM_AUTO_BUILDER_UPDATE: 'team_auto_builder.update',
+  TEAM_AUTO_BUILDER_ALL: 'team_auto_builder.*',
+
+  // Worky (Chief of Staff) — Part 1
+  WORKY_STREAM_READ: 'worky.stream.read',
+  WORKY_STREAM_WRITE: 'worky.stream.write',
+  WORKY_STREAM_EXECUTE: 'worky.stream.execute',
+  WORKY_INTERACTION_RESPOND: 'worky.interaction.respond',
+  WORKY_ADMIN_GOVERNANCE: 'worky.admin.governance',
+  WORKY_ADMIN_TRACE: 'worky.admin.trace',
+  WORKY_ALL: 'worky.*',
+
   // Super Admin
   SUPER_ADMIN: '*',
 } as const;
@@ -240,6 +254,20 @@ const ALL_PERMISSIONS = new Set<string>([
   'playbook.delete',
   'playbook.execute',
   'playbook.*',
+
+  // Team Auto-Builder
+  'team_auto_builder.read',
+  'team_auto_builder.update',
+  'team_auto_builder.*',
+
+  // Worky (Chief of Staff) — Part 1
+  'worky.stream.read',
+  'worky.stream.write',
+  'worky.stream.execute',
+  'worky.interaction.respond',
+  'worky.admin.governance',
+  'worky.admin.trace',
+  'worky.*',
 
   // Super Admin
   '*',

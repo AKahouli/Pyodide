@@ -56,7 +56,7 @@ export class PlaybookFlowService {
 
     seen.add(objectValue);
     const serialized = `{${Object.keys(objectValue)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .map((key) => `${JSON.stringify(key)}:${this.stableStringify(objectValue[key], seen)}`)
       .join(',')}}`;
     seen.delete(objectValue);
@@ -181,7 +181,7 @@ export class PlaybookFlowService {
     for (const doc of duplicates) {
       const match = doc.name.match(pattern);
       if (match?.[1]) {
-        maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
+        maxSeq = Math.max(maxSeq, Number.parseInt(match[1], 10));
       }
     }
 

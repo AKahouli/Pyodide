@@ -12,7 +12,7 @@ import {
   DocumentStatus,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
-import { escapeRegex } from '../../common/utils';
+import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
 import { IndexingService } from '../indexing/indexing.service';
 import {
   UploadSession,
@@ -48,6 +48,8 @@ import {
   ConflictException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
+import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -56,7 +58,6 @@ export class WorkspaceDocumentService {
   private readonly smallFileThresholdMb: number;
   private readonly uploadSessionTtlMinutes: number;
   private readonly sasUrlExpiryMinutes: number;
-  private readonly allowedMimeTypes: string[];
 
   constructor(
     @InjectModel(WorkspaceDoc.name)
@@ -70,6 +71,7 @@ export class WorkspaceDocumentService {
     @Inject(forwardRef(() => IndexingService))
     private readonly indexingService: IndexingService,
     private readonly configService: ConfigService,
+    private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -79,18 +81,18 @@ export class WorkspaceDocumentService {
     this.smallFileThresholdMb = this.configService.get<number>('workspace.smallFileThresholdMb', 10);
     this.uploadSessionTtlMinutes = this.configService.get<number>('workspace.uploadSessionTtlMinutes', 60);
     this.sasUrlExpiryMinutes = this.configService.get<number>('workspace.sasUrlExpiryMinutes', 60);
-    this.allowedMimeTypes = this.configService.get<string[]>('workspace.allowedMimeTypes', []);
   }
 
   /**
    * Sanitize filename for storage
    */
   private sanitizeFilename(filename: string): string {
-    return filename
-      .replace(/[/\\:\0]/g, '_')
-      .replace(/^[\s.]+|[\s.]+$/g, '')
-      .replace(/[_\s]+/g, '_')
-      .substring(0, 255);
+    const normalized = collapseCharSet(
+      stripLeadingTrailingWhitespaceOrDot(filename.replace(/[/\\:\0]/g, '_')),
+      '_ \t\n\r\f\v',
+      '_',
+    );
+    return normalized.substring(0, 255);
   }
 
   /**
@@ -149,17 +151,36 @@ export class WorkspaceDocumentService {
   }
 
   /**
-   * Validate file type and size
+   * Validate file type and size. The source of truth is the
+   * admin-managed `workspace_uploads` system setting; the env-var
+   * fallback (`WORKSPACE_ALLOWED_MIME_TYPES`) is retained for
+   * backwards compatibility but no longer consulted here.
    */
-  private validateFile(mimeType: string, size: number): void {
-    // Check MIME type
-    if (this.allowedMimeTypes.length > 0 && !this.allowedMimeTypes.includes(mimeType)) {
+  private async validateFile(filename: string, mimeType: string, size: number): Promise<void> {
+    const extension = getUploadExtension(filename);
+    if (!extension) {
       throw new BadRequestException(
-        `File type '${mimeType}' is not allowed`,
+        ErrorCode.WORKSPACE_DOCUMENT_INVALID_TYPE,
+        `File '${filename}' has no extension and cannot be uploaded`,
       );
     }
 
-    // Check file size
+    const allowedExtensions = await this.uploadSettingsService.getAllowedExtensions();
+    if (!allowedExtensions.includes(extension)) {
+      throw new BadRequestException(
+        ErrorCode.WORKSPACE_DOCUMENT_INVALID_TYPE,
+        `File extension '${extension}' is not allowed`,
+      );
+    }
+
+    const allowedMimeTypes = this.uploadSettingsService.getAllowedMimeTypesForExtension(extension);
+    if (allowedMimeTypes.length === 0 || !allowedMimeTypes.includes(mimeType)) {
+      throw new BadRequestException(
+        ErrorCode.WORKSPACE_DOCUMENT_INVALID_TYPE,
+        `File type '${mimeType}' is not allowed for '${extension}' files`,
+      );
+    }
+
     const maxSizeBytes = this.maxFileSizeMb * 1024 * 1024;
     if (size > maxSizeBytes) {
       throw new BadRequestException(
@@ -178,7 +199,7 @@ export class WorkspaceDocumentService {
     data: RequestUploadUrlData,
     pathPrefix: string,
   ): Promise<UploadUrlResponse> {
-    this.validateFile(data.mimeType, data.size);
+    await this.validateFile(data.filename, data.mimeType, data.size);
 
     const quota = await this.workspaceService.checkStorageQuota(workspaceId, data.size);
     if (!quota.allowed) {
@@ -241,7 +262,7 @@ export class WorkspaceDocumentService {
   ): Promise<DocumentResponse> {
     const size = file.length;
 
-    this.validateFile(mimeType, size);
+    await this.validateFile(originalName, mimeType, size);
 
     const thresholdBytes = this.smallFileThresholdMb * 1024 * 1024;
     if (size > thresholdBytes) {
@@ -328,7 +349,7 @@ export class WorkspaceDocumentService {
     data: RequestUploadUrlData,
   ): Promise<UploadUrlResponse> {
     // Validate file
-    this.validateFile(data.mimeType, data.size);
+    await this.validateFile(data.filename, data.mimeType, data.size);
 
     // Check storage quota
     const quota = await this.workspaceService.checkStorageQuota(workspaceId, data.size);
@@ -468,7 +489,7 @@ export class WorkspaceDocumentService {
     const size = file.length;
 
     // Validate file
-    this.validateFile(mimeType, size);
+    await this.validateFile(originalName, mimeType, size);
 
     // Check if file is truly "small"
     const thresholdBytes = this.smallFileThresholdMb * 1024 * 1024;
@@ -697,7 +718,7 @@ export class WorkspaceDocumentService {
     // Validate all files and calculate total size
     let totalSize = 0;
     for (const file of files) {
-      this.validateFile(file.mimeType, file.size);
+      await this.validateFile(file.filename, file.mimeType, file.size);
       totalSize += file.size;
     }
 

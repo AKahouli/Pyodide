@@ -724,12 +724,18 @@ function CreateButton() {
 ### Uploading Documents
 
 ```tsx
-import { useWorkspaceStore, useSelectedWorkspace, validateFiles } from '@/modules/workspace';
+import {
+  useWorkspaceStore,
+  useSelectedWorkspace,
+  validateFiles,
+} from '@/modules/workspace';
+import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 
 function UploadHandler() {
   const selectedWorkspace = useSelectedWorkspace();
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
   const startUpload = useWorkspaceStore((state) => state.startUpload);
+  const { accept } = useAllowedUploadExtensions();
 
   const handleFiles = (files: FileList) => {
     if (!selectedWorkspace) return;
@@ -745,7 +751,7 @@ function UploadHandler() {
     <input
       type="file"
       multiple
-      accept={ACCEPT_EXTENSIONS}
+      accept={accept}
       onChange={(e) => e.target.files && handleFiles(e.target.files)}
     />
   );

@@ -1,11 +1,13 @@
 """Factory for calling MCP tools from server configuration."""
 
+import base64
 import json
 import logging
 from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+_MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
 def _log_payload(value: Any) -> str:
@@ -22,6 +24,8 @@ def _redact_log_payload(value: Any) -> Any:
         for key, nested in value.items():
             if key == "image_base64" and isinstance(nested, str):
                 redacted[key] = f"[redacted base64 length={len(nested)}]"
+            elif key == "data" and value.get("type") == "image" and isinstance(nested, str):
+                redacted[key] = f"[redacted image base64 length={len(nested)}]"
             else:
                 redacted[key] = _redact_log_payload(nested)
         return redacted
@@ -77,6 +81,82 @@ def _coerce_json(value: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return value
+
+
+def _part_field(part: Any, *names: str) -> Any:
+    for name in names:
+        if isinstance(part, dict) and name in part:
+            return part.get(name)
+        if hasattr(part, name):
+            return getattr(part, name)
+    return None
+
+
+def _decoded_image_size(image_data: str) -> int:
+    value = str(image_data or "").strip()
+    if "," in value and value.startswith("data:"):
+        value = value.split(",", 1)[1]
+    try:
+        return len(base64.b64decode(value, validate=False))
+    except Exception:
+        return 0
+
+
+def _serialize_mcp_content_parts(content_parts: List[Any]) -> List[Dict[str, Any]]:
+    serialized: List[Dict[str, Any]] = []
+    for part in content_parts:
+        part_type = str(_part_field(part, "type") or "").lower()
+        text = _part_field(part, "text")
+        image_data = _part_field(part, "data")
+        mime_type = str(
+            _part_field(part, "mimeType", "mime_type", "mime")
+            or "image/jpeg"
+        )
+
+        if part_type == "image" and isinstance(image_data, str) and image_data:
+            serialized.append(
+                {
+                    "type": "image",
+                    "data": image_data,
+                    "mimeType": mime_type,
+                    "decodedByteSize": _decoded_image_size(image_data),
+                }
+            )
+        elif isinstance(text, str):
+            serialized.append({"type": "text", "text": text})
+    return serialized
+
+
+def _attach_mcp_content_parts(response: Any, parts: List[Dict[str, Any]]) -> Any:
+    if not any(part.get("type") == "image" for part in parts):
+        return response
+    if isinstance(response, dict):
+        response = dict(response)
+        response[_MCP_CONTENT_PARTS_KEY] = parts
+        return response
+    return {"text": str(response), _MCP_CONTENT_PARTS_KEY: parts}
+
+
+def _log_mcp_image_bridge(action_key: str, parts: List[Dict[str, Any]]) -> None:
+    image_parts = [part for part in parts if part.get("type") == "image"]
+    if not image_parts:
+        return
+    text_count = sum(1 for part in parts if part.get("type") == "text")
+    logger.info(
+        "mcp_image_bridge_received action=%s total_content_parts=%s text_parts=%s image_parts=%s images=%s",
+        action_key,
+        len(parts),
+        text_count,
+        len(image_parts),
+        [
+            {
+                "mimeType": image.get("mimeType"),
+                "decodedByteSize": image.get("decodedByteSize"),
+                "forwardedToProvider": False,
+            }
+            for image in image_parts
+        ],
+    )
 
 
 def _normalize_source_list(payload: Any) -> List[Dict[str, str]]:
@@ -522,9 +602,13 @@ async def call_mcp_tool(
             return error_response
 
         content_parts = getattr(result, "content", []) or []
+        serialized_parts = _serialize_mcp_content_parts(content_parts)
+        _log_mcp_image_bridge(action_key, serialized_parts)
         texts = []
         parsed_payload = None
         for part in content_parts:
+            if str(_part_field(part, "type") or "").lower() == "image":
+                continue
             if hasattr(part, "text"):
                 text_value = part.text
                 texts.append(text_value)
@@ -542,6 +626,10 @@ async def call_mcp_tool(
         response_text = "\n".join(texts) if texts else str(result)
         normalized_response = _normalize_mcp_response(
             parsed_payload, response_text, action_key=action_key
+        )
+        normalized_response = _attach_mcp_content_parts(
+            normalized_response,
+            serialized_parts,
         )
         logger.info(
             "mcp_call_tool_response action=%s transport=%s response_payload=%s",

@@ -447,6 +447,7 @@ def inject_images_before_model(
         if images:
             # Unwrap the images
             unwrapped_images = unwrap_images(images)
+            forwarded_images = []
 
             # Inject each image with its filename
             for i, image in enumerate(unwrapped_images):
@@ -464,6 +465,28 @@ def inject_images_before_model(
                     )
                 )
                 injected_count += 1
+                source_image = images[i] if i < len(images) and isinstance(images[i], dict) else {}
+                raw_data = source_image.get("data", "")
+                try:
+                    decoded_size = len(base64.b64decode(raw_data))
+                except Exception:
+                    decoded_size = 0
+                forwarded_images.append(
+                    {
+                        "mimeType": source_image.get("mime"),
+                        "decodedByteSize": decoded_size,
+                        "forwardedToProvider": True,
+                    }
+                )
+
+            logger.info(
+                "CONVERSATION_MCP_IMAGE_BRIDGE_FORWARDED response_id=%s total_content_parts=%s text_parts=%s image_parts=%s images=%s",
+                response_id,
+                len(images),
+                0,
+                len(images),
+                forwarded_images,
+            )
 
             # Clear the buffer for this response_id
             callback_context.state[image_key] = []
