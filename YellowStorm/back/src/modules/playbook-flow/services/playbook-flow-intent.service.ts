@@ -28,6 +28,11 @@ const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
 const NO_RESOLVED_DESIGN_RESOURCES = '[]';
 const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
 
+type IntentUserMessageContent = string | Array<
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+>;
+
 interface ResolvedDesignResource {
   question: string;
   label: string;
@@ -265,6 +270,7 @@ export interface PlaybookIntentAnalysisContext {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  userMessageContent: IntentUserMessageContent;
   promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
@@ -314,7 +320,7 @@ export class PlaybookFlowIntentService {
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: context.systemPrompt },
-        { role: 'user', content: context.userPrompt },
+        { role: 'user', content: context.userMessageContent },
       ],
     }, { timeout: 180000 });
 
@@ -341,7 +347,7 @@ export class PlaybookFlowIntentService {
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: this.buildUserMessageContent(userPrompt, dto) },
       ],
     }, { timeout: 180000 });
 
@@ -433,6 +439,7 @@ export class PlaybookFlowIntentService {
       model,
       systemPrompt,
       userPrompt,
+      userMessageContent: this.buildUserMessageContent(userPrompt, dto),
       promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
@@ -462,6 +469,17 @@ export class PlaybookFlowIntentService {
         enabled: template.enabled,
       })),
     };
+  }
+
+  private buildUserMessageContent(userPrompt: string, dto: RequestPlaybookFlowIntentDto): IntentUserMessageContent {
+    if (!dto.images?.length) return userPrompt;
+    return [
+      { type: 'text', text: userPrompt },
+      ...dto.images.map((image) => ({
+        type: 'image_url' as const,
+        image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+      })),
+    ];
   }
 
   buildGraphBuilderDesignCatalog(catalog: AvailableDesignCatalog): BuilderDesignCatalog {

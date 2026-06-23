@@ -638,6 +638,13 @@ export interface IntentSuggestionHistoryEntry {
 export interface RequestPlaybookIntentData {
   intent: string;
   selectedTaskId?: string;
+  images?: PlaybookIntentImageInput[];
+}
+
+export interface PlaybookIntentImageInput {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  data: string;
+  name?: string;
 }
 
 export interface PlaybookIntentClarificationQuestion {

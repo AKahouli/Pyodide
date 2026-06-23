@@ -80,7 +80,6 @@ import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNod
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
-import { PlaybookIntentBar } from './PlaybookIntentBar';
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
@@ -108,6 +107,7 @@ import type {
   PlaybookNodeData,
   PlaybookExecution,
   PlaybookIntentSuggestion,
+  PlaybookIntentImageInput,
   PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
   PlaybookTrigger,
@@ -224,7 +224,6 @@ function PlaybookCanvasInner() {
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
-  const intentBarRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousHumanInputKeyRef = useRef<string | null>(null);
@@ -336,7 +335,6 @@ function PlaybookCanvasInner() {
   const [pendingImport, setPendingImport] = useState<PlaybookDefinitionExport | null>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
-  const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
@@ -352,14 +350,16 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
-  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('intent-bar');
+  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('designer-sidebar');
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
   const constructionAbortRef = useRef<AbortController | null>(null);
   const designerIntentRef = useRef('');
+  const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
   const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
   const autoLayoutAfterGenerationRef = useRef<(() => void) | null>(null);
+  const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
   const autoIntentRef = useRef<string | null>(null);
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
@@ -379,6 +379,8 @@ function PlaybookCanvasInner() {
         workspaceExplorerOpen: workspaceExplorerPref,
         connectorSidebarOpen: false,
         nodeEditorOpen: false,
+        designerOpen: true,
+        copilotMode: 'design',
         pageMode: 'design',
       });
       usePlaybookStore.setState({
@@ -387,10 +389,11 @@ function PlaybookCanvasInner() {
         executionPanelOpen: panelPref,
         workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
+        designerOpen: true,
+        copilotMode: 'design',
         pageMode: 'design',
       });
       setExecutionPanelCollapsed(!panelPref);
-      setIntentBarCollapsed(false);
       setToolbarCollapsed(true);
       setDataBindingsVisible(false);
       setIntentSuggestions([]);
@@ -2496,7 +2499,7 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntent, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
@@ -2528,22 +2531,11 @@ function PlaybookCanvasInner() {
     constructionAbortRef,
   });
 
-  const handleSubmitIntentFromBar = useCallback(async () => {
-    setIntentRequestOrigin('intent-bar');
-    const result = await handleSubmitIntent();
-    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
-  }, [handleSubmitIntent]);
-
-  const handleForceGenerateIntentFromBar = useCallback(async (answerText?: string) => {
-    setIntentRequestOrigin('intent-bar');
-    const result = await handleForceGenerateIntent(answerText);
-    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
-  }, [handleForceGenerateIntent]);
-
-  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string) => {
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
     setIntentRequestOrigin('designer-sidebar');
     designerIntentRef.current = intentText;
-    const result = await handleSubmitIntentText(intentText);
+    designerIntentImagesRef.current = images ?? [];
+    const result = await handleSubmitIntentText(intentText, images);
     if (!id || result.status === 'skipped') return;
     if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
     try {
@@ -2565,7 +2557,7 @@ function PlaybookCanvasInner() {
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
     setIntentRequestOrigin('designer-sidebar');
-    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText);
+    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
     if (!id || !answerText || result.status === 'skipped') return;
     if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
     try {
@@ -2596,7 +2588,6 @@ function PlaybookCanvasInner() {
     execution,
     setPageMode,
     setExecutionPanelCollapsed,
-    setIntentBarCollapsed,
     setDesignerOpen,
     setWorkspaceExplorerOpen,
     setConnectorSidebarOpen,
@@ -2663,7 +2654,6 @@ function PlaybookCanvasInner() {
     setImportWarningOpen,
     setExecutionPanelOpen,
     setExecutionPanelCollapsed,
-    setIntentBarCollapsed,
     setDesignerOpen,
     setEditorOpen,
     setPageMode,
@@ -2683,6 +2673,14 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     autoLayoutAfterGenerationRef.current = handleAutoLayout;
   }, [handleAutoLayout]);
+
+  useEffect(() => {
+    const previousStatus = previousConstructionStatusRef.current;
+    previousConstructionStatusRef.current = constructionStatus;
+    if (previousStatus !== 'completed' && constructionStatus === 'completed') {
+      autoLayoutAfterGenerationRef.current?.();
+    }
+  }, [constructionStatus]);
 
   useEffect(() => {
     if (!autoIntentRef.current) return;
@@ -2727,26 +2725,6 @@ function PlaybookCanvasInner() {
       }
     });
   }, [executionForCanvas, fetchExecution, id]);
-
-  const handleIntentBarClick = useCallback(() => {
-    setWorkspaceExplorerOpen(false);
-    setConnectorSidebarOpen(false);
-    setExecutionPanelOpen(false);
-    setExecutionPanelCollapsed(true);
-    if (intentSuggestions.length === 0 && lastIntentSuggestions.length > 0) {
-      setIntentSuggestions(lastIntentSuggestions);
-    }
-  }, [
-    intentSuggestions.length,
-    lastIntentSuggestions,
-    setConnectorSidebarOpen,
-    setExecutionPanelOpen,
-    setWorkspaceExplorerOpen,
-  ]);
-
-  const handleIntentBarPositionChange = useCallback(() => {
-    floatingToolbarRef.current?.reclampPosition();
-  }, []);
 
   useEffect(() => {
     const previousHumanInputKey = previousHumanInputKeyRef.current;
@@ -2826,11 +2804,9 @@ function PlaybookCanvasInner() {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
     if (nextOpen) {
-      setIntentBarCollapsed(true);
       setExecutionPanelCollapsed(false);
       setPageMode('run');
     } else if (pageMode !== 'design') {
-      setIntentBarCollapsed(false);
       setPageMode('design');
     }
   }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
@@ -3092,7 +3068,7 @@ function PlaybookCanvasInner() {
                   <Controls position="bottom-left" />
                 </Canvas>
                 <div
-                  className="absolute right-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
+                  className="absolute left-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
                   role="group"
                   aria-label={t('canvas.view.groupLabel')}
                 >
@@ -3118,39 +3094,9 @@ function PlaybookCanvasInner() {
                   </Button>
                 </div>
                 {intentLoading ? <PlaybookIntentGhostNode progress={constructionProgress} /> : null}
-                <PlaybookIntentBar
-                  ref={intentBarRef}
-                  selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
-                  loading={intentLoading}
-                  value={intentValue}
-                  suggestions={intentSuggestions}
-                  design={intentRequestOrigin === 'intent-bar' ? intentDesign : null}
-                  error={intentError}
-                  history={intentHistory}
-                  collapsed={intentBarCollapsed}
-                  autoApply={intentAutoApply}
-                  onCollapsedChange={setIntentBarCollapsed}
-                  onPositionChange={handleIntentBarPositionChange}
-                  onValueChange={setIntentValue}
-                  onAutoApplyChange={setIntentAutoApply}
-                  onSubmit={() => void handleSubmitIntentFromBar()}
-                  onForceGenerate={(answerText) => void handleForceGenerateIntentFromBar(answerText)}
-                  onApplySuggestion={handleApplyIntentSuggestion}
-                  onRecordHistory={(suggestion, intent) => {
-                    if (playbook) {
-                      addIntentSuggestionHistoryEntry(playbook.id, playbook.name, suggestion, intent);
-                    }
-                  }}
-                  onBarClick={handleIntentBarClick}
-                  onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
-                  constructionStatus={constructionStatus}
-                  constructionProgress={constructionProgress}
-                  onCancelConstruction={handleCancelIntentConstruction}
-                />
                 <PlaybookCanvasFloatingToolbar
                   ref={floatingToolbarRef}
                   containerRef={canvasChromeRef}
-                  avoidRectRef={intentBarRef}
                   onAddStep={handleAddStep}
                   onAddRouterNode={handleAddRouterNode}
                   onAddHumanApprovalNode={handleAddHumanApprovalNode}

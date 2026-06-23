@@ -4,6 +4,7 @@ import type {
   AdvisorRemediationPreviewRequest,
   AdvisorRemediationPreviewResponse,
   Playbook,
+  PlaybookIntentImageInput,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
   PlaybookIntentConstructionStatus,
@@ -26,11 +27,11 @@ interface PlaybookIntentFlowDeps {
   intentAutoApply: boolean;
   intentDesign: PlaybookIntentDesignResponse | null;
   selectStep: (stepId: string | null, iterationIndex?: number) => void;
-  assessPlaybookIntentDesign: (playbookId: string, payload: { intent: string; selectedTaskId?: string }) => Promise<PlaybookIntentDesignResponse>;
-  requestPlaybookIntent: (playbookId: string, payload: { intent: string; selectedTaskId?: string }) => Promise<{ suggestions: PlaybookIntentSuggestion[] }>;
+  assessPlaybookIntentDesign: (playbookId: string, payload: { intent: string; selectedTaskId?: string; images?: PlaybookIntentImageInput[] }) => Promise<PlaybookIntentDesignResponse>;
+  requestPlaybookIntent: (playbookId: string, payload: { intent: string; selectedTaskId?: string; images?: PlaybookIntentImageInput[] }) => Promise<{ suggestions: PlaybookIntentSuggestion[] }>;
   saveNow: () => Promise<void>;
   handleApplyIntentSuggestion: (suggestion: PlaybookIntentSuggestion, options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean }) => void;
-  startPlaybookIntentConstruction?: (playbookId: string, payload: { intent: string; selectedTaskId?: string }, options?: { signal?: AbortSignal }) => Promise<PlaybookIntentConstructionStartResponse>;
+  startPlaybookIntentConstruction?: (playbookId: string, payload: { intent: string; selectedTaskId?: string; images?: PlaybookIntentImageInput[] }, options?: { signal?: AbortSignal }) => Promise<PlaybookIntentConstructionStartResponse>;
   streamPlaybookIntentConstruction?: (playbookId: string, constructionId: string, options: { after?: number; signal?: AbortSignal; onEvent: (event: PlaybookIntentConstructionEvent) => void }) => Promise<void>;
   saveConstruction?: (options: { expectedDefinitionRevision: number; clientMutationId: string }) => Promise<void>;
   setIntentLoading: (loading: boolean) => void;
@@ -51,9 +52,9 @@ interface PlaybookIntentFlowDeps {
 
 interface PlaybookIntentFlowApi {
   handleSubmitIntent: () => Promise<IntentSubmitResult>;
-  handleSubmitIntentText: (intentText: string) => Promise<IntentSubmitResult>;
+  handleSubmitIntentText: (intentText: string, images?: PlaybookIntentImageInput[]) => Promise<IntentSubmitResult>;
   handleForceGenerateIntent: (answerText?: string) => Promise<IntentSubmitResult>;
-  handleForceGenerateIntentText: (intentText: string, answerText?: string) => Promise<IntentSubmitResult>;
+  handleForceGenerateIntentText: (intentText: string, answerText?: string, images?: PlaybookIntentImageInput[]) => Promise<IntentSubmitResult>;
   handleApplyAdvisorIntent: ({ mode, executionId, items, selectedTaskId }: AdvisorIntentApplyRequest) => Promise<void>;
 }
 
@@ -113,7 +114,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
   const runIntentAnalysis = useCallback(async (
     intent: string,
     selectedTaskId?: string,
-    options?: { includeFallback?: boolean },
+    options?: { includeFallback?: boolean; images?: PlaybookIntentImageInput[] },
   ): Promise<{ expectedDefinitionRevision: number; suggestions: PlaybookIntentSuggestion[]; topSuggestion: PlaybookIntentSuggestion | null } | null> => {
     if (!id || !playbook) return null;
 
@@ -126,6 +127,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     const result = await requestPlaybookIntent(id, {
       intent,
       selectedTaskId,
+      ...(options?.images?.length ? { images: options.images } : {}),
     });
     const suggestions = result.suggestions || [];
 
@@ -136,7 +138,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     };
   }, [getCurrentDefinitionRevision, id, isDirty, playbook, requestPlaybookIntent, saveNow]);
 
-  const runRealtimeConstruction = useCallback(async (intent: string, selectedTaskId?: string) => {
+  const runRealtimeConstruction = useCallback(async (intent: string, selectedTaskId?: string, images?: PlaybookIntentImageInput[]) => {
     if (!id || !playbook) return false;
     if (!startPlaybookIntentConstruction || !streamPlaybookIntentConstruction || !saveConstruction || !constructionAbortRef) return false;
 
@@ -160,7 +162,11 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       return true;
     }
 
-    const construction = await startPlaybookIntentConstruction(id, { intent, selectedTaskId }, { signal: abortController.signal });
+    const construction = await startPlaybookIntentConstruction(id, {
+      intent,
+      selectedTaskId,
+      ...(images?.length ? { images } : {}),
+    }, { signal: abortController.signal });
     const baseDefinitionRevision = construction.baseDefinitionRevision ?? expectedDefinitionRevision;
     setConstructionId?.(construction.constructionId);
     setConstructionStatus?.('streaming');
@@ -225,8 +231,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     return appliedDelta;
   }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, showWarning, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
-  const generateIntentSuggestions = useCallback(async (normalizedIntent: string, selectedTaskId?: string, options?: { applyBest?: boolean }) => {
-    const analysis = await runIntentAnalysis(normalizedIntent, selectedTaskId, { includeFallback: options?.applyBest });
+  const generateIntentSuggestions = useCallback(async (normalizedIntent: string, selectedTaskId?: string, options?: { applyBest?: boolean; images?: PlaybookIntentImageInput[] }) => {
+    const analysis = await runIntentAnalysis(normalizedIntent, selectedTaskId, { includeFallback: options?.applyBest, images: options?.images });
     if (!analysis) return;
 
     const {
@@ -245,7 +251,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     }
   }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, playbook?.name, runIntentAnalysis, setIntentSuggestions, setLastIntentSuggestions]);
 
-  const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string) => {
+  const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string, images?: PlaybookIntentImageInput[]) => {
     const normalizedIntent = buildIntentWithDesignAnswer(intentText, answerText || '');
     if (!id || !playbook || normalizedIntent.length < 3) {
       return { status: 'skipped' as const };
@@ -255,7 +261,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setIntentDesign(null);
     try {
       try {
-        const applied = await runRealtimeConstruction(normalizedIntent, resolveSelectedTaskId());
+        const applied = await runRealtimeConstruction(normalizedIntent, resolveSelectedTaskId(), images);
         if (applied) {
           setLastIntentSuggestions([]);
           setIntentSuggestions([]);
@@ -271,7 +277,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
         if (error instanceof Error) setIntentError(error.message);
       }
 
-      await generateIntentSuggestions(normalizedIntent, resolveSelectedTaskId(), { applyBest: true });
+      await generateIntentSuggestions(normalizedIntent, resolveSelectedTaskId(), { applyBest: true, images });
       return { status: 'completed' as const };
     } catch (error) {
       const message = error instanceof Error ? error.message : t('intentBar.error');
@@ -288,7 +294,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     return handleForceGenerateIntentText(intentValue, answerText);
   }, [handleForceGenerateIntentText, intentValue]);
 
-  const handleSubmitIntentText = useCallback(async (intentText: string) => {
+  const handleSubmitIntentText = useCallback(async (intentText: string, images?: PlaybookIntentImageInput[]) => {
     const normalizedIntent = intentText.trim();
     if (!id || !playbook || normalizedIntent.length < 3) {
       return { status: 'skipped' as const };
@@ -302,7 +308,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     try {
       if (intentAutoApply) {
         try {
-          const applied = await runRealtimeConstruction(normalizedIntent, resolvedSelectedTaskId);
+          const applied = await runRealtimeConstruction(normalizedIntent, resolvedSelectedTaskId, images);
           if (applied) {
             setLastIntentSuggestions([]);
             setIntentSuggestions([]);
@@ -321,14 +327,18 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
 
       if (!intentAutoApply) {
         if (isDirty) await saveNow();
-        const design = await assessPlaybookIntentDesign(id, { intent: normalizedIntent, selectedTaskId: resolvedSelectedTaskId });
+        const design = await assessPlaybookIntentDesign(id, {
+          intent: normalizedIntent,
+          selectedTaskId: resolvedSelectedTaskId,
+          ...(images?.length ? { images } : {}),
+        });
         if (design.status !== 'ready_to_generate') {
           setIntentDesign(design);
           return { status: 'needs_clarification' as const };
         }
       }
 
-      await generateIntentSuggestions(normalizedIntent, resolvedSelectedTaskId);
+      await generateIntentSuggestions(normalizedIntent, resolvedSelectedTaskId, { images });
       return { status: 'completed' as const };
     } catch (error) {
       const message = error instanceof Error ? error.message : t('intentBar.error');

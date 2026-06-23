@@ -1,0 +1,1 @@
+{"success":false,"error":{"timestamp":"2026-06-22T21:43:14.831Z","path":"/api/v1/playbooks/6a0feaed9198f0e1d94d80c4/intent-design","method":"POST","requestId":"1f734402-a554-4e61-b903-e9c89be70da7","code":"ERR_1006","message":"property images should not exist","statusCode":400,"details":[{"message":"property images should not exist"}]}}

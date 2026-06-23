@@ -71,6 +71,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
         model: 'm',
         systemPrompt: '',
         userPrompt: '',
+        userMessageContent: '',
         promptVariables: {},
       };
     }

@@ -30,7 +30,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
   const setImportWarningOpen = vi.fn();
   const setExecutionPanelOpen = vi.fn();
   const setExecutionPanelCollapsed = vi.fn();
-  const setIntentBarCollapsed = vi.fn();
   const setDesignerOpen = vi.fn();
   const setEditorOpen = vi.fn();
   const setPageMode = vi.fn();
@@ -112,7 +111,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
         setImportWarningOpen,
         setExecutionPanelOpen,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setEditorOpen,
         setPageMode,
@@ -145,7 +143,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     setImportWarningOpen.mockClear();
     setExecutionPanelOpen.mockClear();
     setExecutionPanelCollapsed.mockClear();
-    setIntentBarCollapsed.mockClear();
     setDesignerOpen.mockClear();
     setEditorOpen.mockClear();
     setPageMode.mockClear();
@@ -384,22 +381,21 @@ describe('usePlaybookCanvasPageHandlers', () => {
 
     expect(setPageMode).toHaveBeenCalledWith('run');
     expect(setDesignerOpen).toHaveBeenCalledWith(false);
-    expect(setIntentBarCollapsed).toHaveBeenCalledWith(true);
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(false);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(true);
   });
 
-  it('keeps designer open while switching to design during active human input', () => {
+  it('opens the designer assistant when switching to design mode', () => {
     const { result } = buildHandler({ waitingForHumanInput: true, designerOpen: true });
 
     act(() => {
       result.current.handlePageModeChange('design');
     });
 
-    expect(setIntentBarCollapsed).toHaveBeenCalledWith(false);
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
-    expect(setDesignerOpen).not.toHaveBeenCalledWith(false);
+    expect(setCopilotMode).toHaveBeenCalledWith('design');
+    expect(setDesignerOpen).toHaveBeenCalledWith(true);
   });
 
   it('saves the new playbook name when blurred with changes', () => {

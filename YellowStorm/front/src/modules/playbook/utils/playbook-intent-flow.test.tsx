@@ -138,6 +138,41 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(deps.setIntentSuggestions).toHaveBeenCalledWith([]);
   });
 
+  it('passes image attachments to realtime construction', async () => {
+    const images = [{ mediaType: 'image/png' as const, data: 'aW1hZ2U=', name: 'diagram.png' }];
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      intentAutoApply: true,
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
+        constructionId: 'construction-images',
+        playbookId: 'p1',
+        baseDefinitionRevision: 7,
+      }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'completed', constructionId: 'construction-images', playbookId: 'p1', sequence: 1 } as any);
+      }),
+      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntentText('Build from this diagram', images);
+    });
+
+    expect(deps.startPlaybookIntentConstruction).toHaveBeenCalledWith('p1', {
+      intent: 'Build from this diagram',
+      selectedTaskId: 't1',
+      images,
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
   it('force generation applies a direct fallback instead of blanking the UI', async () => {
     const fallbackSuggestion: PlaybookIntentSuggestion = {
       ...validStepSuggestion,

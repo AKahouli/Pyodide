@@ -757,6 +757,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     render(<PlaybookDesignerPanel playbookId="playbook-1" intentDesign={intentDesign} onAnswerDesignIntent={onAnswerDesignIntent} />);
 
     expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    expect(screen.queryByText('The workflow needs a target market.')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /France/ }));
     await user.click(screen.getByRole('button', { name: 'intentBar.design.generate' }));
 
@@ -788,6 +789,35 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(onSubmitDesignIntent).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: 'First line\nSecond line' } });
     expect(input).toHaveValue('First line\nSecond line');
+  });
+
+  it('attaches pasted images to the sidebar prompt submission', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-22T08:20:21'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    const input = screen.getByPlaceholderText('designer.inputPlaceholder');
+    const image = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [image],
+      },
+    });
+    await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());
+
+    await user.type(input, 'Build this workflow{Enter}');
+
+    await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Current user request:',
+      '- [2026-06-22 08:20:21] User: Build this workflow [1 image attached]',
+    ].join('\n'), 'Build this workflow [1 image attached]', [
+      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
+    ]);
   });
 
   it('renders sidebar auto-apply and history controls', async () => {

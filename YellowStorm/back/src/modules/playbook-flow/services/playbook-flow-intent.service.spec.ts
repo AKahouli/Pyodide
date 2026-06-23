@@ -145,6 +145,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
@@ -161,6 +162,18 @@ describe('PlaybookFlowIntentService normalization', () => {
         { role: 'user', content: 'User intent context' },
       ],
     }), { timeout: 180000 });
+  });
+
+  it('builds multimodal user message content when prompt images are provided', () => {
+    const content = (service as any).buildUserMessageContent('Use this diagram', {
+      intent: 'Use this diagram',
+      images: [{ mediaType: 'image/png', data: 'aW1hZ2U=', name: 'diagram.png' }],
+    });
+
+    expect(content).toEqual([
+      { type: 'text', text: 'Use this diagram' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
+    ]);
   });
 
   it('renders the customizable design assessment user prompt when configured', async () => {
@@ -184,6 +197,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
@@ -225,6 +239,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
@@ -351,6 +366,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
@@ -389,6 +405,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
@@ -961,6 +978,7 @@ describe('PlaybookFlowIntentService normalization', () => {
           model: 'm',
           systemPrompt: '',
           userPrompt: '',
+          userMessageContent: '',
           promptVariables: {},
           availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
           validationContext: makeContext(),
@@ -995,6 +1013,7 @@ describe('PlaybookFlowIntentService normalization', () => {
           model: 'm',
           systemPrompt: '',
           userPrompt: '',
+          userMessageContent: '',
           promptVariables: {},
           validationContext: ctx,
           limits: DEFAULT_LIMITS,

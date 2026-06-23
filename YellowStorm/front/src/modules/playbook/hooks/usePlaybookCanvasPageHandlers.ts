@@ -38,7 +38,6 @@ export interface UsePlaybookCanvasPageHandlersParams {
   setImportWarningOpen: Dispatch<SetStateAction<boolean>>;
   setExecutionPanelOpen: (open: boolean) => void;
   setExecutionPanelCollapsed: (collapsed: boolean) => void;
-  setIntentBarCollapsed: (collapsed: boolean) => void;
   setDesignerOpen: (open: boolean) => void;
   setEditorOpen: (open: boolean) => void;
   setPageMode: (mode: PlaybookPageMode) => void;
@@ -103,7 +102,6 @@ export function usePlaybookCanvasPageHandlers({
   setImportWarningOpen,
   setExecutionPanelOpen,
   setExecutionPanelCollapsed,
-  setIntentBarCollapsed,
   setDesignerOpen,
   setEditorOpen,
   setPageMode,
@@ -241,20 +239,17 @@ export function usePlaybookCanvasPageHandlers({
   const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
     setPageMode(mode);
     if (mode === 'design') {
-      setIntentBarCollapsed(false);
-      if (!waitingForHumanInput) {
-        setDesignerOpen(false);
-      }
+      setCopilotMode('design');
+      setDesignerOpen(true);
       setExecutionPanelCollapsed(true);
       setExecutionPanelOpen(false);
       return;
     }
 
     setDesignerOpen(false);
-    setIntentBarCollapsed(true);
     setExecutionPanelCollapsed(false);
     setExecutionPanelOpen(true);
-  }, [setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setIntentBarCollapsed, setPageMode, waitingForHumanInput]);
+  }, [setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
 
   const handleNameBlur = useCallback(() => {
     setEditingName(false);

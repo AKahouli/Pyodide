@@ -100,7 +100,7 @@ export class PlaybookFlowIntentConstructionService {
         temperature: 0.2,
         stream: true,
         response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: context.systemPrompt }, { role: 'user', content: context.userPrompt }],
+        messages: [{ role: 'system', content: context.systemPrompt }, { role: 'user', content: context.userMessageContent }],
       }, { timeout: 180000, signal: job.abortController.signal, responseType: 'stream' });
       if (job.abortController.signal.aborted) return;
 

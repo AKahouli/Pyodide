@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen, Clock } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen, Clock, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +23,7 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentImageInput, PlaybookIntentSuggestion } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 
 interface Props {
@@ -33,7 +33,7 @@ interface Props {
   autoApply?: boolean;
   history?: IntentSuggestionHistoryEntry[];
   constructionStatus?: PlaybookIntentConstructionStatus;
-  onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string) => Promise<void> | void;
+  onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => Promise<void> | void;
   onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
   onAutoApplyChange?: (value: boolean) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
@@ -220,6 +220,33 @@ function mergeInterruptThreads(localEntries: InterruptEntry[], computedEntries: 
 const SIDEBAR_DEFAULT_WIDTH = 576;
 const SIDEBAR_MIN_WIDTH = 384;
 const SIDEBAR_MAX_WIDTH_RATIO = 0.6;
+const MAX_PROMPT_IMAGES = 4;
+const MAX_PROMPT_IMAGE_BYTES = 1_500_000;
+const SUPPORTED_PROMPT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+interface PromptImageAttachment extends PlaybookIntentImageInput {
+  id: string;
+  previewUrl: string;
+}
+
+function readPromptImage(file: File): Promise<PromptImageAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const previewUrl = String(reader.result || '');
+      const data = previewUrl.split(',')[1] || '';
+      resolve({
+        id: `${file.name || 'pasted-image'}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        name: file.name || 'pasted image',
+        mediaType: file.type as PlaybookIntentImageInput['mediaType'],
+        data,
+        previewUrl,
+      });
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export function PlaybookDesignerPanel({
   playbookId,
@@ -290,6 +317,8 @@ export function PlaybookDesignerPanel({
   const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
   const [designAnswer, setDesignAnswer] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [promptImages, setPromptImages] = useState<PromptImageAttachment[]>([]);
+  const [promptImageError, setPromptImageError] = useState('');
   const [localInterruptThread, setLocalInterruptThread] = useState<{
     executionId: string;
     entries: InterruptEntry[];
@@ -302,6 +331,7 @@ export function PlaybookDesignerPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollCount = useRef(0);
   const interruptComposerRef = useRef<HTMLTextAreaElement>(null);
+  const designClarificationActionsRef = useRef<HTMLDivElement>(null);
 
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const resizeDragging = useRef(false);
@@ -437,6 +467,7 @@ export function PlaybookDesignerPanel({
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
   const designIntentBusy = isDesigning || intentLoading;
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const isAwaitingDesignAnswer = effectiveCopilotMode === 'design' && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
   const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
 
   useEffect(() => {
@@ -451,6 +482,14 @@ export function PlaybookDesignerPanel({
     }
     prevScrollCount.current = scrollCount;
   }, [scrollCount]);
+
+  useEffect(() => {
+    if (!isAwaitingDesignAnswer) return;
+    const frame = window.requestAnimationFrame(() => {
+      designClarificationActionsRef.current?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [designStepIndex, isAwaitingDesignAnswer]);
 
   useEffect(() => {
     if (!designerOpen || copilotMode !== 'interrupt' || !interruptPayload?.taskId) {
@@ -611,18 +650,27 @@ export function PlaybookDesignerPanel({
     if (!query.trim() || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
 
     const q = query.trim();
+    const images = promptImages.map(({ mediaType, data, name }) => ({ mediaType, data, name }));
+    const visibleQuery = images.length > 0 ? `${q} [${images.length} image${images.length === 1 ? '' : 's'} attached]` : q;
     setQuery('');
+    setPromptImages([]);
+    setPromptImageError('');
 
     if (isDirty) await saveNow();
 
     try {
-      await onSubmitDesignIntent?.(buildIntentTextWithHistory(q, messages), q);
+      if (images.length > 0) {
+        await onSubmitDesignIntent?.(buildIntentTextWithHistory(visibleQuery, messages), visibleQuery, images);
+      } else {
+        await onSubmitDesignIntent?.(buildIntentTextWithHistory(visibleQuery, messages), visibleQuery);
+      }
     } catch {
       setQuery(q);
+      setPromptImages(promptImages);
       return;
     }
     await fetchDesignMessages(playbookId);
-  }, [query, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent, fetchDesignMessages, messages]);
+  }, [query, promptImages, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent, fetchDesignMessages, messages]);
 
   const handleDesignComposerKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.altKey || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -635,6 +683,44 @@ export function PlaybookDesignerPanel({
     onApplyHistorySuggestion?.(entry.suggestion);
     setHistoryOpen(false);
   }, [onApplyHistorySuggestion]);
+
+  const handlePasteDesignImages = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+    if (files.length === 0) return;
+
+    event.preventDefault();
+    setPromptImageError('');
+    const remainingSlots = MAX_PROMPT_IMAGES - promptImages.length;
+    if (remainingSlots <= 0) {
+      setPromptImageError(t('designer.images.maxCount', { count: MAX_PROMPT_IMAGES }));
+      return;
+    }
+
+    const accepted = files.slice(0, remainingSlots).filter((file) => {
+      if (!SUPPORTED_PROMPT_IMAGE_TYPES.has(file.type)) {
+        setPromptImageError(t('designer.images.unsupported'));
+        return false;
+      }
+      if (file.size > MAX_PROMPT_IMAGE_BYTES) {
+        setPromptImageError(t('designer.images.tooLarge'));
+        return false;
+      }
+      return true;
+    });
+    if (accepted.length < files.length && accepted.length === remainingSlots) {
+      setPromptImageError(t('designer.images.maxCount', { count: MAX_PROMPT_IMAGES }));
+    }
+    if (accepted.length === 0) return;
+
+    void Promise.all(accepted.map(readPromptImage))
+      .then((images) => setPromptImages((current) => [...current, ...images].slice(0, MAX_PROMPT_IMAGES)))
+      .catch(() => setPromptImageError(t('designer.images.readFailed')));
+  }, [promptImages.length, t]);
+
+  const removePromptImage = useCallback((id: string) => {
+    setPromptImages((current) => current.filter((image) => image.id !== id));
+    setPromptImageError('');
+  }, []);
 
   const handleRevert = useCallback(async (messageId: string) => {
     if (!playbookId) return;
@@ -994,7 +1080,6 @@ export function PlaybookDesignerPanel({
                       <span>{t('intentBar.design.step', { current: designStepIndex + 1, total: designQuestions.length })}</span>
                     </div>
                     <p className="font-medium">{currentDesignQuestion.question}</p>
-                    {currentDesignQuestion.reason ? <p className="text-xs text-muted-foreground">{currentDesignQuestion.reason}</p> : null}
                   </div>
                   <div className="flex flex-col gap-2">
                     {(currentDesignQuestion.choices ?? []).map((choice, index) => (
@@ -1040,7 +1125,7 @@ export function PlaybookDesignerPanel({
                       className="resize-y"
                     />
                   ) : null}
-                  <div className="flex flex-wrap gap-2">
+                  <div ref={designClarificationActionsRef} className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="outline" onClick={handleBackDesign} disabled={designIntentBusy || designStepIndex === 0}>
                       {t('intentBar.design.back')}
                     </Button>
@@ -1169,7 +1254,10 @@ export function PlaybookDesignerPanel({
       </div>
 
       {effectiveCopilotMode === 'design' ? (
-        <form className="border-t px-3 py-3 shrink-0 space-y-2" onSubmit={handleSubmitDesign}>
+        <form
+          className={`border-t px-3 py-3 shrink-0 space-y-2 transition-shadow ${isAwaitingDesignAnswer ? 'animate-pulse ring-2 ring-primary/40' : ''}`}
+          onSubmit={handleSubmitDesign}
+        >
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <label htmlFor="designer-auto-apply" className="flex items-center gap-2">
               <Switch id="designer-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
@@ -1208,6 +1296,7 @@ export function PlaybookDesignerPanel({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleDesignComposerKeyDown}
+              onPaste={handlePasteDesignImages}
               placeholder={t('designer.inputPlaceholder')}
               disabled={designIntentBusy && !constructionActive}
               rows={1}
@@ -1225,6 +1314,31 @@ export function PlaybookDesignerPanel({
               {constructionActive ? <X className="h-4 w-4" /> : designIntentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
+          {promptImages.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {promptImages.map((image) => (
+                <div key={image.id} className="group relative h-16 w-16 overflow-hidden rounded-lg border bg-muted">
+                  <img src={image.previewUrl} alt={image.name || t('designer.images.attachmentAlt')} className="h-full w-full object-cover" />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute right-1 top-1 h-5 w-5 opacity-90"
+                    aria-label={t('designer.images.remove')}
+                    onClick={() => removePromptImage(image.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <ImageIcon className="h-3.5 w-3.5" />
+              <span>{t('designer.images.pasteHint')}</span>
+            </div>
+          )}
+          {promptImageError ? <p className="text-xs text-destructive">{promptImageError}</p> : null}
         </form>
       ) : composerInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">
