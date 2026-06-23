@@ -170,10 +170,57 @@ describe('PlaybookFlowIntentService normalization', () => {
       images: [{ mediaType: 'image/png', data: 'aW1hZ2U=', name: 'diagram.png' }],
     });
 
-    expect(content).toEqual([
-      { type: 'text', text: 'Use this diagram' },
-      { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
-    ]);
+    expect(content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } }),
+    ]));
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Use this diagram');
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Inspect the attached image content as primary user context');
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('diagram.png');
+  });
+
+  it('sends prompt images as multimodal content during design assessment', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom design assessment prompt',
+        userTemplate: 'Prompt={intent_text}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Prompt=Use this diagram',
+      userMessageContent: 'Prompt=Use this diagram',
+      promptVariables: { intent_text: 'Use this diagram' },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', {
+      intent: 'Use this diagram',
+      images: [{ mediaType: 'image/png', data: 'aW1hZ2U=', name: 'diagram.png' }],
+    });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: [
+          { type: 'text', text: expect.stringContaining('Inspect the attached image content as primary user context') },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
+        ] },
+      ],
+    }), { timeout: 180000 });
   });
 
   it('renders the customizable design assessment user prompt when configured', async () => {
@@ -512,12 +559,16 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(prompt?.systemTemplate).toContain('"blueprint"');
     expect(prompt?.systemTemplate).toContain('sourceKind');
     expect(prompt?.systemTemplate).toContain('"constant"');
-    expect(prompt?.version).toBe(11);
+    expect(prompt?.systemTemplate).toContain('attached images');
+    expect(prompt?.systemTemplate).toContain('visible entities');
+    expect(prompt?.version).toBe(12);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
     const designPrompt = DEFAULT_FLOW_PROMPTS.find((entry) => entry.key === 'intent.design_assessment');
     expect(designPrompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
+    expect(designPrompt?.systemTemplate).toContain('If attached images are present');
+    expect(designPrompt?.version).toBe(5);
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {

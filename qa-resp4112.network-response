@@ -1,0 +1,1 @@
+{"success":false,"error":{"timestamp":"2026-06-23T07:20:01.793Z","path":"/api/v1/playbooks/6a0feaed9198f0e1d94d80c4/intent-design","method":"POST","requestId":"89b88c23-2281-430c-ae77-c89d863ae9cb","code":"ERR_1006","message":"\"[object Object]\" is not valid JSON","statusCode":400}}

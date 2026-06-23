@@ -473,8 +473,14 @@ export class PlaybookFlowIntentService {
 
   private buildUserMessageContent(userPrompt: string, dto: RequestPlaybookFlowIntentDto): IntentUserMessageContent {
     if (!dto.images?.length) return userPrompt;
+    const imageNames = dto.images
+      .map((image, index) => image.name?.trim() || `pasted image ${index + 1}`)
+      .join(', ');
     return [
-      { type: 'text', text: userPrompt },
+      {
+        type: 'text',
+        text: `${userPrompt}\n\n<Attached_Images>\n${dto.images.length} image(s) attached: ${imageNames}. Inspect the attached image content as primary user context. If it shows a diagram, layout, screenshot, or visual workflow, preserve its visible entities, grouping, order, labels, arrows, and relationships in the generated workflow.\n</Attached_Images>`,
+      },
       ...dto.images.map((image) => ({
         type: 'image_url' as const,
         image_url: { url: `data:${image.mediaType};base64,${image.data}` },

@@ -134,22 +134,30 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
     onCollapsedChange?.(resolved);
   }, [collapsed, collapsedProp, onCollapsedChange]);
 
-  const getBottomAnchoredPosition = useCallback((): Position => {
+  const getDefaultPosition = useCallback((): Position => {
     const containerRect = containerRef.current?.getBoundingClientRect();
     const toolbarRect = toolbarRef.current?.getBoundingClientRect();
 
     if (!containerRect || !toolbarRect) {
       return {
         x: Math.max(DEFAULT_POSITION.x, minLeftOffset),
-        y: Math.max(DEFAULT_POSITION.y, Math.max(0, minTopOffset)),
+        y: Math.max(0, minTopOffset),
       };
     }
 
-    return {
-      x: Math.max(DEFAULT_POSITION.x, minLeftOffset),
-      y: Math.max(Math.max(0, minTopOffset), containerRect.height - toolbarRect.height - VIEWPORT_PADDING),
-    };
-  }, [containerRef, minLeftOffset, minTopOffset]);
+    const avoidRect = avoidRectRef?.current?.getBoundingClientRect();
+    let x = Math.max(DEFAULT_POSITION.x, minLeftOffset);
+    let y = Math.max(0, minTopOffset);
+
+    if (avoidRect) {
+      const avoidRightInContainer = avoidRect.right - containerRect.left;
+      const avoidTopInContainer = avoidRect.top - containerRect.top;
+      x = Math.max(x, avoidRightInContainer + avoidRectPadding);
+      y = Math.max(y, avoidTopInContainer);
+    }
+
+    return { x, y };
+  }, [avoidRectPadding, avoidRectRef, containerRef, minLeftOffset, minTopOffset]);
 
   const clampPosition = useCallback((next: Position): Position => {
     const containerRect = containerRef.current?.getBoundingClientRect();
@@ -256,16 +264,16 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   useEffect(() => stopDragging, []);
 
   useLayoutEffect(() => {
-    const next = clampPosition(getBottomAnchoredPosition());
+    const next = clampPosition(getDefaultPosition());
     if (!positionsMatch(positionRef.current, next)) {
       positionRef.current = next;
       setPosition(next);
     }
-  }, [clampPosition, getBottomAnchoredPosition]);
+  }, [clampPosition, getDefaultPosition]);
 
   useLayoutEffect(() => {
     const syncPosition = () => {
-      const next = clampPosition(getBottomAnchoredPosition());
+      const next = clampPosition(getDefaultPosition());
       if (!positionsMatch(positionRef.current, next)) {
         positionRef.current = next;
         setPosition(next);
@@ -275,7 +283,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
     window.addEventListener('resize', syncPosition);
     syncPosition();
     return () => window.removeEventListener('resize', syncPosition);
-  }, [clampPosition, getBottomAnchoredPosition]);
+  }, [clampPosition, getDefaultPosition]);
 
   useLayoutEffect(() => {
     reclampPosition();

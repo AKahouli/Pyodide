@@ -234,7 +234,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
   });
 
-  it('defaults to the bottom left when there is no stored position', () => {
+  it('defaults to the top left when there is no stored position', () => {
     render(
       <PlaybookCanvasFloatingToolbar
         containerRef={containerRef}
@@ -258,10 +258,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '16px', top: '584px' });
+    expect(toolbar).toHaveStyle({ left: '16px', top: '0px' });
   });
 
-  it('ignores stored positions and anchors to the bottom left', () => {
+  it('ignores stored positions and anchors to the top left', () => {
     window.localStorage.setItem('playbook-canvas-floating-toolbar-position-v3', JSON.stringify({ x: 40, y: 0 }));
 
     render(
@@ -287,10 +287,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '40px', top: '584px' });
+    expect(toolbar).toHaveStyle({ left: '40px', top: '0px' });
   });
 
-  it('keeps the bottom-left default when the avoid rect is at the top', () => {
+  it('anchors to the right of the avoid rect when present', () => {
     render(
       <PlaybookCanvasFloatingToolbar
         containerRef={containerRef}
@@ -314,7 +314,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     const toolbar = screen.getByRole('toolbar').parentElement;
-    expect(toolbar).toHaveStyle({ left: '16px', top: '584px' });
+    expect(toolbar).toHaveStyle({ left: '32px', top: '0px' });
   });
 
   it('reclamps after expand changes the toolbar size', async () => {
@@ -357,6 +357,6 @@ describe('PlaybookCanvasFloatingToolbar', () => {
       window.dispatchEvent(new Event('resize'));
     });
 
-    expect(wrapper).toHaveStyle({ top: '530px' });
+    expect(wrapper).toHaveStyle({ left: '186.6875px', top: '212px' });
   });
 });

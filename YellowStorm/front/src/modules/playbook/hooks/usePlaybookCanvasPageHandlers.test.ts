@@ -67,7 +67,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook = makePlaybook(),
     pageMode = 'design',
     designerOpen = false,
-    waitingForHumanInput = false,
     nodeReflectionEnabled = true,
     advisorScoringMode = 'llm',
     advisorAutopilotEnabled = false,
@@ -79,7 +78,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook?: Playbook | null;
     pageMode?: 'design' | 'run';
     designerOpen?: boolean;
-    waitingForHumanInput?: boolean;
     nodeReflectionEnabled?: boolean;
     advisorScoringMode?: 'llm' | 'heuristic';
     advisorAutopilotEnabled?: boolean;
@@ -94,7 +92,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
         nodeReflectionEnabled,
         advisorScoringMode,
         advisorAutopilotEnabled,
-        waitingForHumanInput,
         pageMode,
         designerOpen,
         confirmRemoveAllMessage: 'Remove all tasks?',
@@ -373,7 +370,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
   });
 
   it('switches run mode and closes design/editor panels', () => {
-    const { result } = buildHandler({ pageMode: 'design', waitingForHumanInput: false, designerOpen: true });
+    const { result } = buildHandler({ pageMode: 'design', designerOpen: true });
 
     act(() => {
       result.current.handlePageModeChange('run');
@@ -386,7 +383,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
   });
 
   it('opens the designer assistant when switching to design mode', () => {
-    const { result } = buildHandler({ waitingForHumanInput: true, designerOpen: true });
+    const { result } = buildHandler({ designerOpen: true });
 
     act(() => {
       result.current.handlePageModeChange('design');

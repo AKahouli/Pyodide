@@ -647,11 +647,12 @@ export function PlaybookDesignerPanel({
 
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
-    if (!query.trim() || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
+    const images = promptImages.map(({ mediaType, data, name }) => ({ mediaType, data, name }));
+    if ((!query.trim() && images.length === 0) || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
 
     const q = query.trim();
-    const images = promptImages.map(({ mediaType, data, name }) => ({ mediaType, data, name }));
-    const visibleQuery = images.length > 0 ? `${q} [${images.length} image${images.length === 1 ? '' : 's'} attached]` : q;
+    const imageLabel = `[${images.length} image${images.length === 1 ? '' : 's'} attached]`;
+    const visibleQuery = images.length > 0 ? [q, imageLabel].filter(Boolean).join(' ') : q;
     setQuery('');
     setPromptImages([]);
     setPromptImageError('');
@@ -1306,7 +1307,7 @@ export function PlaybookDesignerPanel({
               type={constructionActive ? 'button' : 'submit'}
               size="icon"
               variant={constructionActive ? 'destructive' : 'default'}
-              disabled={constructionActive ? !onCancelConstruction : !query.trim() || designIntentBusy || !onSubmitDesignIntent}
+              disabled={constructionActive ? !onCancelConstruction : (!query.trim() && promptImages.length === 0) || designIntentBusy || !onSubmitDesignIntent}
               className="shrink-0"
               onClick={constructionActive ? onCancelConstruction : undefined}
               aria-label={constructionActive ? t('intentBar.actions.stop') : t('designer.send')}

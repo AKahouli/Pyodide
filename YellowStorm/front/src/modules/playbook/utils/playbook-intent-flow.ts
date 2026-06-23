@@ -232,6 +232,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
   }, [constructionAbortRef, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, saveConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, showWarning, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
   const generateIntentSuggestions = useCallback(async (normalizedIntent: string, selectedTaskId?: string, options?: { applyBest?: boolean; images?: PlaybookIntentImageInput[] }) => {
+    setConstructionStatus?.('starting');
+    setConstructionProgress?.(t('intentBar.construction.starting'));
     const analysis = await runIntentAnalysis(normalizedIntent, selectedTaskId, { includeFallback: options?.applyBest, images: options?.images });
     if (!analysis) return;
 
@@ -249,7 +251,9 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       setLastIntentSuggestions(newSuggestions);
       setIntentSuggestions(newSuggestions);
     }
-  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, playbook?.name, runIntentAnalysis, setIntentSuggestions, setLastIntentSuggestions]);
+    setConstructionStatus?.('completed');
+    setConstructionProgress?.(t('intentBar.construction.completed'));
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, playbook?.name, runIntentAnalysis, setConstructionProgress, setConstructionStatus, setIntentSuggestions, setLastIntentSuggestions, t]);
 
   const handleForceGenerateIntentText = useCallback(async (intentText: string, answerText?: string, images?: PlaybookIntentImageInput[]) => {
     const normalizedIntent = buildIntentWithDesignAnswer(intentText, answerText || '');

@@ -156,7 +156,6 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 type CanvasViewMode = 'expanded' | 'compact';
-type IntentRequestOrigin = 'intent-bar' | 'designer-sidebar';
 
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
@@ -225,6 +224,7 @@ function PlaybookCanvasInner() {
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
+  const canvasViewModeRef = useRef<HTMLDivElement | null>(null);
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
@@ -350,7 +350,6 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
-  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('designer-sidebar');
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
@@ -2532,12 +2531,10 @@ function PlaybookCanvasInner() {
   });
 
   const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
-    setIntentRequestOrigin('designer-sidebar');
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
     const result = await handleSubmitIntentText(intentText, images);
     if (!id || result.status === 'skipped') return;
-    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
     try {
       await appendDesignMessage(id, {
         userQuery: visibleUserQuery,
@@ -2556,10 +2553,8 @@ function PlaybookCanvasInner() {
   }, [handleSubmitIntentText, id, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
-    setIntentRequestOrigin('designer-sidebar');
     const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
     if (!id || !answerText || result.status === 'skipped') return;
-    if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
     try {
       await appendDesignMessage(id, {
         userQuery: answerText,
@@ -2637,7 +2632,6 @@ function PlaybookCanvasInner() {
     nodeReflectionEnabled,
     advisorScoringMode,
     advisorAutopilotEnabled,
-    waitingForHumanInput,
     pageMode,
     designerOpen,
     confirmRemoveAllMessage: `${t('toolbar.confirmRemoveAllTitle')}\n${t('toolbar.confirmRemoveAllDescription')}`,
@@ -2686,9 +2680,7 @@ function PlaybookCanvasInner() {
     if (!autoIntentRef.current) return;
     if (!playbook || !id || isGeneratingRoute || playbookLoading || playbook.id !== id) return;
     autoIntentRef.current = null;
-    void handleSubmitIntent().then((result) => {
-      if (result.status === 'completed') autoLayoutAfterGenerationRef.current?.();
-    });
+    void handleSubmitIntent();
   }, [playbook, playbookLoading, id, isGeneratingRoute, handleSubmitIntent]);
 
   useEffect(() => () => {
@@ -3068,6 +3060,7 @@ function PlaybookCanvasInner() {
                   <Controls position="bottom-left" />
                 </Canvas>
                 <div
+                  ref={canvasViewModeRef}
                   className="absolute left-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
                   role="group"
                   aria-label={t('canvas.view.groupLabel')}
@@ -3097,6 +3090,7 @@ function PlaybookCanvasInner() {
                 <PlaybookCanvasFloatingToolbar
                   ref={floatingToolbarRef}
                   containerRef={canvasChromeRef}
+                  avoidRectRef={canvasViewModeRef}
                   onAddStep={handleAddStep}
                   onAddRouterNode={handleAddRouterNode}
                   onAddHumanApprovalNode={handleAddHumanApprovalNode}
@@ -3142,8 +3136,8 @@ function PlaybookCanvasInner() {
             )}
             <PlaybookDesignerPanel
               playbookId={id}
-              intentDesign={intentRequestOrigin === 'designer-sidebar' ? intentDesign : null}
-              intentLoading={intentLoading && intentRequestOrigin === 'designer-sidebar'}
+              intentDesign={intentDesign}
+              intentLoading={intentLoading}
               autoApply={intentAutoApply}
               history={intentHistory}
               constructionStatus={constructionStatus}

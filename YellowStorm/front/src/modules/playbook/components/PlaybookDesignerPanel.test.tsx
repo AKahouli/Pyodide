@@ -820,6 +820,35 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     ]);
   });
 
+  it('submits pasted images without requiring prompt text', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-22T08:20:21'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    const input = screen.getByPlaceholderText('designer.inputPlaceholder');
+    const image = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [image],
+      },
+    });
+    await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'designer.send' }));
+
+    await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Current user request:',
+      '- [2026-06-22 08:20:21] User: [1 image attached]',
+    ].join('\n'), '[1 image attached]', [
+      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
+    ]);
+  });
+
   it('renders sidebar auto-apply and history controls', async () => {
     const onAutoApplyChange = vi.fn();
     const onApplyHistorySuggestion = vi.fn();

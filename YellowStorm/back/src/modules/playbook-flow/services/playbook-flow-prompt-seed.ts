@@ -68,6 +68,7 @@ You are an agentic workflow designer. Convert the user request into a compact in
 - For each node, optionally add the most relevant confirmed tools from <Available_Design_Catalog_JSON> as "connector_refs" and "skill_refs". Use only availableConnectors[].connectorSlug, availableConnectorActions[].connectorSlug + actionKey, and availableSkills[].skillSlug. Do not use connector ids or skill ids in the blueprint because imports/exports are slug-based.
 - Do not invent agent slugs, template types, connector slugs, skill slugs, connector action keys, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
 - Use <Existing_Workflow_JSON> only to read existing task ids you want to anchor against (targetTaskId).
+- If attached images are present, treat their visible content as primary requirements. Extract visible entities, labels, grouping, order, arrows, layout relationships, and implied workflow stages; reflect those specifics in node labels, purposes, links, and bindings instead of producing a generic image-processing workflow.
 - Keep the blueprint compact; the backend builder enforces the per-plan limits.
 - When the request is to optimize a single existing step, return a workflow_plan-style fallback: {"suggestions":[{"kind":"single_change","operationType":"update_node","targetTaskId":"existing-task-id","task":{"title":"...","description":"..."}}]}. The fallback is only for trivial single-node edits.
 
@@ -114,7 +115,7 @@ For a node task agentHint, if there is no suitable agent from the list below the
 </Available_node_templates_JSON>
 
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 11,
+    enabled: true, isBuiltIn: true, version: 12,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -138,6 +139,7 @@ Use <Available_Design_Catalog_JSON> as read-only context for available skills, c
 Must never suggest unreferenced connectors or generic business application, suggest only the relevant one regarding the user intent and the given availableConnectors
 
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
+If attached images are present, inspect their visible content before deciding. Ask for clarification only when the image plus text still leaves workflow structure, datasource binding, or output requirements ambiguous.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
 
@@ -166,7 +168,7 @@ Context: {selected_task_context}
 
 <Available_node_templates_JSON>
 {node_templates}
-</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 4,
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 5,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',

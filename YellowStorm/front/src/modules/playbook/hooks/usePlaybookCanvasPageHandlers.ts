@@ -20,7 +20,6 @@ export interface UsePlaybookCanvasPageHandlersParams {
   nodeReflectionEnabled: boolean;
   advisorScoringMode: 'llm' | 'heuristic';
   advisorAutopilotEnabled: boolean;
-  waitingForHumanInput: boolean;
   pageMode: PlaybookPageMode;
   designerOpen: boolean;
   confirmRemoveAllMessage: string;
@@ -85,7 +84,6 @@ export function usePlaybookCanvasPageHandlers({
   nodeReflectionEnabled,
   advisorScoringMode,
   advisorAutopilotEnabled,
-  waitingForHumanInput,
   pageMode,
   designerOpen,
   confirmRemoveAllMessage,
