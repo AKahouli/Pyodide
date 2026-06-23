@@ -900,6 +900,7 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         hitl_policy,
         hitl_blockers,
         human_context,
+        deep_search=False,
     ):
         captured_execute["node_description"] = node_description
         captured_execute["human_context"] = human_context
