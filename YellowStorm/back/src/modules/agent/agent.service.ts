@@ -671,8 +671,9 @@ export class AgentService {
     let selectedManager: IAgentForStream | undefined;
 
     if (pingedAgents.length === 0) {
-      // No agents tagged: send the single mono-agent
-      const monoAgent = this.resolveDefaultAgentBySlug(MONO_AGENT_SLUG, finalUserAgents);
+      // No agents tagged: route through RunSingleAgent with the admin-created
+      // mono-agent (resolved via its agentType reference + isDefault).
+      const monoAgent = await this.resolveDefaultMonoAgent(finalUserAgents);
       filteredAgents = monoAgent ? [monoAgent] : [];
     } else if (pingedAgents.length === 1) {
       // Exactly one agent tagged: send only that agent
@@ -1305,17 +1306,59 @@ export class AgentService {
    *   4. Admin default-for-type agent of this type
    *   5. First admin agent of this type in the list
    */
+  /**
+   * Canonicalize an agent-type slug so lookups are tolerant of the two slug
+   * conventions in the codebase: agent-type slugs use "_" separators
+   * (AgentTypeService.generateSlug) while the lookup constants use "-".
+   */
+  private canonicalSlug(value: string): string {
+    return (value || '').toLowerCase().replace(/[-_\s]+/g, '_');
+  }
+
+  /**
+   * Resolve the admin-created mono-agent sent when no agent is tagged.
+   *
+   * Agents reference their type via the `agentType` ObjectId (→ agent-types
+   * collection), so we resolve the "mono-agent" type id from that collection and
+   * match by id rather than the populated slug. The mono-agent is an admin agent
+   * (isDefault=true); we prefer it but fall back to any agent of that type.
+   */
+  private async resolveDefaultMonoAgent(
+    agents: IAgentForStream[],
+  ): Promise<IAgentForStream | undefined> {
+    const target = this.canonicalSlug(MONO_AGENT_SLUG);
+    const agentTypes = await this.agentTypeService.findAllActive();
+    const monoType = agentTypes.find((t) => this.canonicalSlug(t.slug) === target);
+
+    if (!monoType) {
+      this.logger.warn('No "mono-agent" agent type found; cannot resolve mono-agent', {
+        target,
+        availableTypeSlugs: agentTypes.map((t) => t.slug),
+      });
+      return undefined;
+    }
+
+    const monoAgent =
+      agents.find((a) => a.isDefault && a.agentTypeId === monoType.id) ??
+      agents.find((a) => a.agentTypeId === monoType.id);
+
+    if (!monoAgent) {
+      this.logger.warn('No agent of the "mono-agent" type available for this user', {
+        monoTypeId: monoType.id,
+        monoTypeSlug: monoType.slug,
+      });
+    }
+
+    return monoAgent;
+  }
+
   private resolveDefaultAgentBySlug(
     slug: string,
     allAgents: IAgentForStream[],
     pingedAgents: IAgentForStream[] = [],
   ): IAgentForStream | undefined {
-    // Agent-type slugs are generated with spaces → "_" (see AgentTypeService.generateSlug),
-    // so a type named "Mono Agent" becomes "mono_agent". Canonicalize hyphens/underscores/
-    // whitespace so lookup constants (e.g. "mono-agent") match regardless of separator.
-    const canon = (value: string) => (value || '').toLowerCase().replace(/[-_\s]+/g, '_');
-    const target = canon(slug);
-    const matches = (a: IAgentForStream) => canon(a.agentTypeSlug) === target;
+    const target = this.canonicalSlug(slug);
+    const matches = (a: IAgentForStream) => this.canonicalSlug(a.agentTypeSlug) === target;
 
     // 1. If the user pinged an agent of this type, use it (first one if multiple)
     const pinged = pingedAgents.find(matches);
