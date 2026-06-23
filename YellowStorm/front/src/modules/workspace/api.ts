@@ -193,9 +193,75 @@ export async function getDocumentDownloadUrl(
 export async function reindexDocument(
   workspaceId: string,
   documentId: string,
+  deepSearch?: boolean,
 ): Promise<WorkspaceDocument> {
+  const params = deepSearch ? { deepSearch: 'true' } : undefined;
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.reindex(workspaceId, documentId),
+    undefined,
+    { params },
+  );
+  return response.data.data;
+}
+
+// ===== Folder APIs =====
+
+export interface CommunityGraphData {
+  documents: Array<{
+    id: string;
+    description: string;
+    toc_text: string;
+    hl_concepts: string[];
+    ll_concepts: string[];
+    community_id: string | null;
+    file_name: string;
+    metadata: Record<string, unknown>;
+  }>;
+  edges: Array<{
+    source: string;
+    target: string;
+    weight: number;
+    hl_jaccard: number;
+    ll_jaccard: number;
+    semantic_cosine: number;
+    shared_hl: string[];
+    shared_ll: string[];
+    relationship_type: string;
+    citation_raw_text?: string;
+    citation_type?: string;
+    citation_confidence?: number;
+  }>;
+  communities: Array<{
+    id: string;
+    level: number;
+    status: string;
+    member_count: number;
+    dominant_hl: string[];
+    dominant_ll: string[];
+  }>;
+  concepts: Array<{
+    id: string;
+    label: string;
+    level: string;
+    doc_freq: number;
+  }>;
+  concept_document_links: Array<{
+    concept_id: string;
+    document_id: string;
+    level: string;
+    weight: number;
+  }>;
+  shared_concept_edges: Array<{
+    source: string;
+    target: string;
+    shared_count: number;
+    shared_levels: string[];
+  }>;
+}
+
+export async function fetchCommunityGraph(workspaceId: string): Promise<CommunityGraphData> {
+  const response = await apiClient.get<ApiResponse<CommunityGraphData>>(
+    API_ENDPOINTS.workspaceDocuments.graphData(workspaceId),
   );
   return response.data.data;
 }
@@ -383,11 +449,15 @@ export async function uploadSmallFile(
   file: File,
   onProgress?: (progress: number) => void,
   folderId?: string,
+  deepSearch?: boolean,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
   if (folderId) {
     formData.append('folderId', folderId);
+  }
+  if (deepSearch) {
+    formData.append('deepSearch', 'true');
   }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
@@ -456,9 +526,13 @@ export async function initiateBulkUpload(
 export async function completeBulkUpload(
   workspaceId: string,
   sessionId: string,
+  deepSearch?: boolean,
 ): Promise<BulkUploadSession> {
+  const params = deepSearch ? { deepSearch: 'true' } : undefined;
   const response = await apiClient.post<ApiResponse<BulkUploadSession>>(
     API_ENDPOINTS.workspaceDocuments.bulkComplete(workspaceId, sessionId),
+    undefined,
+    { params },
   );
   return response.data.data;
 }

@@ -178,7 +178,7 @@ describe('WorkyGovernanceService', () => {
       maxOwnerRelaxLevel: 'notify',
     });
     await expect(service.resolve(streamId, 'external_send', 'off')).rejects.toMatchObject({
-      code: 'ERR_3415',
+      code: 'ERR_3515',
     });
   });
 
@@ -195,7 +195,7 @@ describe('WorkyGovernanceService', () => {
     });
     // The owner can only relax to `notify` (rank 1); `off` (rank 0) is rejected.
     await expect(service.resolve(streamId, 'external_send', 'off')).rejects.toMatchObject({
-      code: 'ERR_3415',
+      code: 'ERR_3515',
     });
   });
 

@@ -79,6 +79,7 @@ interface EditorDraft {
   modelId: string | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
+  deepSearch: boolean;
 }
 
 const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
@@ -198,6 +199,7 @@ function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefault
     modelId: task.modelId ?? null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
+    deepSearch: task.deepSearch ?? false,
   };
 }
 
@@ -226,6 +228,7 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     modelId: isStepLikeNodeType(draft.nodeType) ? draft.modelId : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
+    deepSearch: draft.deepSearch,
   };
 }
 
@@ -295,6 +298,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     modelId: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
+    deepSearch: false,
   });
 
   const agentOptions = useMemo<SearchableSelectOption[]>(
@@ -1391,6 +1395,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                   />
                 </div>
               </EditorSection>
+
             </div>
           </div>
       </DialogContent>

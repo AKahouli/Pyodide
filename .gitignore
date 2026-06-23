@@ -53,10 +53,10 @@ tmp_pymongo
 .understand-anything/diff-overlay.json
 .history
 .claude/settings.local.json
+.venv/
+__pycache__/
 
 .qa/
 .qa-screenshots/
 qa-screenshots/
 qa_screenshots/
-
-$/

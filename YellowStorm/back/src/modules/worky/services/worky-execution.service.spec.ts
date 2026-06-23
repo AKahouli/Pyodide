@@ -448,7 +448,7 @@ describe('WorkyExecutionService', () => {
       lane: 'running',
       executionState: 'running',
     });
-    await expect(service.cancelTask(taskId, ownerId)).rejects.toMatchObject({ code: 'ERR_3414' });
+    await expect(service.cancelTask(taskId, ownerId)).rejects.toMatchObject({ code: 'ERR_3514' });
   });
 
   it('cancelTask moves not_started task to canceled', async () => {

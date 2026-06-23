@@ -425,7 +425,15 @@ export class PlaybookFlowService {
     if (dto.settings !== undefined) existing.settings = dto.settings as any;
     if (dto.hitlPolicy !== undefined) existing.hitlPolicy = dto.hitlPolicy as any;
     if (dto.hitlBlockers !== undefined) existing.hitlBlockers = dto.hitlBlockers as any[];
-    if (dto.nodes !== undefined) existing.nodes = dto.nodes as any[];
+    if (dto.nodes !== undefined) {
+      const dsNodes = (dto.nodes as any[]).filter((n: any) => n.deepSearch);
+      if (dsNodes.length > 0) {
+        this.logger.warn(`[deep-search-debug] PATCH received ${dsNodes.length} node(s) with deepSearch=true: ${dsNodes.map((n: any) => n.id).join(',')}`);
+      } else {
+        this.logger.warn(`[deep-search-debug] PATCH received ${dto.nodes.length} nodes, NONE have deepSearch=true`);
+      }
+      existing.nodes = dto.nodes as any[];
+    }
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
     if (dto.reflectionEnabled !== undefined) existing.reflectionEnabled = dto.reflectionEnabled;

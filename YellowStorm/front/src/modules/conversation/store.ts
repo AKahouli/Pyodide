@@ -361,6 +361,9 @@ interface ConversationState {
   // Selected connector repository for the current conversation
   selectedConnectorRepo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null;
 
+  // Deep search toggle
+  deepSearchEnabled: boolean;
+
   // Selected skill IDs for the current conversation (applied to every message)
   selectedSkillIds: string[];
 
@@ -444,6 +447,9 @@ interface ConversationState {
   // Connector repository selection
   setSelectedConnectorRepo: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null) => void;
 
+  // Deep search toggle
+  setDeepSearchEnabled: (enabled: boolean) => void;
+
   // Skill selection (applied to every message in the conversation)
   setSelectedSkillIds: (skillIds: string[]) => void;
   toggleSelectedSkill: (skillId: string) => void;
@@ -500,6 +506,7 @@ export const useConversationStore = create<ConversationState>()(
       selectedModelId: null,
       selectedWorkspaceIds: [],
       selectedConnectorRepo: null,
+      deepSearchEnabled: false,
       selectedSkillIds: [],
 
       streamingStateCache: new Map(),
@@ -1482,6 +1489,10 @@ export const useConversationStore = create<ConversationState>()(
         set({ selectedConnectorRepo: repo });
       },
 
+      setDeepSearchEnabled: (enabled) => {
+        set({ deepSearchEnabled: enabled });
+      },
+
       setSelectedSkillIds: (skillIds) => {
         set({ selectedSkillIds: skillIds });
         get().persistSelectedSkills();
@@ -1759,6 +1770,10 @@ export const useResetSelectedWorkspaceIds = () => useConversationStore((s) => s.
 export const useSelectedConnectorRepo = () => useConversationStore((s) => s.selectedConnectorRepo);
 
 export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.setSelectedConnectorRepo);
+
+export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSearchEnabled);
+
+export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
 
 export const useSelectedSkillIds = () => useConversationStore((s) => s.selectedSkillIds);
 

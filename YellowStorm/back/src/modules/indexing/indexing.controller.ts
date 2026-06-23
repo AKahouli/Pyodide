@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -24,9 +25,6 @@ import { WorkspaceOwnerGuard } from '../workspace/guards/workspace-owner.guard';
 export class IndexingController {
   constructor(private readonly indexingService: IndexingService) {}
 
-  /**
-   * Trigger re-indexing of a document
-   */
   @Post(':docId/reindex')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger re-indexing of a document' })
@@ -38,8 +36,13 @@ export class IndexingController {
   async reindexDocument(
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
+    @Query('deepSearch') deepSearch?: string,
   ) {
-    const document = await this.indexingService.reindexDocument(workspaceId, docId);
+    const document = await this.indexingService.reindexDocument(
+      workspaceId,
+      docId,
+      deepSearch === 'true',
+    );
     return {
       id: document._id.toString(),
       indexingStatus: document.indexingStatus,
@@ -47,9 +50,6 @@ export class IndexingController {
     };
   }
 
-  /**
-   * Get indexing status of a document
-   */
   @Get(':docId/index-status')
   @ApiOperation({ summary: 'Get indexing status of a document' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })

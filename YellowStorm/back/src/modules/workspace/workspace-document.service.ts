@@ -411,6 +411,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     documentId: string,
+    deepSearch?: boolean,
   ): Promise<DocumentResponse> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -448,7 +449,7 @@ export class WorkspaceDocumentService {
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
     if (!document.isFolder) {
-      this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
           documentId: document._id,
           error: err instanceof Error ? err.message : 'Unknown error',
@@ -485,6 +486,7 @@ export class WorkspaceDocumentService {
     originalName: string,
     mimeType: string,
     folderId?: string,
+    deepSearch?: boolean,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -555,7 +557,7 @@ export class WorkspaceDocumentService {
     });
 
     // Trigger indexing (non-blocking)
-    this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+    this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
       this.logger.warn('Failed to queue document for indexing', {
         documentId: document._id,
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -890,6 +892,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     sessionId: string,
+    deepSearch?: boolean,
   ): Promise<BulkUploadCompleteResponse> {
     const startTime = Date.now();
 
@@ -941,7 +944,7 @@ export class WorkspaceDocumentService {
 
         // Trigger indexing (non-blocking). Skip folders — nothing to index.
         if (!document.isFolder) {
-          this.indexingService.queueDocument(document._id.toString()).catch((err) => {
+          this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
             this.logger.warn('Failed to queue document for indexing', {
               documentId: document._id,
               error: err instanceof Error ? err.message : 'Unknown error',

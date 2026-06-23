@@ -173,6 +173,9 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
     ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
+    ...(node.deepSearch === true || metadata.deep_search === true
+      ? { deep_search: true }
+      : {}),
   };
 }
 
@@ -1266,6 +1269,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   ): Promise<void> {
     try {
       const snapshot = (snapshotOverride || this.builderService.buildSnapshot((flow || {}) as any)) as any;
+      const dsSnapshotNodes = (snapshot.nodes || []).filter((n: any) => n.deepSearch);
+      this.logger.warn(`[deep-search-debug] snapshot has ${snapshot.nodes?.length ?? 0} nodes, ${dsSnapshotNodes.length} with deepSearch=true: ${dsSnapshotNodes.map((n: any) => n.id).join(',')}`);
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
       const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
@@ -1551,6 +1556,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         execution_id: executionId,
         flow_id: flowId,
         owner_id: normalizedOwnerId,
+
       snapshot: {
         nodes: (enrichedNodes as any[]).map((n) => ({
           id: n.id,

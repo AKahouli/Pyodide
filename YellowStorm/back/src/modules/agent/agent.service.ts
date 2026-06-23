@@ -1758,6 +1758,20 @@ export class AgentService {
       }
     }
 
+    const mcpLogicalSearchKey = this.configService.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
+    if (mcpLogicalSearchKey) {
+      for (const binding of bindings) {
+        const transport = String(binding.mcp_transport_type || '');
+        const hasAuth = Boolean((binding.auth_headers as Record<string, string>)?.Authorization);
+        if (transport === 'streamable_http' && !hasAuth) {
+          binding.auth_headers = {
+            ...(binding.auth_headers as Record<string, string>),
+            Authorization: `Bearer ${mcpLogicalSearchKey}`,
+          };
+        }
+      }
+    }
+
     return bindings;
   }
 

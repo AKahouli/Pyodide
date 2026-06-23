@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
+import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
@@ -57,6 +58,7 @@ import {
 import { usePlaybookUiStore } from '../uiStore';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
+import { CommunityGraphPanel } from './CommunityGraphPanel';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
@@ -180,6 +182,8 @@ function PlaybookCanvasInner() {
   const hasActiveExecution = useHasActiveExecution(id);
   const executionPanelOpen = useExecutionPanelOpen();
   const workspaceExplorerOpen = useWorkspaceExplorerOpen();
+  const graphPanelOpen = usePlaybookStore((s) => s.graphPanelOpen);
+  const setGraphPanelOpen = usePlaybookStore((s) => s.setGraphPanelOpen);
   const pageMode = usePageMode();
   const selectedStepId = useSelectedStep();
   const canUndo = useCanUndo();
@@ -2639,6 +2643,14 @@ function PlaybookCanvasInner() {
     setAdvisorAutopilotEnabled((playbook.advisorAutopilotEnabled ?? false) === true);
   }, [playbook?.advisorAutopilotEnabled]);
 
+  const handleToggleDeepSearch = useCallback(() => {
+    if (!id || !playbook) return;
+    const currentDeepSearch = playbook.tasks.some((t) => t.deepSearch);
+    const newValue = !currentDeepSearch;
+    updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
+    toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
+  }, [id, playbook, updateTasks, t]);
+
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
       return;
@@ -2890,6 +2902,8 @@ function PlaybookCanvasInner() {
             onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
             advisorScoringMode={advisorScoringMode}
             onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
+            onDownloadAllResults={handleDownloadAllResults}
+            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onTriggers={() => setTriggersSheetOpen(true)}
             triggersOpen={triggersSheetOpen}
             designSettings={playbook.designSettings}
@@ -2959,6 +2973,11 @@ function PlaybookCanvasInner() {
       <div className="flex flex-1 overflow-hidden">
         {/* Workspace Explorer Sidebar */}
         <WorkspaceExplorerSidebar />
+        <CommunityGraphPanel
+          open={graphPanelOpen}
+          onOpenChange={setGraphPanelOpen}
+          workspaceId={playbook?.workspaces?.[0] ?? null}
+        />
 
         {/* Connector Sidebar */}
         <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />
@@ -3110,6 +3129,8 @@ function PlaybookCanvasInner() {
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
+                  deepSearch={playbook.tasks.some((t) => t.deepSearch)}
+                  onToggleDeepSearch={() => { void handleToggleDeepSearch(); }}
                 />
                 </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>

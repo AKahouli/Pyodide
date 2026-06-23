@@ -13,6 +13,7 @@ from src.smart_rag.agents.factories import AgentFactory
 from src.smart_rag.infrastructure.session.manager import SessionHelper
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.factories import LLMFactory
+from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.monitoring import langfuse_client
 from src.smart_rag.tools import build_tree, SearchToolkit, SearchToolADK, calculator
@@ -267,29 +268,32 @@ class SingleAgentService:
             # Determine what tools to enable based on agent configuration
             calculator_tool = False
             search_tool = False
+            deep_search = False
             search_tool_config = None
             search_web_tool = False
+            vectorstore_mcp_tool = MCPHelper.has_requested_mcp_type(
+                "vectorstore",
+                agent_config.tools,
+                agent_config.agent_params,
+            )
 
             if agent_config.tools:
                 for tool in agent_config.tools:
                     tool_name = tool.get("name", "").lower()
                     if "calculator" in tool_name:
                         calculator_tool = True
+                    elif tool_name == "deep_search":
+                        deep_search = True
+                        vectorstore_mcp_tool = True
                     elif "search" in tool_name:
                         if "web" in tool_name:
                             search_web_tool = True
                         else:
                             search_tool = True
-                            search_tool_config = tool  # Store the tool config
+                            search_tool_config = tool
 
             # Build agent tools
             tools = []
-
-            # Inject AgentSkills catalog into the system prompt and expose lazy activation.
-            agent_prompt = inject_skill_catalog(agent_config.prompt, agent_config.skills)
-            activate_skill_tool = make_activate_skill_tool(agent_config.skills)
-            if activate_skill_tool:
-                tools.append(activate_skill_tool)
 
             # Add standard search tool if search is enabled
             if search_tool and agent_config.brain_ids:
@@ -335,6 +339,37 @@ class SingleAgentService:
             # Add calculator tool if requested
             if calculator_tool:
                 tools.append(calculator)
+
+            if vectorstore_mcp_tool:
+                tools.extend(MCPHelper.create_vectorstore_toolsets_with_deep_search(
+                    brain_ids=agent_config.brain_ids,
+                    deep_search=deep_search,
+                ))
+
+            # Inject skill catalog and deep search prompt
+            agent_prompt = inject_skill_catalog(agent_config.prompt, agent_config.skills)
+            activate_skill_tool = make_activate_skill_tool(agent_config.skills)
+            if activate_skill_tool:
+                tools.append(activate_skill_tool)
+
+            if deep_search:
+                agent_prompt += (
+                    "\n\n<deep_search_mode>\n"
+                    "You are in DEEP SEARCH mode. You MUST follow this two-phase search strategy:\n\n"
+                    "Phase 1 — Find relevant documents:\n"
+                    "- Call search_relevant_documents(query=\"your search query\", workspace_name=\"...\") FIRST\n"
+                    "- This returns top candidate documents with: document_id, file_name, hybrid_score, matched concepts\n"
+                    "- Use the results to identify the most relevant documents for the user's question\n\n"
+                    "Phase 2 — Extract detailed information:\n"
+                    "- Using the file_name from Phase 1 results, call search_sections() or read_section()\n"
+                    "  to get detailed content from those specific documents\n"
+                    "- Cross-reference information across multiple documents when relevant\n"
+                    "- Use matched_hl_concepts and matched_ll_concepts to guide follow-up searches\n\n"
+                    "IMPORTANT: Always start with search_relevant_documents before using other search tools.\n"
+                    "This ensures you find the most semantically relevant documents across the entire workspace first,\n"
+                    "then dive deep into those specific documents for detailed answers.\n"
+                    "</deep_search_mode>"
+                )
 
             # Create LLM with appropriate configuration
             if tools:

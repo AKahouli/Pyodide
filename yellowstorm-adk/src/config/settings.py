@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     # Vectorstores API (document indexing)
     VECTORSTORES_API_URL: Optional[str] = None
 
+    # Community graph MCP (deep search via mcp-indexation)
+    COMMUNITY_GRAPH_MCP_URL: Optional[str] = None
+
     # Image upload limits
     MAX_IMAGES: int = 10
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB per image

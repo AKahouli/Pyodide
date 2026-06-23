@@ -206,8 +206,16 @@ class ManagerAgentFactory:
         # Create a copy to avoid modifying the original list
         updated_tools = tools.copy()
 
+        brain_ids = getattr(self.config, 'brain_ids', None)
+        enable_vectorstore_mcp = False
+        enable_deep_search = False
+
         for tool_name in manager_specific_tools:
             tool_name_lower = tool_name.lower()
+
+            if tool_name_lower == 'deep_search':
+                enable_deep_search = True
+                enable_vectorstore_mcp = True
 
             if tool_name_lower == 'dataviz':
                 # Add dataviz MCP toolset
@@ -239,6 +247,21 @@ class ManagerAgentFactory:
 
             else:
                 logger.warning(f"Unknown manager-specific tool: {tool_name}. Skipping.")
+
+        if enable_vectorstore_mcp:
+            try:
+                vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
+                    brain_ids=brain_ids,
+                    deep_search=enable_deep_search,
+                )
+                updated_tools.extend(vectorstore_toolset)
+                logger.info(
+                    "Enabled vectorstore MCP toolset for manager agent (has_brain_ids=%s deep_search=%s)",
+                    bool(brain_ids),
+                    enable_deep_search,
+                )
+            except Exception as e:
+                logger.exception(f"Error enabling vectorstore toolset for manager agent: {e}")
 
         return updated_tools
 

@@ -8,7 +8,7 @@ import json
 import base64
 import asyncio
 import aiohttp
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List, Tuple
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from src.config.settings import get_settings
@@ -22,6 +22,42 @@ app_settings = get_settings()
 
 class MCPHelper:
     """Handles MCP-related operations."""
+
+    @staticmethod
+    def extract_requested_mcp_types(
+        tools: Optional[List[Any]] = None,
+        agent_params: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        requested_types: List[str] = []
+
+        def add_type(raw_value: Any) -> None:
+            if not isinstance(raw_value, str):
+                return
+            for item in raw_value.split(','):
+                normalized = item.strip().lower()
+                if normalized and normalized not in requested_types:
+                    requested_types.append(normalized)
+
+        if isinstance(agent_params, dict):
+            add_type(agent_params.get("mcp_type"))
+            add_type(agent_params.get("mcp_types"))
+
+        for tool in tools or []:
+            if isinstance(tool, dict):
+                add_type(tool.get("mcp_type"))
+
+        return requested_types
+
+    @staticmethod
+    def has_requested_mcp_type(
+        mcp_type: str,
+        tools: Optional[List[Any]] = None,
+        agent_params: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        normalized_target = mcp_type.strip().lower()
+        if not normalized_target:
+            return False
+        return normalized_target in MCPHelper.extract_requested_mcp_types(tools, agent_params)
 
     @staticmethod
     def create_excel_mcp_headers(user_id: str, brain_ids: List[str],
@@ -112,18 +148,21 @@ class MCPHelper:
             return {"error": str(e)}
 
     @staticmethod
-    def create_mcp_toolset(connection_params, mcp_type: str = 'unknown'):
+    def create_mcp_toolset(connection_params, mcp_type: str = 'unknown', tool_filter: Optional[List[str]] = None):
         """Create MCP toolset from connection parameters.
 
         Args:
             connection_params: MCP connection parameters.
             mcp_type (str): Type/name of the MCP for identification.
+            tool_filter (Optional[List[str]]): Optional whitelist of tool names to load.
         Returns:
             MCPToolset: The MCP toolset instance with mcp_type attribute.
         """
         try:
-            toolset = MCPToolset(connection_params=connection_params)
-            # Add a custom attribute to identify the MCP type
+            kwargs = {"connection_params": connection_params}
+            if tool_filter is not None:
+                kwargs["tool_filter"] = tool_filter
+            toolset = MCPToolset(**kwargs)
             toolset.mcp_type = mcp_type
             return toolset
         except Exception as e:
@@ -219,6 +258,26 @@ class MCPHelper:
                     raise ValueError("URL is required for github MCP type")
                 return StreamableHTTPConnectionParams(url=url)
 
+            elif mcp_type == 'vectorstore':
+                url = kwargs.get('url', app_settings.VECTORSTORE_MCP_URL)
+                if not url:
+                    raise ValueError("VECTORSTORE_MCP_URL is not configured")
+                headers = kwargs.get('headers', {})
+                return StreamableHTTPConnectionParams(
+                    url=url,
+                    headers=headers,
+                    timeout=180.0,
+                )
+
+            elif mcp_type == 'community_graph':
+                url = kwargs.get('url') or getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None)
+                if not url:
+                    raise ValueError("COMMUNITY_GRAPH_MCP_URL is not configured")
+                return StreamableHTTPConnectionParams(
+                    url=url,
+                    timeout=180.0,
+                )
+
             else:
                 raise ValueError(f"Unsupported MCP type: {mcp_type}")
 
@@ -250,7 +309,8 @@ class MCPHelper:
                     continue
 
                 connection_params = MCPHelper.create_mcp_config(mcp_type, **config)
-                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type)
+                tf = config.get('tool_filter')
+                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type, tool_filter=tf)
                 toolsets.append(toolset)
 
             except ValueError as e:
@@ -260,6 +320,44 @@ class MCPHelper:
                 logger.error(f"Failed to create {mcp_type} toolset: {str(e)}", exc_info=True)
                 continue
 
+        return toolsets
+
+    @staticmethod
+    def create_vectorstore_toolsets_with_deep_search(
+        brain_ids: Optional[List[str]] = None,
+        deep_search: bool = False,
+        required: bool = True,
+    ):
+        if not app_settings.VECTORSTORE_MCP_URL:
+            raise ValueError("VECTORSTORE_MCP_URL is not configured")
+
+        headers = {}
+        if brain_ids:
+            headers["X-Brain-ID"] = ",".join(brain_ids)
+        if deep_search:
+            headers["X-Deep-Search"] = "true"
+
+        logger.info(
+            "Attaching vectorstore MCP toolset at %s (deep_search=%s)",
+            app_settings.VECTORSTORE_MCP_URL,
+            deep_search,
+        )
+
+        configs = [{'type': 'vectorstore', 'headers': headers}]
+
+        toolsets = []
+        for config in configs:
+            mcp_type = config.get('type')
+            try:
+                if not mcp_type:
+                    continue
+                connection_params = MCPHelper.create_mcp_config(mcp_type, **config)
+                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type)
+                toolsets.append(toolset)
+            except Exception as e:
+                logger.error(f"Failed to create {mcp_type} toolset: {str(e)}", exc_info=True)
+                if required:
+                    raise
         return toolsets
 
     @staticmethod
