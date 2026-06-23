@@ -182,14 +182,14 @@ describe('WorkyPlanDeltaService.apply', () => {
     const { service } = makeService({ streamUpdateNull: true });
     await expect(
       service.apply(baseInput({ basePlanVersion: 99 })),
-    ).rejects.toMatchObject({ code: 'ERR_3407' });
+    ).rejects.toMatchObject({ code: 'ERR_3507' });
   });
 
   it('rejects when the stream is in an execution phase', async () => {
     const { service } = makeService({ stream: { ...makeService().stream, status: 'active' } });
     await expect(
       service.apply(baseInput()),
-    ).rejects.toMatchObject({ code: 'ERR_3409' });
+    ).rejects.toMatchObject({ code: 'ERR_3509' });
   });
 
   it('accepts a planning plan-delta when the stream is in start_validation_failed', async () => {
@@ -238,7 +238,7 @@ describe('WorkyPlanDeltaService.apply', () => {
           },
         }),
       ),
-    ).rejects.toMatchObject({ code: 'ERR_3408' });
+    ).rejects.toMatchObject({ code: 'ERR_3508' });
   });
 
   it('rejects a delta that references an unknown task', async () => {
@@ -251,7 +251,7 @@ describe('WorkyPlanDeltaService.apply', () => {
           },
         }),
       ),
-    ).rejects.toMatchObject({ code: 'ERR_3406' });
+    ).rejects.toMatchObject({ code: 'ERR_3506' });
   });
 
   it('allows update_tasks to recover an unassigned task', async () => {
@@ -286,7 +286,7 @@ describe('WorkyPlanDeltaService.apply', () => {
           },
         }),
       ),
-    ).rejects.toMatchObject({ code: 'ERR_3406' });
+    ).rejects.toMatchObject({ code: 'ERR_3506' });
   });
 
   it('persists clarification interactions and resolves clientTaskId to task id', async () => {

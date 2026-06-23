@@ -147,7 +147,7 @@ describe('WorkyEphemeralWorkerService', () => {
         role: 'analyzer',
         toolRefs: [],
       }),
-    ).rejects.toMatchObject({ code: 'ERR_3400' });
+    ).rejects.toMatchObject({ code: 'ERR_3500' });
   });
 
   it('refuses to bind for an unknown task', async () => {
@@ -159,7 +159,7 @@ describe('WorkyEphemeralWorkerService', () => {
         role: 'analyzer',
         toolRefs: [],
       }),
-    ).rejects.toMatchObject({ code: 'ERR_3413' });
+    ).rejects.toMatchObject({ code: 'ERR_3513' });
   });
 
   it('retire updates the worker status', async () => {

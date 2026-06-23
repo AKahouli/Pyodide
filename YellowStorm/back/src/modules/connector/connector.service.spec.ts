@@ -239,6 +239,7 @@ describe('ConnectorService importFromMcp', () => {
       { find: jest.fn() } as any,
       logger as any,
       null as any,
+      null as any,
     );
 
     await service.update(connectorId, {
