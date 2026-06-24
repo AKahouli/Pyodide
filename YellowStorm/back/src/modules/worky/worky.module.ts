@@ -27,6 +27,8 @@ import { WorkyStreamController } from './controllers/worky-stream.controller';
 import { WorkyEventsController } from './controllers/worky-events.controller';
 import { WorkyInternalController } from './controllers/worky-internal.controller';
 import { WorkyMessageController } from './controllers/worky-message.controller';
+import { WorkySttController } from './controllers/worky-stt.controller';
+import { WorkySttService } from './services/worky-stt.service';
 import { WorkyBoardController } from './controllers/worky-board.controller';
 import { WorkyInteractionController } from './controllers/worky-interaction.controller';
 import { WorkyTaskController } from './controllers/worky-task.controller';
@@ -166,6 +168,7 @@ import { ModelsModule } from '../models/models.module';
     WorkyEventsController,
     WorkyInternalController,
     WorkyMessageController,
+    WorkySttController,
     WorkyBoardController,
     WorkyInteractionController,
     WorkyTaskController,
@@ -194,6 +197,7 @@ import { ModelsModule } from '../models/models.module';
     WorkyMemoryService,
     WorkyTraceService,
     WorkyTaskResultService,
+    WorkySttService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
     WorkyServiceAuthGuard,
