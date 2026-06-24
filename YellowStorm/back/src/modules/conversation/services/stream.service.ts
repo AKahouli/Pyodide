@@ -870,7 +870,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // Pass metadata as the positional metadata arg — wrapping it as
       // `{ metadata }` makes grpc-js treat it as call options and silently
       // drop the headers (x-api-key + user).
-      const call = this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
+      //
+      // Route to the matching RPC: a single-agent roster is sent as a
+      // RunSingleAgentRequest (carries `agent`, no manager), everything else as
+      // a RunAgentTeamRequest (carries the `agents` roster + manager). Without
+      // this branch a single-agent request hits RunAgentTeam with an empty
+      // `agents` list and the ADK rejects it with "No Manager agent was found".
+      const call = useSingleAgent
+        ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
+        : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;

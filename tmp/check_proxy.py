@@ -2,7 +2,7 @@ import requests
 import json
 
 def check_model(model_name):
-    url = "http://173.208.208.93:3014/chat/completions"
+    url = "https://dev.litellm.yellowmind.ai/chat/completions"
     headers = {"Content-Type": "application/json"}
     data = {
         "model": model_name,
