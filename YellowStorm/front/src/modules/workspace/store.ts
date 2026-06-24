@@ -241,7 +241,7 @@ interface WorkspaceActions {
   addFilesToQueue: (files: File[], workspaceId: string, folderId?: string) => void;
   removeFromQueue: (fileId: string) => void;
   clearQueue: () => void;
-  startUpload: (deepSearch?: boolean) => Promise<void>;
+  startUpload: (deepSearch?: boolean, autoIndex?: boolean) => Promise<void>;
   cancelUpload: (fileId: string) => void;
   updateUploadProgress: (fileId: string, progress: number) => void;
   updateUploadStatus: (fileId: string, status: UploadFileStatus, error?: string) => void;
@@ -1132,7 +1132,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ uploadQueue: [], uploadSessionId: null });
       },
 
-      startUpload: async (deepSearch?: boolean) => {
+      startUpload: async (deepSearch?: boolean, autoIndex?: boolean) => {
         const state = get();
         const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
 
@@ -1163,6 +1163,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                 },
                 item.folderId,
                 deepSearch,
+                autoIndex,
               );
               get().updateUploadStatus(item.id, 'completed');
 
@@ -1224,7 +1225,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
             // Always complete bulk session so backend can finalize
             try {
-              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch);
+              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch, autoIndex);
 
               if (failCount === 0) {
                 toast.success(tToast('upload.successTitle', 'Upload complete'), {
@@ -1817,7 +1818,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         get().addFilesToQueue(validFiles, workspaceId);
         try {
-          await get().startUpload(options?.deepSearch);
+          await get().startUpload(options?.deepSearch, options?.autoIndex);
           toast.success(
             validFiles.length === 1
               ? 'Fichier ajouté'
