@@ -487,6 +487,7 @@ export class WorkspaceDocumentService {
     mimeType: string,
     folderId?: string,
     deepSearch?: boolean,
+    autoIndex: boolean = true,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -556,13 +557,15 @@ export class WorkspaceDocumentService {
       parentId: folderId ? new Types.ObjectId(folderId) : undefined,
     });
 
-    // Trigger indexing (non-blocking)
-    this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
-      this.logger.warn('Failed to queue document for indexing', {
-        documentId: document._id,
-        error: err instanceof Error ? err.message : 'Unknown error',
+    // Trigger indexing (non-blocking), unless auto-indexation is disabled.
+    if (autoIndex) {
+      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+        this.logger.warn('Failed to queue document for indexing', {
+          documentId: document._id,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
       });
-    });
+    }
 
     // Update workspace storage
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
@@ -893,6 +896,7 @@ export class WorkspaceDocumentService {
     userId: string,
     sessionId: string,
     deepSearch?: boolean,
+    autoIndex: boolean = true,
   ): Promise<BulkUploadCompleteResponse> {
     const startTime = Date.now();
 
@@ -942,8 +946,9 @@ export class WorkspaceDocumentService {
         document.url = document.path;
         await document.save();
 
-        // Trigger indexing (non-blocking). Skip folders — nothing to index.
-        if (!document.isFolder) {
+        // Trigger indexing (non-blocking). Skip folders — nothing to index —
+        // and skip entirely when auto-indexation is disabled by the uploader.
+        if (!document.isFolder && autoIndex) {
           this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
             this.logger.warn('Failed to queue document for indexing', {
               documentId: document._id,

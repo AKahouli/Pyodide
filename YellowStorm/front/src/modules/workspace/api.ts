@@ -450,6 +450,7 @@ export async function uploadSmallFile(
   onProgress?: (progress: number) => void,
   folderId?: string,
   deepSearch?: boolean,
+  autoIndex?: boolean,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
@@ -458,6 +459,10 @@ export async function uploadSmallFile(
   }
   if (deepSearch) {
     formData.append('deepSearch', 'true');
+  }
+  // Only send the flag when explicitly disabling — absence means "index" (back-compat).
+  if (autoIndex === false) {
+    formData.append('autoIndex', 'false');
   }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
@@ -527,8 +532,15 @@ export async function completeBulkUpload(
   workspaceId: string,
   sessionId: string,
   deepSearch?: boolean,
+  autoIndex?: boolean,
 ): Promise<BulkUploadSession> {
-  const params = deepSearch ? { deepSearch: 'true' } : undefined;
+  const params =
+    deepSearch || autoIndex === false
+      ? {
+          ...(deepSearch ? { deepSearch: 'true' } : {}),
+          ...(autoIndex === false ? { autoIndex: 'false' } : {}),
+        }
+      : undefined;
   const response = await apiClient.post<ApiResponse<BulkUploadSession>>(
     API_ENDPOINTS.workspaceDocuments.bulkComplete(workspaceId, sessionId),
     undefined,
