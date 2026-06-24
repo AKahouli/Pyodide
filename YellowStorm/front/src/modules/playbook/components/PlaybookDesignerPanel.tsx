@@ -962,19 +962,6 @@ export function PlaybookDesignerPanel({
           )}
         </div>
         <div className="flex items-center gap-1">
-          {effectiveCopilotMode === 'design' && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-              disabled={messages.length === 0 || messagesLoading || isDesigning || isClearingDesignMemory}
-              onClick={() => void handleClearDesignMemory()}
-              title={t('designer.clearMemory')}
-              aria-label={t('designer.clearMemory')}
-            >
-              {isClearingDesignMemory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            </Button>
-          )}
           {effectiveCopilotMode === 'interrupt' && playbookId && currentExecution && (
             <Button
               variant="ghost"
@@ -1264,18 +1251,31 @@ export function PlaybookDesignerPanel({
               <Switch id="designer-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
               <span>{t('intentBar.actions.autoApply')}</span>
             </label>
-            <Button
-              type="button"
-              variant={historyOpen ? 'secondary' : 'outline'}
-              size="sm"
-              className="h-7 gap-1.5 px-2"
-              disabled={history.length === 0 || !onApplyHistorySuggestion}
-              aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen((current) => !current)}
-            >
-              <Clock className="h-3.5 w-3.5" />
-              {t('intentBar.history.title')}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={messages.length === 0 || messagesLoading || isDesigning || isClearingDesignMemory}
+                onClick={() => void handleClearDesignMemory()}
+              >
+                {isClearingDesignMemory ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {t('designer.clearMemory')}
+              </Button>
+              <Button
+                type="button"
+                variant={historyOpen ? 'secondary' : 'outline'}
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={history.length === 0 || !onApplyHistorySuggestion}
+                aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen((current) => !current)}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                {t('intentBar.history.title')}
+              </Button>
+            </div>
           </div>
           {historyOpen ? (
             <div className="max-h-40 overflow-y-auto rounded-lg border bg-muted/20 p-2 space-y-1">

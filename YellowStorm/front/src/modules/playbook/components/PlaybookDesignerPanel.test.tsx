@@ -11,6 +11,7 @@ type StoreSnapshot = {
   designMessages: DesignMessage[];
   copilotMode: 'design' | 'interrupt';
   designerOpen: boolean;
+  clearDesignMessages: ReturnType<typeof vi.fn>;
   resumeExecution: ReturnType<typeof vi.fn>;
   disableHitlBlocker: ReturnType<typeof vi.fn>;
   fetchDesignMessages: ReturnType<typeof vi.fn>;
@@ -28,6 +29,7 @@ const storeState: StoreSnapshot = {
   designMessages: [],
   copilotMode: 'interrupt',
   designerOpen: true,
+  clearDesignMessages: vi.fn(),
   resumeExecution: vi.fn(),
   disableHitlBlocker: vi.fn(),
   fetchDesignMessages: vi.fn(),
@@ -87,7 +89,7 @@ vi.mock('../store', () => ({
     usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
     fetchDesignMessages: storeState.fetchDesignMessages,
     designPlaybook: vi.fn(),
-    clearDesignMessages: vi.fn(),
+    clearDesignMessages: storeState.clearDesignMessages,
     revertToSnapshot: vi.fn(),
     resumeExecution: storeState.resumeExecution,
     disableHitlBlocker: storeState.disableHitlBlocker,
@@ -894,6 +896,32 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     await userEvent.click(screen.getByRole('button', { name: /intentBar.history.title/ }));
     await userEvent.click(screen.getByRole('button', { name: /Improve routing/ }));
     expect(onApplyHistorySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'suggestion-1' }));
+    expect(screen.getByRole('button', { name: 'designer.clearMemory' })).toBeInTheDocument();
+  });
+
+  it('clears design chat memory from the visible sidebar control', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [{
+      id: 'message-1',
+      playbookId: 'playbook-1',
+      userQuery: 'Build a workflow',
+      aiSummary: 'Done',
+      snapshotBefore: null,
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-22T08:20:21.000Z',
+      updatedAt: '2026-06-22T08:20:21.000Z',
+    } as DesignMessage];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'designer.clearMemory' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith('designer.clearMemoryConfirm');
+    expect(storeState.clearDesignMessages).toHaveBeenCalledWith('playbook-1');
+    confirmSpy.mockRestore();
   });
 
   it('switches the sidebar send button to stop during construction', async () => {
