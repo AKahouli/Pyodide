@@ -245,8 +245,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     if ((options?.applyBest || intentAutoApply) && topSuggestion && (options?.applyBest || topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) && id) {
       addIntentSuggestionHistoryEntry(id, playbook?.name ?? '', topSuggestion, normalizedIntent);
       handleApplyIntentSuggestion(topSuggestion, { expectedDefinitionRevision });
-      setLastIntentSuggestions([]);
-      setIntentSuggestions([]);
+      setLastIntentSuggestions(newSuggestions);
+      setIntentSuggestions(newSuggestions);
     } else {
       setLastIntentSuggestions(newSuggestions);
       setIntentSuggestions(newSuggestions);
@@ -267,8 +267,6 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       try {
         const applied = await runRealtimeConstruction(normalizedIntent, resolveSelectedTaskId(), images);
         if (applied) {
-          setLastIntentSuggestions([]);
-          setIntentSuggestions([]);
           return { status: 'completed' as const };
         }
       } catch (error) {
@@ -314,8 +312,6 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
         try {
           const applied = await runRealtimeConstruction(normalizedIntent, resolvedSelectedTaskId, images);
           if (applied) {
-            setLastIntentSuggestions([]);
-            setIntentSuggestions([]);
             return { status: 'completed' as const };
           }
         } catch (error) {

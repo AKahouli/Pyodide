@@ -135,7 +135,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       expectedDefinitionRevision: 9,
       clientMutationId: 'intent-construction-construction-clarified',
     });
-    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([]);
+    expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([]);
   });
 
   it('passes image attachments to realtime construction', async () => {
@@ -173,7 +173,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('force generation applies a direct fallback instead of blanking the UI', async () => {
+  it('force generation applies a direct fallback without blanking the UI', async () => {
     const fallbackSuggestion: PlaybookIntentSuggestion = {
       ...validStepSuggestion,
       id: 'fallback',
@@ -198,7 +198,8 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     });
 
     expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(fallbackSuggestion, { expectedDefinitionRevision: 7 });
-    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([]);
+    expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([]);
+    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([fallbackSuggestion]);
   });
 
   it('uses the latest revision for the final realtime construction save', async () => {

@@ -94,6 +94,10 @@ export class PlaybookIntentGraphBindingResolverService {
       this.warnDrop('edge_unknown_port', `${sourceId}.${edge.sourceOutputPortId || '?'}->${targetId}.${edge.targetInputPortId || '?'}`);
       return null;
     }
+    if (sourcePort.kind && targetPort.kind && sourcePort.kind !== targetPort.kind) {
+      this.warnDrop('edge_artifact_mismatch', `${sourceId}.${sourcePort.id || '?'}->${targetId}.${targetPort.id || '?'}`);
+      return null;
+    }
     return {
       ...edge,
       ...(sourcePort.id ? { sourceOutputPortId: sourcePort.id } : {}),

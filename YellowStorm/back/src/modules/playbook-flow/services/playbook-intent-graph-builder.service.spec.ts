@@ -73,13 +73,16 @@ function makeTemplate(overrides: Partial<FlowNodeTemplateResponse>): FlowNodeTem
 
 describe('PlaybookIntentGraphBuilderService', () => {
   let service: PlaybookIntentGraphBuilderService;
+  let resolver: PlaybookIntentGraphBindingResolverService;
 
   beforeEach(() => {
+    resolver = new PlaybookIntentGraphBindingResolverService();
     service = new PlaybookIntentGraphBuilderService(
       new PlaybookIntentNodeBuildRegistryService(),
-      new PlaybookIntentGraphBindingResolverService(),
+      resolver,
     );
     jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+    jest.spyOn((resolver as any).logger, 'warn').mockImplementation(() => undefined);
   });
 
   it('produces a stable workflow_plan from a linear blueprint across repeated runs', () => {
@@ -311,6 +314,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     });
 
     expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(false);
+    expect((resolver as any).logger.warn).toHaveBeenCalledWith(expect.stringContaining('rule=edge_artifact_mismatch'));
   });
 
   it('emits an iterator node with an isolated body that does not leak edges to the top level', () => {
@@ -439,7 +443,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(node.task.outputPorts?.map((p: { id: string }) => p.id)).toEqual(['draft']);
   });
 
-  it('prunes unbound template ports and keeps explicit blueprint ports', () => {
+  it('keeps explicit blueprint ports instead of injecting referenced template ports', () => {
     const template = makeTemplate({
       type: 'synthesis-step',
       inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: true }],
@@ -453,7 +457,12 @@ describe('PlaybookIntentGraphBuilderService', () => {
         inputPorts: [{ id: 'custom', artifactKind: 'text', required: true }],
       }],
       links: [],
-      bindings: [],
+      bindings: [{
+        targetRef: 'step',
+        targetPort: 'context',
+        sourceKind: 'constant',
+        constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' },
+      }],
     };
 
     const { suggestion }: { suggestion: WorkflowPlan } = service.build({
@@ -466,6 +475,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
 
     const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
     expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['custom']);
+    expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).not.toContain('context');
     expect(node?.task.outputPorts).toBeUndefined();
   });
 

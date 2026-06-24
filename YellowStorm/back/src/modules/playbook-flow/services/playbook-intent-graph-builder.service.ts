@@ -333,6 +333,24 @@ export class PlaybookIntentGraphBuilderService {
   ): BuilderPort[] {
     const ports: BuilderPort[] = [];
     const seen = new Set<string>();
+    if (blueprintPorts?.length) {
+      for (const port of blueprintPorts) {
+        if (!port.id || !port.artifactKind) {
+          dropped.push({ rule: 'builder_port_missing_fields', itemId: `${ownerRef}.${port.id || '?'}` });
+          continue;
+        }
+        if (seen.has(port.id)) continue;
+        seen.add(port.id);
+        ports.push({
+          id: port.id,
+          artifactKind: port.artifactKind as BuilderPort['artifactKind'],
+          required: port.required === true,
+          ...(port.name ? { name: port.name } : {}),
+        });
+      }
+      return ports;
+    }
+
     for (const port of templatePorts || []) {
       if (!port.id || !port.artifactKind) continue;
       if (!referencedTemplatePorts?.has(port.id)) continue;
@@ -344,25 +362,6 @@ export class PlaybookIntentGraphBuilderService {
         required: false,
         ...(port.name ? { name: port.name } : {}),
       });
-    }
-    for (const port of blueprintPorts || []) {
-      if (!port.id || !port.artifactKind) {
-        dropped.push({ rule: 'builder_port_missing_fields', itemId: `${ownerRef}.${port.id || '?'}` });
-        continue;
-      }
-      const existingIndex = ports.findIndex((p) => p.id === port.id);
-      const merged: BuilderPort = {
-        id: port.id,
-        artifactKind: port.artifactKind as BuilderPort['artifactKind'],
-        required: port.required === true,
-        ...(port.name ? { name: port.name } : {}),
-      };
-      if (existingIndex >= 0) {
-        ports[existingIndex] = merged;
-      } else {
-        ports.push(merged);
-        seen.add(port.id);
-      }
     }
     return ports;
   }
