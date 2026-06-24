@@ -62,6 +62,15 @@ export class MessageController {
     return merged.size > 0 ? [...merged] : undefined;
   }
 
+  /**
+   * Human-readable display name for logs/observability: "First Last" when a
+   * profile name is set, otherwise falls back to the user's email.
+   */
+  private resolveDisplayName(user: UserDocument): string {
+    const fullName = `${user.profile?.firstName ?? ''} ${user.profile?.lastName ?? ''}`.trim();
+    return fullName || user.email;
+  }
+
   @Post()
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
@@ -216,7 +225,7 @@ export class MessageController {
           agentIds: resolvedAgentIds,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
-        }, requestId, undefined, user.email)
+        }, requestId, undefined, this.resolveDisplayName(user))
         .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,
@@ -346,7 +355,7 @@ export class MessageController {
         webSearchEnabled: userMessage.webSearchEnabled,
         deepSearchEnabled: (userMessage as any).deepSearchEnabled,
         agentIds: userMessage.agentIds?.map((id) => id.toString()),
-      }, requestId, undefined, user.email)
+      }, requestId, undefined, this.resolveDisplayName(user))
       .catch((err) => {
         this.logger.error('Regenerate stream failed', {
           conversationId,

@@ -24,7 +24,7 @@ from structlog import get_logger
 from src.config.settings import get_settings
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
-from src.middleware.correlation import UserContext, user_ctx
+from src.middleware.correlation import UserContext, user_ctx, set_user_context, get_user_label
 # Import generated protobuf code (will be generated after running proto generation)
 try:
     from src.grpc_generated import chatbot_pb2, chatbot_pb2_grpc
@@ -270,7 +270,7 @@ class ChatbotServicer(
 
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
         username = request.user_context.username or 'unknown'
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         # Create asyncio queue
         queue: asyncio.Queue[dict] = asyncio.Queue()
         bg_task: Optional[asyncio.Task] = None
@@ -525,7 +525,7 @@ class ChatbotServicer(
         )
 
         username = request.user_context.username or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         queue: asyncio.Queue[dict] = asyncio.Queue()
         bg_task: Optional[asyncio.Task] = None
         get_task: Optional[asyncio.Task] = None
@@ -1991,7 +1991,7 @@ class ChatbotServicer(
         positioned nodes and edges.
         """
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         try:
             logger.info(
                 "[GeneratePlaybook] Request received",
@@ -2071,7 +2071,7 @@ class ChatbotServicer(
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 max_tokens=32000,
                 response_format={"type": "json_object"},
-                user=username,
+                user=get_user_label(),
             )
 
             raw = response.choices[0].message.content.strip()
@@ -2215,7 +2215,7 @@ class ChatbotServicer(
         )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         logger.info(
             "[RunPlaybookWorkflow] Request received",
             playbook_id=request.playbook_id,
@@ -2330,7 +2330,7 @@ class ChatbotServicer(
         )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         logger.info(
             "[ResumePlaybookWorkflow] Request received",
             playbook_id=request.playbook_id,
@@ -2513,7 +2513,7 @@ class ChatbotServicer(
             trigger_edge_count=trigger_edge_count,
         )
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name, username=username)
 
         try:
@@ -2628,7 +2628,7 @@ class ChatbotServicer(
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
         trigger_edge_count = sum(
             1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
@@ -2821,7 +2821,7 @@ class ChatbotServicer(
         from src.flow_engine.legacy_runtime import resume_step
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         logger.info(
             "[ResumeStep] Request received",
             thread_id=request.thread_id,
