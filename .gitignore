@@ -58,5 +58,5 @@ tmp_pymongo
 .qa-screenshots/
 qa-screenshots/
 qa_screenshots/
-
+qa-artifacts/
 $/
