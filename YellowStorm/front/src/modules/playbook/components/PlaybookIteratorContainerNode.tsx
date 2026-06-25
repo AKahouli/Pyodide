@@ -1,19 +1,33 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Handle, Position, type NodeProps, useUpdateNodeInternals } from '@xyflow/react';
 import { LayoutGrid, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import { NodeDataActionsContext } from './PlaybookNode';
+import { PortLabel } from './PortLabel';
+import { usePlaybookStore } from '../store';
 import type { PlaybookNodeData } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
 const ITERATOR_MIN_WIDTH = 360;
 const ITERATOR_MIN_HEIGHT = 220;
 
+function getPortTopPercent(index: number, total: number): number {
+  if (total <= 1) return 50;
+  const step = 100 / (total + 1);
+  return step * (index + 1);
+}
+
 export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
-  const node = data as PlaybookNodeData & { childTaskIds?: string[] };
+  const nodeData = data as PlaybookNodeData & { childTaskIds?: string[] };
+  const currentTask = usePlaybookStore((state) => state.currentPlaybook?.tasks.find((task) => task.id === nodeData.id));
+  const node = useMemo(
+    () => (currentTask ? { ...nodeData, ...currentTask } : nodeData),
+    [currentTask, nodeData],
+  );
   const { t } = useModuleTranslation('playbook');
   const nodeActions = useContext(NodeDataActionsContext);
+  const updateNodeInternals = useUpdateNodeInternals();
   const childCount = node.childTaskIds?.length || 0;
   const isEmpty = childCount === 0;
   const selectedClass = selected
@@ -25,6 +39,10 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   const pointerIdRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    updateNodeInternals(node.id);
+  }, [node.id, node.inputPorts?.length, node.outputPorts?.length, updateNodeInternals]);
 
   const queueSizeUpdate = useCallback((clientX: number, clientY: number) => {
     const nextWidth = Math.max(ITERATOR_MIN_WIDTH, dragStart.current.width + (clientX - dragStart.current.x));
@@ -130,22 +148,30 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
 
   return (
     <div className={`relative h-full w-full overflow-visible rounded-xl border-2 border-dashed transition-colors ${selectedClass} ${isEmpty ? 'bg-muted/35' : 'bg-muted/20'} ${isResizing ? 'shadow-xl shadow-primary/30' : ''}`}>
-      {(node.inputPorts || []).map((port) => (
-        <Handle
+      {(node.inputPorts || []).map((port, index, ports) => (
+        <div
           key={port.id}
-          id={port.id}
-          type="target"
-          position={Position.Left}
-          className="!h-3 !w-3 !border-2 !border-background !bg-primary"
-          style={{ top: 80 }}
-          aria-label={port.name}
-        />
+          className="absolute left-0 z-10 flex w-0 -translate-y-1/2 items-center"
+          style={{ top: `${getPortTopPercent(index, ports.length)}%` }}
+        >
+          <Handle
+            id={port.id}
+            type="target"
+            position={Position.Left}
+            className="!h-3 !w-3 !border-2 !border-background"
+            style={{ top: 0, background: PORT_COLORS[port.artifactKind]?.raw }}
+            aria-label={port.name}
+          />
+          <PortLabel name={port.name} kind={port.artifactKind} position="left" selected={selected} />
+        </div>
       ))}
-      {(node.outputPorts || []).map((port) => (
-        <div key={port.id} className="absolute right-0 top-20 z-10 flex -translate-y-1/2 items-center gap-2">
-          <div className="rounded-full border bg-background/90 px-2 py-0.5 text-[11px] font-medium text-foreground shadow-sm">
-            {port.name}
-          </div>
+      {(node.outputPorts || []).map((port, index, ports) => (
+        <div
+          key={port.id}
+          className="absolute right-0 z-10 flex w-0 -translate-y-1/2 items-center"
+          style={{ top: `${getPortTopPercent(index, ports.length)}%` }}
+        >
+          <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={selected} />
           <Handle
             id={port.id}
             type="source"

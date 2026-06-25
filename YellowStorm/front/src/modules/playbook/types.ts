@@ -24,6 +24,7 @@ export interface TaskInputPort {
   artifactKind: ArtifactKind;
   required: boolean;
   description?: string;
+  role?: 'collection' | 'context';
 }
 
 export interface TaskArtifact {

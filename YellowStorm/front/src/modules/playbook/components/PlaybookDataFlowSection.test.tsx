@@ -142,4 +142,32 @@ describe('PlaybookDataFlowSection', () => {
       }),
     ]);
   });
+
+  it('adds iterator context input ports while keeping the collection port locked', () => {
+    const onInputPortsChange = vi.fn();
+
+    render(
+      <PlaybookDataFlowSection
+        targetNodeId="task-1"
+        inputPortsOverride={[{ id: 'items', name: 'Items', artifactKind: 'data', required: false, role: 'collection' }]}
+        outputPortsOverride={[{ id: 'results', name: 'Results', artifactKind: 'data' }]}
+        onInputPortsChange={onInputPortsChange}
+        canEditPorts
+        inputPortBehavior="iterator"
+        showOutputPorts
+        canEditOutputPortNames={false}
+        canEditOutputPortKinds={false}
+        canModifyOutputPorts={false}
+      />,
+    );
+
+    expect(screen.getByDisplayValue('Items')).toBeDisabled();
+
+    fireEvent.click(screen.getByText('dataFlow.addInput'));
+
+    expect(onInputPortsChange).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'items', role: 'collection' }),
+      expect.objectContaining({ role: 'context', artifactKind: 'text', required: false }),
+    ]);
+  });
 });
