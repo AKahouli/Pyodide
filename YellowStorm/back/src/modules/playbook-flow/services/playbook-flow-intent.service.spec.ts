@@ -49,6 +49,7 @@ function createService(overrides: Partial<{
     undefined,
     undefined,
     undefined,
+    undefined,
     overrides.skillService,
     overrides.connectorService,
     overrides.workspaceService,
@@ -470,12 +471,98 @@ describe('PlaybookFlowIntentService normalization', () => {
     }), { timeout: 180000 });
   });
 
-  it('falls back to clarification questions when design JSON is malformed', () => {
+it('falls back to clarification questions when design JSON is malformed', () => {
     const result = callNormalizeDesign('not-json');
 
     expect(result.status).toBe('needs_clarification');
     if (result.status !== 'needs_clarification') return;
     expect(result.questions[0].choices.length).toBeGreaterThan(0);
+  });
+
+  it('returns and stores a lastTrace for intent.analyze', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"suggestions":[]}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Analyze system prompt',
+        userTemplate: 'Catalog={available_design_catalog}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'gpt-analyze',
+      systemPrompt: 'Analyze system prompt',
+      userPrompt: 'Catalog=…',
+      userMessageContent: 'Catalog=…',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    const response = await service.analyze('flow-1', 'owner-1', { intent: 'Build workflow' });
+    expect(response.lastTrace).toMatchObject({
+      stage: 'intent.analyze',
+      model: 'gpt-analyze',
+      systemPrompt: 'Analyze system prompt',
+      userPrompt: 'Catalog=…',
+      rawOutput: '{"suggestions":[]}',
+    });
+
+    const listed = service.getIntentTraces('flow-1', 'owner-1');
+    expect(listed.intentAnalyze).toHaveLength(1);
+    expect(listed.designAssessment).toHaveLength(0);
+  });
+
+  it('returns and stores a lastTrace for intent.design_assessment with the customized prompts', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"x"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom DA system',
+        userTemplate: 'Custom DA user',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'gpt-da',
+      systemPrompt: 'unused-default',
+      userPrompt: 'unused-default-user',
+      userMessageContent: 'unused-default-user',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    const response = await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+    expect(response.lastTrace).toMatchObject({
+      stage: 'intent.design_assessment',
+      model: 'gpt-da',
+      systemPrompt: 'Custom DA system',
+      userPrompt: 'Custom DA user',
+      rawOutput: '{"status":"ready_to_generate","detectedIntent":"x"}',
+    });
+
+    const listed = service.getIntentTraces('flow-1', 'owner-1');
+    expect(listed.designAssessment).toHaveLength(1);
+    expect(listed.intentAnalyze).toHaveLength(0);
   });
 
   it('splits captured clarification answers from the base intent', () => {

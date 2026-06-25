@@ -46,6 +46,7 @@ import type {
   RequestPlaybookIntentData,
   PlaybookIntentDesignResponse,
   PlaybookIntentResponse,
+  PlaybookIntentTraceResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
   RequestPlaybookNodeAdvisorData,
@@ -74,6 +75,8 @@ import type {
   PlaybookDeltaPatchFields,
   PlaybookDeltaNodePatch,
   PlaybookDeltaNodePositionUpdate,
+  AssignablePlaybookPermission,
+  PlaybookShareEntry,
   HitlBlockerRule,
   HitlEventLog,
   HitlFeedbackScope,
@@ -1321,6 +1324,15 @@ export async function assessPlaybookIntentDesign(
   return response.data.data;
 }
 
+export async function fetchPlaybookIntentTraces(
+  playbookId: string,
+): Promise<PlaybookIntentTraceResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookIntentTraceResponse>>(
+    API_ENDPOINTS.playbooks.intentTraces(playbookId),
+  );
+  return response.data.data;
+}
+
 export async function startPlaybookIntentConstruction(
   playbookId: string,
   data: RequestPlaybookIntentData,
@@ -2050,6 +2062,41 @@ export async function cloneSharePlaybook(
     { emails },
   );
   return response.data.data;
+}
+
+export async function sharePlaybook(
+  id: string,
+  emails: string[],
+  permission: AssignablePlaybookPermission,
+): Promise<PlaybookShareEntry[]> {
+  const response = await apiClient.post<ApiResponse<PlaybookShareEntry[]>>(
+    API_ENDPOINTS.playbooks.shares(id),
+    { emails, permission },
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookShares(id: string): Promise<PlaybookShareEntry[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookShareEntry[]>>(
+    API_ENDPOINTS.playbooks.shares(id),
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookSharePermission(
+  id: string,
+  shareId: string,
+  permission: AssignablePlaybookPermission,
+): Promise<PlaybookShareEntry> {
+  const response = await apiClient.patch<ApiResponse<PlaybookShareEntry>>(
+    API_ENDPOINTS.playbooks.share(id, shareId),
+    { permission },
+  );
+  return response.data.data;
+}
+
+export async function revokePlaybookShare(id: string, shareId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbooks.share(id, shareId));
 }
 
 export async function clonePlaybook(id: string): Promise<Playbook> {

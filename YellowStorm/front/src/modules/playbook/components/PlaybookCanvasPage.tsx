@@ -86,7 +86,7 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
-import { CloneShareDialog } from './CloneShareDialog';
+import { SharePlaybookDialog } from './SharePlaybookDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { SkillSidebar } from './SkillSidebar';
@@ -98,7 +98,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
@@ -110,6 +110,7 @@ import type {
   PlaybookIntentImageInput,
   PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
+  PlaybookIntentTraceResponse,
   PlaybookTrigger,
   InterruptType,
   PlaybookIntentTaskDraft,
@@ -350,6 +351,8 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
+  const [intentTraces, setIntentTraces] = useState<PlaybookIntentTraceResponse | null>(null);
+  const [intentTracesLoading, setIntentTracesLoading] = useState(false);
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
@@ -404,6 +407,29 @@ function PlaybookCanvasInner() {
     // Ensure agents are loaded so nodes can display agent names
     void useAgentStore.getState().fetchAgents();
   }, [id, isGeneratingRoute]);
+
+  const refreshIntentTraces = useCallback(async () => {
+    if (!id) return;
+    setIntentTracesLoading(true);
+    try {
+      const traces = await fetchPlaybookIntentTraces(id);
+      setIntentTraces(traces);
+    } catch (error) {
+      console.error('Failed to load intent traces', error);
+    } finally {
+      setIntentTracesLoading(false);
+    }
+  }, [id]);
+
+  const handleOpenIntentTraces = useCallback(() => {
+    void refreshIntentTraces();
+  }, [refreshIntentTraces]);
+
+  useEffect(() => {
+    if (id) {
+      void refreshIntentTraces();
+    }
+  }, [id, refreshIntentTraces]);
 
   useEffect(() => {
     if (searchParams.get('triggers') === '1' || searchParams.get('schedule') === '1') {
@@ -2546,11 +2572,12 @@ function PlaybookCanvasInner() {
         status: result.status === 'failed' ? 'failed' : 'completed',
         error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
       });
+      await refreshIntentTraces();
     } catch (error) {
       console.error('Failed to save Designer Assistant chat history', error);
       showWarning(t('designer.intentSaveFailed'));
     }
-  }, [handleSubmitIntentText, id, t]);
+  }, [handleSubmitIntentText, id, refreshIntentTraces, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
     const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
@@ -2565,6 +2592,7 @@ function PlaybookCanvasInner() {
         error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
       });
       await usePlaybookStore.getState().fetchDesignMessages(id);
+      await refreshIntentTraces();
     } catch (error) {
       console.error('Failed to save Designer Assistant clarification history', error);
       showWarning(t('designer.intentSaveFailed'));
@@ -2896,14 +2924,16 @@ function PlaybookCanvasInner() {
           >
             <Copy className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShareDialogOpen(true)}
-            title={t('share.share')}
-          >
-            <Share2 className="h-4 w-4" />
-          </Button>
+          {playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShareDialogOpen(true)}
+              title={t('share.share')}
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          )}
           <div className="w-40 sm:w-64">
             <PlaybookWorkspaceSelect
               value={playbook.workspaces || []}
@@ -2950,7 +2980,7 @@ function PlaybookCanvasInner() {
         </div>
       </div>
 
-      {id && (
+      {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
           <PlaybookTriggersSheet
             open={triggersSheetOpen}
             onOpenChange={setTriggersSheetOpen}
@@ -3141,12 +3171,15 @@ function PlaybookCanvasInner() {
               autoApply={intentAutoApply}
               history={intentHistory}
               constructionStatus={constructionStatus}
+              intentTraces={intentTraces}
+              intentTracesLoading={intentTracesLoading}
               onSubmitDesignIntent={handleSubmitIntentFromDesigner}
               onAnswerDesignIntent={handleAnswerIntentFromDesigner}
               onAutoApplyChange={setIntentAutoApply}
               onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
               onCancelConstruction={handleCancelIntentConstruction}
               onWidthChange={setDesignerSidebarWidth}
+              onOpenIntentTraces={handleOpenIntentTraces}
             />
           </div>
 
@@ -3206,10 +3239,11 @@ function PlaybookCanvasInner() {
 
       {/* Share Dialog */}
       {id && (
-        <CloneShareDialog
+        <SharePlaybookDialog
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}
           playbookId={id}
+          playbookName={playbook?.name ?? ''}
         />
       )}
 

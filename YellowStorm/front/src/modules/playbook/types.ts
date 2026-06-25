@@ -676,7 +676,7 @@ export interface PlaybookIntentWorkflowBrief {
   hitlRules: string[];
 }
 
-export type PlaybookIntentDesignResponse =
+export type PlaybookIntentDesignResponse = (
   | {
       status: 'needs_clarification';
       detectedIntent: string;
@@ -696,12 +696,32 @@ export type PlaybookIntentDesignResponse =
       detectedIntent: string;
       assumptions: string[];
       riskFlags: string[];
-    };
+    }
+) & {
+  lastTrace?: PlaybookIntentTraceEntry;
+};
 
 export interface PlaybookIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
   model: string;
   settings: EffectivePlaybookDesignSettings;
+  lastTrace?: PlaybookIntentTraceEntry;
+}
+
+export type PlaybookIntentTraceStage = 'intent.analyze' | 'intent.design_assessment';
+
+export interface PlaybookIntentTraceEntry {
+  stage: PlaybookIntentTraceStage;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  rawOutput: string;
+  createdAt: string;
+}
+
+export interface PlaybookIntentTraceResponse {
+  intentAnalyze: PlaybookIntentTraceEntry[];
+  designAssessment: PlaybookIntentTraceEntry[];
 }
 
 export interface PlaybookIntentConstructionStartResponse {
@@ -969,6 +989,7 @@ export interface Playbook {
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
+  accessLevel?: PlaybookPermissionLevel;
   isActive: boolean;
   executionSchedule: ExecutionScheduleData | null;
   triggers: PlaybookTrigger[];
@@ -987,6 +1008,23 @@ export interface Playbook {
 export interface CloneShareResult {
   succeeded: { email: string; playbookId: string }[];
   failed: { email: string; reason: string }[];
+}
+
+export type PlaybookPermissionLevel = 'read' | 'write' | 'owner';
+export type AssignablePlaybookPermission = Exclude<PlaybookPermissionLevel, 'owner'>;
+
+export interface PlaybookShareUser {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface PlaybookShareEntry {
+  shareId: string;
+  permission: AssignablePlaybookPermission;
+  user: PlaybookShareUser;
+  createdAt: string;
 }
 
 export interface PublicReasoningTraceItem {

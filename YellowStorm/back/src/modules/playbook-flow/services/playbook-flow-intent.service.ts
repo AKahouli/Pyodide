@@ -20,6 +20,8 @@ import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.servi
 import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
+import type { PlaybookIntentTraceEntry, PlaybookIntentTraceResponse } from '../interfaces/playbook-flow-intent-trace.interface';
+import { PlaybookFlowIntentTraceService } from './playbook-flow-intent-trace.service';
 import { parseDesignResourceLine } from '../utils/playbook-flow-safe-text.util';
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
@@ -285,6 +287,7 @@ export interface PlaybookFlowIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
   model: string;
   settings: EffectiveFlowDesignSettings;
+  lastTrace?: PlaybookIntentTraceEntry;
 }
 
 @Injectable()
@@ -300,6 +303,7 @@ export class PlaybookFlowIntentService {
     private readonly agentService: AgentService,
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly traceService: PlaybookFlowIntentTraceService = new PlaybookFlowIntentTraceService(),
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
     private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
     private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
@@ -323,15 +327,14 @@ export class PlaybookFlowIntentService {
         { role: 'user', content: context.userMessageContent },
       ],
     }, { timeout: 180000 });
+    const rawOutput = this.extractChatCompletionText(response.data);
+    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.analyze', context, rawOutput);
 
     return {
-      suggestions: this.normalizeConstructionOutput({
-        raw: this.extractChatCompletionText(response.data),
-        dto,
-        context,
-      }),
+      suggestions: this.normalizeConstructionOutput({ raw: rawOutput, dto, context }),
       model: context.model,
       settings: context.effectiveSettings,
+      lastTrace,
     };
   }
 
@@ -341,20 +344,60 @@ export class PlaybookFlowIntentService {
     const userPrompt = prompt?.userTemplate?.trim()
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
       : context.userPrompt;
+    const systemPrompt = prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt();
     const response = await context.httpClient.post('/v1/chat/completions', {
       model: context.model,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: this.buildUserMessageContent(userPrompt, dto) },
       ],
     }, { timeout: 180000 });
+    const rawOutput = this.extractChatCompletionText(response.data);
+    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
+      systemPromptOverride: systemPrompt,
+      userPromptOverride: userPrompt,
+    });
 
-    return this.normalizeDesignAssessment(
-      this.extractChatCompletionText(response.data),
-      dto.intent,
-    );
+    return {
+      ...this.normalizeDesignAssessment(rawOutput, dto.intent),
+      lastTrace,
+    };
+  }
+
+  getIntentTraces(flowId: string, ownerId: string): PlaybookIntentTraceResponse {
+    return this.traceService.list(ownerId, flowId);
+  }
+
+  private recordTrace(
+    flowId: string,
+    ownerId: string,
+    stage: PlaybookIntentTraceEntry['stage'],
+    context: PlaybookIntentAnalysisContext,
+    rawOutput: string,
+    overrides?: { systemPromptOverride?: string; userPromptOverride?: string },
+  ): PlaybookIntentTraceEntry {
+    const entry: PlaybookIntentTraceEntry = {
+      stage,
+      model: context.model,
+      systemPrompt: overrides?.systemPromptOverride ?? context.systemPrompt,
+      userPrompt: overrides?.userPromptOverride ?? this.serializeUserMessageContent(context.userMessageContent),
+      rawOutput,
+      createdAt: new Date().toISOString(),
+    };
+    this.traceService.push(ownerId, flowId, entry);
+    return entry;
+  }
+
+  private serializeUserMessageContent(content: IntentUserMessageContent): string {
+    if (typeof content === 'string') return content;
+    return content
+      .map((part) => {
+        if (part.type === 'text') return part.text;
+        return `[image: ${part.image_url.url.slice(0, 40)}…]`;
+      })
+      .join('\n\n');
   }
 
   async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {

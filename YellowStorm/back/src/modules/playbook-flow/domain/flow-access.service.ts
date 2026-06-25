@@ -10,6 +10,8 @@ import {
   NotFoundException,
 } from '../../exceptions/exceptions/http.exceptions';
 import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
+import { PlaybookShareService } from '../services/playbook-share.service';
+import type { PlaybookPermissionLevel } from '../interfaces/playbook-share.interface';
 
 @Injectable()
 /**
@@ -17,7 +19,10 @@ import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
  * validation so write paths share the same access semantics.
  */
 export class FlowAccessService {
-  constructor(@InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>) {}
+  constructor(
+    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
+    private readonly playbookShareService: PlaybookShareService,
+  ) {}
 
   async findById(flowId: string): Promise<FlowDocument> {
     if (!Types.ObjectId.isValid(flowId)) {
@@ -37,6 +42,30 @@ export class FlowAccessService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
     return flow;
+  }
+
+  async findAccessibleFlow(flowId: string, userId: string, permission: PlaybookPermissionLevel): Promise<FlowDocument> {
+    const flow = await this.findById(flowId);
+    if (String(flow.ownerId) === String(userId)) {
+      return flow;
+    }
+
+    const sharedPermission = await this.playbookShareService.getSharePermission(userId, flowId);
+    if (sharedPermission && this.allows(sharedPermission, permission)) {
+      return flow;
+    }
+
+    throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
+  }
+
+  async assertExecutionAccess(flowId: string, userId: string, permission: PlaybookPermissionLevel): Promise<void> {
+    await this.findAccessibleFlow(flowId, userId, permission);
+  }
+
+  private allows(actual: Exclude<PlaybookPermissionLevel, 'owner'>, required: PlaybookPermissionLevel): boolean {
+    if (required === 'read') return actual === 'read' || actual === 'write';
+    if (required === 'write') return actual === 'write';
+    return false;
   }
 
   ensureExpectedUpdatedAt(existingUpdatedAt: Date | undefined, expectedUpdatedAtRaw: string, message: string): void {

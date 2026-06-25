@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
-import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen, Clock, Image as ImageIcon } from 'lucide-react';
+import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye, Square, Info, PanelRightOpen, SlidersHorizontal, ChevronDown, Loader2, Trash2, FolderOpen, Clock, Image as ImageIcon, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -23,8 +23,9 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentImageInput, PlaybookIntentSuggestion } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
+import { IntentTraceModal } from './IntentTraceModal';
 
 interface Props {
   playbookId: string | undefined;
@@ -33,12 +34,15 @@ interface Props {
   autoApply?: boolean;
   history?: IntentSuggestionHistoryEntry[];
   constructionStatus?: PlaybookIntentConstructionStatus;
+  intentTraces?: PlaybookIntentTraceResponse | null;
+  intentTracesLoading?: boolean;
   onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => Promise<void> | void;
   onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
   onAutoApplyChange?: (value: boolean) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onCancelConstruction?: () => void;
   onWidthChange?: (width: number) => void;
+  onOpenIntentTraces?: () => void;
 }
 
 interface InterruptEntry extends HumanFeedbackData {
@@ -255,12 +259,15 @@ export function PlaybookDesignerPanel({
   autoApply = false,
   history = [],
   constructionStatus = 'idle',
+  intentTraces = null,
+  intentTracesLoading = false,
   onSubmitDesignIntent,
   onAnswerDesignIntent,
   onAutoApplyChange,
   onApplyHistorySuggestion,
   onCancelConstruction,
   onWidthChange,
+  onOpenIntentTraces,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
 
@@ -315,6 +322,7 @@ export function PlaybookDesignerPanel({
   const [selectedDesignChoice, setSelectedDesignChoice] = useState('');
   const [selectedDesignResource, setSelectedDesignResource] = useState<PlaybookIntentClarificationResource | null>(null);
   const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
+  const [intentTracesModalOpen, setIntentTracesModalOpen] = useState(false);
   const [designAnswer, setDesignAnswer] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [promptImages, setPromptImages] = useState<PromptImageAttachment[]>([]);
@@ -974,6 +982,20 @@ export function PlaybookDesignerPanel({
               <Square className="h-4 w-4" />
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => {
+              setIntentTracesModalOpen(true);
+              onOpenIntentTraces?.();
+            }}
+            disabled={!onOpenIntentTraces || intentTracesLoading}
+            aria-label={t('designer.traces.open')}
+            title={t('designer.traces.open')}
+          >
+            {intentTracesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScrollText className="h-4 w-4" />}
+          </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)} aria-label={t('interrupt.collapseAssistant')}>
             <X className="h-4 w-4" />
           </Button>
@@ -1562,6 +1584,13 @@ export function PlaybookDesignerPanel({
           onSelect={handleSelectDesignResource}
         />
       ) : null}
+      <IntentTraceModal
+        open={intentTracesModalOpen}
+        onOpenChange={setIntentTracesModalOpen}
+        intentAnalyze={intentTraces?.intentAnalyze ?? []}
+        designAssessment={intentTraces?.designAssessment ?? []}
+        loading={intentTracesLoading}
+      />
     </>
   );
 }

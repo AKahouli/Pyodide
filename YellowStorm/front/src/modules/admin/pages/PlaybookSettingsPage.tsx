@@ -64,7 +64,7 @@ export function PlaybookSettingsPage() {
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
     replayEligibilityConfidenceThreshold: 70,
-    useDeterministicBlueprintBuilder: false,
+    useDeterministicBlueprintBuilder: true,
   });
 
   useEffect(() => {

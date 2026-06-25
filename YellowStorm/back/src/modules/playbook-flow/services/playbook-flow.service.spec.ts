@@ -907,6 +907,7 @@ describe('PlaybookFlowService', () => {
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
+      { getSharedPlaybookIdsForUser: jest.fn(), getShareInfoMapForUser: jest.fn(), getSharePermission: jest.fn(), removeAllSharesForPlaybook: jest.fn() } as any,
     );
 
     await service.createWithNodesAndEdges('user-1', 'Base', '', [], [], [], []);
@@ -972,6 +973,7 @@ describe('PlaybookFlowService', () => {
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
+      { getSharedPlaybookIdsForUser: jest.fn(), getShareInfoMapForUser: jest.fn(), getSharePermission: jest.fn(), removeAllSharesForPlaybook: jest.fn() } as any,
     );
 
     await service.clone('flow-1', 'user-1');

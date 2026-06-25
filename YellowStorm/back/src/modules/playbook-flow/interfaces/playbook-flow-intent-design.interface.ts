@@ -1,3 +1,5 @@
+import type { PlaybookIntentTraceEntry } from './playbook-flow-intent-trace.interface';
+
 export interface PlaybookIntentClarificationQuestion {
   id: string;
   question: string;
@@ -17,7 +19,7 @@ export interface PlaybookIntentWorkflowBrief {
   hitlRules: string[];
 }
 
-export type PlaybookIntentDesignResponse =
+export type PlaybookIntentDesignResponse = (
   | {
     status: 'needs_clarification';
     detectedIntent: string;
@@ -37,4 +39,7 @@ export type PlaybookIntentDesignResponse =
     detectedIntent: string;
     assumptions: string[];
     riskFlags: string[];
-  };
+  }
+) & {
+  lastTrace?: PlaybookIntentTraceEntry;
+};

@@ -356,6 +356,16 @@ export class PlaybookFlowController {
     return this.playbookFlowIntentService.assessDesign(id, userId, dto);
   }
 
+  @Get(':id/intent-traces')
+  @ApiOperation({ summary: 'Get the last LLM traces for intent.analyze and intent.design_assessment prompts on this playbook.' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getIntentTraces(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.playbookFlowIntentService.getIntentTraces(id, userId);
+  }
+
   @Post(':id/intent-constructions')
   @ApiOperation({ summary: 'Start realtime playbook intent construction' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
