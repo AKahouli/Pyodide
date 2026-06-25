@@ -320,3 +320,28 @@ export async function rejectMemoryProposal(
   );
   return unwrap(response);
 }
+
+// =================================================================
+// Speech-to-text — voice composer
+// =================================================================
+
+/**
+ * Upload a recorded audio clip and get back its transcript. The backend
+ * proxies it to OpenRouter's Whisper transcription (auto-detects EN/FR). The
+ * clip is sent as multipart/form-data under the `file` field.
+ */
+export async function transcribeAudio(
+  blob: Blob,
+  filename = 'speech.webm',
+): Promise<{ text: string; language?: string }> {
+  const form = new FormData();
+  form.append('file', blob, filename);
+  const response = await apiClient.post<ApiResponse<{ text: string; language?: string }>>(
+    API_ENDPOINTS.worky.sttTranscribe,
+    form,
+    // The shared client defaults to application/json; clearing it lets the
+    // browser set multipart/form-data with the correct boundary.
+    { headers: { 'Content-Type': undefined } },
+  );
+  return unwrap(response);
+}

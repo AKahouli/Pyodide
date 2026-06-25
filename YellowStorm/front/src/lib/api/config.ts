@@ -524,5 +524,6 @@ export const API_ENDPOINTS = {
     memoryProposalConfirm: (id: string) => `/worky/memory/proposals/${id}/confirm`,
     memoryProposalReject: (id: string) => `/worky/memory/proposals/${id}/reject`,
     governancePolicy: '/worky/admin/governance-policy',
+    sttTranscribe: '/worky/stt/transcribe',
   },
 } as const;

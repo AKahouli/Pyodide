@@ -253,4 +253,18 @@ export const configValidationSchema = Joi.object({
   WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
   WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
   WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
+
+  // Worky — speech-to-text via OpenRouter (OpenAI-compatible transcriptions)
+  WORKY_STT_BASE_URL: Joi.string().uri().default('https://openrouter.ai/api'),
+  WORKY_STT_MODEL: Joi.string().default('openai/whisper-large-v3-turbo'),
+  // Leave empty to let Whisper auto-detect (handles EN + FR). Set to 'en' or
+  // 'fr' to pin a single language for slightly lower latency / fewer surprises.
+  WORKY_STT_LANGUAGE: Joi.string().allow('').default(''),
+  WORKY_STT_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(30000),
+  WORKY_STT_MAX_BYTES: Joi.number().min(65536).default(26214400),
+  // OpenRouter API key (bearer token).
+  WORKY_STT_API_KEY: Joi.string().allow('').default(''),
+  // OpenRouter provider routing for STT (e.g. 'groq'). Comma-separated list
+  // allowed. Empty = let OpenRouter choose.
+  WORKY_STT_PROVIDER: Joi.string().allow('').default(''),
 });

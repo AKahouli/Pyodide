@@ -373,3 +373,13 @@ export function useRejectMemoryProposal() {
     },
   });
 }
+
+export function useTranscribeAudio() {
+  return useMutation<
+    Awaited<ReturnType<typeof api.transcribeAudio>>,
+    Error,
+    { blob: Blob; filename?: string }
+  >({
+    mutationFn: ({ blob, filename }) => api.transcribeAudio(blob, filename),
+  });
+}
