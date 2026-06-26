@@ -528,5 +528,6 @@ export const API_ENDPOINTS = {
     memoryProposalReject: (id: string) => `/worky/memory/proposals/${id}/reject`,
     governancePolicy: '/worky/admin/governance-policy',
     sttTranscribe: '/worky/stt/transcribe',
+    ttsSpeak: '/worky/tts/speak',
   },
 } as const;

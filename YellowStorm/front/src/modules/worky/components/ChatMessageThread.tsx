@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
-import { Bot, User } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bot, User, Volume2, VolumeX } from 'lucide-react';
 import { format } from 'date-fns';
 import { useModuleTranslation } from '@/modules/localization';
+import { synthesizeSpeech } from '../api';
 import { useWorkyAssistantText, useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 
@@ -11,12 +12,64 @@ function formatMessageTime(value: string): string {
   return format(date, 'HH:mm');
 }
 
+// ponytail: Gemini TTS voice names; update if WORKY_TTS_MODEL changes provider.
+const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda', 'Orus'];
+
 export function ChatMessageThread(): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const assistantText = useWorkyAssistantText();
   const streaming = useWorkyStore((s) => s.streaming);
   const containerRef = useRef<HTMLUListElement>(null);
+
+  // Read-aloud: opt-in toggle. When on, each new agent message is spoken via
+  // OpenRouter TTS. Off by default so we don't fire paid calls / hit autoplay
+  // blocks unprompted.
+  const [ttsOn, setTtsOn] = useState(false);
+  const [voice, setVoice] = useState(() => localStorage.getItem('worky-tts-voice') ?? TTS_VOICES[0]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSpokenRef = useRef<string | null>(null);
+  const initializedRef = useRef(false);
+
+  const chooseVoice = (v: string) => {
+    setVoice(v);
+    localStorage.setItem('worky-tts-voice', v);
+  };
+
+  // Stop audio when muted or unmounted.
+  useEffect(() => {
+    if (!ttsOn) audioRef.current?.pause();
+  }, [ttsOn]);
+  useEffect(() => () => audioRef.current?.pause(), []);
+
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    // Don't replay history on first load — only speak messages that arrive after.
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      lastSpokenRef.current = last.id;
+      return;
+    }
+    if (last.id === lastSpokenRef.current) return;
+    lastSpokenRef.current = last.id;
+    if (!ttsOn || last.role === 'owner' || !last.content?.trim()) return;
+    void (async () => {
+      try {
+        const blob = await synthesizeSpeech(last.content, voice || undefined);
+        const url = URL.createObjectURL(blob);
+        audioRef.current?.pause();
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        const free = () => URL.revokeObjectURL(url);
+        audio.onended = free;
+        audio.onerror = free;
+        await audio.play().catch(() => undefined); // autoplay may need a gesture
+      } catch {
+        /* TTS failure is non-fatal — the text answer is already shown. */
+      }
+    })();
+  }, [messages, ttsOn, voice]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -36,11 +89,40 @@ export function ChatMessageThread(): JSX.Element {
         <h3 className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
           {t('messages.title')}
         </h3>
-        {streaming ? (
-          <span className='text-[10px] italic text-muted-foreground'>
-            {t('messages.streamingLabel')}
-          </span>
-        ) : null}
+        <div className='flex items-center gap-2'>
+          {streaming ? (
+            <span className='text-[10px] italic text-muted-foreground'>
+              {t('messages.streamingLabel')}
+            </span>
+          ) : null}
+          {ttsOn ? (
+            <select
+              value={voice}
+              onChange={(e) => chooseVoice(e.target.value)}
+              aria-label={t('messages.speak.voice')}
+              title={t('messages.speak.voice')}
+              className='rounded border border-border/60 bg-background/60 px-1 py-0.5 text-[10px] text-muted-foreground'
+              data-testid='worky-tts-voice'
+            >
+              {TTS_VOICES.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            type='button'
+            onClick={() => setTtsOn((on) => !on)}
+            aria-pressed={ttsOn}
+            aria-label={ttsOn ? t('messages.speak.disable') : t('messages.speak.enable')}
+            title={ttsOn ? t('messages.speak.disable') : t('messages.speak.enable')}
+            className='text-muted-foreground hover:text-foreground'
+            data-testid='worky-tts-toggle'
+          >
+            {ttsOn ? <Volume2 className='h-3.5 w-3.5' /> : <VolumeX className='h-3.5 w-3.5' />}
+          </button>
+        </div>
       </header>
       {hasContent ? (
         <ul
