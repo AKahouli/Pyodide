@@ -190,6 +190,7 @@ class MCPHelper:
                     if len(effective_workspace_ids) > 1
                     else effective_workspace_ids[0]
                 )
+                headers["Workspace-Id"] = ",".join(effective_workspace_ids)
 
             logger.debug(f"MCP context headers: {headers}")
             return headers

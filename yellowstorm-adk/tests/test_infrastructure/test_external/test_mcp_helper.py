@@ -75,6 +75,7 @@ class TestMCPHelper:
             "user_id": "user123",
             "file_name": "contract.pdf",
             "workspace_id": "workspace-1",
+            "Workspace-Id": "workspace-1",
         }
 
     def test_create_mcp_context_headers_uses_workspace_id_for_legacy_names(self):
@@ -86,6 +87,7 @@ class TestMCPHelper:
         assert result == {
             "user_id": "user123",
             "workspace_id": '["workspace-1", "workspace-2"]',
+            "Workspace-Id": "workspace-1,workspace-2",
         }
 
     @pytest.mark.asyncio
@@ -265,6 +267,7 @@ class TestMCPHelper:
                 headers={
                     'user_id': 'user-1',
                     'workspace_id': 'workspace-1',
+                    'Workspace-Id': 'workspace-1',
                     'X-User-Id': 'user-1',
                 },
             )
