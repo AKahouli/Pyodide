@@ -25,6 +25,22 @@ export interface LiteLLMModelInfoResponse {
   data: LiteLLMModelInfoEntry[];
 }
 
+// Supported model classification types (mirrors LiteLLM model_info.mode values).
+// Kept as a single source of truth used by the schema default, the update DTO
+// validation and the admin UI.
+export const MODEL_TYPES = [
+  'chat',
+  'completion',
+  'embedding',
+  'image_generation',
+  'audio_transcription',
+  'audio_speech',
+  'moderation',
+  'search',
+] as const;
+
+export type ModelType = (typeof MODEL_TYPES)[number];
+
 // Internal types
 export interface ModelResponse {
   id: string;
@@ -33,6 +49,7 @@ export interface ModelResponse {
   chefSlug: string;
   litellmModel: string;
   providers: string[];
+  type: string;
   isActive: boolean;
   isDefault: boolean;
 }

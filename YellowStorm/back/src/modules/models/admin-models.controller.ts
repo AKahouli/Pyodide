@@ -45,7 +45,8 @@ export class AdminModelsController {
   @ApiOperation({ summary: 'List all models (including inactive)' })
   @ApiResponse({ status: 200, description: 'Models retrieved' })
   async listAllModels(): Promise<ModelsListResponse> {
-    return this.modelsService.findAll(false); // false = include inactive
+    // include inactive (activeOnly=false) AND all types (chatOnly=false)
+    return this.modelsService.findAll(false, false);
   }
 
   @Get('default')

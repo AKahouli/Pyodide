@@ -57,6 +57,7 @@ import {
   syncModels,
 } from '../api';
 import type { AdminModelResponse, AdminModelsListResponse } from '../types';
+import { MODEL_TYPES } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -122,6 +123,7 @@ export function ModelsPage() {
     name: '',
     providers: '',
     chefSlug: '',
+    type: '',
   });
 
   const fetchModels = async () => {
@@ -216,6 +218,7 @@ export function ModelsPage() {
       name: model.name,
       providers: model.providers.join(', '),
       chefSlug: model.chefSlug,
+      type: model.type ?? '',
     });
     setShowEditDialog(true);
   };
@@ -240,6 +243,7 @@ export function ModelsPage() {
         chef,
         chefSlug,
         providers,
+        ...(editFormData.type ? { type: editFormData.type } : {}),
       });
 
       setModels((prev) =>
@@ -330,6 +334,7 @@ export function ModelsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('models.table.columns.model')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('models.table.columns.type')}</TableHead>
                   <TableHead className="hidden md:table-cell">{t('models.table.columns.provider')}</TableHead>
                   <TableHead className="hidden lg:table-cell">{t('models.table.columns.providers')}</TableHead>
                   <TableHead>{t('models.table.columns.enabled')}</TableHead>
@@ -340,7 +345,7 @@ export function ModelsPage() {
               <TableBody>
                 {models.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center">
+                    <TableCell colSpan={7} className="h-24 text-center">
                       {t('models.table.empty')}
                     </TableCell>
                   </TableRow>
@@ -365,6 +370,15 @@ export function ModelsPage() {
                             {model.id}
                           </span>
                         </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {model.type ? (
+                          <Badge variant="secondary">{model.type}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {t('models.table.typeUnset')}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         <Badge variant="outline">{model.chef}</Badge>
@@ -460,6 +474,29 @@ export function ModelsPage() {
                     setEditFormData((prev) => ({ ...prev, name: e.target.value }))
                   }
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="type">{t('models.edit.fields.type')}</Label>
+                <Select
+                  value={editFormData.type}
+                  onValueChange={(value) =>
+                    setEditFormData((prev) => ({ ...prev, type: value }))
+                  }
+                >
+                  <SelectTrigger id="type">
+                    <SelectValue placeholder={t('models.edit.fields.selectType')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_TYPES.map((modelType) => (
+                      <SelectItem key={modelType} value={modelType}>
+                        {modelType}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t('models.edit.fields.typeHelper')}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="providers">{t('models.edit.fields.providers')}</Label>
