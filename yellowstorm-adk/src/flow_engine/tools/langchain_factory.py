@@ -1907,6 +1907,7 @@ def _create_connector_mcp_tools(
                                     effective_auth_headers.pop("file_name", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                effective_auth_headers["Workspace-Id"] = ",".join(_wi)
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
