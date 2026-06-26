@@ -17,7 +17,6 @@ import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-gra
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
 import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
-import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
 import type { PlaybookIntentTraceEntry, PlaybookIntentTraceResponse } from '../interfaces/playbook-flow-intent-trace.interface';
@@ -206,8 +205,10 @@ export type PlaybookIntentWorkflowChange =
     type: 'create_edge' | 'delete_edge';
     sourceTaskId: string | null;
     sourceNodeRef: string | null;
+    sourceIteratorNodeRef?: string | null;
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     sourceOutputPortId?: string | null;
     targetInputPortId?: string | null;
   }
@@ -215,10 +216,12 @@ export type PlaybookIntentWorkflowChange =
     type: 'create_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'node-output';
     sourceTaskId: string | null;
     sourceNodeRef: string | null;
+    sourceIteratorNodeRef?: string | null;
     sourcePort: string | null;
     iteration?: 'current' | 'previous';
   }
@@ -226,6 +229,7 @@ export type PlaybookIntentWorkflowChange =
     type: 'create_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'constant';
     constantValue: ResolvedDesignResourceBindingValue;
@@ -234,9 +238,11 @@ export type PlaybookIntentWorkflowChange =
     type: 'delete_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceTaskId?: string | null;
     sourceNodeRef?: string | null;
+    sourceIteratorNodeRef?: string | null;
     sourcePort?: string | null;
   };
 
@@ -280,8 +286,10 @@ export interface PlaybookIntentAnalysisContext {
   nodeTemplates: Array<{ id: string; type: string; key: string; nodeType: string; title: string; description?: string; category: string;
     inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
     outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
-    recommendedAgentTypeSlug: string | null; enabled: boolean }>;
+    recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown }>;
 }
+
+const DEFAULT_GENERIC_NODE_TEMPLATE_KEY = 'generic.agent_step';
 
 export interface PlaybookFlowIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
@@ -307,7 +315,6 @@ export class PlaybookFlowIntentService {
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
     private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
     private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
-      new PlaybookIntentNodeBuildRegistryService(),
       new PlaybookIntentGraphBindingResolverService(),
     ),
     private readonly skillService?: SkillService,
@@ -438,12 +445,14 @@ export class PlaybookFlowIntentService {
         role: agent.role,
       })), null, 2),
       node_templates: JSON.stringify(nodeTemplates.items.map((template) => ({
+        key: template.key,
         type: template.type,
         title: template.title,
         description: template.description || '',
         category: template.category,
-        nodeType: template.nodeType,
+        semanticNodeType: template.nodeType,
         executionMode: template.executionMode,
+        isDefault: template.key === DEFAULT_GENERIC_NODE_TEMPLATE_KEY,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
           name: port.name,
@@ -509,6 +518,7 @@ export class PlaybookFlowIntentService {
           description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        iteratorConfig: template.iteratorConfig,
         enabled: template.enabled,
       })),
     };
@@ -736,8 +746,7 @@ export class PlaybookFlowIntentService {
     dto: RequestPlaybookFlowIntentDto;
     context: PlaybookIntentAnalysisContext;
   }): PlaybookIntentSuggestion[] {
-    const useBlueprint = args.context.effectiveSettings.useDeterministicBlueprintBuilder;
-    if (useBlueprint && this.blueprintParser.hasBlueprintShape(args.raw)) {
+    if (this.blueprintParser.hasBlueprintShape(args.raw)) {
       const parsed = this.blueprintParser.parse(args.raw);
       if (parsed) {
         try {
@@ -1322,8 +1331,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     if (item.type === 'create_edge' || item.type === 'delete_edge') {
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef) || this.normalizeText(item.sourceRef) || this.normalizeText(item.fromNodeRef);
+      const sourceIteratorNodeRef = this.normalizeText(item.sourceIteratorNodeRef) || this.normalizeText(item.sourceIteratorRef);
       const targetTaskId = this.normalizeText(item.targetTaskId);
       const targetNodeRef = this.normalizeText(item.targetNodeRef) || this.normalizeText(item.targetRef) || this.normalizeText(item.toNodeRef);
+      const targetIteratorNodeRef = this.normalizeText(item.targetIteratorNodeRef) || this.normalizeText(item.targetIteratorRef);
 
       if (!(sourceTaskId || sourceNodeRef) || !(targetTaskId || targetNodeRef)) {
         return null;
@@ -1333,8 +1344,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         type: item.type,
         sourceTaskId: sourceTaskId || null,
         sourceNodeRef: sourceNodeRef || null,
+        ...(sourceIteratorNodeRef ? { sourceIteratorNodeRef } : {}),
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
+        ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
         ...(this.normalizeText(item.sourceOutputPortId) ? { sourceOutputPortId: this.normalizeText(item.sourceOutputPortId) } : {}),
         ...(this.normalizeText(item.targetInputPortId) ? { targetInputPortId: this.normalizeText(item.targetInputPortId) } : {}),
       };
@@ -1343,12 +1356,14 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     if (item.type === 'create_data_binding') {
       const targetTaskId = this.normalizeText(item.targetTaskId);
       const targetNodeRef = this.normalizeText(item.targetNodeRef);
+      const targetIteratorNodeRef = this.normalizeText(item.targetIteratorNodeRef) || this.normalizeText(item.targetIteratorRef);
       const targetPort = this.normalizeText(item.targetPort);
       if (!targetPort || !(targetTaskId || targetNodeRef)) {
         return null;
       }
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
+      const sourceIteratorNodeRef = this.normalizeText(item.sourceIteratorNodeRef) || this.normalizeText(item.sourceIteratorRef);
       const sourcePort = this.normalizeText(item.sourcePort);
       if (item.sourceKind === 'constant') {
         const constantValue = this.normalizeResolvedDesignResourceBindingValue(item.constantValue);
@@ -1356,6 +1371,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           type: 'create_data_binding',
           targetTaskId: targetTaskId || null,
           targetNodeRef: targetNodeRef || null,
+          ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
           targetPort,
           sourceKind: 'constant',
           constantValue,
@@ -1369,10 +1385,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         type: 'create_data_binding',
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
+        ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
         targetPort,
         sourceKind: 'node-output',
         sourceTaskId: sourceTaskId || null,
         sourceNodeRef: sourceNodeRef || null,
+        ...(sourceIteratorNodeRef ? { sourceIteratorNodeRef } : {}),
         sourcePort: sourcePort || null,
         iteration: item.iteration === 'previous' ? 'previous' : 'current',
       };

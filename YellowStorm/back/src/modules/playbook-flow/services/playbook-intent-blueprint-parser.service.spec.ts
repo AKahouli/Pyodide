@@ -14,8 +14,8 @@ describe('PlaybookIntentBlueprintParserService', () => {
         title: 'Research',
         summary: 'Linear research workflow',
         nodes: [
-          { ref: 'collect', label: 'Collect', purpose: 'Gather data', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-          { ref: 'draft', label: 'Draft', purpose: 'Write report', templateType: 'synthesis-step',
+          { ref: 'collect', label: 'Collect', purpose: 'Gather data', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+          { ref: 'draft', label: 'Draft', purpose: 'Write report', nodeTemplateKey: 'synthesis-step',
             inputPorts: [{ id: 'data', artifactKind: 'data', required: true }],
             outputPorts: [{ id: 'report', artifactKind: 'document' }] },
         ],
@@ -34,6 +34,32 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result!.dropped).toEqual([]);
   });
 
+  it('accepts scoped iterator child links and bindings', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Iterator scoped',
+        nodes: [
+          { ref: 'template', label: 'Template', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'document', artifactKind: 'document' }] },
+          {
+            ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template',
+            iteratorBody: {
+              steps: [{ ref: 'child', title: 'Child', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'template', artifactKind: 'document' }] }],
+              edges: [],
+            },
+          },
+        ],
+        links: [{ sourceRef: 'template', targetIteratorRef: 'loop', targetRef: 'child', sourceOutputPortId: 'document', targetInputPortId: 'template' }],
+        bindings: [{ sourceKind: 'node-output', sourceRef: 'template', sourcePort: 'document', targetIteratorRef: 'loop', targetRef: 'child', targetPort: 'template' }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.links[0]).toEqual(expect.objectContaining({ targetIteratorRef: 'loop', targetRef: 'child' }));
+    expect(result.blueprint.bindings?.[0]).toEqual(expect.objectContaining({ targetIteratorRef: 'loop', targetRef: 'child' }));
+    expect(result.dropped).toEqual([]);
+  });
+
   it('accepts connector and skill refs with slug-based snake_case fields', () => {
     const raw = JSON.stringify({
       blueprint: {
@@ -42,6 +68,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
           ref: 'search_files',
           label: 'Search files',
           purpose: 'Find source documents',
+          nodeTemplateKey: 'generic.agent_step',
           connector_refs: [{ connector_slug: 'google-drive', action_key: 'search', reason: 'Find files' }],
           skill_refs: [{ skill_slug: 'summarize-documents', reason: 'Summarize matches' }],
         }],
@@ -66,6 +93,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
         nodes: [{
           ref: 'search_files',
           label: 'Search files',
+          nodeTemplateKey: 'generic.agent_step',
           connector_refs: [{ connector_slug: 'google-drive' }, { action_key: 'search' }],
           skill_refs: [{}],
         }],
@@ -90,6 +118,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
           ref: 'search_files',
           label: 'Search files',
           purpose: 'Find source documents',
+          nodeTemplateKey: 'generic.agent_step',
           connectorRefs: [
             { connectorSlug: 'google-drive', actionKey: 'search' },
             { connectorSlug: 'google-drive', actionKey: 'search' },
@@ -138,10 +167,24 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(service.hasBlueprintShape(raw)).toBe(true);
   });
 
+  it('temporarily accepts legacy templateType as nodeTemplateKey and logs the fallback', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Legacy template',
+        nodes: [{ ref: 'legacy_step', label: 'Legacy step', templateType: 'legacy.template' }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].nodeTemplateKey).toBe('legacy.template');
+    expect((service as any).logger.warn).toHaveBeenCalledWith(expect.stringContaining('playbook_intent_blueprint_legacy_template_type'));
+  });
+
   it('derives a missing blueprint title from the first node label', () => {
     const raw = JSON.stringify({
       blueprint: {
-        nodes: [{ ref: 'collect_input', label: 'Collect input', purpose: 'Collect source input' }],
+        nodes: [{ ref: 'collect_input', label: 'Collect input', purpose: 'Collect source input', nodeTemplateKey: 'generic.agent_step' }],
       },
     });
 
@@ -164,9 +207,9 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [
-          { ref: 'a', label: 'A' },
-          { ref: '', label: 'B' },
-          { ref: 'c' },
+          { ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step' },
+          { ref: '', label: 'B', nodeTemplateKey: 'generic.agent_step' },
+          { ref: 'c', nodeTemplateKey: 'generic.agent_step' },
           { label: 'D' },
         ],
       },
@@ -182,8 +225,8 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [
-          { ref: 'a', label: 'A' },
-          { ref: 'a', label: 'A duplicate' },
+          { ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step' },
+          { ref: 'a', label: 'A duplicate', nodeTemplateKey: 'generic.agent_step' },
         ],
       },
     });
@@ -192,17 +235,17 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.dropped.find((d) => d.rule === 'blueprint_node_duplicate_ref')).toBeDefined();
   });
 
-  it('drops unsupported node kinds but keeps the node without that hint', () => {
+  it('ignores nodeType as semantic metadata in parsed output', () => {
     const raw = JSON.stringify({
       blueprint: {
         title: 't',
-        nodes: [{ ref: 'a', label: 'A', nodeType: 'unknown_kind' }],
+        nodes: [{ ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step', nodeType: 'unknown_kind' }],
       },
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.nodes).toHaveLength(1);
-    expect(result.blueprint.nodes[0].nodeType).toBeUndefined();
-    expect(result.dropped.find((d) => d.rule === 'blueprint_node_unsupported_kind')).toBeDefined();
+    expect(result.blueprint.nodes[0].nodeType).toBe('unknown_kind');
+    expect(result.dropped.find((d) => d.rule === 'blueprint_node_unsupported_kind')).toBeUndefined();
   });
 
   it('keeps the iterator body scoped to its owning node and rejects unknown step refs', () => {
@@ -210,11 +253,11 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [{
-          ref: 'loop', label: 'Loop', purpose: 'Iterate', nodeType: 'iterator',
+          ref: 'loop', label: 'Loop', purpose: 'Iterate', nodeTemplateKey: 'iterator.template',
           iteratorBody: {
             steps: [
-              { ref: 's1', title: 'Step 1' },
-              { ref: 's2', title: 'Step 2' },
+              { ref: 's1', title: 'Step 1', nodeTemplateKey: 'generic.agent_step' },
+              { ref: 's2', title: 'Step 2', nodeTemplateKey: 'generic.agent_step' },
             ],
             edges: [
               { sourceRef: 's1', targetRef: 's2' },
@@ -235,7 +278,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const raw = JSON.stringify({
       blueprint: {
         title: 't',
-        nodes: [{ ref: 'a', label: 'A' }],
+        nodes: [{ ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step' }],
         links: [
           { sourceRef: 'a', targetRef: 'b' },
           { sourceRef: 'a', targetRef: '' },
@@ -254,9 +297,9 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [
-          { ref: 'dst_a', label: 'Destination A', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
-          { ref: 'dst_b', label: 'Destination B', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
-          { ref: 'dst_c', label: 'Destination C', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
+          { ref: 'dst_a', label: 'Destination A', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
+          { ref: 'dst_b', label: 'Destination B', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
+          { ref: 'dst_c', label: 'Destination C', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'inp', artifactKind: 'text' }] },
         ],
         bindings: [
           { sourceKind: 'constant', targetRef: 'dst_a', targetPort: 'inp',
@@ -278,8 +321,8 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [
-          { ref: 'a', label: 'A', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
-          { ref: 'b', label: 'B', inputPorts: [{ id: 'i', artifactKind: 'text' }] },
+          { ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+          { ref: 'b', label: 'B', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'text' }] },
         ],
         bindings: [
           { sourceKind: 'node-output', sourceRef: 'a', sourcePort: 'o', targetRef: 'b', targetPort: 'i' },
@@ -297,8 +340,8 @@ describe('PlaybookIntentBlueprintParserService', () => {
       blueprint: {
         title: 't',
         nodes: [
-          { ref: 'a', label: 'A', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
-          { ref: 'b', label: 'B', inputPorts: [{ id: 'i', artifactKind: 'document' }] },
+          { ref: 'a', label: 'A', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+          { ref: 'b', label: 'B', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'document' }] },
         ],
         bindings: [{ sourceKind: 'node-output', sourceRef: 'a', sourcePort: 'o', targetRef: 'b', targetPort: 'i' }],
       },

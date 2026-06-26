@@ -7,15 +7,10 @@ import {
   PlaybookIntentBlueprintIteratorStep,
   PlaybookIntentBlueprintLink,
   PlaybookIntentBlueprintNode,
-  PlaybookIntentBlueprintNodeKind,
   PlaybookIntentBlueprintParseResult,
   PlaybookIntentBlueprintPort,
   PlaybookIntentBlueprintSkillRef,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
-
-const SUPPORTED_NODE_KINDS: PlaybookIntentBlueprintNodeKind[] = [
-  'agent', 'action', 'evaluation', 'iterator', 'router', 'human_approval',
-];
 
 const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = [
   'text', 'document', 'code', 'image', 'data', 'dashboard',
@@ -40,7 +35,7 @@ export class PlaybookIntentBlueprintParserService {
 
     const dropped: Array<{ rule: string; itemId: string }> = [];
     const nodes = this.parseNodes(blueprintNode.nodes, dropped);
-    const links = this.parseLinks(blueprintNode.links, nodes.map((n) => n.ref), dropped);
+    const links = this.parseLinks(blueprintNode.links, nodes, dropped);
     const bindings = this.parseBindings(blueprintNode.bindings, nodes, dropped);
     const summary = this.asString(blueprintNode.summary) || this.asString(root.summary);
     const title = this.asString(blueprintNode.title) || this.asString(root.title) || summary || nodes[0]?.label;
@@ -56,8 +51,14 @@ export class PlaybookIntentBlueprintParserService {
         nodes,
         links,
         bindings,
-        assumptions: this.asStringArray(blueprintNode.assumptions),
-        riskFlags: this.asStringArray(blueprintNode.riskFlags),
+        assumptions: [
+          ...this.asStringArray(root.assumptions),
+          ...this.asStringArray(blueprintNode.assumptions),
+        ],
+        riskFlags: [
+          ...this.asStringArray(root.riskFlags),
+          ...this.asStringArray(blueprintNode.riskFlags),
+        ],
       },
       dropped,
     };
@@ -116,8 +117,9 @@ export class PlaybookIntentBlueprintParserService {
       const ref = this.asString(raw.ref);
       const label = this.asString(raw.label) || this.asString(raw.title);
       const purpose = this.asString(raw.purpose) || this.asString(raw.description);
+      const nodeTemplateKey = this.parseNodeTemplateKey(raw, ref || label || 'unknown');
 
-      if (!ref || !label) {
+      if (!ref || !label || !nodeTemplateKey) {
         this.recordDrop(dropped, 'blueprint_node_missing_fields', ref || label || 'unknown');
         continue;
       }
@@ -125,7 +127,6 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDrop(dropped, 'blueprint_node_duplicate_ref', ref);
         continue;
       }
-      const nodeType = this.parseNodeKind(raw.nodeType, dropped, ref);
       const templateType = this.asString(raw.templateType) || null;
       const inputPorts = this.parsePorts(raw.inputPorts, dropped, `${ref}.inputs`);
       const outputPorts = this.parsePorts(raw.outputPorts, dropped, `${ref}.outputs`);
@@ -135,15 +136,16 @@ export class PlaybookIntentBlueprintParserService {
         ref,
         label,
         purpose,
+        nodeTemplateKey,
         templateType,
-        nodeType,
+        nodeType: this.asString(raw.nodeType) || null,
         agentHint: this.asString(raw.agentHint) || null,
         inputPorts,
         outputPorts,
         connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, dropped, ref),
         skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, dropped, ref),
         anchor,
-        ...(nodeType === 'iterator' ? { iteratorBody: this.parseIteratorBody(raw.iteratorBody, dropped, ref) } : {}),
+        ...(raw.iteratorBody ? { iteratorBody: this.parseIteratorBody(raw.iteratorBody, dropped, ref) } : {}),
       });
       seenRefs.add(ref);
     }
@@ -211,18 +213,18 @@ export class PlaybookIntentBlueprintParserService {
     return accepted;
   }
 
-  private parseNodeKind(
-    value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
-    ownerRef: string,
-  ): PlaybookIntentBlueprintNodeKind | undefined {
-    const kind = this.asString(value) as PlaybookIntentBlueprintNodeKind | '';
-    if (!kind) return undefined;
-    if (!SUPPORTED_NODE_KINDS.includes(kind)) {
-      this.recordDrop(dropped, 'blueprint_node_unsupported_kind', `${ownerRef}:${kind}`);
-      return undefined;
+  private parseNodeTemplateKey(raw: Record<string, unknown>, ownerRef: string): string {
+    const nodeTemplateKey = this.asString(raw.nodeTemplateKey ?? raw.node_template_key);
+    if (nodeTemplateKey) return nodeTemplateKey;
+
+    // Compatibility fallback lets existing saved prompt overrides drain while compilation moves to template keys.
+    const legacyTemplateType = this.asString(raw.templateType);
+    if (legacyTemplateType) {
+      const safeOwnerRef = ownerRef.replace(/[\r\n]/g, ' ');
+      const safeTemplateType = legacyTemplateType.replace(/[\r\n]/g, ' ');
+      this.logger.warn(`playbook_intent_blueprint_legacy_template_type owner=${safeOwnerRef} templateType=${safeTemplateType}`);
     }
-    return kind;
+    return legacyTemplateType;
   }
 
   private parsePorts(
@@ -303,7 +305,8 @@ export class PlaybookIntentBlueprintParserService {
     const raw = value as Record<string, unknown>;
     const ref = this.asString(raw.ref);
     const title = this.asString(raw.title) || this.asString(raw.label);
-    if (!ref || !title) {
+    const nodeTemplateKey = this.parseNodeTemplateKey(raw, `${ownerRef}.step.${ref || '?'}`);
+    if (!ref || !title || !nodeTemplateKey) {
       this.recordDrop(dropped, 'blueprint_iterator_step_missing_fields', `${ownerRef}.step.${ref || '?'}`);
       return null;
     }
@@ -311,8 +314,9 @@ export class PlaybookIntentBlueprintParserService {
       ref,
       title,
       description: this.asString(raw.description),
+      nodeTemplateKey,
       templateType: this.asString(raw.templateType) || null,
-      nodeType: this.parseNodeKind(raw.nodeType, dropped, `${ownerRef}.${ref}`),
+      nodeType: this.asString(raw.nodeType) || null,
       inputPorts: this.parsePorts(raw.inputPorts, dropped, `${ownerRef}.${ref}.inputs`),
       outputPorts: this.parsePorts(raw.outputPorts, dropped, `${ownerRef}.${ref}.outputs`),
     };
@@ -346,11 +350,12 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseLinks(
     value: unknown,
-    validRefs: string[],
+    nodes: PlaybookIntentBlueprintNode[],
     dropped: Array<{ rule: string; itemId: string }>,
   ): PlaybookIntentBlueprintLink[] {
     if (!Array.isArray(value)) return [];
-    const refSet = new Set(validRefs);
+    const refSet = new Set(nodes.map((n) => n.ref));
+    const iteratorStepsByRef = this.buildIteratorStepRefSet(nodes);
     const accepted: PlaybookIntentBlueprintLink[] = [];
     const seenKeys = new Set<string>();
     for (const item of value) {
@@ -361,15 +366,21 @@ export class PlaybookIntentBlueprintParserService {
       const raw = item as Record<string, unknown>;
       const sourceRef = this.asString(raw.sourceRef);
       const targetRef = this.asString(raw.targetRef);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef);
       if (!sourceRef || !targetRef) {
         this.recordDrop(dropped, 'blueprint_link_missing_refs', `${sourceRef || '?'}->${targetRef || '?'}`);
         continue;
       }
-      if (!refSet.has(sourceRef) || !refSet.has(targetRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
         this.recordDrop(dropped, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
         continue;
       }
-      const key = `${sourceRef}::${targetRef}::${raw.sourceOutputPortId || ''}::${raw.targetInputPortId || ''}`;
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
+        this.recordDrop(dropped, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
+        continue;
+      }
+      const key = `${sourceIteratorRef}.${sourceRef}::${targetIteratorRef}.${targetRef}::${raw.sourceOutputPortId || ''}::${raw.targetInputPortId || ''}`;
       if (seenKeys.has(key)) {
         this.recordDrop(dropped, 'blueprint_link_duplicate', key);
         continue;
@@ -378,6 +389,8 @@ export class PlaybookIntentBlueprintParserService {
       accepted.push({
         sourceRef,
         targetRef,
+        ...(sourceIteratorRef ? { sourceIteratorRef } : {}),
+        ...(targetIteratorRef ? { targetIteratorRef } : {}),
         ...(this.asString(raw.sourceOutputPortId) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId) } : {}),
         ...(this.asString(raw.targetInputPortId) ? { targetInputPortId: this.asString(raw.targetInputPortId) } : {}),
       });
@@ -394,9 +407,15 @@ export class PlaybookIntentBlueprintParserService {
     const refSet = new Set(nodes.map((n) => n.ref));
     const inputsByRef = new Map<string, Map<string, PlaybookIntentBlueprintPort>>();
     const outputsByRef = new Map<string, Map<string, PlaybookIntentBlueprintPort>>();
+    const iteratorStepsByRef = this.buildIteratorStepRefSet(nodes);
     for (const node of nodes) {
       inputsByRef.set(node.ref, new Map((node.inputPorts || []).map((p) => [p.id, p])));
       outputsByRef.set(node.ref, new Map((node.outputPorts || []).map((p) => [p.id, p])));
+      for (const step of node.iteratorBody?.steps || []) {
+        const scopedRef = this.scopedRef(node.ref, step.ref);
+        inputsByRef.set(scopedRef, new Map((step.inputPorts || []).map((p) => [p.id, p])));
+        outputsByRef.set(scopedRef, new Map((step.outputPorts || []).map((p) => [p.id, p])));
+      }
     }
 
     const accepted: PlaybookIntentBlueprintBinding[] = [];
@@ -408,12 +427,13 @@ export class PlaybookIntentBlueprintParserService {
       }
       const raw = item as Record<string, unknown>;
       const targetRef = this.asString(raw.targetRef);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef);
       const targetPort = this.asString(raw.targetPort);
       if (!targetRef || !targetPort) {
         this.recordDrop(dropped, 'blueprint_binding_missing_target', `${targetRef || '?'}.${targetPort || '?'}`);
         continue;
       }
-      if (!refSet.has(targetRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
         this.recordDrop(dropped, 'blueprint_binding_unknown_target_ref', targetRef);
         continue;
       }
@@ -423,13 +443,14 @@ export class PlaybookIntentBlueprintParserService {
         continue;
       }
 
-      const key = `${targetRef}.${targetPort}`;
+      const targetCatalogRef = targetIteratorRef ? this.scopedRef(targetIteratorRef, targetRef) : targetRef;
+      const key = `${targetCatalogRef}.${targetPort}`;
       if (seenKeys.has(key)) {
         this.recordDrop(dropped, 'blueprint_binding_duplicate_target', key);
         continue;
       }
 
-      const targetPorts = inputsByRef.get(targetRef);
+      const targetPorts = inputsByRef.get(targetCatalogRef);
       if (!targetPorts?.has(targetPort)) {
         this.recordDrop(dropped, 'blueprint_binding_unknown_target_port', key);
         continue;
@@ -441,6 +462,7 @@ export class PlaybookIntentBlueprintParserService {
         if (!constantValue) continue;
         accepted.push({
           targetRef,
+          ...(targetIteratorRef ? { targetIteratorRef } : {}),
           targetPort,
           sourceKind: 'constant',
           constantValue,
@@ -449,16 +471,18 @@ export class PlaybookIntentBlueprintParserService {
       }
 
       const sourceRef = this.asString(raw.sourceRef);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef);
       const sourcePort = this.asString(raw.sourcePort);
       if (!sourceRef || !sourcePort) {
         this.recordDrop(dropped, 'blueprint_binding_missing_source', key);
         continue;
       }
-      if (!refSet.has(sourceRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
         this.recordDrop(dropped, 'blueprint_binding_unknown_source_ref', `${sourceRef}->${key}`);
         continue;
       }
-      const sourcePorts = outputsByRef.get(sourceRef);
+      const sourceCatalogRef = sourceIteratorRef ? this.scopedRef(sourceIteratorRef, sourceRef) : sourceRef;
+      const sourcePorts = outputsByRef.get(sourceCatalogRef);
       if (!sourcePorts?.has(sourcePort)) {
         this.recordDrop(dropped, 'blueprint_binding_unknown_source_port', `${sourceRef}.${sourcePort}->${key}`);
         continue;
@@ -471,14 +495,37 @@ export class PlaybookIntentBlueprintParserService {
       }
       accepted.push({
         targetRef,
+        ...(targetIteratorRef ? { targetIteratorRef } : {}),
         targetPort,
         sourceKind: 'node-output',
         sourceRef,
+        ...(sourceIteratorRef ? { sourceIteratorRef } : {}),
         sourcePort,
         ...(raw.iteration === 'previous' ? { iteration: 'previous' as const } : {}),
       });
     }
     return accepted;
+  }
+
+  private buildIteratorStepRefSet(nodes: PlaybookIntentBlueprintNode[]): Map<string, Set<string>> {
+    return new Map(nodes.map((node) => [
+      node.ref,
+      new Set((node.iteratorBody?.steps || []).map((step) => step.ref)),
+    ]));
+  }
+
+  private hasEndpointRef(
+    topLevelRefs: Set<string>,
+    iteratorStepsByRef: Map<string, Set<string>>,
+    ref: string,
+    iteratorRef: string,
+  ): boolean {
+    if (!iteratorRef) return topLevelRefs.has(ref);
+    return iteratorStepsByRef.get(iteratorRef)?.has(ref) === true;
+  }
+
+  private scopedRef(iteratorRef: string, stepRef: string): string {
+    return `${iteratorRef}.${stepRef}`;
   }
 
   private parseConstantValue(

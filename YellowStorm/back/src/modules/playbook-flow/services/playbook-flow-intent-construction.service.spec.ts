@@ -65,7 +65,10 @@ describe('PlaybookFlowIntentConstructionService', () => {
         limits: { maxWorkflowPlanChanges: 500, maxInputPorts: 4, maxOutputPorts: 4, maxIteratorBodySteps: 12, maxIteratorBodyEdges: 50 },
         validationContext,
         availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
-        nodeTemplates: [],
+        nodeTemplates: [{
+          id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+        }],
         httpClient: { post: jest.fn() },
         flow: {},
         model: 'm',
@@ -88,8 +91,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
           title: 'Linear',
           summary: 'Two steps',
           nodes: [
-            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
           ],
           links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
         },

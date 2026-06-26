@@ -333,7 +333,21 @@ describe('PlaybookFlowIntentService normalization', () => {
         findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
       } as unknown as AgentService,
       nodeTemplateService: {
-        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+        findEnabled: jest.fn().mockResolvedValue({ items: [{
+          id: 'tpl-1',
+          key: 'generic.agent_step',
+          type: 'generic-agent',
+          title: 'Generic agent step',
+          description: 'Default flexible node',
+          category: 'general',
+          nodeType: 'agent',
+          executionMode: 'agent',
+          inputPorts: [{ id: 'input', name: 'Input', artifactKind: 'text', required: true, description: 'Input text' }],
+          outputPorts: [{ id: 'output', name: 'Output', artifactKind: 'text', description: 'Output text' }],
+          recommendedAgentTypeSlug: null,
+          iteratorConfig: null,
+          enabled: true,
+        }] }),
       } as unknown as PlaybookFlowNodeTemplateService,
       skillService: {
         findAllActive: jest.fn().mockResolvedValue([
@@ -369,6 +383,7 @@ describe('PlaybookFlowIntentService normalization', () => {
 
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
+    const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
 
     expect(catalog).toEqual({
       availableSkills: [{ id: 'skill-1', skillSlug: 'summarize-documents', name: 'summarize-documents', description: 'Summarize documents', category: 'Writing' }],
@@ -388,6 +403,12 @@ describe('PlaybookFlowIntentService normalization', () => {
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
+    expect(nodeTemplates[0]).toEqual(expect.objectContaining({
+      key: 'generic.agent_step',
+      semanticNodeType: 'agent',
+      isDefault: true,
+    }));
+    expect(nodeTemplates[0].nodeType).toBeUndefined();
     expect(context.userPrompt).toContain('"availableWorkspaces"');
     expect(context.userPrompt).not.toContain('document-1');
     expect(context.userPrompt).not.toContain('originalName');
@@ -648,7 +669,9 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.systemTemplate).toContain('"constant"');
     expect(prompt?.systemTemplate).toContain('attached images');
     expect(prompt?.systemTemplate).toContain('visible entities');
-    expect(prompt?.version).toBe(12);
+    expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
+    expect(prompt?.systemTemplate).toContain('semantic metadata');
+    expect(prompt?.version).toBe(14);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
@@ -1093,8 +1116,8 @@ it('falls back to clarification questions when design JSON is malformed', () => 
           title: 'Linear',
           summary: 'Two steps',
           nodes: [
-            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
           ],
           links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
         },
@@ -1102,7 +1125,10 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       const context = {
         ...makeContext(),
         effectiveSettings: { useDeterministicBlueprintBuilder: true } as EffectiveFlowDesignSettings,
-        nodeTemplates: [],
+        nodeTemplates: [{
+          id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+        }],
         limits: DEFAULT_LIMITS,
         selectedNodeId: null,
       };
@@ -1128,14 +1154,14 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       expect(plan.changes.filter((c: any) => c.type === 'create_edge')).toHaveLength(1);
     });
 
-    it('falls back to legacy normalization when the feature flag is disabled even if a blueprint is present', () => {
+    it('routes a blueprint response through the deterministic builder even when the feature flag is disabled', () => {
       const raw = JSON.stringify({
         blueprint: {
           title: 'Linear',
           summary: 'Two steps',
           nodes: [
-            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
           ],
         },
       });
@@ -1156,11 +1182,13 @@ it('falls back to clarification questions when design JSON is malformed', () => 
           validationContext: ctx,
           limits: DEFAULT_LIMITS,
           availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
-          nodeTemplates: [],
+          nodeTemplates: [{
+            id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+            inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+          }],
         },
       });
-      // Legacy normalization treats the raw payload as suggestions JSON. With no suggestions array, only the fallback is emitted.
-      expect(suggestions.every((s: any) => s.kind === 'single_change')).toBe(true);
+      expect(suggestions.some((s: any) => s.kind === 'workflow_plan')).toBe(true);
     });
   });
 });

@@ -8,7 +8,6 @@ import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartRe
 import { PlaybookFlowIntentService, type IntentNormalizationLimits, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
-import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 
 interface PlaybookIntentConstructionJob {
@@ -33,7 +32,6 @@ export class PlaybookFlowIntentConstructionService {
     private readonly intentService: PlaybookFlowIntentService,
     private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
     private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
-      new PlaybookIntentNodeBuildRegistryService(),
       new PlaybookIntentGraphBindingResolverService(),
     ),
   ) {}
@@ -114,7 +112,7 @@ export class PlaybookFlowIntentConstructionService {
         emittedDeltaCount = await this.emitSuggestions(job, partialSuggestions, emittedDeltaCount);
       }
 
-      if (useBlueprint) {
+      if (useBlueprint || this.blueprintParser.hasBlueprintShape(raw)) {
         const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
         await this.emitSuggestions(job, suggestions);
         if (job.abortController.signal.aborted) return;

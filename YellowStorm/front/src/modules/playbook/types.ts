@@ -555,8 +555,10 @@ export type PlaybookIntentWorkflowChange =
       type: 'create_edge' | 'delete_edge';
       sourceTaskId: string | null;
       sourceNodeRef: string | null;
+      sourceIteratorNodeRef?: string | null;
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
     }
@@ -564,10 +566,12 @@ export type PlaybookIntentWorkflowChange =
       type: 'create_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
       targetPort: string;
       sourceKind: 'node-output';
       sourceTaskId: string | null;
       sourceNodeRef: string | null;
+      sourceIteratorNodeRef?: string | null;
       sourcePort: string | null;
       iteration?: 'current' | 'previous';
     }
@@ -575,6 +579,7 @@ export type PlaybookIntentWorkflowChange =
       type: 'create_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
       targetPort: string;
       sourceKind: 'constant';
       constantValue: ResolvedDesignResourceBindingValue;
@@ -583,9 +588,11 @@ export type PlaybookIntentWorkflowChange =
       type: 'delete_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
       targetPort: string;
       sourceTaskId?: string | null;
       sourceNodeRef?: string | null;
+      sourceIteratorNodeRef?: string | null;
       sourcePort?: string | null;
     };
 

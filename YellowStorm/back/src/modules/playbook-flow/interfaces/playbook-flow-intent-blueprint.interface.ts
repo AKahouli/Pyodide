@@ -1,11 +1,3 @@
-export type PlaybookIntentBlueprintNodeKind =
-  | 'agent'
-  | 'action'
-  | 'evaluation'
-  | 'iterator'
-  | 'router'
-  | 'human_approval';
-
 export interface PlaybookIntentBlueprintPort {
   id: string;
   name?: string | null;
@@ -17,8 +9,11 @@ export interface PlaybookIntentBlueprintIteratorStep {
   ref: string;
   title: string;
   description?: string;
+  nodeTemplateKey: string;
+  /** @deprecated Use nodeTemplateKey. Kept only while old LLM outputs drain. */
   templateType?: string | null;
-  nodeType?: PlaybookIntentBlueprintNodeKind;
+  /** @deprecated Semantic metadata only. Do not use for compilation. */
+  nodeType?: string | null;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
 }
@@ -37,8 +32,11 @@ export interface PlaybookIntentBlueprintNode {
   ref: string;
   label: string;
   purpose: string;
+  nodeTemplateKey: string;
+  /** @deprecated Use nodeTemplateKey. Kept only while old LLM outputs drain. */
   templateType?: string | null;
-  nodeType?: PlaybookIntentBlueprintNodeKind;
+  /** @deprecated Semantic metadata only. Do not use for compilation. */
+  nodeType?: string | null;
   agentHint?: string | null;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
@@ -66,15 +64,19 @@ export interface PlaybookIntentBlueprintSkillRef {
 export interface PlaybookIntentBlueprintLink {
   sourceRef: string;
   targetRef: string;
+  sourceIteratorRef?: string | null;
+  targetIteratorRef?: string | null;
   sourceOutputPortId?: string | null;
   targetInputPortId?: string | null;
 }
 
 export interface PlaybookIntentBlueprintBinding {
   targetRef: string;
+  targetIteratorRef?: string | null;
   targetPort: string;
   sourceKind: 'node-output' | 'constant';
   sourceRef?: string | null;
+  sourceIteratorRef?: string | null;
   sourcePort?: string | null;
   iteration?: 'current' | 'previous';
   constantValue?: {

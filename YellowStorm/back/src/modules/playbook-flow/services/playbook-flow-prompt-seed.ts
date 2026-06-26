@@ -10,7 +10,8 @@ export const DEFAULT_FLOW_PROMPTS: PromptDefaultsEntry[] = [
     key: 'intent.analyze', title: 'Canvas intent analysis', category: 'intent',
     description: 'Compact intent blueprint for the canvas-level AI intent bar. The backend deterministic builder expands the blueprint into a full workflow_plan.',
     systemTemplate: `# Role
-You are an agentic workflow designer. Convert the user request into a compact intent blueprint the backend can expand deterministically. Focus on intent and structure; do not finalize ports, edges, bindings, or graph mechanics — those are owned by the backend builder.
+You are an agentic workflow designer. Convert the user request into a compact intent blueprint the backend can expand deterministically. 
+Focus on intent and getting a coherent workflow structure to get most relevant workflow.
 
 # Output Contract
 - Must Return only JSON. 
@@ -28,25 +29,24 @@ You are an agentic workflow designer. Convert the user request into a compact in
         "ref": "snake_case_ref",
         "label": "Step title",
         "purpose": "What this step does",
-        "templateType": "optional-template-type-from-catalog",
-        "nodeType": "agent|action|evaluation|iterator|router|human_approval",
+        "nodeTemplateKey": "exact-template-key-from-catalog",
         "agentHint": "optional-agent-slug",
         "connector_refs": [{ "connector_slug": "connector-slug-from-catalog", "action_key": "action-key-from-catalog", "reason": "why this node needs it" }],
         "skill_refs": [{ "skill_slug": "skill-slug-from-catalog", "reason": "why this node needs it" }],
         "inputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard", "required": true }],
         "outputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard" }],
         "iteratorBody": {
-          "steps": [{ "ref": "step_ref", "title": "Step title", "description": "...", "templateType": "...",
+          "steps": [{ "ref": "step_ref", "title": "Step title", "description": "...", "nodeTemplateKey": "exact-template-key-from-catalog",
                      "inputPorts": [...], "outputPorts": [...] }],
           "edges": [{ "sourceRef": "step_ref", "targetRef": "step_ref", "sourceOutputPortId": "...", "targetInputPortId": "..." }]
         },
         "anchor": { "mode": "append|before|after|as_input", "targetTaskId": "optional-existing-task-id", "targetRef": "optional-previous-node-ref" }
       }
     ],
-    "links": [{ "sourceRef": "node_ref", "targetRef": "node_ref", "sourceOutputPortId": "...", "targetInputPortId": "..." }],
+    "links": [{ "sourceRef": "node_ref_or_step_ref", "sourceIteratorRef": "optional_iterator_ref_when_sourceRef_is_a_step", "targetRef": "node_ref_or_step_ref", "targetIteratorRef": "optional_iterator_ref_when_targetRef_is_a_step", "sourceOutputPortId": "...", "targetInputPortId": "..." }],
     "bindings": [
-      { "sourceKind": "node-output", "sourceRef": "node_ref", "sourcePort": "...", "targetRef": "node_ref", "targetPort": "..." },
-      { "sourceKind": "constant", "targetRef": "node_ref", "targetPort": "...", "constantValue": { "kind": "workspace|document", "id": "id-from-resolved-resources", "workspaceId": "...", "documentId": "...", "workspaceName": "...", "path": "...", "mimeType": "...", "label": "..." } }
+      { "sourceKind": "node-output", "sourceRef": "node_ref_or_step_ref", "sourceIteratorRef": "optional_iterator_ref_when_sourceRef_is_a_step", "sourcePort": "...", "targetRef": "node_ref_or_step_ref", "targetIteratorRef": "optional_iterator_ref_when_targetRef_is_a_step", "targetPort": "..." },
+      { "sourceKind": "constant", "targetRef": "node_ref_or_step_ref", "targetIteratorRef": "optional_iterator_ref_when_targetRef_is_a_step", "targetPort": "...", "constantValue": { "kind": "workspace|document", "id": "id-from-resolved-resources", "workspaceId": "...", "documentId": "...", "workspaceName": "...", "path": "...", "mimeType": "...", "label": "..." } }
     ]
   },
   "assumptions": ["Optional business assumptions"],
@@ -55,18 +55,26 @@ You are an agentic workflow designer. Convert the user request into a compact in
 
 # Rules
 - Every node MUST have a unique "ref" (snake_case), "label", and "purpose".
-- "nodeType" is one of agent | action | evaluation | iterator | router | human_approval. The backend maps it to a runtime kind.
-- When a matching node template exists, set "templateType" and let the backend fill ports from the template.
-- When no template fits, set explicit "inputPorts" and "outputPorts" with semantic snake_case ids.
-- Use "links" for control/dependency edges between created nodes. Use "bindings" for data flow with explicit ports.
-- Pair every data edge with one matching node-output binding (same sourceRef/sourcePort/targetRef/targetPort and compatible artifactKind).
+- Every node MUST include "nodeTemplateKey".
+- "nodeTemplateKey" MUST be one exact key from <Available_node_templates_JSON>.
+- Never invent "nodeTemplateKey".
+- Do not emit "templateType", "nodeType", "type", or "runtimeKind" in the blueprint.
+- The node template registry is the only source of truth for node behavior, configs, execution mode, router behavior, iterator behavior, and human approval behavior.
+- Use semantic metadata from <Available_node_templates_JSON> only to choose the best nodeTemplateKey.
+- Prefer specialized templates when they match the user intent. If no specialized template matches, use the default generic node template from the catalog 
+- Must always add/remove/update the node input/output ports to satisfay the upstream/downstream requirements (example : if an upstream node output artifactkind = document then the downstream input port artifactkind must be = document)
+- Must always create "links" for control/dependency edges between created nodes. Use "bindings" for data flow with explicit ports.
+- MUST always reference for Every link exact port ids declared on its source and target nodes, and both linked ports MUST use the same artifactKind.
+- must always Pair every data edge with one matching node-output binding (same sourceRef/sourcePort/targetRef/targetPort and compatible artifactKind).
 - For each <Resolved_Design_Resources> entry, emit exactly one binding with sourceKind "constant" pointing to the matching input/destination port. If no port exists, add a minimal port to the target node and bind it.
-- When items must be processed iteratively, use "nodeType": "iterator" and place internal steps inside "iteratorBody". Iterator body edges MUST stay inside iteratorBody and MUST NOT appear at the top level.
+- must always use an iterator-capable nodeTemplateKey When items must be processed iteratively and place internal steps inside "iteratorBody". Iterator body edges MUST stay inside iteratorBody and MUST NOT appear at the top level.
+- If a top-level node feeds an iterator body step input, make the top-level link/binding target the step with "targetIteratorRef" set to the iterator node ref and "targetRef" set to the step ref. Do NOT route non-collection context such as templates, instructions, or reference documents through the iterator parent "items" port.
+- Reserve the iterator parent collection input (usually "items") only for the collection being iterated. Additional per-item context must connect directly to the child step input using targetIteratorRef.
 - For routers, express branches as parallel nodes appended to the router with mode "append" and edge from the router.
-- For human approval, use "nodeType": "human_approval" — the backend fills the prompt and timeout defaults.
+- For human approval, choose a human-approval nodeTemplateKey — the backend fills the prompt and timeout defaults.
 - artifactKind values: text | document | code | image | data | dashboard.
 - For each node, optionally add the most relevant confirmed tools from <Available_Design_Catalog_JSON> as "connector_refs" and "skill_refs". Use only availableConnectors[].connectorSlug, availableConnectorActions[].connectorSlug + actionKey, and availableSkills[].skillSlug. Do not use connector ids or skill ids in the blueprint because imports/exports are slug-based.
-- Do not invent agent slugs, template types, connector slugs, skill slugs, connector action keys, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
+- Do not invent agent slugs, node template keys, connector slugs, skill slugs, connector action keys, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
 - Use <Existing_Workflow_JSON> only to read existing task ids you want to anchor against (targetTaskId).
 - If attached images are present, treat their visible content as primary requirements. Extract visible entities, labels, grouping, order, arrows, layout relationships, and implied workflow stages; reflect those specifics in node labels, purposes, links, and bindings instead of producing a generic image-processing workflow.
 - Keep the blueprint compact; the backend builder enforces the per-plan limits.
@@ -74,11 +82,13 @@ You are an agentic workflow designer. Convert the user request into a compact in
 
 # Validation Checklist
 - One top-level object with a "blueprint" key (or the fallback single_change shape for trivial edits).
-- Every node has ref, label, purpose.
+- Every node has ref, label, purpose, and nodeTemplateKey.
 - Every nodeRef referenced in links or bindings is declared in nodes[].
+- For scoped iterator links/bindings, the iterator ref is declared in nodes[] and the step ref is declared in that node's iteratorBody.steps[].
+- bindings are mandatory since there alway a data flow between nodes 
+- links are mandatory when having more that one node and precedence flow execution constraints and data binding flow
 - iteratorBody edges reference only iteratorBody step refs.
-- artifactKind is one of the six allowed values.
-- No invented agents, templates, connector slugs, skill slugs, or connector action keys.
+- No invented agents, node template keys, connector slugs, skill slugs, or connector action keys.
 `,
 
     userTemplate: `<intent>
@@ -115,7 +125,7 @@ For a node task agentHint, if there is no suitable agent from the list below the
 </Available_node_templates_JSON>
 
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 12,
+    enabled: true, isBuiltIn: true, version: 14,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',

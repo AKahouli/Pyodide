@@ -2359,13 +2359,23 @@ describe('playbook store', () => {
     expect(state.selectedStepId).toBe('task-2');
   });
 
-  it('viewExecutionInPanel fetches from API when not cached', () => {
+  it('viewExecutionInPanel fetches from API when not cached and selects the first step', async () => {
     const playbook = makePlaybook({ id: 'p1' });
     apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2' }));
-    usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false });
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      executionPanelOpen: false,
+      selectedStepId: 'missing-task',
+    });
     usePlaybookStore.getState().viewExecutionInPanel('e2');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e2');
+    expect(usePlaybookStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('deleteAllExecutions calls api and clears cached state', async () => {

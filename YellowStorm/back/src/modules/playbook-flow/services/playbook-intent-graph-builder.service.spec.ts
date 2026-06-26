@@ -1,5 +1,4 @@
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
-import { PlaybookIntentNodeBuildRegistryService } from './playbook-intent-node-build-registry.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import type {
   IntentWorkflowValidationContext,
@@ -71,16 +70,28 @@ function makeTemplate(overrides: Partial<FlowNodeTemplateResponse>): FlowNodeTem
   };
 }
 
+function genericTemplate(overrides: Partial<FlowNodeTemplateResponse> = {}): FlowNodeTemplateResponse {
+  return makeTemplate({
+    id: 'tpl-generic',
+    key: 'generic.agent_step',
+    type: 'generic-agent',
+    title: 'Generic agent step',
+    inputPorts: [],
+    outputPorts: [],
+    recommendedAgentTypeSlug: null,
+    ...overrides,
+  });
+}
+
+const ITERATOR_CONFIG = { source: 'items', mode: 'item' as const };
+
 describe('PlaybookIntentGraphBuilderService', () => {
   let service: PlaybookIntentGraphBuilderService;
   let resolver: PlaybookIntentGraphBindingResolverService;
 
   beforeEach(() => {
     resolver = new PlaybookIntentGraphBindingResolverService();
-    service = new PlaybookIntentGraphBuilderService(
-      new PlaybookIntentNodeBuildRegistryService(),
-      resolver,
-    );
+    service = new PlaybookIntentGraphBuilderService(resolver);
     jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
     jest.spyOn((resolver as any).logger, 'warn').mockImplementation(() => undefined);
   });
@@ -90,8 +101,8 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 'Linear research',
       summary: 'Linear two-step research',
       nodes: [
-        { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-        { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }],
+        { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+        { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }],
           outputPorts: [{ id: 'report', artifactKind: 'document' }] },
       ],
       links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
@@ -101,7 +112,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [] as FlowNodeTemplateResponse[],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     };
     const first = service.build(options);
@@ -116,8 +127,8 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 'Research',
       summary: 'Linear',
       nodes: [
-        { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-        { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+        { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+        { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
       ],
       links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
     };
@@ -126,7 +137,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -145,6 +156,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
         ref: 'search_files',
         label: 'Search files',
         purpose: 'Find documents',
+        nodeTemplateKey: 'generic.agent_step',
         connectorRefs: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
         skillRefs: [{ skillSlug: 'summarize-documents' }],
       }],
@@ -156,7 +168,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       designCatalog: {
         connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
         connectorActions: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
@@ -191,6 +203,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
         ref: 'search_files',
         label: 'Search files',
         purpose: 'Find documents',
+        nodeTemplateKey: 'generic.agent_step',
         connectorRefs: [
           { connectorSlug: 'google-drive', actionKey: 'search' },
           { connectorSlug: 'google-drive', actionKey: 'read' },
@@ -204,7 +217,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       designCatalog: {
         connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
         connectorActions: [
@@ -235,6 +248,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
         ref: 'search_files',
         label: 'Search files',
         purpose: 'Find documents',
+        nodeTemplateKey: 'generic.agent_step',
         connectorRefs: [
           { connectorSlug: 'missing-connector', actionKey: 'search' },
           { connectorSlug: 'google-drive', actionKey: 'missing' },
@@ -249,7 +263,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       designCatalog: {
         connectors: [{ id: 'connector-1', slug: 'google-drive', name: 'Google Drive' }],
         connectorActions: [{ connectorSlug: 'google-drive', actionKey: 'search' }],
@@ -272,7 +286,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Template node',
       summary: '',
-      nodes: [{ ref: 'draft', label: 'Draft', purpose: 'Write', templateType: 'document' }],
+      nodes: [{ ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'document' }],
       links: [],
       bindings: [{ targetRef: 'draft', targetPort: 'input-context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } }],
     };
@@ -294,13 +308,13 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(createChange?.task.inputPorts?.[0]).toEqual(expect.objectContaining({ id: 'input-context', required: false }));
   });
 
-  it('drops the edge when ports have incompatible artifact kinds and logs a warning', () => {
+  it('keeps the visual edge when ports have incompatible artifact kinds and logs a warning', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Mismatch',
       summary: '',
       nodes: [
-        { ref: 'src', label: 'Src', purpose: '', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
-        { ref: 'dst', label: 'Dst', purpose: '', inputPorts: [{ id: 'i', artifactKind: 'document' }] },
+        { ref: 'src', label: 'Src', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+        { ref: 'dst', label: 'Dst', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'document' }] },
       ],
       links: [{ sourceRef: 'src', targetRef: 'dst', sourceOutputPortId: 'o', targetInputPortId: 'i' }],
     };
@@ -309,11 +323,12 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
-    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(false);
+    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(true);
+    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_data_binding')).toBe(false);
     expect((resolver as any).logger.warn).toHaveBeenCalledWith(expect.stringContaining('rule=edge_artifact_mismatch'));
   });
 
@@ -322,11 +337,11 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 'Iterate',
       summary: '',
       nodes: [{
-        ref: 'loop', label: 'Loop', purpose: 'Iterate', nodeType: 'iterator',
+        ref: 'loop', label: 'Loop', purpose: 'Iterate', nodeTemplateKey: 'iterator.template',
         iteratorBody: {
           steps: [
-            { ref: 's1', title: 'Step 1', outputPorts: [{ id: 'text', artifactKind: 'text' }] },
-            { ref: 's2', title: 'Step 2', inputPorts: [{ id: 'text', artifactKind: 'text' }] },
+            { ref: 's1', title: 'Step 1', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'text', artifactKind: 'text' }] },
+            { ref: 's2', title: 'Step 2', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'text', artifactKind: 'text' }] },
           ],
           edges: [{ sourceRef: 's1', targetRef: 's2', sourceOutputPortId: 'text', targetInputPortId: 'text' }],
         },
@@ -339,7 +354,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG }), genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -355,7 +370,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Constant',
       summary: '',
-      nodes: [{ ref: 'dst', label: 'Dst', purpose: '', inputPorts: [{ id: 'inp', artifactKind: 'document' }] }],
+      nodes: [{ ref: 'dst', label: 'Dst', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'inp', artifactKind: 'document' }] }],
       links: [],
       bindings: [{
         targetRef: 'dst', targetPort: 'inp', sourceKind: 'constant',
@@ -367,7 +382,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -382,32 +397,29 @@ describe('PlaybookIntentGraphBuilderService', () => {
     }));
   });
 
-  it('maps iterator nodeType to runtime iterator and human_approval to human_approval', () => {
+  it('drops iterator body when the selected template does not support it', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Mixed',
       summary: '',
       nodes: [
-        { ref: 'loop', label: 'Loop', purpose: '', nodeType: 'iterator', iteratorBody: { steps: [{ ref: 's1', title: 'S1' }], edges: [] } },
-        { ref: 'approve', label: 'Approve', purpose: '', nodeType: 'human_approval' },
-        { ref: 'route', label: 'Route', purpose: '', nodeType: 'router' },
+        { ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'generic.agent_step', iteratorBody: { steps: [{ ref: 's1', title: 'S1', nodeTemplateKey: 'generic.agent_step' }], edges: [] } },
       ],
       links: [],
       bindings: [],
     };
 
-    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+    const result = service.build({
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
-    const nodes: CreateNodeChange[] = suggestion.changes.filter((c: Change): c is CreateNodeChange => c.type === 'create_node');
-    expect(nodes).toHaveLength(3);
-    expect(nodes.find((n: CreateNodeChange) => n.nodeRef === 'loop')?.task.templateType).toBeFalsy();
-    expect(nodes.find((n: CreateNodeChange) => n.nodeRef === 'approve')).toBeDefined();
-    expect(nodes.find((n: CreateNodeChange) => n.nodeRef === 'route')).toBeDefined();
+    const nodes: CreateNodeChange[] = result.suggestion.changes.filter((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].task.iteratorBody).toBeUndefined();
+    expect(result.dropped.find((drop) => drop.rule === 'builder_iterator_body_not_supported_by_template')).toBeDefined();
   });
 
   it('uses bound node template ports when no explicit ports are provided', () => {
@@ -417,8 +429,8 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 't',
       summary: '',
       nodes: [
-        { ref: 'step', label: 'Step', purpose: '', templateType: 'synthesis-step' },
-        { ref: 'publish', label: 'Publish', purpose: '', inputPorts: [{ id: 'draft', artifactKind: 'document' }] },
+        { ref: 'step', label: 'Step', purpose: '', nodeTemplateKey: 'synthesis-step' },
+        { ref: 'publish', label: 'Publish', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'draft', artifactKind: 'document' }] },
       ],
       links: [],
       bindings: [
@@ -431,7 +443,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [template],
+      templates: [template, genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -453,7 +465,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 't',
       summary: '',
       nodes: [{
-        ref: 'step', label: 'Step', purpose: '', templateType: 'synthesis-step',
+        ref: 'step', label: 'Step', purpose: '', nodeTemplateKey: 'synthesis-step',
         inputPorts: [{ id: 'custom', artifactKind: 'text', required: true }],
       }],
       links: [],
@@ -484,8 +496,8 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 'Bound flow',
       summary: '',
       nodes: [
-        { ref: 'collect', label: 'Collect', purpose: '', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-        { ref: 'draft', label: 'Draft', purpose: '', inputPorts: [{ id: 'data', artifactKind: 'data' }] },
+        { ref: 'collect', label: 'Collect', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+        { ref: 'draft', label: 'Draft', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data' }] },
       ],
       links: [],
       bindings: [{ targetRef: 'draft', targetPort: 'data', sourceKind: 'node-output', sourceRef: 'collect', sourcePort: 'data' }],
@@ -495,7 +507,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -521,11 +533,11 @@ describe('PlaybookIntentGraphBuilderService', () => {
       title: 'Iterate templates',
       summary: '',
       nodes: [{
-        ref: 'loop', label: 'Loop', purpose: '', nodeType: 'iterator',
+        ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template',
         iteratorBody: {
           steps: [
-            { ref: 's1', title: 'Step 1', templateType: 'iterator-step' },
-            { ref: 's2', title: 'Step 2', templateType: 'iterator-step' },
+            { ref: 's1', title: 'Step 1', nodeTemplateKey: 'synthesis-step' },
+            { ref: 's2', title: 'Step 2', nodeTemplateKey: 'synthesis-step' },
           ],
           edges: [{ sourceRef: 's1', targetRef: 's2', sourceOutputPortId: 'out', targetInputPortId: 'bound' }],
         },
@@ -538,7 +550,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [template],
+      templates: [genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG }), template],
       selectedNodeId: null,
     });
 
@@ -551,13 +563,105 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(secondStep?.outputPorts).toBeUndefined();
   });
 
+  it('targets iterator child inputs with scoped external links instead of collapsing onto parent items', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Adapt CVs',
+      summary: '',
+      nodes: [
+        { ref: 'collect_cv_sources', label: 'Collect CVs', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'cv_documents', artifactKind: 'document' }] },
+        { ref: 'load_docx_template', label: 'Load template', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'template_document', artifactKind: 'document' }] },
+        {
+          ref: 'adapt_cvs_to_template', label: 'Adapt CVs', purpose: '', nodeTemplateKey: 'iterator.template',
+          inputPorts: [{ id: 'items', artifactKind: 'document' }],
+          iteratorBody: {
+            steps: [{
+              ref: 'apply_template_to_cv', title: 'Apply template to CV', nodeTemplateKey: 'synthesis-step',
+            }],
+            edges: [],
+          },
+        },
+      ],
+      links: [
+        { sourceRef: 'collect_cv_sources', targetRef: 'adapt_cvs_to_template', sourceOutputPortId: 'cv_documents', targetInputPortId: 'items' },
+        { sourceRef: 'load_docx_template', targetIteratorRef: 'adapt_cvs_to_template', targetRef: 'apply_template_to_cv', sourceOutputPortId: 'template_document', targetInputPortId: 'template' },
+      ],
+      bindings: [
+        { sourceKind: 'node-output', sourceRef: 'collect_cv_sources', sourcePort: 'cv_documents', targetRef: 'adapt_cvs_to_template', targetPort: 'items' },
+        { sourceKind: 'node-output', sourceRef: 'load_docx_template', sourcePort: 'template_document', targetIteratorRef: 'adapt_cvs_to_template', targetRef: 'apply_template_to_cv', targetPort: 'template' },
+      ],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate(),
+        genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG, inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'document', required: false }] }),
+        makeTemplate({ key: 'synthesis-step', inputPorts: [{ id: 'template', name: 'Template', artifactKind: 'document', required: false }], outputPorts: [] }),
+      ],
+      selectedNodeId: null,
+    });
+
+    const iteratorNode = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'adapt_cvs_to_template');
+    const childStep = iteratorNode?.task.iteratorBody?.steps.find((step: { nodeRef: string }) => step.nodeRef === 'apply_template_to_cv');
+    const scopedEdge = suggestion.changes.find((c: Change): c is CreateEdgeChange => c.type === 'create_edge' && c.targetIteratorNodeRef === 'adapt_cvs_to_template');
+    const scopedBinding = suggestion.changes.find((c: Change): c is CreateBindingChange => c.type === 'create_data_binding' && c.targetIteratorNodeRef === 'adapt_cvs_to_template');
+
+    expect(childStep?.inputPorts?.map((port: { id: string }) => port.id)).toContain('template');
+    expect(scopedEdge).toEqual(expect.objectContaining({
+      sourceNodeRef: 'load_docx_template',
+      targetIteratorNodeRef: 'adapt_cvs_to_template',
+      targetNodeRef: 'apply_template_to_cv',
+      targetInputPortId: 'template',
+    }));
+    expect(scopedBinding).toEqual(expect.objectContaining({
+      sourceNodeRef: 'load_docx_template',
+      targetIteratorNodeRef: 'adapt_cvs_to_template',
+      targetNodeRef: 'apply_template_to_cv',
+      targetPort: 'template',
+    }));
+  });
+
+  it('uses connected explicit artifact kind for referenced template-derived iterator collection ports', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Adapt CVs',
+      summary: '',
+      nodes: [
+        { ref: 'collect_cv_sources', label: 'Collect CVs', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'cv_documents', artifactKind: 'document' }] },
+        { ref: 'adapt_cvs_to_template', label: 'Adapt CVs', purpose: '', nodeTemplateKey: 'iterator.template' },
+      ],
+      links: [{ sourceRef: 'collect_cv_sources', targetRef: 'adapt_cvs_to_template', sourceOutputPortId: 'cv_documents', targetInputPortId: 'items' }],
+      bindings: [{ sourceKind: 'node-output', sourceRef: 'collect_cv_sources', sourcePort: 'cv_documents', targetRef: 'adapt_cvs_to_template', targetPort: 'items' }],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate(),
+        genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG, inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }] }),
+      ],
+      selectedNodeId: null,
+    });
+
+    const iteratorNode = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'adapt_cvs_to_template');
+
+    expect(iteratorNode?.task.inputPorts).toEqual([expect.objectContaining({ id: 'items', artifactKind: 'document' })]);
+    expect(suggestion.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'create_edge', targetNodeRef: 'adapt_cvs_to_template', targetInputPortId: 'items' }),
+      expect.objectContaining({ type: 'create_data_binding', targetNodeRef: 'adapt_cvs_to_template', targetPort: 'items' }),
+    ]));
+  });
+
   it('recomputes impact counts deterministically from accepted changes', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Plan',
       summary: 'Plan summary',
       nodes: [
-        { ref: 'a', label: 'A', purpose: '', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
-        { ref: 'b', label: 'B', purpose: '', inputPorts: [{ id: 'i', artifactKind: 'text' }] },
+        { ref: 'a', label: 'A', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+        { ref: 'b', label: 'B', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'text' }] },
       ],
       links: [{ sourceRef: 'a', targetRef: 'b', sourceOutputPortId: 'o', targetInputPortId: 'i' }],
       bindings: [{ targetRef: 'b', targetPort: 'i', sourceKind: 'node-output', sourceRef: 'a', sourcePort: 'o' }],
@@ -567,7 +671,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
-      templates: [],
+      templates: [genericTemplate()],
       selectedNodeId: null,
     });
 
@@ -577,17 +681,17 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(suggestion.impact.affectedTaskIds.sort()).toEqual(['a', 'b']);
   });
 
-  it('falls back to nodeKind template lookup when no explicit templateType is set', () => {
+  it('does not fall back to nodeType template lookup when nodeTemplateKey is unknown', () => {
     const template = makeTemplate({ type: 'research', nodeType: 'agent' });
     const blueprint: PlaybookIntentBlueprint = {
       title: 't',
       summary: '',
-      nodes: [{ ref: 'r', label: 'R', purpose: '', nodeType: 'agent' }],
+      nodes: [{ ref: 'r', label: 'R', purpose: '', nodeTemplateKey: 'missing-template', nodeType: 'agent' }],
       links: [],
       bindings: [{ targetRef: 'r', targetPort: 'context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } }],
     };
 
-    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+    const result = service.build({
       blueprint,
       context: makeContext(),
       limits: DEFAULT_LIMITS,
@@ -595,9 +699,9 @@ describe('PlaybookIntentGraphBuilderService', () => {
       selectedNodeId: null,
     });
 
-    const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
-    expect(node).toBeDefined();
-    if (!node) return;
-    expect(node.task.inputPorts?.map((p: { id: string }) => p.id)).toContain('context');
+    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_node')).toBe(false);
+    expect(result.dropped).toEqual(expect.arrayContaining([
+      { rule: 'builder_node_template_key_unknown', itemId: 'missing-template' },
+    ]));
   });
 });

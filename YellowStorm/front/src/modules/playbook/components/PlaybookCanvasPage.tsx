@@ -38,7 +38,6 @@ import {
   useCurrentPlaybookLoading,
   useCurrentExecution,
   useLatestExecutionForPlaybook,
-  useExecutionHistoryForPlaybook,
   useIsDirty,
   useIsSaving,
   useIsGenerating,
@@ -212,7 +211,6 @@ function PlaybookCanvasInner() {
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const pendingRerunTaskId = usePlaybookStore((s) => s.pendingRerunTaskId);
   const setPendingRerunTaskId = usePlaybookStore((s) => s.setPendingRerunTaskId);
-  const executionHistory = useExecutionHistoryForPlaybook(id);
   const repeatability = usePlaybookStore((s) => s.repeatability);
   const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
   const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
@@ -229,6 +227,11 @@ function PlaybookCanvasInner() {
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
+  const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
+
+  useEffect(() => {
+    globalSidebarOpenRef.current = setGlobalSidebarOpen;
+  }, [setGlobalSidebarOpen]);
 
   const handleToggleTriggerEnabled = useCallback(
     async (playbookId: string, currentlyEnabled: boolean) => {
@@ -370,7 +373,15 @@ function PlaybookCanvasInner() {
   const highlightTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
+    // Ensure agents are loaded so nodes can display agent names
+    void useAgentStore.getState().fetchAgents();
+
     if (id && !isGeneratingRoute) {
+      let cancelled = false;
+      const hasExecutionParam = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('execution') !== null
+        : false;
+
       // Reset execution state when switching playbooks, but preserve panel preference
       const panelPref = (() => { try { return localStorage.getItem('ys_playbook_exec_panel') === '1'; } catch { return false; } })();
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
@@ -400,13 +411,44 @@ function PlaybookCanvasInner() {
       setDataBindingsVisible(false);
       setIntentSuggestions([]);
       setLastIntentSuggestions([]);
-      setGlobalSidebarOpen(false);
-      void usePlaybookStore.getState().fetchPlaybook(id);
-      void usePlaybookStore.getState().fetchExecutions(id);
+      globalSidebarOpenRef.current(false);
+
+      void (async () => {
+        await Promise.all([
+          usePlaybookStore.getState().fetchPlaybook(id),
+          usePlaybookStore.getState().fetchExecutions(id),
+        ]);
+        if (cancelled || hasExecutionParam) {
+          return;
+        }
+
+        const latestExecutionSummary = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        if (latestExecutionSummary) {
+          setDesignerOpen(false);
+          setPageMode('run');
+          setExecutionPanelOpen(true);
+          setExecutionPanelCollapsed(false);
+          await fetchExecution(id, latestExecutionSummary.id);
+          if (cancelled) {
+            return;
+          }
+          viewExecutionInPanel(latestExecutionSummary.id);
+          return;
+        }
+
+        setPageMode('design');
+        setDesignerOpen(true);
+        setCopilotMode('design');
+        setExecutionPanelOpen(false);
+        setExecutionPanelCollapsed(true);
+        selectStep(null);
+      })();
+
+      return () => {
+        cancelled = true;
+      };
     }
-    // Ensure agents are loaded so nodes can display agent names
-    void useAgentStore.getState().fetchAgents();
-  }, [id, isGeneratingRoute]);
+  }, [fetchExecution, id, isGeneratingRoute, selectStep, setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode, viewExecutionInPanel]);
 
   const refreshIntentTraces = useCallback(async () => {
     if (!id) return;
@@ -1643,6 +1685,12 @@ function PlaybookCanvasInner() {
       return null;
     };
 
+    const resolveScopedTaskReference = (taskId: string | null | undefined, nodeRef: string | null | undefined, iteratorNodeRef?: string | null) => {
+      if (taskId) return resolveTaskReference(taskId);
+      if (iteratorNodeRef && nodeRef) return resolveTaskReference(`${iteratorNodeRef}.${nodeRef}`);
+      return resolveTaskReference(nodeRef);
+    };
+
     const resolveAnchorTask = (targetTaskId: string | null, nodeRef: string | null) => {
       const resolvedId = resolveTaskReference(targetTaskId) || resolveTaskReference(nodeRef);
       return resolvedId ? nextTasks.find((task) => task.id === resolvedId) || null : null;
@@ -1742,6 +1790,9 @@ function PlaybookCanvasInner() {
             nextTasks = [...nextTasks, childTask];
             changedNodeIds.add(childTask.id);
             newlyCreatedNodeIds.push(childTask.id);
+          }
+          if (newNodeRef) {
+            createdNodeRefs.set(`${newNodeRef}.${step.nodeRef}`, childTask.id);
           }
           iteratorChildRefs.set(step.nodeRef, childTask.id);
         });
@@ -2165,18 +2216,20 @@ function PlaybookCanvasInner() {
       targetTaskId: string | null,
       targetNodeRef: string | null,
       targetPort: string,
+      targetIteratorNodeRef?: string | null,
       sourceKind?: 'node-output' | 'constant',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
+      sourceIteratorNodeRef?: string | null,
       iteration?: 'current' | 'previous',
       constantValue?: unknown,
     ) => {
-      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+      const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
       if (!resolvedTargetId || !targetPort) return;
 
       if (type === 'delete_data_binding') {
-        const resolvedSourceId = resolveTaskReference(sourceTaskId ?? null) || resolveTaskReference(sourceNodeRef ?? null);
+        const resolvedSourceId = resolveScopedTaskReference(sourceTaskId ?? null, sourceNodeRef ?? null, sourceIteratorNodeRef);
         if (resolvedSourceId && sourcePort) {
           nextDataBindings = nextDataBindings.filter(
             (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort && b.sourceKind === 'node-output' && b.sourceNode === resolvedSourceId && b.sourcePort === sourcePort),
@@ -2194,7 +2247,7 @@ function PlaybookCanvasInner() {
         return;
       }
 
-      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
+      const resolvedSourceId = resolveScopedTaskReference(sourceTaskId, sourceNodeRef, sourceIteratorNodeRef);
       if (!resolvedSourceId || !sourcePort) return;
 
       upsertNodeOutputBinding(
@@ -2213,11 +2266,13 @@ function PlaybookCanvasInner() {
       sourceNodeRef: string | null,
       targetTaskId: string | null,
       targetNodeRef: string | null,
+      targetIteratorNodeRef?: string | null,
       sourceOutputPortId?: string | null,
       targetInputPortId?: string | null,
+      sourceIteratorNodeRef?: string | null,
     ) => {
-      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
-      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+      const resolvedSourceId = resolveScopedTaskReference(sourceTaskId, sourceNodeRef, sourceIteratorNodeRef);
+      const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
 
       if (!resolvedSourceId || !resolvedTargetId || resolvedSourceId === resolvedTargetId) {
         return;
@@ -2410,8 +2465,10 @@ function PlaybookCanvasInner() {
           change.sourceNodeRef,
           change.targetTaskId,
           change.targetNodeRef,
+          change.targetIteratorNodeRef,
           change.sourceOutputPortId,
           change.targetInputPortId,
+          change.sourceIteratorNodeRef,
         );
         continue;
       }
@@ -2423,7 +2480,9 @@ function PlaybookCanvasInner() {
             change.targetTaskId,
             change.targetNodeRef,
             change.targetPort,
+            change.targetIteratorNodeRef,
             change.sourceKind,
+            null,
             null,
             null,
             null,
@@ -2436,10 +2495,12 @@ function PlaybookCanvasInner() {
             change.targetTaskId,
             change.targetNodeRef,
             change.targetPort,
+            change.targetIteratorNodeRef,
             change.sourceKind,
             change.sourceTaskId,
             change.sourceNodeRef,
             change.sourcePort,
+            change.sourceIteratorNodeRef,
             change.iteration,
           );
         }
@@ -2452,10 +2513,12 @@ function PlaybookCanvasInner() {
           change.targetTaskId,
           change.targetNodeRef,
           change.targetPort,
+          change.targetIteratorNodeRef,
           undefined,
           change.sourceTaskId ?? undefined,
           change.sourceNodeRef ?? undefined,
           change.sourcePort ?? undefined,
+          change.sourceIteratorNodeRef ?? undefined,
         );
         continue;
       }

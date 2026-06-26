@@ -4587,7 +4587,16 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             nodeEditorOpen: false,
             pageMode: 'run',
           });
-          get().fetchExecution(playbookId, executionId);
+          void get().fetchExecution(playbookId, executionId).then(() => {
+            const fetchedExecution = get().executionCache[executionId];
+            if (!fetchedExecution) {
+              return;
+            }
+            const selectedStepId = getPreferredSelectedStepId(fetchedExecution.taskResults, get().selectedStepId);
+            if (selectedStepId) {
+              get().selectStep(selectedStepId);
+            }
+          });
         }
       },
 
