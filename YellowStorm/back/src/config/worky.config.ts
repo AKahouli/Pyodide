@@ -24,4 +24,13 @@ export default registerAs('worky', () => ({
   // OpenRouter provider routing. e.g. 'groq' to pin Whisper to Groq (the only
   // provider that serves it). Comma-separated for an ordered fallback list.
   sttProvider: process.env.WORKY_STT_PROVIDER || '',
+
+  // Text-to-speech via OpenRouter (`/v1/audio/speech`). Reuses the STT
+  // OpenRouter base URL + API key (same account).
+  ttsModel: process.env.WORKY_TTS_MODEL || 'google/gemini-3.1-flash-tts-preview',
+  ttsVoice: process.env.WORKY_TTS_VOICE || 'Kore',
+  ttsFormat: process.env.WORKY_TTS_FORMAT || 'pcm', // Gemini TTS only emits pcm
+  ttsProvider: process.env.WORKY_TTS_PROVIDER || '', // e.g. 'google-vertex'
+  ttsTimeoutMs: parseInt(process.env.WORKY_TTS_TIMEOUT_MS || '30000', 10),
+  ttsMaxChars: parseInt(process.env.WORKY_TTS_MAX_CHARS || '2000', 10),
 }));

@@ -267,4 +267,12 @@ export const configValidationSchema = Joi.object({
   // OpenRouter provider routing for STT (e.g. 'groq'). Comma-separated list
   // allowed. Empty = let OpenRouter choose.
   WORKY_STT_PROVIDER: Joi.string().allow('').default(''),
+
+  // Worky — text-to-speech via OpenRouter (reuses WORKY_STT_BASE_URL + key)
+  WORKY_TTS_MODEL: Joi.string().default('google/gemini-3.1-flash-tts-preview'),
+  WORKY_TTS_VOICE: Joi.string().default('Kore'),
+  WORKY_TTS_FORMAT: Joi.string().default('pcm'),
+  WORKY_TTS_PROVIDER: Joi.string().allow('').default(''),
+  WORKY_TTS_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(30000),
+  WORKY_TTS_MAX_CHARS: Joi.number().min(1).max(20000).default(2000),
 });
