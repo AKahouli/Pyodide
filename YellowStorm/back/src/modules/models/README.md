@@ -22,8 +22,9 @@ The models module manages AI model configuration and synchronization with LiteLL
 
 The models module provides:
 
-- **Model Discovery**: Automatic synchronization of available AI models from LiteLLM
+- **Model Discovery**: Automatic synchronization of available AI models from LiteLLM (all types, not just chat)
 - **Model Management**: CRUD operations for model configuration
+- **Model Classification**: Each model carries a `type` (chat, embedding, image_generation, …) initialised from LiteLLM and editable by an admin
 - **Default Model Selection**: Admin ability to set a default model for new conversations
 - **Provider Organization**: Models grouped by provider (chef) for easy filtering
 - **Connection Resilience**: Automatic reconnection with exponential backoff
@@ -99,6 +100,7 @@ models/
 ├── models.controller.ts           # Public API endpoints
 ├── admin-models.controller.ts     # Admin-only API endpoints
 ├── models.service.ts              # Business logic and data access
+├── models.service.spec.ts         # Unit tests (sync, classification, public filtering)
 ├── litellm.client.ts              # LiteLLM API client
 ├── litellm-connection.service.ts  # Connection management with auto-reconnect
 ├── schemas/
@@ -136,6 +138,11 @@ export class AiModel {
   @Prop({ type: [String], default: [] })
   providers: string[];      // List of provider slugs
 
+  @Prop({ default: '', index: true })
+  type: string;             // Classification: chat | embedding | image_generation | ...
+                            // '' = unclassified, set by admin. Initialised from
+                            // LiteLLM mode for new models, never overwritten on re-sync.
+
   @Prop({ default: true })
   isActive: boolean;        // Whether model is available for use
 
@@ -150,6 +157,7 @@ export class AiModel {
 |-------|--------|---------|
 | Primary | `modelId` (unique) | Fast lookups by model ID |
 | Chef filter | `chefSlug, isActive` | Filter models by provider |
+| Type filter | `type, isActive` | Filter active models by classification (e.g. chat-only public list) |
 | Active filter | `isActive` | List active models only |
 | Default lookup | `isDefault` | Find default model |
 
@@ -163,6 +171,7 @@ interface ModelResponse {
   chefSlug: string;     // Provider slug (e.g., "openai")
   litellmModel: string; // Full LiteLLM identifier (e.g., "azure/gpt-4.1")
   providers: string[];  // All providers supporting this model
+  type: string;         // Classification ("chat", "embedding", ...; "" if unclassified)
   isActive: boolean;    // Availability status
   isDefault: boolean;   // Whether this is the default model
 }
@@ -234,7 +243,7 @@ interface LiteLLMModelInfoEntry {
 | `model_name` | `modelId` | `"gpt-4o"` |
 | `model_info.litellm_provider` | `chefSlug` | `"azure"` |
 | `litellm_params.model` | `litellmModel` | `"azure/gpt-4.1"` |
-| `model_info.mode` | _(filter only)_ | `"chat"` — only chat models are synced |
+| `model_info.mode` | `type` | `"chat"` — seeds the type of NEW models only; not overwritten afterwards |
 | _(derived from chefSlug)_ | `chef` | `"Azure"` |
 
 ### Provider Display Names
@@ -346,9 +355,11 @@ All public endpoints require JWT authentication.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/models` | List all active models |
+| `GET` | `/models` | List active **chat** models (filtered to `type === "chat"`) |
 | `GET` | `/models/:id` | Get model by ID |
-| `GET` | `/models/chef/:chefSlug` | Get models by provider |
+| `GET` | `/models/chef/:chefSlug` | Get active **chat** models by provider |
+
+> **Note:** the public endpoints intentionally return only `type === "chat"` models so that conversation model selectors never surface embeddings, image-generation, etc. The admin endpoints (`/admin/models`) return **all** types.
 
 ### Admin Endpoints
 
@@ -376,6 +387,7 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
       "chefSlug": "azure",
       "litellmModel": "azure/gpt-4o",
       "providers": ["azure"],
+      "type": "chat",
       "isActive": true,
       "isDefault": true
     },
@@ -386,6 +398,7 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
       "chefSlug": "anthropic",
       "litellmModel": "anthropic/claude-3-opus",
       "providers": ["anthropic"],
+      "type": "chat",
       "isActive": true,
       "isDefault": false
     }
@@ -396,9 +409,10 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
 
 **PATCH /admin/models/:id**
 ```json
-// Request
+// Request (type must be one of the 8 supported values)
 {
   "name": "GPT-4 Omni",
+  "type": "chat",
   "isActive": false
 }
 
@@ -410,6 +424,7 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
   "chefSlug": "azure",
   "litellmModel": "azure/gpt-4o",
   "providers": ["azure"],
+  "type": "chat",
   "isActive": false,
   "isDefault": false
 }
@@ -432,7 +447,7 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
 
 ### Sync Process
 
-The `syncModels()` method keeps the local database in sync with LiteLLM's `/v1/model/info` endpoint. Only models with `mode === "chat"` are synced (embeddings, audio, etc. are filtered out).
+The `syncModels()` method keeps the local database in sync with LiteLLM's `/v1/model/info` endpoint. **All** model types are ingested (chat, embeddings, image generation, audio, etc.). Each new model is classified via its `type` field, seeded from `model_info.mode`; the admin can override it afterwards and a re-sync will never overwrite it.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -442,15 +457,17 @@ The `syncModels()` method keeps the local database in sync with LiteLLM's `/v1/m
 │  1. Fetch models from LiteLLM /v1/model/info                   │
 │         │                                                       │
 │         ▼                                                       │
-│  2. Filter to chat models only (mode === "chat")                │
+│  2. (no type filter — every model is ingested)                  │
 │         │                                                       │
 │         ▼                                                       │
-│  3. For each chat model:                                        │
+│  3. For each model:                                             │
 │     ┌───────────────────────────────────────────────┐          │
 │     │ Model exists in DB?                           │          │
-│     │   NO  ──► Create new model (isActive=true)    │          │
+│     │   NO  ──► Create (isActive=true,              │          │
+│     │            type = mode || "")                  │          │
 │     │   YES ──► Always update chefSlug, litellmModel,│         │
 │     │           providers from source of truth       │          │
+│     │           (type is NEVER touched here)          │          │
 │     │           Model inactive? ──► Reactivate it    │          │
 │     └───────────────────────────────────────────────┘          │
 │         │                                                       │
@@ -476,7 +493,7 @@ On every sync, the following fields are **always updated** from LiteLLM for exis
 | `litellmModel` | `litellm_params.model` | Full identifier needed for gRPC/streaming |
 | `providers` | `[chefSlug]` | Keep in sync with provider |
 
-The `name` field is **never overwritten** on existing models, preserving admin-set custom display names.
+The `name` and `type` fields are **never overwritten** on existing models, preserving admin-set custom display names and classifications. `type` is only seeded on creation (from `model_info.mode`).
 
 ### Sync Statistics
 
@@ -486,12 +503,25 @@ The `name` field is **never overwritten** on existing models, preserving admin-s
 | `updated` | Existing active models whose source-of-truth fields changed |
 | `reactivated` | Previously deactivated models found again in LiteLLM |
 | `deactivated` | Models no longer in LiteLLM, marked inactive |
-| `total` | Total chat models returned by LiteLLM |
+| `total` | Total models returned by LiteLLM |
 
 ### Sync Triggers
 
 1. **Application Startup**: Non-blocking sync on `onApplicationBootstrap`
 2. **Manual Trigger**: Admin calls `POST /admin/models/sync`
+
+### One-Off Migration (type backfill)
+
+Because the public list filters on `type === "chat"`, models that predate the
+`type` field would disappear from selectors until a re-sync. Every model already
+in the DB is a chat model (the old sync only stored chat), so run this once
+**after deploy and before the first re-sync**:
+
+```bash
+cd back && npx ts-node scripts/migrations/2026-06-26-backfill-model-type-chat.ts
+```
+
+It sets `type: "chat"` on all models that are still unclassified.
 
 ### Model Name Generation
 

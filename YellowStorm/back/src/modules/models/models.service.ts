@@ -76,15 +76,12 @@ export class ModelsService implements OnApplicationBootstrap {
       return { added: 0, updated: 0, reactivated: 0, deactivated: 0, total: 0 };
     }
 
-    // Filter to chat models only (exclude embeddings etc.)
-    const chatModels = litellmEntries.filter(
-      (entry) => entry.model_info?.mode === 'chat',
-    );
-
-    this.logger.log('Filtered chat models from LiteLLM response', {
+    // Ingest ALL model types (chat, embedding, image_generation, etc.).
+    // Classification is no longer filtered here — the `type` field is set from
+    // LiteLLM's mode for new models and managed by the admin afterwards.
+    this.logger.log('Fetched models from LiteLLM response', {
       context: 'ModelsService',
       totalEntries: litellmEntries.length,
-      chatModels: chatModels.length,
     });
 
     let addedCount = 0;
@@ -92,10 +89,10 @@ export class ModelsService implements OnApplicationBootstrap {
     let reactivatedCount = 0;
 
     // Collect all model IDs from LiteLLM
-    const litellmModelIds = new Set(chatModels.map((m) => m.model_name));
+    const litellmModelIds = new Set(litellmEntries.map((m) => m.model_name));
 
     // Process each model from LiteLLM
-    for (const entry of chatModels) {
+    for (const entry of litellmEntries) {
       try {
         const existingModel = await this.aiModelModel.findOne({ modelId: entry.model_name });
 
@@ -177,7 +174,7 @@ export class ModelsService implements OnApplicationBootstrap {
       updated: updatedCount,
       reactivated: reactivatedCount,
       deactivated: deactivatedCount,
-      total: chatModels.length,
+      total: litellmEntries.length,
     });
 
     return {
@@ -185,12 +182,21 @@ export class ModelsService implements OnApplicationBootstrap {
       updated: updatedCount,
       reactivated: reactivatedCount,
       deactivated: deactivatedCount,
-      total: chatModels.length,
+      total: litellmEntries.length,
     };
   }
 
-  async findAll(activeOnly: boolean = true): Promise<ModelsListResponse> {
-    const query = activeOnly ? { isActive: true } : {};
+  /**
+   * @param activeOnly restrict to active models (default true — public usage).
+   * @param chatOnly   restrict to chat models only (default true). The public
+   *   model selector must keep showing chat models exclusively even though the
+   *   DB now also holds embeddings, image generation, etc. The admin passes
+   *   false to see every type.
+   */
+  async findAll(activeOnly: boolean = true, chatOnly: boolean = true): Promise<ModelsListResponse> {
+    const query: Record<string, unknown> = {};
+    if (activeOnly) query.isActive = true;
+    if (chatOnly) query.type = 'chat';
 
     const models = await this.aiModelModel
       .find(query)
@@ -234,7 +240,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async findByChef(chefSlug: string): Promise<ModelsListResponse> {
     const models = await this.aiModelModel
-      .find({ chefSlug: chefSlug.toLowerCase(), isActive: true })
+      .find({ chefSlug: chefSlug.toLowerCase(), isActive: true, type: 'chat' })
       .sort({ name: 1 })
       .lean()
       .exec();
@@ -262,6 +268,10 @@ export class ModelsService implements OnApplicationBootstrap {
       chefSlug,
       litellmModel,
       providers: [chefSlug],
+      // Initialise classification from LiteLLM's mode when available; otherwise
+      // leave empty so the admin can set it. Only applied to NEW models — a
+      // re-sync never overwrites an existing model's type (admin choice wins).
+      type: entry.model_info?.mode || '',
     };
   }
 
@@ -309,7 +319,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; isActive: boolean }>,
+    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; isActive: boolean }>,
   ): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
       .findOneAndUpdate(
@@ -410,6 +420,7 @@ export class ModelsService implements OnApplicationBootstrap {
       chefSlug: doc.chefSlug as string,
       litellmModel: (doc.litellmModel as string) || '',
       providers: doc.providers as string[],
+      type: (doc.type as string) || '',
       isActive: doc.isActive as boolean,
       isDefault: (doc.isDefault as boolean) || false,
     };
