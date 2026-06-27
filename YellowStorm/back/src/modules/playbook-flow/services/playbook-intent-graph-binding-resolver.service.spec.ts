@@ -105,12 +105,12 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
     ]));
   });
 
-  it('keeps mismatched visual edges without synthesizing unsafe bindings', () => {
+  it('rejects edges with incompatible artifact kinds', () => {
     const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
-        outputPortsByTaskId: [['source', [['report', 'document']]]],
-        inputPortsByTaskId: [['target', [['payload', 'data']]]],
+        outputPortsByTaskId: [['source', [['report', 'image']]]],
+        inputPortsByTaskId: [['target', [['payload', 'text']]]],
       }),
       deletedTaskIds: new Set(),
       changes: [{
@@ -124,11 +124,39 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(result.changes).toEqual([expect.objectContaining({
-      type: 'create_edge',
-      sourceOutputPortId: 'report',
-      targetInputPortId: 'payload',
-    })]);
+    expect(result.changes).toEqual([]);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'edge_artifact_mismatch',
+        stage: 'binding_resolver',
+        severity: 'error',
+        repairable: true,
+      }),
+    ]));
+  });
+
+  it('accepts edges between compatible artifact kinds (data to text)', () => {
+    const result = service.resolveWorkflowChanges({
+      context: makeContext({
+        existingTaskIds: ['source', 'target'],
+        outputPortsByTaskId: [['source', [['artifact_list', 'data']]]],
+        inputPortsByTaskId: [['target', [['input_1', 'text']]]],
+      }),
+      deletedTaskIds: new Set(),
+      changes: [{
+        type: 'create_edge',
+        sourceTaskId: 'source',
+        sourceNodeRef: null,
+        targetTaskId: 'target',
+        targetNodeRef: null,
+        sourceOutputPortId: 'artifact_list',
+        targetInputPortId: 'input_1',
+      }],
+    });
+
+    expect(result.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'create_edge', sourceOutputPortId: 'artifact_list', targetInputPortId: 'input_1' }),
+    ]));
   });
 
   it('infers an unknown source port when exactly one compatible output exists', () => {
@@ -272,6 +300,38 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
 
     expect(result.changes).toHaveLength(1);
     expect(result.changes[0]).toEqual(expect.objectContaining({ type: 'create_data_binding', targetPort: 'input' }));
+  });
+
+  it('rejects bindings with incompatible artifact kinds', () => {
+    const result = service.resolveWorkflowChanges({
+      context: makeContext({
+        existingTaskIds: ['source', 'target'],
+        outputPortsByTaskId: [['source', [['report', 'image']]]],
+        inputPortsByTaskId: [['target', [['input', 'text']]]],
+      }),
+      deletedTaskIds: new Set(),
+      changes: [{
+        type: 'create_data_binding',
+        sourceKind: 'node-output',
+        sourceTaskId: 'source',
+        sourceNodeRef: null,
+        sourcePort: 'report',
+        targetTaskId: 'target',
+        targetNodeRef: null,
+        targetPort: 'input',
+        iteration: 'current',
+      }],
+    });
+
+    expect(result.changes).toEqual([]);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'binding_artifact_mismatch',
+        stage: 'binding_resolver',
+        severity: 'error',
+        repairable: true,
+      }),
+    ]));
   });
 
   it('drops bindings targeting an existing binding target', () => {

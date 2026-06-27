@@ -60,6 +60,32 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('accepts links where sourceIteratorRef equals sourceRef (iterator node itself as source)', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Self iterator ref',
+        nodes: [
+          {
+            ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template',
+            inputPorts: [{ id: 'items', artifactKind: 'data' }],
+            outputPorts: [{ id: 'results', artifactKind: 'data' }],
+            iteratorBody: {
+              steps: [{ ref: 'child', title: 'Child', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'input', artifactKind: 'data' }], outputPorts: [{ id: 'output', artifactKind: 'data' }] }],
+              edges: [],
+            },
+          },
+          { ref: 'report', label: 'Report', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'context', artifactKind: 'text' }] },
+        ],
+        links: [{ sourceRef: 'loop', sourceIteratorRef: 'loop', targetRef: 'report', sourceOutputPortId: 'results', targetInputPortId: 'context' }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.links).toHaveLength(1);
+    expect(result.diagnostics.filter((d) => d.code === 'blueprint_link_unknown_ref')).toEqual([]);
+  });
+
   it('accepts connector and skill refs with slug-based snake_case fields', () => {
     const raw = JSON.stringify({
       blueprint: {

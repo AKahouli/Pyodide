@@ -506,7 +506,7 @@ export class PlaybookIntentBlueprintParserService {
     ref: string,
     iteratorRef: string,
   ): boolean {
-    if (!iteratorRef) return topLevelRefs.has(ref);
+    if (!iteratorRef || ref === iteratorRef) return topLevelRefs.has(ref);
     return iteratorStepsByRef.get(iteratorRef)?.has(ref) === true;
   }
 

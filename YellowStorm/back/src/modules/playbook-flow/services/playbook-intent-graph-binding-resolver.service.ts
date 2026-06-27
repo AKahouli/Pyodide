@@ -10,6 +10,10 @@ type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard
 type CreateEdgeChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_edge' | 'delete_edge' }> & { type: 'create_edge' };
 type CreateBindingChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_data_binding' }>;
 
+// These artifact kinds are all serializable text-based content that can be
+// connected without an explicit conversion node (e.g. collector `data` → AI task `text`).
+const COMPATIBLE_ARTIFACT_KINDS: ReadonlySet<ArtifactKind> = new Set(['text', 'data', 'code', 'document']);
+
 interface PortCatalog {
   inputPorts: Map<string, Map<string, ArtifactKind>>;
   outputPorts: Map<string, Map<string, ArtifactKind>>;
@@ -127,13 +131,13 @@ export class PlaybookIntentGraphBindingResolverService {
       this.recordDiagnostic(diagnostics, 'edge_unknown_port', `${sourceId}.${edge.sourceOutputPortId || '?'}->${targetId}.${edge.targetInputPortId || '?'}`);
       return null;
     }
-    if (sourcePort.kind && targetPort.kind && sourcePort.kind !== targetPort.kind) {
-      this.recordDiagnostic(diagnostics, 'edge_artifact_mismatch', `${sourceId}.${sourcePort.id || '?'}->${targetId}.${targetPort.id || '?'}`);
-      return {
-        ...edge,
-        ...(sourcePort.id ? { sourceOutputPortId: sourcePort.id } : {}),
-        ...(targetPort.id ? { targetInputPortId: targetPort.id } : {}),
-      };
+    if (sourcePort.kind && targetPort.kind && !this.areArtifactKindsCompatible(sourcePort.kind, targetPort.kind)) {
+      this.recordDiagnostic(diagnostics, 'edge_artifact_mismatch', `${sourceId}.${sourcePort.id || '?'}->${targetId}.${targetPort.id || '?'}`, {
+        severity: 'error',
+        message: `Cannot connect ${sourcePort.kind} output to ${targetPort.kind} input.`,
+        repairable: true,
+      });
+      return null;
     }
     return {
       ...edge,
@@ -175,8 +179,12 @@ export class PlaybookIntentGraphBindingResolverService {
       return null;
     }
     const sourcePort = this.resolvePort(catalog.outputPorts.get(sourceId), binding.sourcePort || null, targetPort.kind);
-    if (!sourcePort.id || sourcePort.kind !== targetPort.kind) {
-      this.recordDiagnostic(diagnostics, 'binding_artifact_mismatch', `${sourceId}.${binding.sourcePort || '?'}->${targetId}.${targetPort.id}`);
+    if (!sourcePort.id || !this.areArtifactKindsCompatible(sourcePort.kind, targetPort.kind)) {
+      this.recordDiagnostic(diagnostics, 'binding_artifact_mismatch', `${sourceId}.${binding.sourcePort || '?'}->${targetId}.${targetPort.id}`, {
+        severity: 'error',
+        message: `Cannot bind ${sourcePort.kind || 'unknown'} output to ${targetPort.kind} input.`,
+        repairable: true,
+      });
       return null;
     }
 
@@ -195,7 +203,7 @@ export class PlaybookIntentGraphBindingResolverService {
 
     const sourceKind = catalog.outputPorts.get(sourceId)?.get(edge.sourceOutputPortId);
     const targetKind = catalog.inputPorts.get(targetId)?.get(edge.targetInputPortId);
-    if (!sourceKind || !targetKind || sourceKind !== targetKind) return null;
+    if (!sourceKind || !targetKind || !this.areArtifactKindsCompatible(sourceKind, targetKind)) return null;
 
     // Edges and bindings are separate canvas contracts; synthesize the binding so runtime data flow is not lost.
     return {
@@ -224,9 +232,14 @@ export class PlaybookIntentGraphBindingResolverService {
     if (requested && !allowRequestedFallback) return { id: null, kind: null };
     if (!requiredKind) return { id: null, kind: null };
 
-    const candidates = [...ports.entries()].filter(([, kind]) => kind === requiredKind);
+    // Prefer exact kind match; only fall back to compatible kinds when no exact match exists.
+    const exactCandidates = [...ports.entries()].filter(([, kind]) => kind === requiredKind);
+    if (exactCandidates.length === 1) return { id: exactCandidates[0][0], kind: exactCandidates[0][1] };
+    if (exactCandidates.length > 1) return { id: null, kind: null };
+
+    const compatibleCandidates = [...ports.entries()].filter(([, kind]) => kind !== requiredKind && this.areArtifactKindsCompatible(kind, requiredKind));
     // Ambiguous inference is intentionally rejected because wrong ports corrupt runtime data flow.
-    return candidates.length === 1 ? { id: candidates[0][0], kind: candidates[0][1] } : { id: null, kind: null };
+    return compatibleCandidates.length === 1 ? { id: compatibleCandidates[0][0], kind: compatibleCandidates[0][1] } : { id: null, kind: null };
   }
 
   private resolveTaskId(taskId: string | null, nodeRef: string | null, iteratorNodeRef: string | null, catalog: PortCatalog): string | null {
@@ -234,6 +247,12 @@ export class PlaybookIntentGraphBindingResolverService {
     if (iteratorNodeRef && nodeRef) return catalog.nodeRefToTaskId.get(this.scopedRef(iteratorNodeRef, nodeRef)) || null;
     if (nodeRef) return catalog.nodeRefToTaskId.get(nodeRef) || nodeRef;
     return null;
+  }
+
+  private areArtifactKindsCompatible(sourceKind: ArtifactKind | null, targetKind: ArtifactKind | null): boolean {
+    if (!sourceKind || !targetKind) return true;
+    if (sourceKind === targetKind) return true;
+    return COMPATIBLE_ARTIFACT_KINDS.has(sourceKind) && COMPATIBLE_ARTIFACT_KINDS.has(targetKind);
   }
 
   private edgeKey(edge: PlaybookIntentWorkflowChange): string {
@@ -258,15 +277,23 @@ export class PlaybookIntentGraphBindingResolverService {
     items.set(key, value);
   }
 
-  private recordDiagnostic(diagnostics: PlaybookIntentDiagnostic[], code: string, itemId: string): void {
+  private recordDiagnostic(
+    diagnostics: PlaybookIntentDiagnostic[],
+    code: string,
+    itemId: string,
+    overrides?: { severity?: 'info' | 'warning' | 'error'; message?: string; repairable?: boolean },
+  ): void {
+    const severity = overrides?.severity ?? 'warning';
     const diagnostic: PlaybookIntentDiagnostic = {
-      severity: 'warning',
+      severity,
       stage: 'binding_resolver',
       code,
       itemId,
-      message: code,
+      message: overrides?.message ?? code,
+      ...(overrides?.repairable != null ? { repairable: overrides.repairable } : {}),
     };
     diagnostics.push(diagnostic);
-    this.logger.warn(`playbook_intent_connection_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
+    const logLevel = severity === 'error' ? 'error' : 'warn';
+    this.logger[logLevel](`playbook_intent_connection_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
   }
 }

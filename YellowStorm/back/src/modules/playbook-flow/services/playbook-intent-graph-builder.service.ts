@@ -600,7 +600,7 @@ export class PlaybookIntentGraphBuilderService {
 
   private resolveEndpointReference(ref: string | null | undefined, iteratorRef: string | null, options: BuildOptions): ResolvedEndpointRef | null {
     if (!ref) return null;
-    if (!iteratorRef) {
+    if (!iteratorRef || ref === iteratorRef) {
       const resolved = this.resolveReference(ref, options);
       if (!resolved) return null;
       return options.context.existingTaskIds.has(resolved)

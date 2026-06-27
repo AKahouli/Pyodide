@@ -7,6 +7,7 @@ import type {
 } from './playbook-flow-intent.service';
 import type { FlowNodeTemplateResponse } from '../interfaces/playbook-flow-node-template.interface';
 import type { PlaybookIntentBlueprint } from '../interfaces/playbook-flow-intent-blueprint.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 
 type Change = PlaybookIntentWorkflowChange;
 type WorkflowPlan = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
@@ -94,6 +95,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     service = new PlaybookIntentGraphBuilderService(resolver);
     jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
     jest.spyOn((resolver as any).logger, 'warn').mockImplementation(() => undefined);
+    jest.spyOn((resolver as any).logger, 'error').mockImplementation(() => undefined);
   });
 
   it('produces a stable workflow_plan from a linear blueprint across repeated runs', () => {
@@ -308,13 +310,13 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(createChange?.task.inputPorts?.[0]).toEqual(expect.objectContaining({ id: 'input-context', required: false }));
   });
 
-  it('keeps the visual edge when ports have incompatible artifact kinds and logs a warning', () => {
+  it('rejects edges with incompatible artifact kinds and logs an error', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Mismatch',
       summary: '',
       nodes: [
         { ref: 'src', label: 'Src', purpose: '', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'o', artifactKind: 'text' }] },
-        { ref: 'dst', label: 'Dst', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'document' }] },
+        { ref: 'dst', label: 'Dst', purpose: '', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'i', artifactKind: 'image' }] },
       ],
       links: [{ sourceRef: 'src', targetRef: 'dst', sourceOutputPortId: 'o', targetInputPortId: 'i' }],
     };
@@ -327,9 +329,10 @@ describe('PlaybookIntentGraphBuilderService', () => {
       selectedNodeId: null,
     });
 
-    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(true);
+    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(false);
     expect(result.suggestion.changes.some((c: Change) => c.type === 'create_data_binding')).toBe(false);
-    expect((resolver as any).logger.warn).toHaveBeenCalledWith(expect.stringContaining('rule=edge_artifact_mismatch'));
+    expect(result.diagnostics.some((d: PlaybookIntentDiagnostic) => d.code === 'edge_artifact_mismatch' && d.severity === 'error')).toBe(true);
+    expect((resolver as any).logger.error).toHaveBeenCalledWith(expect.stringContaining('rule=edge_artifact_mismatch'));
   });
 
   it('emits an iterator node with an isolated body that does not leak edges to the top level', () => {
