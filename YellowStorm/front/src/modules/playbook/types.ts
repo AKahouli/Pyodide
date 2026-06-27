@@ -40,6 +40,7 @@ export interface TaskArtifact {
 
 export interface TaskTemplate {
   id: string;
+  key: string;
   type: string;
   nodeType: PlaybookNodeType;
   title: string;
@@ -468,7 +469,7 @@ export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
-  templateType?: string | null;
+  nodeTemplateKey?: string | null;
   toolBindings?: ToolBinding[];
   skillBindings?: TaskSkillBinding[];
   inputPorts?: Array<{
@@ -488,7 +489,7 @@ export interface PlaybookIntentTaskDraft {
       title: string;
       description: string;
       agentSlug?: string | null;
-      templateType?: string | null;
+      nodeTemplateKey?: string | null;
       inputPorts?: Array<{
         id: string;
         name?: string | null;

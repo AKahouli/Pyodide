@@ -4969,6 +4969,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           set({
             nodeTemplates: items.map((item) => ({
               id: item.id,
+              key: item.key,
               type: item.type,
               nodeType: item.nodeType,
               title: item.title,
@@ -4995,6 +4996,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
+              iteratorConfig: item.iteratorConfig ?? null,
               retryPolicy: (item as Record<string, unknown>).retryPolicy as TaskTemplate['retryPolicy'] ?? null,
               modelId: (item as Record<string, unknown>).modelId as string | null ?? null,
             })),
@@ -5026,6 +5028,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           set({
             flowNodeTemplates: items.map((item) => ({
               ...item,
+              key: item.key,
               type: item.type,
               nodeType: item.nodeType,
               description: item.description || '',

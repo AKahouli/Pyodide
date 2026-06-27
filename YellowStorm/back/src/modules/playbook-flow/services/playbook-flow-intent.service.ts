@@ -109,7 +109,7 @@ export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
-  templateType?: string | null;
+  nodeTemplateKey?: string | null;
   inputPorts?: Array<{
     id: string;
     name?: string | null;
@@ -142,7 +142,7 @@ export interface PlaybookIntentTaskDraft {
       title: string;
       description: string;
       agentSlug?: string | null;
-      templateType?: string | null;
+      nodeTemplateKey?: string | null;
       inputPorts?: Array<{
         id: string;
         name?: string | null;
@@ -761,21 +761,19 @@ export class PlaybookFlowIntentService {
           if (buildResult.dropped.length) {
             this.logger.warn(`playbook_intent_builder_dropped items=${buildResult.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
           }
-          return [this.createFallbackSuggestion(args.dto, args.context.selectedNodeId), buildResult.suggestion];
+          return [buildResult.suggestion];
         } catch (error) {
           this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
+          this.logger.warn('playbook_intent_invalid_blueprint_output rule=build_failed');
+          return [];
         }
       }
+      this.logger.warn('playbook_intent_invalid_blueprint_output rule=parse_failed');
+      return [];
     }
 
-    return this.normalizeConstructionSuggestions({
-      raw: args.raw,
-      dto: args.dto,
-      selectedNodeId: args.context.selectedNodeId,
-      limits: args.context.limits,
-      validationContext: args.context.validationContext,
-      includeFallback: true,
-    });
+    this.logger.warn('playbook_intent_invalid_blueprint_output rule=missing_blueprint');
+    return [];
   }
 
   private buildDesignAssessmentSystemPrompt(): string {
@@ -1050,7 +1048,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const taskTitle = operationType === 'update_node' ? explicitTitle : (explicitTitle || derivedLabel);
     const taskDescription = this.normalizeText(item.taskDescription) || this.normalizeText(nestedTask?.description) || this.normalizeText(item.summary);
     const agentSlug = this.normalizeText(item.agentSlug) || this.normalizeText(nestedTask?.agentSlug);
-    const templateType = this.normalizeText(item.templateType) || this.normalizeText(nestedTask?.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey) || this.normalizeText(nestedTask?.nodeTemplateKey);
     const inputPorts = nestedTask ? this.normalizeInputPorts(nestedTask.inputPorts, limits) : [];
     const outputPorts = nestedTask ? this.normalizeOutputPorts(nestedTask.outputPorts, limits) : [];
 
@@ -1061,7 +1059,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           ...(taskTitle ? { title: taskTitle } : {}),
           description: taskDescription,
           ...(agentSlug ? { agentSlug } : {}),
-          ...(templateType ? { templateType } : {}),
+          ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
           ...(inputPorts.length ? { inputPorts } : {}),
           ...(outputPorts.length ? { outputPorts } : {}),
         }
@@ -1069,7 +1067,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           title: taskTitle || label,
           description: taskDescription,
           agentSlug: agentSlug || null,
-          templateType: templateType || null,
+          nodeTemplateKey: nodeTemplateKey || null,
           ...(inputPorts.length ? { inputPorts } : {}),
           ...(outputPorts.length ? { outputPorts } : {}),
         };
@@ -1466,7 +1464,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
-    const templateType = this.normalizeText(item.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1475,7 +1473,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         title,
         description,
         ...(agentSlug ? { agentSlug } : {}),
-        ...(templateType ? { templateType } : {}),
+        ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
         ...(inputPorts.length ? { inputPorts } : {}),
         ...(outputPorts.length ? { outputPorts } : {}),
         ...(iteratorBody ? { iteratorBody } : {}),
@@ -1493,7 +1491,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
-    const templateType = this.normalizeText(item.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1501,7 +1499,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
       ...(agentSlug ? { agentSlug } : {}),
-      ...(templateType ? { templateType } : {}),
+      ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
       ...(iteratorBody ? { iteratorBody } : {}),
@@ -1530,7 +1528,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
 
           const description = this.normalizeText(draft.description);
           const agentSlug = this.normalizeText(draft.agentSlug);
-          const templateType = this.normalizeText(draft.templateType);
+          const nodeTemplateKey = this.normalizeText(draft.nodeTemplateKey);
           const inputPorts = this.normalizeInputPorts(draft.inputPorts, limits);
           const outputPorts = this.normalizeOutputPorts(draft.outputPorts, limits);
           return {
@@ -1538,7 +1536,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
             title,
             description,
             ...(agentSlug ? { agentSlug } : {}),
-            ...(templateType ? { templateType } : {}),
+            ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
             ...(inputPorts.length ? { inputPorts } : {}),
             ...(outputPorts.length ? { outputPorts } : {}),
           };

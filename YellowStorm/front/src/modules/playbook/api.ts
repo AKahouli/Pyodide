@@ -2124,6 +2124,7 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
+  iteratorConfig?: PlaybookIteratorConfig | null;
 }> }> {
   const response = await apiClient.get<ApiResponse<{ items: Array<{
     id: string;
@@ -2143,6 +2144,7 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     executionMode?: string;
     assignedAgentId?: string | null;
     selectedAction?: string | null;
+    iteratorConfig?: PlaybookIteratorConfig | null;
   }> }>>(
     API_ENDPOINTS.playbookNodeTemplates.list,
   );

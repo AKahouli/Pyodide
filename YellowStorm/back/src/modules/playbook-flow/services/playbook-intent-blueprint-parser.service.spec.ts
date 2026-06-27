@@ -167,7 +167,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(service.hasBlueprintShape(raw)).toBe(true);
   });
 
-  it('temporarily accepts legacy templateType as nodeTemplateKey and logs the fallback', () => {
+  it('rejects legacy templateType when nodeTemplateKey is missing', () => {
     const raw = JSON.stringify({
       blueprint: {
         title: 'Legacy template',
@@ -177,8 +177,9 @@ describe('PlaybookIntentBlueprintParserService', () => {
 
     const result = service.parse(raw)!;
 
-    expect(result.blueprint.nodes[0].nodeTemplateKey).toBe('legacy.template');
-    expect((service as any).logger.warn).toHaveBeenCalledWith(expect.stringContaining('playbook_intent_blueprint_legacy_template_type'));
+    expect(result.blueprint.nodes).toEqual([]);
+    expect(result.dropped.find((d) => d.rule === 'blueprint_node_missing_fields')).toBeDefined();
+    expect((service as any).logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('playbook_intent_blueprint_legacy_template_type'));
   });
 
   it('derives a missing blueprint title from the first node label', () => {
@@ -235,7 +236,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.dropped.find((d) => d.rule === 'blueprint_node_duplicate_ref')).toBeDefined();
   });
 
-  it('ignores nodeType as semantic metadata in parsed output', () => {
+  it('does not carry blueprint nodeType into parsed output', () => {
     const raw = JSON.stringify({
       blueprint: {
         title: 't',
@@ -244,7 +245,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.nodes).toHaveLength(1);
-    expect(result.blueprint.nodes[0].nodeType).toBe('unknown_kind');
+    expect(result.blueprint.nodes[0]).not.toHaveProperty('nodeType');
     expect(result.dropped.find((d) => d.rule === 'blueprint_node_unsupported_kind')).toBeUndefined();
   });
 

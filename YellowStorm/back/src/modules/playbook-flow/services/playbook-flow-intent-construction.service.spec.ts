@@ -8,34 +8,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
     } as any);
   }
 
-  it('uses the default large workflow limit during realtime construction normalization', () => {
-    const normalizeConstructionSuggestions = jest.fn().mockReturnValue([]);
-    const service = new PlaybookFlowIntentConstructionService({
-      normalizeConstructionSuggestions,
-      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
-    } as any);
-
-    (service as any).normalizeRawSuggestions(
-      '{"suggestions":[]}',
-      { intent: 'build a large workflow' },
-      {
-        selectedNodeId: null,
-        limits: {
-          maxWorkflowPlanChanges: 50,
-          maxInputPorts: 4,
-          maxOutputPorts: 4,
-          maxIteratorBodySteps: 12,
-          maxIteratorBodyEdges: 50,
-        },
-        validationContext: {},
-      },
-    );
-
-    expect(normalizeConstructionSuggestions).toHaveBeenCalledWith(expect.objectContaining({
-      limits: expect.objectContaining({ maxWorkflowPlanChanges: 500 }),
-    }));
-  });
-
   it('reads a final chat completion stream line without a trailing newline', async () => {
     const service = createService();
     const payload = JSON.stringify({ choices: [{ delta: { content: 'tail content' } }] });
@@ -147,19 +119,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(deltaEvents.some((event: any) => event.suggestion.id === 'intent-fallback' || event.suggestion.isDirectIntentFallback)).toBe(false);
     });
 
-    it('normalizes raw suggestions through the legacy path used when the blueprint flag is disabled', () => {
-      const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
-      const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);
-      const suggestions = (service as any).normalizeRawSuggestions(
-        JSON.stringify({ blueprint: { title: 'x', summary: '', nodes: [], links: [] } }),
-        { intent: 'test' },
-        makeContext(false),
-      );
-      expect(normalizeConstructionSuggestions).toHaveBeenCalled();
-      expect(suggestions[0]).toEqual({ id: 'legacy', kind: 'single_change' });
-    });
-
-    it('falls back to legacy normalization when the raw payload has no blueprint shape', () => {
+    it('returns no suggestions when the raw payload has no blueprint shape', () => {
       const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
       const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);
       const suggestions = (service as any).buildBlueprintSuggestions(
@@ -167,8 +127,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
         makeContext(true),
         { intent: 'test' },
       );
-      expect(normalizeConstructionSuggestions).toHaveBeenCalled();
-      expect(suggestions[0]).toEqual({ id: 'legacy', kind: 'single_change' });
+      expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
+      expect(suggestions).toEqual([]);
     });
   });
 });

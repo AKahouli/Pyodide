@@ -69,7 +69,8 @@ Focus on intent and getting a coherent workflow structure to get most relevant w
 - For each <Resolved_Design_Resources> entry, emit exactly one binding with sourceKind "constant" pointing to the matching input/destination port. If no port exists, add a minimal port to the target node and bind it.
 - must always use an iterator-capable nodeTemplateKey When items must be processed iteratively and place internal steps inside "iteratorBody". Iterator body edges MUST stay inside iteratorBody and MUST NOT appear at the top level.
 - If a top-level node feeds an iterator body step input, make the top-level link/binding target the step with "targetIteratorRef" set to the iterator node ref and "targetRef" set to the step ref. Do NOT route non-collection context such as templates, instructions, or reference documents through the iterator parent "items" port.
-- Reserve the iterator parent collection input (usually "items") only for the collection being iterated. Additional per-item context must connect directly to the child step input using targetIteratorRef.
+- Always reserve the iterator parent collection input (usually "items") only for the collection being iterated. Additional per-item context must be referenced by creating additional iterator input ports.
+
 - For routers, express branches as parallel nodes appended to the router with mode "append" and edge from the router.
 - For human approval, choose a human-approval nodeTemplateKey — the backend fills the prompt and timeout defaults.
 - artifactKind values: text | document | code | image | data | dashboard.
@@ -78,14 +79,17 @@ Focus on intent and getting a coherent workflow structure to get most relevant w
 - Use <Existing_Workflow_JSON> only to read existing task ids you want to anchor against (targetTaskId).
 - If attached images are present, treat their visible content as primary requirements. Extract visible entities, labels, grouping, order, arrows, layout relationships, and implied workflow stages; reflect those specifics in node labels, purposes, links, and bindings instead of producing a generic image-processing workflow.
 - Keep the blueprint compact; the backend builder enforces the per-plan limits.
-- When the request is to optimize a single existing step, return a workflow_plan-style fallback: {"suggestions":[{"kind":"single_change","operationType":"update_node","targetTaskId":"existing-task-id","task":{"title":"...","description":"..."}}]}. The fallback is only for trivial single-node edits.
 
 # Validation Checklist
-- One top-level object with a "blueprint" key (or the fallback single_change shape for trivial edits).
+- One top-level object with a "blueprint" key.
 - Every node has ref, label, purpose, and nodeTemplateKey.
 - Every nodeRef referenced in links or bindings is declared in nodes[].
 - For scoped iterator links/bindings, the iterator ref is declared in nodes[] and the step ref is declared in that node's iteratorBody.steps[].
-- bindings are mandatory since there alway a data flow between nodes 
+- Use links for execution order and dependencies.
+- Use bindings only when the target consumes a source output or a selected constant resource.
+- Do not invent bindings for pure control-flow dependencies.
+- Every required input must either have a matching binding, a constant binding, or be explicitly marked unresolved in riskFlags.
+
 - links are mandatory when having more that one node and precedence flow execution constraints and data binding flow
 - iteratorBody edges reference only iteratorBody step refs.
 - No invented agents, node template keys, connector slugs, skill slugs, or connector action keys.

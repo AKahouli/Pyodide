@@ -450,7 +450,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'step');
     expect(node).toBeDefined();
     if (!node) return;
-    expect(node.task.templateType).toBe('synthesis-step');
+    expect(node.task.nodeTemplateKey).toBe('synthesis-step');
     expect(node.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['context']);
     expect(node.task.outputPorts?.map((p: { id: string }) => p.id)).toEqual(['draft']);
   });
@@ -686,7 +686,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 't',
       summary: '',
-      nodes: [{ ref: 'r', label: 'R', purpose: '', nodeTemplateKey: 'missing-template', nodeType: 'agent' }],
+      nodes: [{ ref: 'r', label: 'R', purpose: '', nodeTemplateKey: 'missing-template' }],
       links: [],
       bindings: [{ targetRef: 'r', targetPort: 'context', sourceKind: 'constant', constantValue: { kind: 'workspace', id: 'ws-1', workspaceId: 'ws-1' } }],
     };

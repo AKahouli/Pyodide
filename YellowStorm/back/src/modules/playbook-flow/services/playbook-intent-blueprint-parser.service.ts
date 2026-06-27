@@ -127,7 +127,6 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDrop(dropped, 'blueprint_node_duplicate_ref', ref);
         continue;
       }
-      const templateType = this.asString(raw.templateType) || null;
       const inputPorts = this.parsePorts(raw.inputPorts, dropped, `${ref}.inputs`);
       const outputPorts = this.parsePorts(raw.outputPorts, dropped, `${ref}.outputs`);
       const anchor = this.parseAnchor(raw.anchor);
@@ -137,8 +136,6 @@ export class PlaybookIntentBlueprintParserService {
         label,
         purpose,
         nodeTemplateKey,
-        templateType,
-        nodeType: this.asString(raw.nodeType) || null,
         agentHint: this.asString(raw.agentHint) || null,
         inputPorts,
         outputPorts,
@@ -213,18 +210,8 @@ export class PlaybookIntentBlueprintParserService {
     return accepted;
   }
 
-  private parseNodeTemplateKey(raw: Record<string, unknown>, ownerRef: string): string {
-    const nodeTemplateKey = this.asString(raw.nodeTemplateKey ?? raw.node_template_key);
-    if (nodeTemplateKey) return nodeTemplateKey;
-
-    // Compatibility fallback lets existing saved prompt overrides drain while compilation moves to template keys.
-    const legacyTemplateType = this.asString(raw.templateType);
-    if (legacyTemplateType) {
-      const safeOwnerRef = ownerRef.replace(/[\r\n]/g, ' ');
-      const safeTemplateType = legacyTemplateType.replace(/[\r\n]/g, ' ');
-      this.logger.warn(`playbook_intent_blueprint_legacy_template_type owner=${safeOwnerRef} templateType=${safeTemplateType}`);
-    }
-    return legacyTemplateType;
+  private parseNodeTemplateKey(raw: Record<string, unknown>, _ownerRef: string): string {
+    return this.asString(raw.nodeTemplateKey ?? raw.node_template_key);
   }
 
   private parsePorts(
@@ -315,8 +302,6 @@ export class PlaybookIntentBlueprintParserService {
       title,
       description: this.asString(raw.description),
       nodeTemplateKey,
-      templateType: this.asString(raw.templateType) || null,
-      nodeType: this.asString(raw.nodeType) || null,
       inputPorts: this.parsePorts(raw.inputPorts, dropped, `${ownerRef}.${ref}.inputs`),
       outputPorts: this.parsePorts(raw.outputPorts, dropped, `${ownerRef}.${ref}.outputs`),
     };

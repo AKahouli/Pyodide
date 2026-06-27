@@ -10,10 +10,6 @@ export interface PlaybookIntentBlueprintIteratorStep {
   title: string;
   description?: string;
   nodeTemplateKey: string;
-  /** @deprecated Use nodeTemplateKey. Kept only while old LLM outputs drain. */
-  templateType?: string | null;
-  /** @deprecated Semantic metadata only. Do not use for compilation. */
-  nodeType?: string | null;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
 }
@@ -33,10 +29,6 @@ export interface PlaybookIntentBlueprintNode {
   label: string;
   purpose: string;
   nodeTemplateKey: string;
-  /** @deprecated Use nodeTemplateKey. Kept only while old LLM outputs drain. */
-  templateType?: string | null;
-  /** @deprecated Semantic metadata only. Do not use for compilation. */
-  nodeType?: string | null;
   agentHint?: string | null;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];

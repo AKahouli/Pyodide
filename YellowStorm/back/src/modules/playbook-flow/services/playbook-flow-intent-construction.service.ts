@@ -2,10 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS } from '@modules/system/interfaces/playbook-settings.interface';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartResult, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
-import { PlaybookFlowIntentService, type IntentNormalizationLimits, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
+import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
@@ -92,7 +91,6 @@ export class PlaybookFlowIntentConstructionService {
     job.status = 'running';
     try {
       this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Planning workflow construction' });
-      const useBlueprint = context.effectiveSettings.useDeterministicBlueprintBuilder;
       const response = await context.httpClient.post('/v1/chat/completions', {
         model: context.model,
         temperature: 0.2,
@@ -103,28 +101,16 @@ export class PlaybookFlowIntentConstructionService {
       if (job.abortController.signal.aborted) return;
 
       let raw = '';
-      let emittedDeltaCount = 0;
       for await (const content of this.readChatCompletionStream(response.data)) {
         if (job.abortController.signal.aborted) return;
         raw += content;
-        if (useBlueprint) continue;
-        const partialSuggestions = this.normalizePartialSuggestions(raw, dto, context);
-        emittedDeltaCount = await this.emitSuggestions(job, partialSuggestions, emittedDeltaCount);
       }
 
-      if (useBlueprint || this.blueprintParser.hasBlueprintShape(raw)) {
-        const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
-        await this.emitSuggestions(job, suggestions);
-        if (job.abortController.signal.aborted) return;
-        job.status = 'completed';
-        this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
-      } else {
-        const suggestions = this.normalizeRawSuggestions(raw, dto, context);
-        await this.emitSuggestions(job, suggestions, emittedDeltaCount);
-        if (job.abortController.signal.aborted) return;
-        job.status = 'completed';
-        this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
-      }
+      const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
+      await this.emitSuggestions(job, suggestions);
+      if (job.abortController.signal.aborted) return;
+      job.status = 'completed';
+      this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
       this.scheduleCleanup(job);
     } catch (error) {
       if (job.abortController.signal.aborted) return;
@@ -142,11 +128,13 @@ export class PlaybookFlowIntentConstructionService {
     dto: RequestPlaybookFlowIntentDto,
   ): PlaybookIntentSuggestion[] {
     if (!this.blueprintParser.hasBlueprintShape(raw)) {
-      return this.normalizeRawSuggestions(raw, dto, context);
+      this.logger.warn('playbook_intent_construction_invalid_blueprint_output rule=missing_blueprint');
+      return [];
     }
     const parsed = this.blueprintParser.parse(raw);
     if (!parsed) {
-      return this.normalizeRawSuggestions(raw, dto, context);
+      this.logger.warn('playbook_intent_construction_invalid_blueprint_output rule=parse_failed');
+      return [];
     }
     try {
       const built = this.graphBuilder.build({
@@ -163,7 +151,7 @@ export class PlaybookFlowIntentConstructionService {
       return [built.suggestion];
     } catch (error) {
       this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
-      return this.normalizeRawSuggestions(raw, dto, context);
+      return [];
     }
   }
 
@@ -180,42 +168,6 @@ export class PlaybookFlowIntentConstructionService {
       await this.waitForNextDelta(job.abortController.signal);
     }
     return Math.max(emittedDeltaCount, deltas.length);
-  }
-
-  private normalizeRawSuggestions(raw: string, dto: RequestPlaybookFlowIntentDto, context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>): PlaybookIntentSuggestion[] {
-    return this.intentService.normalizeConstructionSuggestions({
-      raw,
-      dto,
-      selectedNodeId: context.selectedNodeId,
-      limits: this.getConstructionLimits(context.limits),
-      validationContext: context.validationContext,
-      includeFallback: false,
-    });
-  }
-
-  private normalizePartialSuggestions(raw: string, dto: RequestPlaybookFlowIntentDto, context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>): PlaybookIntentSuggestion[] {
-    const changes = this.extractCompleteChanges(raw);
-    if (changes.length === 0) return [];
-    return this.normalizeRawSuggestions(JSON.stringify({
-      suggestions: [{
-        kind: 'workflow_plan',
-        label: this.extractStringField(raw, 'label') || 'Realtime workflow construction',
-        summary: this.extractStringField(raw, 'summary') || '',
-        reason: this.extractStringField(raw, 'reason') || '',
-        confidence: 0.8,
-        changes,
-      }],
-    }), dto, context);
-  }
-
-  private getConstructionLimits(limits: IntentNormalizationLimits): IntentNormalizationLimits {
-    return {
-      ...limits,
-      maxWorkflowPlanChanges: Math.max(
-        limits.maxWorkflowPlanChanges,
-        DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS.maxWorkflowPlanChanges,
-      ),
-    };
   }
 
   private async *readChatCompletionStream(stream: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
@@ -247,59 +199,6 @@ export class PlaybookFlowIntentConstructionService {
       const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }> };
       const content = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content;
       return typeof content === 'string' ? content : '';
-    } catch {
-      return '';
-    }
-  }
-
-  private extractCompleteChanges(raw: string): Array<Record<string, unknown>> {
-    const changesKeyIndex = raw.indexOf('"changes"');
-    if (changesKeyIndex < 0) return [];
-    const arrayStart = raw.indexOf('[', changesKeyIndex);
-    if (arrayStart < 0) return [];
-
-    const changes: Array<Record<string, unknown>> = [];
-    let objectStart = -1;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let index = arrayStart + 1; index < raw.length; index += 1) {
-      const char = raw[index];
-      if (inString) {
-        escaped = !escaped && char === '\\';
-        if (!escaped && char === '"') inString = false;
-        if (char !== '\\') escaped = false;
-        continue;
-      }
-      if (char === '"') {
-        inString = true;
-        continue;
-      }
-      if (char === '{') {
-        if (depth === 0) objectStart = index;
-        depth += 1;
-      }
-      if (char === '}') {
-        depth -= 1;
-        if (depth === 0 && objectStart >= 0) {
-          try {
-            changes.push(JSON.parse(raw.slice(objectStart, index + 1)) as Record<string, unknown>);
-          } catch {
-            return changes;
-          }
-          objectStart = -1;
-        }
-      }
-      if (char === ']' && depth === 0) break;
-    }
-    return changes;
-  }
-
-  private extractStringField(raw: string, field: string): string {
-    const match = raw.match(new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
-    if (!match) return '';
-    try {
-      return JSON.parse(`"${match[1]}"`) as string;
     } catch {
       return '';
     }

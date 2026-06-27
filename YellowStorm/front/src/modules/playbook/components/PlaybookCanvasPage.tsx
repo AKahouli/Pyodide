@@ -58,6 +58,7 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
+import { isIntentIteratorTask } from '../utils/intent-task-template';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { usePlaybookCanvasNodeHandlers, type PlaybookBindingModalState } from '../hooks/usePlaybookCanvasNodeHandlers';
 import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHandlers';
@@ -1512,12 +1513,13 @@ function PlaybookCanvasInner() {
       return updatedTask;
     };
 
-    const findMatchingTemplate = (_title: string, _description: string, templateType?: string | null) => {
-      if (templateType) {
-        const exactTemplate = nodeTemplates.find((template) => template.type === templateType);
+    const findMatchingTemplate = (_title: string, _description: string, nodeTemplateKey?: string | null) => {
+      if (nodeTemplateKey) {
+        const exactTemplate = nodeTemplates.find((template) => template.key === nodeTemplateKey);
         if (exactTemplate) {
           return exactTemplate;
         }
+        console.warn(`playbook_intent_template_key_unresolved key=${nodeTemplateKey}`);
       }
 
       return null;
@@ -1529,21 +1531,22 @@ function PlaybookCanvasInner() {
       title: string,
       description: string,
       agentSlug: string | null | undefined,
-      templateType: string | null | undefined,
+      nodeTemplateKey: string | null | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
+      iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
       anchorTask: PlaybookTask | null,
       order: number,
       toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
       skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ): PlaybookTask => {
-      const matchedTemplate = findMatchingTemplate(title, description, templateType);
+      const matchedTemplate = findMatchingTemplate(title, description, nodeTemplateKey);
       const matchedNodeType = matchedTemplate?.nodeType
-        ?? (templateType === 'iterator' ? 'iterator' as const : templateType === 'evaluation' ? 'evaluation' as const : 'agent');
+        ?? 'agent';
       const genericInputPorts = normalizeIntentInputPorts(inputPorts);
       const genericOutputPorts = normalizeIntentOutputPorts(outputPorts);
 
-      const isIterator = matchedNodeType === 'iterator';
+      const isIterator = isIntentIteratorTask(matchedTemplate, iteratorBody);
 
       return {
         id: taskId,
@@ -1573,17 +1576,19 @@ function PlaybookCanvasInner() {
           : matchedNodeType === 'evaluation'
             ? 'evaluation'
             : 'generic',
-        nodeType: matchedNodeType,
-        templateType: matchedTemplate?.type ?? templateType ?? null,
+        nodeType: isIterator ? 'iterator' : matchedNodeType,
+        templateType: matchedTemplate?.type ?? null,
         iteratorConfig: isIterator
-          ? {
-              source: '{{items}}',
-              mode: 'item',
-              batchSize: 10,
-              itemVariable: 'item',
-              outputVariable: 'processed_items',
-              errorStrategy: 'stop',
-            }
+          ? matchedTemplate?.iteratorConfig
+            ? { ...matchedTemplate.iteratorConfig }
+            : {
+                source: '{{items}}',
+                mode: 'item',
+                batchSize: 10,
+                itemVariable: 'item',
+                outputVariable: 'processed_items',
+                errorStrategy: 'stop',
+              }
           : undefined,
         inputPorts: genericInputPorts.length > 0
           ? genericInputPorts
@@ -1712,7 +1717,7 @@ function PlaybookCanvasInner() {
       taskTitle: string,
       taskDescription: string,
       agentSlug: string | null | undefined,
-      templateType: string | null | undefined,
+      nodeTemplateKey: string | null | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
@@ -1752,9 +1757,10 @@ function PlaybookCanvasInner() {
         taskTitle,
         taskDescription,
         agentSlug,
-        templateType,
+        nodeTemplateKey,
         inputPorts,
         outputPorts,
+        iteratorBody,
         anchorTask,
         nextTasks.length,
         toolBindings,
@@ -1776,9 +1782,10 @@ function PlaybookCanvasInner() {
             step.title,
             step.description,
             step.agentSlug,
-            step.templateType,
+            step.nodeTemplateKey,
             step.inputPorts,
             step.outputPorts,
+            undefined,
             newTask,
             nextTasks.length + index + 1,
           );
@@ -2397,7 +2404,7 @@ function PlaybookCanvasInner() {
         change.task.title || '',
         change.task.description || '',
         change.task.agentSlug,
-        change.task.templateType,
+        change.task.nodeTemplateKey,
         change.task.inputPorts,
         change.task.outputPorts,
         change.task.iteratorBody,
@@ -2440,7 +2447,7 @@ function PlaybookCanvasInner() {
           change.task.title,
           change.task.description,
           change.task.agentSlug,
-          change.task.templateType,
+          change.task.nodeTemplateKey,
           change.task.inputPorts,
           change.task.outputPorts,
           change.task.iteratorBody,
