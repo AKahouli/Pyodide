@@ -758,8 +758,8 @@ export class PlaybookFlowIntentService {
             designCatalog: this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog),
             selectedNodeId: args.context.selectedNodeId,
           });
-          if (buildResult.dropped.length) {
-            this.logger.warn(`playbook_intent_builder_dropped items=${buildResult.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
+          if (buildResult.diagnostics.length) {
+            this.logger.warn(`playbook_intent_builder_diagnostics items=${buildResult.diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
           }
           return [buildResult.suggestion];
         } catch (error) {
@@ -1119,11 +1119,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       }
     }
 
-    const resolvedChanges = this.graphBindingResolver.resolveWorkflowChanges({
+    const resolved = this.graphBindingResolver.resolveWorkflowChanges({
       changes: acceptedChanges,
       context: ctx,
       deletedTaskIds,
     });
+    const resolvedChanges = resolved.changes;
 
     if (resolvedChanges.length === 0) {
       return null;

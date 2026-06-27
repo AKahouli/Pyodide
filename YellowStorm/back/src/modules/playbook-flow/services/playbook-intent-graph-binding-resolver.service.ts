@@ -4,6 +4,7 @@ import type {
   PlaybookIntentTaskDraft,
   PlaybookIntentWorkflowChange,
 } from './playbook-flow-intent.service';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 
 type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
 type CreateEdgeChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_edge' | 'delete_edge' }> & { type: 'create_edge' };
@@ -21,25 +22,31 @@ interface ResolveParams {
   deletedTaskIds: Set<string>;
 }
 
+export interface ResolveWorkflowChangesResult {
+  changes: PlaybookIntentWorkflowChange[];
+  diagnostics: PlaybookIntentDiagnostic[];
+}
+
 @Injectable()
 export class PlaybookIntentGraphBindingResolverService {
   private readonly logger = new Logger(PlaybookIntentGraphBindingResolverService.name);
 
-  resolveWorkflowChanges(params: ResolveParams): PlaybookIntentWorkflowChange[] {
+  resolveWorkflowChanges(params: ResolveParams): ResolveWorkflowChangesResult {
     const catalog = this.buildCatalog(params.changes, params.context);
     const accepted: PlaybookIntentWorkflowChange[] = [];
     const edges = new Map<string, PlaybookIntentWorkflowChange>();
     const bindings = new Map<string, PlaybookIntentWorkflowChange>();
+    const diagnostics: PlaybookIntentDiagnostic[] = [];
 
     for (const change of params.changes) {
       if (change.type === 'create_edge') {
-        const edge = this.resolveEdge(change as CreateEdgeChange, catalog, params.deletedTaskIds);
-        if (edge) this.setUnique(edges, this.edgeKey(edge), edge, 'duplicate_edge');
+        const edge = this.resolveEdge(change as CreateEdgeChange, catalog, params.deletedTaskIds, diagnostics);
+        if (edge) this.setUnique(edges, this.edgeKey(edge), edge, 'duplicate_edge', diagnostics);
         continue;
       }
       if (change.type === 'create_data_binding') {
-        const binding = this.resolveBinding(change, catalog, params.context, params.deletedTaskIds);
-        if (binding) this.setUnique(bindings, this.bindingKey(binding), binding, 'duplicate_binding_target');
+        const binding = this.resolveBinding(change, catalog, params.context, params.deletedTaskIds, diagnostics);
+        if (binding) this.setUnique(bindings, this.bindingKey(binding), binding, 'duplicate_binding_target', diagnostics);
         continue;
       }
       accepted.push(change);
@@ -54,7 +61,7 @@ export class PlaybookIntentGraphBindingResolverService {
     }
 
     accepted.push(...bindings.values());
-    return accepted;
+    return { changes: accepted, diagnostics };
   }
 
   private buildCatalog(changes: PlaybookIntentWorkflowChange[], context: IntentWorkflowValidationContext): PortCatalog {
@@ -86,11 +93,12 @@ export class PlaybookIntentGraphBindingResolverService {
     edge: CreateEdgeChange,
     catalog: PortCatalog,
     deletedTaskIds: Set<string>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
     const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog);
     const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog);
     if (!sourceId || !targetId || deletedTaskIds.has(sourceId) || deletedTaskIds.has(targetId)) {
-      this.warnDrop('edge_unresolved_task', `${edge.sourceTaskId || edge.sourceNodeRef || '?'}->${edge.targetTaskId || edge.targetNodeRef || '?'}`);
+      this.recordDiagnostic(diagnostics, 'edge_unresolved_task', `${edge.sourceTaskId || edge.sourceNodeRef || '?'}->${edge.targetTaskId || edge.targetNodeRef || '?'}`);
       return null;
     }
 
@@ -104,23 +112,23 @@ export class PlaybookIntentGraphBindingResolverService {
       sourcePort = this.resolvePort(sourcePorts, edge.sourceOutputPortId, requestedTargetPort.kind, true);
       if (sourcePort.id) {
         targetPort = this.resolvePort(targetPorts, edge.targetInputPortId || null, sourcePort.kind, true);
-        this.warnDrop('edge_port_fallback', `${sourceId}.${edge.sourceOutputPortId}->${sourceId}.${sourcePort.id}`);
+        this.recordDiagnostic(diagnostics, 'edge_port_fallback', `${sourceId}.${edge.sourceOutputPortId}->${sourceId}.${sourcePort.id}`);
       }
     }
 
     if (edge.targetInputPortId && !targetPort.id) {
       targetPort = this.resolvePort(targetPorts, edge.targetInputPortId, sourcePort.kind, true);
       if (targetPort.id) {
-        this.warnDrop('edge_port_fallback', `${targetId}.${edge.targetInputPortId}->${targetId}.${targetPort.id}`);
+        this.recordDiagnostic(diagnostics, 'edge_port_fallback', `${targetId}.${edge.targetInputPortId}->${targetId}.${targetPort.id}`);
       }
     }
 
     if ((edge.sourceOutputPortId && !sourcePort.id) || (edge.targetInputPortId && !targetPort.id)) {
-      this.warnDrop('edge_unknown_port', `${sourceId}.${edge.sourceOutputPortId || '?'}->${targetId}.${edge.targetInputPortId || '?'}`);
+      this.recordDiagnostic(diagnostics, 'edge_unknown_port', `${sourceId}.${edge.sourceOutputPortId || '?'}->${targetId}.${edge.targetInputPortId || '?'}`);
       return null;
     }
     if (sourcePort.kind && targetPort.kind && sourcePort.kind !== targetPort.kind) {
-      this.warnDrop('edge_artifact_mismatch', `${sourceId}.${sourcePort.id || '?'}->${targetId}.${targetPort.id || '?'}`);
+      this.recordDiagnostic(diagnostics, 'edge_artifact_mismatch', `${sourceId}.${sourcePort.id || '?'}->${targetId}.${targetPort.id || '?'}`);
       return {
         ...edge,
         ...(sourcePort.id ? { sourceOutputPortId: sourcePort.id } : {}),
@@ -139,20 +147,21 @@ export class PlaybookIntentGraphBindingResolverService {
     catalog: PortCatalog,
     context: IntentWorkflowValidationContext,
     deletedTaskIds: Set<string>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
     const targetId = this.resolveTaskId(binding.targetTaskId, binding.targetNodeRef, binding.targetIteratorNodeRef || null, catalog);
     if (!targetId || deletedTaskIds.has(targetId)) {
-      this.warnDrop('binding_unresolved_target', `${binding.targetTaskId || binding.targetNodeRef || '?'}.${binding.targetPort}`);
+      this.recordDiagnostic(diagnostics, 'binding_unresolved_target', `${binding.targetTaskId || binding.targetNodeRef || '?'}.${binding.targetPort}`);
       return null;
     }
 
     const targetPort = this.resolvePort(catalog.inputPorts.get(targetId), binding.targetPort, null);
     if (!targetPort.id) {
-      this.warnDrop('binding_unknown_target_port', `${targetId}.${binding.targetPort}`);
+      this.recordDiagnostic(diagnostics, 'binding_unknown_target_port', `${targetId}.${binding.targetPort}`);
       return null;
     }
     if (context.existingBindingTargets.has(`${targetId}:${targetPort.id}`)) {
-      this.warnDrop('existing_binding_target', `${targetId}.${targetPort.id}`);
+      this.recordDiagnostic(diagnostics, 'existing_binding_target', `${targetId}.${targetPort.id}`);
       return null;
     }
 
@@ -162,12 +171,12 @@ export class PlaybookIntentGraphBindingResolverService {
 
     const sourceId = this.resolveTaskId(binding.sourceTaskId, binding.sourceNodeRef, binding.sourceIteratorNodeRef || null, catalog);
     if (!sourceId || deletedTaskIds.has(sourceId)) {
-      this.warnDrop('binding_unresolved_source', `${binding.sourceTaskId || binding.sourceNodeRef || '?'}->${targetId}.${targetPort.id}`);
+      this.recordDiagnostic(diagnostics, 'binding_unresolved_source', `${binding.sourceTaskId || binding.sourceNodeRef || '?'}->${targetId}.${targetPort.id}`);
       return null;
     }
     const sourcePort = this.resolvePort(catalog.outputPorts.get(sourceId), binding.sourcePort || null, targetPort.kind);
     if (!sourcePort.id || sourcePort.kind !== targetPort.kind) {
-      this.warnDrop('binding_artifact_mismatch', `${sourceId}.${binding.sourcePort || '?'}->${targetId}.${targetPort.id}`);
+      this.recordDiagnostic(diagnostics, 'binding_artifact_mismatch', `${sourceId}.${binding.sourcePort || '?'}->${targetId}.${targetPort.id}`);
       return null;
     }
 
@@ -241,15 +250,23 @@ export class PlaybookIntentGraphBindingResolverService {
     return iteratorRef && nodeRef ? `${iteratorRef}.${nodeRef}` : nodeRef || '';
   }
 
-  private setUnique<T>(items: Map<string, T>, key: string, value: T, rule: string): void {
+  private setUnique<T>(items: Map<string, T>, key: string, value: T, code: string, diagnostics: PlaybookIntentDiagnostic[]): void {
     if (items.has(key)) {
-      this.warnDrop(rule, key);
+      this.recordDiagnostic(diagnostics, code, key);
       return;
     }
     items.set(key, value);
   }
 
-  private warnDrop(rule: string, itemId: string): void {
-    this.logger.warn(`playbook_intent_connection_drop rule=${rule} item=${itemId}`);
+  private recordDiagnostic(diagnostics: PlaybookIntentDiagnostic[], code: string, itemId: string): void {
+    const diagnostic: PlaybookIntentDiagnostic = {
+      severity: 'warning',
+      stage: 'binding_resolver',
+      code,
+      itemId,
+      message: code,
+    };
+    diagnostics.push(diagnostic);
+    this.logger.warn(`playbook_intent_connection_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
   }
 }

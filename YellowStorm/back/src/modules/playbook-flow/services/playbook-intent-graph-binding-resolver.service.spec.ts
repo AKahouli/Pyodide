@@ -21,7 +21,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
   const service = new PlaybookIntentGraphBindingResolverService();
 
   it('synthesizes a data binding from a valid ported edge', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['report', 'document']]]],
@@ -39,14 +39,14 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'create_edge' }),
       expect.objectContaining({ type: 'create_data_binding', sourcePort: 'report', targetPort: 'report' }),
     ]));
   });
 
   it('resolves scoped iterator child targets and synthesizes bindings against child ports', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext(),
       deletedTaskIds: new Set(),
       changes: [
@@ -88,7 +88,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       ],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'create_edge',
         targetIteratorNodeRef: 'loop',
@@ -106,7 +106,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
   });
 
   it('keeps mismatched visual edges without synthesizing unsafe bindings', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['report', 'document']]]],
@@ -124,7 +124,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([expect.objectContaining({
+    expect(result.changes).toEqual([expect.objectContaining({
       type: 'create_edge',
       sourceOutputPortId: 'report',
       targetInputPortId: 'payload',
@@ -132,7 +132,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
   });
 
   it('infers an unknown source port when exactly one compatible output exists', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['report', 'document']]]],
@@ -150,14 +150,14 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'create_edge', sourceOutputPortId: 'report', targetInputPortId: 'report' }),
       expect.objectContaining({ type: 'create_data_binding', sourcePort: 'report', targetPort: 'report' }),
     ]));
   });
 
   it('infers a mistyped source port when exactly one compatible output exists', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['output_document', 'document'], ['output_notes', 'text']]]],
@@ -175,7 +175,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'create_edge',
         sourceOutputPortId: 'output_document',
@@ -190,7 +190,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
   });
 
   it('drops an unknown edge port when compatible fallback is ambiguous', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['report_a', 'document'], ['report_b', 'document']]]],
@@ -208,11 +208,14 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([]);
+    expect(result.changes).toEqual([]);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'edge_unknown_port', stage: 'binding_resolver', severity: 'warning' }),
+    ]));
   });
 
   it('infers a mistyped target port when exactly one compatible input exists', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['document', 'document']]]],
@@ -230,7 +233,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'create_edge',
         sourceOutputPortId: 'document',
@@ -257,7 +260,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       iteration: 'current',
     };
 
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['text', 'text']]]],
@@ -267,12 +270,12 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       changes: [binding, binding],
     });
 
-    expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual(expect.objectContaining({ type: 'create_data_binding', targetPort: 'input' }));
+    expect(result.changes).toHaveLength(1);
+    expect(result.changes[0]).toEqual(expect.objectContaining({ type: 'create_data_binding', targetPort: 'input' }));
   });
 
   it('drops bindings targeting an existing binding target', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['text', 'text']]]],
@@ -293,11 +296,14 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([]);
+    expect(result.changes).toEqual([]);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'existing_binding_target', stage: 'binding_resolver', severity: 'warning' }),
+    ]));
   });
 
   it('keeps valid constant resource bindings', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['target'],
         inputPortsByTaskId: [['target', [['input-context', 'text']]]],
@@ -313,11 +319,11 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([expect.objectContaining({ type: 'create_data_binding', sourceKind: 'constant' })]);
+    expect(result.changes).toEqual([expect.objectContaining({ type: 'create_data_binding', sourceKind: 'constant' })]);
   });
 
   it('uses ports from newly created node refs', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext(),
       deletedTaskIds: new Set(),
       changes: [
@@ -345,13 +351,13 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       ],
     });
 
-    expect(changes).toEqual(expect.arrayContaining([
+    expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'create_data_binding', sourceNodeRef: 'source_ref', targetNodeRef: 'target_ref' }),
     ]));
   });
 
   it('does not infer a missing port when multiple compatible candidates exist', () => {
-    const changes = service.resolveWorkflowChanges({
+    const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
         outputPortsByTaskId: [['source', [['a', 'text'], ['b', 'text']]]],
@@ -371,6 +377,6 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(changes).toEqual([]);
+    expect(result.changes).toEqual([]);
   });
 });

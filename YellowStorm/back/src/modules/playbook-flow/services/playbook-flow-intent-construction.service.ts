@@ -145,8 +145,8 @@ export class PlaybookFlowIntentConstructionService {
         designCatalog: this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog),
         selectedNodeId: context.selectedNodeId,
       });
-      if (built.dropped.length) {
-        this.logger.warn(`playbook_intent_builder_dropped items=${built.dropped.map((drop) => `${drop.rule}:${drop.itemId}`).join(',')}`);
+      if (built.diagnostics.length) {
+        this.logger.warn(`playbook_intent_builder_diagnostics items=${built.diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
       }
       return [built.suggestion];
     } catch (error) {

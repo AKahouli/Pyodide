@@ -7,6 +7,7 @@ import {
   PlaybookIntentBlueprintNode,
   PlaybookIntentBlueprintPort,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 import type {
   IntentNormalizationLimits,
   IntentWorkflowValidationContext,
@@ -70,7 +71,7 @@ export interface BuilderCatalogSkill {
 
 interface BuildResult {
   suggestion: WorkflowPlanSuggestion;
-  dropped: Array<{ rule: string; itemId: string }>;
+  diagnostics: PlaybookIntentDiagnostic[];
 }
 
 type BuilderPort = NonNullable<PlaybookIntentTaskDraft['inputPorts']>[number];
@@ -97,7 +98,7 @@ export class PlaybookIntentGraphBuilderService {
   ) {}
 
   build(options: BuildOptions): BuildResult {
-    const dropped: Array<{ rule: string; itemId: string }> = [];
+    const diagnostics: PlaybookIntentDiagnostic[] = [];
     const nodesByRef = new Map<string, PlaybookIntentBlueprintNode>();
     for (const node of options.blueprint.nodes) {
       nodesByRef.set(node.ref, node);
@@ -108,33 +109,35 @@ export class PlaybookIntentGraphBuilderService {
     const referencedPorts = this.collectReferencedPorts(options.blueprint);
 
     for (const blueprintNode of options.blueprint.nodes.slice(0, options.limits.maxWorkflowPlanChanges)) {
-      const change = this.buildCreateNodeChange(blueprintNode, options, dropped, referencedPorts);
+      const change = this.buildCreateNodeChange(blueprintNode, options, diagnostics, referencedPorts);
       if (!change) continue;
       acceptedChanges.push(change);
       createdRefs.add(blueprintNode.ref);
     }
 
     for (const link of options.blueprint.links) {
-      const change = this.buildCreateEdgeChange(link, options, dropped);
+      const change = this.buildCreateEdgeChange(link, options, diagnostics);
       if (change) acceptedChanges.push(change);
     }
 
     const explicitEdgeKeys = new Set(options.blueprint.links.map((link) => this.blueprintEdgeKey(link)));
     for (const binding of options.blueprint.bindings || []) {
-      const change = this.buildCreateEdgeChangeFromBinding(binding, options, explicitEdgeKeys, dropped);
+      const change = this.buildCreateEdgeChangeFromBinding(binding, options, explicitEdgeKeys, diagnostics);
       if (change) acceptedChanges.push(change);
     }
 
     for (const binding of options.blueprint.bindings || []) {
-      const change = this.buildCreateBindingChange(binding, options, dropped);
+      const change = this.buildCreateBindingChange(binding, options, diagnostics);
       if (change) acceptedChanges.push(change);
     }
 
-    const resolvedChanges = this.resolver.resolveWorkflowChanges({
+    const resolved = this.resolver.resolveWorkflowChanges({
       changes: acceptedChanges,
       context: options.context,
       deletedTaskIds: new Set(),
     });
+    diagnostics.push(...resolved.diagnostics);
+    const resolvedChanges = resolved.changes;
 
     const label = options.blueprint.title;
     const summary = options.blueprint.summary;
@@ -150,19 +153,19 @@ export class PlaybookIntentGraphBuilderService {
       isDirectIntentFallback: false,
     };
 
-    return { suggestion, dropped };
+    return { suggestion, diagnostics };
   }
 
   private buildCreateNodeChange(
     node: PlaybookIntentBlueprintNode,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     referencedPorts: ReferencedPorts,
   ): PlaybookIntentWorkflowChange | null {
-    const template = this.resolveNodeTemplate(node.nodeTemplateKey, options.templates, dropped);
+    const template = this.resolveNodeTemplate(node.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
-    const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), referencedPorts.inputKindsByRef.get(node.ref), dropped);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), dropped);
+    const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), referencedPorts.inputKindsByRef.get(node.ref), diagnostics);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
     const agentSlug = this.resolveAgentSlug(node, template);
 
     const task: PlaybookIntentTaskDraft = {
@@ -172,12 +175,12 @@ export class PlaybookIntentGraphBuilderService {
       nodeTemplateKey: template.key,
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
-      ...(node.connectorRefs?.length ? { toolBindings: this.buildToolBindings(node, options, dropped) } : {}),
-      ...(node.skillRefs?.length ? { skillBindings: this.buildSkillBindings(node, options, dropped) } : {}),
-      ...(node.iteratorBody && this.supportsIteratorBody(template) ? { iteratorBody: this.buildIteratorBody(node.ref, node.iteratorBody, options, dropped, referencedPorts) } : {}),
+      ...(node.connectorRefs?.length ? { toolBindings: this.buildToolBindings(node, options, diagnostics) } : {}),
+      ...(node.skillRefs?.length ? { skillBindings: this.buildSkillBindings(node, options, diagnostics) } : {}),
+      ...(node.iteratorBody && this.supportsIteratorBody(template) ? { iteratorBody: this.buildIteratorBody(node.ref, node.iteratorBody, options, diagnostics, referencedPorts) } : {}),
     };
     if (node.iteratorBody && !this.supportsIteratorBody(template)) {
-      this.recordDrop(dropped, 'builder_iterator_body_not_supported_by_template', node.ref);
+      this.recordDiagnostic(diagnostics, 'builder_iterator_body_not_supported_by_template', node.ref);
     }
 
     return {
@@ -197,7 +200,7 @@ export class PlaybookIntentGraphBuilderService {
   private buildToolBindings(
     node: PlaybookIntentBlueprintNode,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): NonNullable<PlaybookIntentTaskDraft['toolBindings']> {
     const connectors = new Map((options.designCatalog?.connectors || []).map((connector) => [connector.slug, connector]));
     const actionKeys = new Set((options.designCatalog?.connectorActions || []).map((action) => `${action.connectorSlug}:${action.actionKey}`));
@@ -206,11 +209,11 @@ export class PlaybookIntentGraphBuilderService {
     for (const ref of node.connectorRefs || []) {
       const connector = connectors.get(ref.connectorSlug);
       if (!connector) {
-        this.recordDrop(dropped, 'builder_connector_ref_unknown_slug', `${node.ref}:${ref.connectorSlug}`);
+        this.recordDiagnostic(diagnostics, 'builder_connector_ref_unknown_slug', `${node.ref}:${ref.connectorSlug}`);
         continue;
       }
       if (!actionKeys.has(`${ref.connectorSlug}:${ref.actionKey}`)) {
-        this.recordDrop(dropped, 'builder_connector_ref_unknown_action', `${node.ref}:${ref.connectorSlug}.${ref.actionKey}`);
+        this.recordDiagnostic(diagnostics, 'builder_connector_ref_unknown_action', `${node.ref}:${ref.connectorSlug}.${ref.actionKey}`);
         continue;
       }
       const existing = bindingsBySlug.get(ref.connectorSlug);
@@ -235,14 +238,14 @@ export class PlaybookIntentGraphBuilderService {
   private buildSkillBindings(
     node: PlaybookIntentBlueprintNode,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): NonNullable<PlaybookIntentTaskDraft['skillBindings']> {
     const skills = new Map((options.designCatalog?.skills || []).map((skill) => [skill.slug, skill]));
     const bindings = [] as NonNullable<PlaybookIntentTaskDraft['skillBindings']>;
     for (const ref of node.skillRefs || []) {
       const skill = skills.get(ref.skillSlug);
       if (!skill) {
-        this.recordDrop(dropped, 'builder_skill_ref_unknown_slug', `${node.ref}:${ref.skillSlug}`);
+        this.recordDiagnostic(diagnostics, 'builder_skill_ref_unknown_slug', `${node.ref}:${ref.skillSlug}`);
         continue;
       }
       bindings.push({
@@ -264,14 +267,14 @@ export class PlaybookIntentGraphBuilderService {
     ownerRef: string,
     body: NonNullable<PlaybookIntentBlueprintNode['iteratorBody']>,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     externalReferencedPorts: ReferencedPorts,
   ): PlaybookIntentTaskDraft['iteratorBody'] {
     const referencedPorts = this.collectIteratorReferencedPorts(body);
     this.mergeExternalIteratorReferences(ownerRef, body, referencedPorts, externalReferencedPorts);
     const steps = body.steps
       .slice(0, options.limits.maxIteratorBodySteps)
-      .map((step) => this.buildIteratorStep(step, options, dropped, referencedPorts))
+      .map((step) => this.buildIteratorStep(step, options, diagnostics, referencedPorts))
       .filter((step): step is NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] => step !== null);
     const validStepRefs = new Set(steps.map((s) => s.nodeRef));
     const edges = body.edges
@@ -290,13 +293,13 @@ export class PlaybookIntentGraphBuilderService {
   private buildIteratorStep(
     step: PlaybookIntentBlueprintIteratorStep,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     referencedPorts: ReferencedPorts,
   ): NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] | null {
-    const template = this.resolveNodeTemplate(step.nodeTemplateKey, options.templates, dropped);
+    const template = this.resolveNodeTemplate(step.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
-    const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), referencedPorts.inputKindsByRef.get(step.ref), dropped);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), dropped);
+    const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), referencedPorts.inputKindsByRef.get(step.ref), diagnostics);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
     return {
       nodeRef: step.ref,
       title: step.title,
@@ -311,10 +314,10 @@ export class PlaybookIntentGraphBuilderService {
   private resolveNodeTemplate(
     nodeTemplateKey: string,
     templates: BuilderNodeTemplate[],
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): BuilderNodeTemplate | undefined {
     const template = templates.find((candidate) => candidate.enabled && candidate.key === nodeTemplateKey);
-    if (!template) this.recordDrop(dropped, 'builder_node_template_key_unknown', nodeTemplateKey);
+    if (!template) this.recordDiagnostic(diagnostics, 'builder_node_template_key_unknown', nodeTemplateKey);
     return template;
   }
 
@@ -322,9 +325,16 @@ export class PlaybookIntentGraphBuilderService {
     return Boolean(template.iteratorConfig);
   }
 
-  private recordDrop(dropped: Array<{ rule: string; itemId: string }>, rule: string, itemId: string): void {
-    dropped.push({ rule, itemId });
-    this.logger.warn(`playbook_intent_builder_drop rule=${rule} item=${itemId}`);
+  private recordDiagnostic(diagnostics: PlaybookIntentDiagnostic[], code: string, itemId: string): void {
+    const diagnostic: PlaybookIntentDiagnostic = {
+      severity: 'warning',
+      stage: 'graph_builder',
+      code,
+      itemId,
+      message: code,
+    };
+    diagnostics.push(diagnostic);
+    this.logger.warn(`playbook_intent_builder_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
   }
 
   private resolveAgentSlug(node: PlaybookIntentBlueprintNode, template: BuilderNodeTemplate | undefined): string | null {
@@ -339,14 +349,14 @@ export class PlaybookIntentGraphBuilderService {
     ownerRef: string,
     referencedTemplatePorts: Set<string> | undefined,
     referencedTemplatePortKinds: Map<string, string> | undefined,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): BuilderPort[] {
     const ports: BuilderPort[] = [];
     const seen = new Set<string>();
     if (blueprintPorts?.length) {
       for (const port of blueprintPorts) {
         if (!port.id || !port.artifactKind) {
-          dropped.push({ rule: 'builder_port_missing_fields', itemId: `${ownerRef}.${port.id || '?'}` });
+          this.recordDiagnostic(diagnostics, 'builder_port_missing_fields', `${ownerRef}.${port.id || '?'}`);
           continue;
         }
         if (seen.has(port.id)) continue;
@@ -488,12 +498,12 @@ export class PlaybookIntentGraphBuilderService {
   private buildCreateEdgeChange(
     link: PlaybookIntentBlueprintLink,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
     const source = this.resolveEndpointReference(link.sourceRef, link.sourceIteratorRef || null, options);
     const target = this.resolveEndpointReference(link.targetRef, link.targetIteratorRef || null, options);
     if (!source || !target) {
-      dropped.push({ rule: 'builder_edge_unknown_ref', itemId: `${link.sourceRef}->${link.targetRef}` });
+      this.recordDiagnostic(diagnostics, 'builder_edge_unknown_ref', `${link.sourceRef}->${link.targetRef}`);
       return null;
     }
     return {
@@ -512,11 +522,11 @@ export class PlaybookIntentGraphBuilderService {
   private buildCreateBindingChange(
     binding: PlaybookIntentBlueprintBinding,
     options: BuildOptions,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
     const target = this.resolveEndpointReference(binding.targetRef, binding.targetIteratorRef || null, options);
     if (!target) {
-      dropped.push({ rule: 'builder_binding_unknown_target', itemId: `${binding.targetRef}.${binding.targetPort}` });
+      this.recordDiagnostic(diagnostics, 'builder_binding_unknown_target', `${binding.targetRef}.${binding.targetPort}`);
       return null;
     }
     if (binding.sourceKind === 'constant' && binding.constantValue) {
@@ -535,12 +545,12 @@ export class PlaybookIntentGraphBuilderService {
       };
     }
     if (!binding.sourceRef || !binding.sourcePort) {
-      dropped.push({ rule: 'builder_binding_missing_source', itemId: `${binding.targetRef}.${binding.targetPort}` });
+      this.recordDiagnostic(diagnostics, 'builder_binding_missing_source', `${binding.targetRef}.${binding.targetPort}`);
       return null;
     }
     const source = this.resolveEndpointReference(binding.sourceRef, binding.sourceIteratorRef || null, options);
     if (!source) {
-      dropped.push({ rule: 'builder_binding_unknown_source', itemId: `${binding.sourceRef}->${binding.targetRef}.${binding.targetPort}` });
+      this.recordDiagnostic(diagnostics, 'builder_binding_unknown_source', `${binding.sourceRef}->${binding.targetRef}.${binding.targetPort}`);
       return null;
     }
     return {
@@ -562,7 +572,7 @@ export class PlaybookIntentGraphBuilderService {
     binding: PlaybookIntentBlueprintBinding,
     options: BuildOptions,
     explicitEdgeKeys: Set<string>,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
     if (binding.sourceKind !== 'node-output') return null;
     if (!binding.sourceRef || !binding.sourcePort) return null;
@@ -575,7 +585,7 @@ export class PlaybookIntentGraphBuilderService {
       targetInputPortId: binding.targetPort,
     };
     if (explicitEdgeKeys.has(this.blueprintEdgeKey(link))) return null;
-    return this.buildCreateEdgeChange(link, options, dropped);
+    return this.buildCreateEdgeChange(link, options, diagnostics);
   }
 
   private blueprintEdgeKey(link: PlaybookIntentBlueprintLink): string {

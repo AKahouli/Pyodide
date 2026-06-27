@@ -31,7 +31,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result!.blueprint.nodes).toHaveLength(2);
     expect(result!.blueprint.links).toHaveLength(1);
     expect(result!.blueprint.bindings).toHaveLength(1);
-    expect(result!.dropped).toEqual([]);
+    expect(result!.diagnostics).toEqual([]);
   });
 
   it('accepts scoped iterator child links and bindings', () => {
@@ -57,7 +57,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
 
     expect(result.blueprint.links[0]).toEqual(expect.objectContaining({ targetIteratorRef: 'loop', targetRef: 'child' }));
     expect(result.blueprint.bindings?.[0]).toEqual(expect.objectContaining({ targetIteratorRef: 'loop', targetRef: 'child' }));
-    expect(result.dropped).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
   });
 
   it('accepts connector and skill refs with slug-based snake_case fields', () => {
@@ -83,7 +83,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.blueprint.nodes[0].skillRefs).toEqual([
       { skillSlug: 'summarize-documents', reason: 'Summarize matches' },
     ]);
-    expect(result.dropped).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
   });
 
   it('drops malformed connector and skill refs', () => {
@@ -104,7 +104,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
 
     expect(result.blueprint.nodes[0].connectorRefs).toEqual([]);
     expect(result.blueprint.nodes[0].skillRefs).toEqual([]);
-    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
       'blueprint_connector_ref_missing_fields',
       'blueprint_skill_ref_missing_fields',
     ]));
@@ -139,7 +139,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.blueprint.nodes[0].skillRefs).toEqual([
       { skillSlug: 'summarize-documents', reason: null },
     ]);
-    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
       'blueprint_connector_ref_duplicate',
       'blueprint_skill_ref_duplicate',
     ]));
@@ -178,7 +178,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const result = service.parse(raw)!;
 
     expect(result.blueprint.nodes).toEqual([]);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_node_missing_fields')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_node_missing_fields')).toMatchObject({ stage: 'parser', severity: 'warning' });
     expect((service as any).logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('playbook_intent_blueprint_legacy_template_type'));
   });
 
@@ -218,7 +218,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
 
     const result = service.parse(raw)!;
     expect(result.blueprint.nodes.map((n) => n.ref)).toEqual(['a']);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_node_missing_fields')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_node_missing_fields')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('drops duplicate node refs and keeps the first occurrence', () => {
@@ -233,7 +233,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.nodes).toHaveLength(1);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_node_duplicate_ref')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_node_duplicate_ref')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('does not carry blueprint nodeType into parsed output', () => {
@@ -246,7 +246,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const result = service.parse(raw)!;
     expect(result.blueprint.nodes).toHaveLength(1);
     expect(result.blueprint.nodes[0]).not.toHaveProperty('nodeType');
-    expect(result.dropped.find((d) => d.rule === 'blueprint_node_unsupported_kind')).toBeUndefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_node_unsupported_kind')).toBeUndefined();
   });
 
   it('keeps the iterator body scoped to its owning node and rejects unknown step refs', () => {
@@ -272,7 +272,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const body = result.blueprint.nodes[0].iteratorBody!;
     expect(body.steps).toHaveLength(2);
     expect(body.edges).toHaveLength(1);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_iterator_edge_unknown_ref')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_iterator_edge_unknown_ref')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('drops malformed links and rejects refs that point to unknown nodes', () => {
@@ -288,7 +288,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.links).toHaveLength(0);
-    expect(result.dropped.map((d) => d.rule)).toEqual(
+    expect(result.diagnostics.map((d) => d.code)).toEqual(
       expect.arrayContaining(['blueprint_link_unknown_ref', 'blueprint_link_missing_refs']),
     );
   });
@@ -314,7 +314,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.bindings).toHaveLength(2);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_binding_invalid_constant')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_invalid_constant')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('drops duplicate bindings targeting the same port on a node', () => {
@@ -333,7 +333,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.bindings).toHaveLength(1);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_binding_duplicate_target')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_duplicate_target')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('drops bindings with mismatched artifact kinds', () => {
@@ -349,7 +349,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     });
     const result = service.parse(raw)!;
     expect(result.blueprint.bindings).toHaveLength(0);
-    expect(result.dropped.find((d) => d.rule === 'blueprint_binding_artifact_mismatch')).toBeDefined();
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_artifact_mismatch')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
   it('hasBlueprintShape returns true only when blueprint key is present', () => {

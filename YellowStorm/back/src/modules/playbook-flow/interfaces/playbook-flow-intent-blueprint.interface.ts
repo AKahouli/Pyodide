@@ -1,3 +1,5 @@
+import type { PlaybookIntentDiagnostic } from './playbook-flow-intent-diagnostic.interface';
+
 export interface PlaybookIntentBlueprintPort {
   id: string;
   name?: string | null;
@@ -95,5 +97,5 @@ export interface PlaybookIntentBlueprint {
 
 export interface PlaybookIntentBlueprintParseResult {
   blueprint: PlaybookIntentBlueprint;
-  dropped: Array<{ rule: string; itemId: string }>;
+  diagnostics: PlaybookIntentDiagnostic[];
 }

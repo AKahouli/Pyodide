@@ -275,7 +275,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const createChange = result.suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
     expect(createChange?.task.toolBindings).toEqual([]);
     expect(createChange?.task.skillBindings).toEqual([]);
-    expect(result.dropped.map((drop) => drop.rule)).toEqual(expect.arrayContaining([
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
       'builder_connector_ref_unknown_slug',
       'builder_connector_ref_unknown_action',
       'builder_skill_ref_unknown_slug',
@@ -419,7 +419,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const nodes: CreateNodeChange[] = result.suggestion.changes.filter((c: Change): c is CreateNodeChange => c.type === 'create_node');
     expect(nodes).toHaveLength(1);
     expect(nodes[0].task.iteratorBody).toBeUndefined();
-    expect(result.dropped.find((drop) => drop.rule === 'builder_iterator_body_not_supported_by_template')).toBeDefined();
+    expect(result.diagnostics.find((diagnostic) => diagnostic.code === 'builder_iterator_body_not_supported_by_template')).toMatchObject({ stage: 'graph_builder', severity: 'warning' });
   });
 
   it('uses bound node template ports when no explicit ports are provided', () => {
@@ -700,8 +700,8 @@ describe('PlaybookIntentGraphBuilderService', () => {
     });
 
     expect(result.suggestion.changes.some((c: Change) => c.type === 'create_node')).toBe(false);
-    expect(result.dropped).toEqual(expect.arrayContaining([
-      { rule: 'builder_node_template_key_unknown', itemId: 'missing-template' },
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'builder_node_template_key_unknown', stage: 'graph_builder', severity: 'warning', itemId: 'missing-template' }),
     ]));
   });
 });
