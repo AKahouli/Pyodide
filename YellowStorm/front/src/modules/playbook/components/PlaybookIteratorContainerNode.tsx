@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps, useUpdateNodeInternals } from '@xyflow/react';
 import { LayoutGrid, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,14 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const childCount = node.childTaskIds?.length || 0;
   const isEmpty = childCount === 0;
+  const inputPortLayoutKey = useMemo(
+    () => (node.inputPorts || []).map((port) => port.id).join('|'),
+    [node.inputPorts],
+  );
+  const outputPortLayoutKey = useMemo(
+    () => (node.outputPorts || []).map((port) => port.id).join('|'),
+    [node.outputPorts],
+  );
   const selectedClass = selected
     ? 'border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25'
     : 'border-border';
@@ -40,9 +48,14 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   const frameRef = useRef<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     updateNodeInternals(node.id);
-  }, [node.id, node.inputPorts?.length, node.outputPorts?.length, updateNodeInternals]);
+    if (typeof window === 'undefined') return undefined;
+
+    // React Flow measures handle positions from the DOM; iterator handles are percentage-positioned in a resizable shell.
+    const frame = window.requestAnimationFrame(() => updateNodeInternals(node.id));
+    return () => window.cancelAnimationFrame(frame);
+  }, [childCount, inputPortLayoutKey, node.height, node.id, node.width, outputPortLayoutKey, updateNodeInternals]);
 
   const queueSizeUpdate = useCallback((clientX: number, clientY: number) => {
     const nextWidth = Math.max(ITERATOR_MIN_WIDTH, dragStart.current.width + (clientX - dragStart.current.x));

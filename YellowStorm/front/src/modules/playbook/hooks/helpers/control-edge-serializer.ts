@@ -33,17 +33,18 @@ export function remapIteratorEdgePorts(
 ): PlaybookEdge {
   const sourceTask = tasks.find((t) => t.id === edge.sourceId);
   const targetTask = tasks.find((t) => t.id === edge.targetId);
+  const isSourceIterator = sourceTask && getEffectiveNodeType(sourceTask) === 'iterator';
+  const isTargetIterator = targetTask && getEffectiveNodeType(targetTask) === 'iterator';
+  const hasRequestedSourcePort = sourceTask?.outputPorts?.some((port) => port.id === edge.sourceOutputPortId);
+  const hasRequestedTargetPort = targetTask?.inputPorts?.some((port) => port.id === edge.targetInputPortId);
+  const sourceOutputPortId = isSourceIterator && !hasRequestedSourcePort ? 'results' : edge.sourceOutputPortId;
+  const targetInputPortId = isTargetIterator && !hasRequestedTargetPort ? 'items' : edge.targetInputPortId;
 
+  // Keep explicit iterator context ports; only legacy/invalid edges fall back to canonical collection/results ports.
   return {
     ...edge,
-    sourceOutputPortId:
-      sourceTask && getEffectiveNodeType(sourceTask) === 'iterator'
-        ? 'results'
-        : edge.sourceOutputPortId,
-    targetInputPortId:
-      targetTask && getEffectiveNodeType(targetTask) === 'iterator'
-        ? 'items'
-        : edge.targetInputPortId,
+    sourceOutputPortId,
+    targetInputPortId,
   };
 }
 
@@ -193,9 +194,8 @@ export function resolveIntentEdgePorts(
   const suggestedInput = inputPorts.find((p) => p.id === suggestedInputPortId) || null;
 
   if (suggestedOutput && suggestedInput) {
-    if (artifactKindsCompatible(suggestedOutput.artifactKind, suggestedInput.artifactKind)) {
-      return { sourceOutputPortId: suggestedOutput.id, targetInputPortId: suggestedInput.id };
-    }
+    // Preserve exact LLM topology even when kinds differ; runtime data bindings remain kind-gated elsewhere.
+    return { sourceOutputPortId: suggestedOutput.id, targetInputPortId: suggestedInput.id };
   }
 
   if (suggestedOutput) {
