@@ -8,9 +8,6 @@ export class FlowNodeTemplate {
   @Prop({ required: true, unique: true, index: true, trim: true, maxlength: 120 })
   key!: string;
 
-  @Prop({ required: true, unique: true, index: true, trim: true, maxlength: 120 })
-  type!: string;
-
   @Prop({
     required: true,
     trim: true,
@@ -77,9 +74,6 @@ export class FlowNodeTemplate {
 
   @Prop({ type: [String], default: [] })
   requiredToolNames!: string[];
-
-  @Prop({ type: String, default: 'agent', trim: true, maxlength: 40 })
-  executionMode!: string;
 
   @Prop({ type: String, default: null, trim: true })
   assignedAgentId!: string | null;

@@ -366,6 +366,8 @@ describe('usePlaybookCanvasPageHandlers', () => {
 
     expect(setCopilotMode).toHaveBeenCalledWith('design');
     expect(setPageMode).toHaveBeenCalledWith('design');
+    expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
+    expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
     expect(setDesignerOpen).toHaveBeenCalledWith(true);
     expect(setEditorOpen).toHaveBeenCalledWith(false);
   });

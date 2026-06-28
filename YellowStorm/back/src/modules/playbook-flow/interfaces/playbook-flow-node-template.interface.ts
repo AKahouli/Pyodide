@@ -42,7 +42,6 @@ export interface FlowNodeTemplateRetryPolicy {
 export interface FlowNodeTemplateResponse {
   id: string;
   key: string;
-  type: string;
   nodeType: 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
   title: string;
   description?: string;
@@ -54,7 +53,6 @@ export interface FlowNodeTemplateResponse {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode: string;
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
@@ -75,7 +73,6 @@ export interface FlowNodeTemplateListResponse {
 
 export interface CreateFlowNodeTemplateRequest {
   key: string;
-  type: string;
   nodeType: 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
   title: string;
   description?: string;
@@ -87,7 +84,6 @@ export interface CreateFlowNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
@@ -100,7 +96,6 @@ export interface CreateFlowNodeTemplateRequest {
 
 export interface UpdateFlowNodeTemplateRequest {
   key?: string;
-  type?: string;
   nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
   title?: string;
   description?: string;
@@ -112,7 +107,6 @@ export interface UpdateFlowNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;

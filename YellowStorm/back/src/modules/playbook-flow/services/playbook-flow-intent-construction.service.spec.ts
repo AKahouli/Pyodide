@@ -38,7 +38,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
         validationContext,
         availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
         nodeTemplates: [{
-          id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
           inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
         }],
         httpClient: { post: jest.fn() },

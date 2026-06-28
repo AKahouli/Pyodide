@@ -25,11 +25,6 @@ export class CreateFlowNodeTemplateDto {
   @IsNotEmpty()
   key!: string;
 
-  @ApiProperty({ maxLength: 120 })
-  @IsString()
-  @IsNotEmpty()
-  type!: string;
-
   @ApiProperty({ enum: ['agent', 'action', 'evaluation', 'iterator', 'router', 'human_approval'] })
   @IsString()
   @IsIn(['agent', 'action', 'evaluation', 'iterator', 'router', 'human_approval'])
@@ -87,11 +82,6 @@ export class CreateFlowNodeTemplateDto {
   @IsArray()
   @IsString({ each: true })
   requiredToolNames?: string[];
-
-  @ApiPropertyOptional({ maxLength: 40 })
-  @IsOptional()
-  @IsString()
-  executionMode?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

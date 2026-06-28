@@ -29,7 +29,6 @@ export class PlaybookFlowNodeTemplateService {
     return {
       id: (doc as any)._id.toString(),
       key: doc.key,
-      type: doc.type,
       nodeType: this.deriveNodeType(doc),
       title: doc.title,
       description: doc.description,
@@ -41,7 +40,6 @@ export class PlaybookFlowNodeTemplateService {
       promptTemplate: doc.promptTemplate || '',
       recommendedAgentTypeSlug: doc.recommendedAgentTypeSlug ?? null,
       requiredToolNames: doc.requiredToolNames || [],
-      executionMode: doc.executionMode || 'agent',
       assignedAgentId: doc.assignedAgentId ?? null,
       selectedAction: doc.selectedAction ?? null,
       iteratorConfig: doc.iteratorConfig ?? null,
@@ -87,23 +85,19 @@ export class PlaybookFlowNodeTemplateService {
 
   async create(dto: CreateFlowNodeTemplateRequest, userId: string): Promise<FlowNodeTemplateResponse> {
     const normalizedKey = String(dto.key || '').trim();
-    const normalizedType = String(dto.type || '').trim();
-    if (!normalizedKey || !normalizedType) throw new BadRequestException('Key and type are required');
+    if (!normalizedKey) throw new BadRequestException('Key is required');
 
-    const existing = await this.templateModel.findOne({
-      $or: [{ key: normalizedKey }, { type: normalizedType }],
-    }).exec();
-    if (existing) throw new ConflictException('A template with this key or type already exists');
+    const existing = await this.templateModel.findOne({ key: normalizedKey }).exec();
+    if (existing) throw new ConflictException('A template with this key already exists');
 
     const created = await this.templateModel.create({
-      key: normalizedKey, type: normalizedType, nodeType: dto.nodeType,
+      key: normalizedKey, nodeType: dto.nodeType,
       title: dto.title.trim(), description: dto.description?.trim() || '',
       icon: dto.icon?.trim() || '', color: dto.color?.trim() || '',
       category: dto.category.trim(), inputPorts: dto.inputPorts || [],
       outputPorts: dto.outputPorts || [], promptTemplate: dto.promptTemplate || '',
       recommendedAgentTypeSlug: dto.recommendedAgentTypeSlug ?? null,
       requiredToolNames: dto.requiredToolNames || [],
-      executionMode: dto.executionMode || 'agent',
       assignedAgentId: dto.assignedAgentId ?? null,
       selectedAction: dto.selectedAction ?? null,
       iteratorConfig: dto.iteratorConfig ?? null,
@@ -123,21 +117,19 @@ export class PlaybookFlowNodeTemplateService {
     const existing = await this.templateModel.findById(id).exec();
     if (!existing) throw new NotFoundException('Template not found');
 
-    if (dto.key || dto.type) {
+    if (dto.key) {
       const normalizedKey = dto.key ? String(dto.key).trim() : existing.key;
-      const normalizedType = dto.type ? String(dto.type).trim() : existing.type;
       const conflict = await this.templateModel.findOne({
         _id: { $ne: new Types.ObjectId(id) },
-        $or: [{ key: normalizedKey }, { type: normalizedType }],
+        key: normalizedKey,
       }).exec();
-      if (conflict) throw new ConflictException('A template with this key or type already exists');
+      if (conflict) throw new ConflictException('A template with this key already exists');
     }
 
     const updatePayload: Record<string, unknown> = {
       updatedBy: new Types.ObjectId(userId), version: (existing.version || 0) + 1,
     };
     if (dto.key !== undefined) updatePayload.key = dto.key.trim();
-    if (dto.type !== undefined) updatePayload.type = dto.type.trim();
     if (dto.nodeType !== undefined) updatePayload.nodeType = dto.nodeType;
     if (dto.title !== undefined) updatePayload.title = dto.title.trim();
     if (dto.description !== undefined) updatePayload.description = dto.description.trim();
@@ -149,7 +141,6 @@ export class PlaybookFlowNodeTemplateService {
     if (dto.promptTemplate !== undefined) updatePayload.promptTemplate = dto.promptTemplate;
     if (dto.recommendedAgentTypeSlug !== undefined) updatePayload.recommendedAgentTypeSlug = dto.recommendedAgentTypeSlug;
     if (dto.requiredToolNames !== undefined) updatePayload.requiredToolNames = dto.requiredToolNames;
-    if (dto.executionMode !== undefined) updatePayload.executionMode = dto.executionMode;
     if (dto.assignedAgentId !== undefined) updatePayload.assignedAgentId = dto.assignedAgentId;
     if (dto.selectedAction !== undefined) updatePayload.selectedAction = dto.selectedAction;
     if (dto.iteratorConfig !== undefined) updatePayload.iteratorConfig = dto.iteratorConfig;

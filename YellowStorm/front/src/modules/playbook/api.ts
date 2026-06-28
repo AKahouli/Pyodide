@@ -170,7 +170,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       })),
       taskType: task.taskType,
       nodeType: task.nodeType,
-      templateType: task.templateType,
+      nodeTemplateKey: task.nodeTemplateKey,
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
@@ -564,7 +564,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     selectedAction: (meta.selectedAction as any) ?? undefined,
     executionMode: (meta.executionMode as any) ?? undefined,
     taskType: (meta.taskType as string) ?? undefined,
-    templateType: (meta.templateType as string) ?? undefined,
+    nodeTemplateKey: (meta.nodeTemplateKey as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
     skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
@@ -2109,7 +2109,6 @@ export async function clonePlaybook(id: string): Promise<Playbook> {
 export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   id: string;
   key: string;
-  type: string;
   nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
   title: string;
   description?: string;
@@ -2121,7 +2120,6 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
@@ -2129,7 +2127,6 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   const response = await apiClient.get<ApiResponse<{ items: Array<{
     id: string;
     key: string;
-    type: string;
     nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
     title: string;
     description?: string;
@@ -2141,7 +2138,6 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     promptTemplate: string;
     recommendedAgentTypeSlug: string | null;
     requiredToolNames: string[];
-    executionMode?: string;
     assignedAgentId?: string | null;
     selectedAction?: string | null;
     iteratorConfig?: PlaybookIteratorConfig | null;

@@ -158,6 +158,13 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 type CanvasViewMode = 'expanded' | 'compact';
 
+export function shouldAutoLayoutAfterConstruction(
+  previousStatus: PlaybookIntentConstructionStatus,
+  currentStatus: PlaybookIntentConstructionStatus,
+): boolean {
+  return previousStatus !== 'completed' && currentStatus === 'completed';
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1552,11 +1559,11 @@ function PlaybookCanvasInner() {
         id: taskId,
         title,
         description,
-        assignedAgentId: matchedTemplate?.executionMode === 'agent'
+        assignedAgentId: matchedTemplate?.nodeType === 'agent'
           ? (matchedTemplate.assignedAgentId ?? resolveAssignedAgentId(agentSlug))
           : resolveAssignedAgentId(agentSlug),
-        executionMode: (matchedTemplate?.executionMode as PlaybookTask['executionMode']) ?? 'agent',
-        selectedAction: matchedTemplate?.executionMode === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
+        executionMode: matchedTemplate?.nodeType === 'action' ? 'action' : 'agent',
+        selectedAction: matchedTemplate?.nodeType === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
         executionOrder: order,
         positionX: (anchorTask?.positionX || 0) + DEFAULT_NODE_SPACING_X,
         positionY: anchorTask?.positionY || 0,
@@ -1577,7 +1584,7 @@ function PlaybookCanvasInner() {
             ? 'evaluation'
             : 'generic',
         nodeType: isIterator ? 'iterator' : matchedNodeType,
-        templateType: matchedTemplate?.type ?? null,
+        nodeTemplateKey: nodeTemplateKey ?? matchedTemplate?.key ?? null,
         iteratorConfig: isIterator
           ? matchedTemplate?.iteratorConfig
             ? { ...matchedTemplate.iteratorConfig }
@@ -2769,7 +2776,7 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     const previousStatus = previousConstructionStatusRef.current;
     previousConstructionStatusRef.current = constructionStatus;
-    if (previousStatus !== 'completed' && constructionStatus === 'completed') {
+    if (shouldAutoLayoutAfterConstruction(previousStatus, constructionStatus)) {
       autoLayoutAfterGenerationRef.current?.();
     }
   }, [constructionStatus]);

@@ -5,7 +5,6 @@ function makeDoc(overrides: Record<string, unknown> = {}) {
   return {
     _id: new Types.ObjectId(),
     key: 'router-default',
-    type: 'router-default',
     nodeType: 'router',
     title: 'Router',
     description: 'Route work',
@@ -17,7 +16,6 @@ function makeDoc(overrides: Record<string, unknown> = {}) {
     promptTemplate: '',
     recommendedAgentTypeSlug: null,
     requiredToolNames: [],
-    executionMode: 'agent',
     assignedAgentId: null,
     selectedAction: null,
     iteratorConfig: null,
@@ -57,7 +55,6 @@ describe('PlaybookFlowNodeTemplateService', () => {
       makeDoc({
         _id: new Types.ObjectId(),
         key: 'approval-default',
-        type: 'approval-default',
         nodeType: 'human_approval',
         title: 'Approval',
         routerConfig: null,
@@ -117,7 +114,6 @@ describe('PlaybookFlowNodeTemplateService', () => {
 
     await service.create({
       key: 'approval-default',
-      type: 'approval-default',
       nodeType: 'human_approval',
       title: 'Approval',
       category: 'analysis',
@@ -148,5 +144,23 @@ describe('PlaybookFlowNodeTemplateService', () => {
       },
       { new: true },
     );
+  });
+
+  it('rejects duplicate template keys on create', async () => {
+    const existingDoc = makeDoc({ key: 'approval-default' });
+    const model = {
+      findOne: jest.fn().mockReturnValue(execResult(existingDoc)),
+    } as any;
+
+    const service = new PlaybookFlowNodeTemplateService(model);
+
+    await expect(service.create({
+      key: 'approval-default',
+      nodeType: 'human_approval',
+      title: 'Approval',
+      category: 'analysis',
+      inputPorts: [],
+      outputPorts: [],
+    }, userId)).rejects.toThrow('A template with this key already exists');
   });
 });

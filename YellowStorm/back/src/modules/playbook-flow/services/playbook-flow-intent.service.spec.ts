@@ -336,12 +336,10 @@ describe('PlaybookFlowIntentService normalization', () => {
         findEnabled: jest.fn().mockResolvedValue({ items: [{
           id: 'tpl-1',
           key: 'generic.agent_step',
-          type: 'generic-agent',
           title: 'Generic agent step',
           description: 'Default flexible node',
           category: 'general',
           nodeType: 'agent',
-          executionMode: 'agent',
           inputPorts: [{ id: 'input', name: 'Input', artifactKind: 'text', required: true, description: 'Input text' }],
           outputPorts: [{ id: 'output', name: 'Output', artifactKind: 'text', description: 'Output text' }],
           recommendedAgentTypeSlug: null,
@@ -1126,7 +1124,7 @@ it('falls back to clarification questions when design JSON is malformed', () => 
         ...makeContext(),
         effectiveSettings: { useDeterministicBlueprintBuilder: true } as EffectiveFlowDesignSettings,
         nodeTemplates: [{
-          id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
           inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
         }],
         limits: DEFAULT_LIMITS,
@@ -1183,7 +1181,7 @@ it('falls back to clarification questions when design JSON is malformed', () => 
           limits: DEFAULT_LIMITS,
           availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
           nodeTemplates: [{
-            id: 'tpl-generic', type: 'generic-agent', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+            id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
             inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
           }],
         },

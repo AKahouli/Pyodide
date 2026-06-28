@@ -913,7 +913,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       error: null,
       createdAt: '2026-06-22T08:20:21.000Z',
       updatedAt: '2026-06-22T08:20:21.000Z',
-    } as DesignMessage];
+    } as unknown as DesignMessage];
 
     render(<PlaybookDesignerPanel playbookId="playbook-1" />);
 

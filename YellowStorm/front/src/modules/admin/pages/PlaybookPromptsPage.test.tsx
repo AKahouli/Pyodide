@@ -19,7 +19,6 @@ vi.mock('../api', () => ({
       {
         id: 'iterator-template-1',
         key: 'iterator',
-        type: 'iterator',
         nodeType: 'iterator',
         title: 'Iterator',
         description: 'Iterator template',
@@ -31,7 +30,6 @@ vi.mock('../api', () => ({
         promptTemplate: '',
         recommendedAgentTypeSlug: null,
         requiredToolNames: [],
-        executionMode: 'action',
         assignedAgentId: 'agent-1',
         selectedAction: 'index',
         iteratorConfig: null,
@@ -44,7 +42,6 @@ vi.mock('../api', () => ({
       {
         id: 'router-template-1',
         key: 'document-router',
-        type: 'document-router',
         nodeType: 'router',
         title: 'Document Router',
         description: 'Route documents by type',
@@ -56,7 +53,6 @@ vi.mock('../api', () => ({
         promptTemplate: '',
         recommendedAgentTypeSlug: null,
         requiredToolNames: [],
-        executionMode: 'agent',
         assignedAgentId: 'agent-1',
         selectedAction: 'index',
         iteratorConfig: null,
@@ -204,7 +200,6 @@ describe('PlaybookPromptsPage', () => {
     );
     expect(payload.inputPorts).toEqual([{ id: 'items', name: 'Items', artifactKind: 'data', required: false }]);
     expect(payload.outputPorts).toEqual([{ id: 'results', name: 'Results', artifactKind: 'data' }]);
-    expect(payload.executionMode).toBe('agent');
     expect(payload.assignedAgentId).toBeNull();
     expect(payload.selectedAction).toBeNull();
   });

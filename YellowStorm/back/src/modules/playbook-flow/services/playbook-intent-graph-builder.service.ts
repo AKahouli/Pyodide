@@ -27,7 +27,6 @@ interface BuilderNodeTemplatePort {
 }
 
 interface BuilderNodeTemplate {
-  type: string;
   key: string;
   nodeType: string;
   enabled: boolean;

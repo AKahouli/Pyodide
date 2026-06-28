@@ -41,7 +41,6 @@ export interface TaskArtifact {
 export interface TaskTemplate {
   id: string;
   key: string;
-  type: string;
   nodeType: PlaybookNodeType;
   title: string;
   description: string;
@@ -53,7 +52,6 @@ export interface TaskTemplate {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode?: TaskExecutionMode;
   assignedAgentId?: string | null;
   selectedAction?: SelectedAction;
   iteratorConfig?: PlaybookIteratorConfig | null;
@@ -357,7 +355,7 @@ export interface PlaybookTask {
   inputFiles: InputFile[];
   taskType?: string;
   nodeType?: PlaybookNodeType | null;
-  templateType?: string | null;
+  nodeTemplateKey?: string | null;
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];

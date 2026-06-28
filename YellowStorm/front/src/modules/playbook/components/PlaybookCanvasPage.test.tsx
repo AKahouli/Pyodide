@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -157,5 +158,15 @@ describe('resolveCanvasNodeSelection', () => {
 
     expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-1', 'task-2')).toBe(false);
     expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-2', 'task-2')).toBe(true);
+  });
+});
+
+describe('shouldAutoLayoutAfterConstruction', () => {
+  it('returns true when deterministic builder reaches completed status', () => {
+    expect(shouldAutoLayoutAfterConstruction('streaming', 'completed')).toBe(true);
+  });
+
+  it('returns false for repeated completed status updates', () => {
+    expect(shouldAutoLayoutAfterConstruction('completed', 'completed')).toBe(false);
   });
 });

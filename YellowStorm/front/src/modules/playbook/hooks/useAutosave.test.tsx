@@ -204,7 +204,7 @@ describe('useAutosave', () => {
         name: 'Task 1',
         position: { x: 0, y: 0 },
         inputPorts: [{ id: 'prompt', name: 'Prompt', type: 'string', required: true }],
-      } as PlaybookTask],
+      } as unknown as PlaybookTask],
       dataBindings: [],
     };
 

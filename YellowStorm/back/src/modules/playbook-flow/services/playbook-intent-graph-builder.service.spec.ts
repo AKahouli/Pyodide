@@ -42,7 +42,6 @@ function makeTemplate(overrides: Partial<FlowNodeTemplateResponse>): FlowNodeTem
   return {
     id: 'tpl-1',
     key: 'synthesis-step',
-    type: 'synthesis',
     nodeType: 'agent',
     title: 'Synthesis step',
     description: '',
@@ -54,7 +53,6 @@ function makeTemplate(overrides: Partial<FlowNodeTemplateResponse>): FlowNodeTem
     promptTemplate: '',
     recommendedAgentTypeSlug: 'synthesis-agent',
     requiredToolNames: [],
-    executionMode: 'agent',
     assignedAgentId: null,
     selectedAction: null,
     iteratorConfig: null,
@@ -75,7 +73,6 @@ function genericTemplate(overrides: Partial<FlowNodeTemplateResponse> = {}): Flo
   return makeTemplate({
     id: 'tpl-generic',
     key: 'generic.agent_step',
-    type: 'generic-agent',
     title: 'Generic agent step',
     inputPorts: [],
     outputPorts: [],
@@ -298,7 +295,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
       context: makeContext(),
       limits: DEFAULT_LIMITS,
       templates: [{
-        type: 'document', key: 'document', nodeType: 'agent',
+        key: 'document', nodeType: 'agent',
         inputPorts: [{ id: 'input-context', name: 'Context', artifactKind: 'text', required: true }],
         outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
       }],
@@ -426,7 +423,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
   });
 
   it('uses bound node template ports when no explicit ports are provided', () => {
-    const template = makeTemplate({ type: 'synthesis-step', inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: false }],
+    const template = makeTemplate({ inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: false }],
       outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'document' }] });
     const blueprint: PlaybookIntentBlueprint = {
       title: 't',
@@ -460,7 +457,6 @@ describe('PlaybookIntentGraphBuilderService', () => {
 
   it('keeps explicit blueprint ports instead of injecting referenced template ports', () => {
     const template = makeTemplate({
-      type: 'synthesis-step',
       inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: true }],
       outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'document' }],
     });
@@ -525,7 +521,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
   });
 
   it('prunes iterator step template ports against the enclosing iterator body edges', () => {
-    const template = makeTemplate({ type: 'iterator-step', inputPorts: [
+    const template = makeTemplate({ inputPorts: [
       { id: 'bound', name: 'Bound', artifactKind: 'text', required: false },
       { id: 'unused', name: 'Unused', artifactKind: 'text', required: false },
     ], outputPorts: [
@@ -685,7 +681,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
   });
 
   it('does not fall back to nodeType template lookup when nodeTemplateKey is unknown', () => {
-    const template = makeTemplate({ type: 'research', nodeType: 'agent' });
+    const template = makeTemplate({ key: 'research', nodeType: 'agent' });
     const blueprint: PlaybookIntentBlueprint = {
       title: 't',
       summary: '',

@@ -4970,7 +4970,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             nodeTemplates: items.map((item) => ({
               id: item.id,
               key: item.key,
-              type: item.type,
               nodeType: item.nodeType,
               title: item.title,
               description: item.description || '',
@@ -4993,7 +4992,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               promptTemplate: item.promptTemplate || '',
               recommendedAgentTypeSlug: item.recommendedAgentTypeSlug,
               requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
-              executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
               iteratorConfig: item.iteratorConfig ?? null,
@@ -5029,7 +5027,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             flowNodeTemplates: items.map((item) => ({
               ...item,
               key: item.key,
-              type: item.type,
               nodeType: item.nodeType,
               description: item.description || '',
               icon: item.icon || 'FileText',

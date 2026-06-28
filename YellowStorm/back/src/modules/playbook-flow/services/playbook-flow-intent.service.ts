@@ -283,7 +283,7 @@ export interface PlaybookIntentAnalysisContext {
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
   availableDesignCatalog: AvailableDesignCatalog;
-  nodeTemplates: Array<{ id: string; type: string; key: string; nodeType: string; title: string; description?: string; category: string;
+  nodeTemplates: Array<{ id: string; key: string; nodeType: string; title: string; description?: string; category: string;
     inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
     outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
     recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown }>;
@@ -446,12 +446,10 @@ export class PlaybookFlowIntentService {
       })), null, 2),
       node_templates: JSON.stringify(nodeTemplates.items.map((template) => ({
         key: template.key,
-        type: template.type,
         title: template.title,
         description: template.description || '',
         category: template.category,
         semanticNodeType: template.nodeType,
-        executionMode: template.executionMode,
         isDefault: template.key === DEFAULT_GENERIC_NODE_TEMPLATE_KEY,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
@@ -498,7 +496,6 @@ export class PlaybookFlowIntentService {
       availableDesignCatalog,
       nodeTemplates: nodeTemplates.items.map((template) => ({
         id: template.id,
-        type: template.type,
         key: template.key,
         nodeType: template.nodeType,
         title: template.title,

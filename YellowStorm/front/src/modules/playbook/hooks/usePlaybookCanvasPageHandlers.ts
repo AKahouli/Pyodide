@@ -230,12 +230,14 @@ export function usePlaybookCanvasPageHandlers({
       if (pageMode === 'run') {
         setPageMode('design');
       }
+      setExecutionPanelCollapsed(true);
+      setExecutionPanelOpen(false);
     }
     setDesignerOpen(nextOpen);
     if (nextOpen) {
       setEditorOpen(false);
     }
-  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen, setPageMode]);
+  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
 
   const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
     setPageMode(mode);

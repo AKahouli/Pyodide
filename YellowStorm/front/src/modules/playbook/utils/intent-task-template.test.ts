@@ -5,7 +5,6 @@ import type { PlaybookIntentTaskDraft, TaskTemplate } from '../types';
 const baseTemplate = {
   id: 'template-1',
   key: 'generic-ai-task',
-  type: 'generic-ai-task',
   nodeType: 'agent',
   title: 'Generic AI task',
   description: '',

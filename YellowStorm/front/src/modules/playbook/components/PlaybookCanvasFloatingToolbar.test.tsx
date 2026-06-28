@@ -14,7 +14,6 @@ vi.mock('../store', () => ({
   usePlaybookStore: (sel: (state: {
     flowNodeTemplates: Array<{
       id: string;
-      type: string;
       nodeType: string;
       title: string;
       description: string;
@@ -36,7 +35,6 @@ vi.mock('../store', () => ({
     flowNodeTemplates: [
       {
         id: 'summarizer',
-        type: 'summarizer',
         nodeType: 'action',
         title: 'taskType.summarizer',
         description: 'Summarize',
@@ -54,7 +52,6 @@ vi.mock('../store', () => ({
       },
       {
         id: 'router-default',
-        type: 'router-default',
         nodeType: 'router',
         title: 'taskType.routerDefault',
         description: 'Route work',

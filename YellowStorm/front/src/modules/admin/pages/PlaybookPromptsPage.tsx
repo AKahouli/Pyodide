@@ -60,7 +60,6 @@ const EMPTY_PROMPT: PlaybookPromptResponse = {
 const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   id: '',
   key: '',
-  type: '',
   nodeType: 'agent',
   title: '',
   description: '',
@@ -72,7 +71,6 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   promptTemplate: '',
   recommendedAgentTypeSlug: null,
   requiredToolNames: [],
-  executionMode: 'agent',
   assignedAgentId: null,
   selectedAction: null,
   enabled: true,
@@ -94,7 +92,6 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
 
 // Constants for selects
 const CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'];
-const EXECUTION_MODES = ['agent', 'action'];
 const ACTIONS = ['index', 'delete', 'read'];
 const ARTIFACT_KINDS = ['text', 'document', 'code', 'data', 'image', 'dashboard'];
 const COLORS = ['blue', 'indigo', 'green', 'orange', 'purple', 'red', 'pink', 'slate', 'cyan', 'teal'] as const;
@@ -136,7 +133,6 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
   if (template.nodeType === 'iterator') {
     return {
       ...template,
-      executionMode: 'agent',
       assignedAgentId: null,
       selectedAction: null,
       inputPorts: getDefaultIteratorInputPorts(),
@@ -150,7 +146,6 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
     const routerConfig = cloneRouterConfig(template.routerConfig);
     return {
       ...template,
-      executionMode: 'agent',
       assignedAgentId: null,
       selectedAction: null,
       outputPorts: buildRouterOutputPorts(routerConfig),
@@ -355,8 +350,7 @@ export function PlaybookPromptsPage() {
       toast.error(t('playbook.templates.toasts.validationError'));
       return;
     }
-    const type = templateDraft.type || templateDraft.key;
-    const draftToSave = normalizeNodeTemplate({ ...templateDraft, type });
+    const draftToSave = normalizeNodeTemplate(templateDraft);
     const routerValidationError = validateRouterTemplate(draftToSave);
     if (routerValidationError) {
       toast.error(routerValidationError);
@@ -367,7 +361,6 @@ export function PlaybookPromptsPage() {
       if (isCreatingTemplate) {
         const created = await createPlaybookNodeTemplate({
           key: draftToSave.key,
-          type,
           nodeType: draftToSave.nodeType,
           title: draftToSave.title,
           description: draftToSave.description,
@@ -378,7 +371,6 @@ export function PlaybookPromptsPage() {
           outputPorts: stripPortIds(draftToSave.outputPorts),
           promptTemplate: draftToSave.promptTemplate,
           requiredToolNames: draftToSave.requiredToolNames,
-          executionMode: draftToSave.executionMode,
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
@@ -393,7 +385,6 @@ export function PlaybookPromptsPage() {
       } else if (templateDraft.id) {
         const updated = await updatePlaybookNodeTemplate(templateDraft.id, {
           key: draftToSave.key,
-          type,
           nodeType: draftToSave.nodeType,
           title: draftToSave.title,
           description: draftToSave.description,
@@ -404,7 +395,6 @@ export function PlaybookPromptsPage() {
           outputPorts: stripPortIds(draftToSave.outputPorts),
           promptTemplate: draftToSave.promptTemplate,
           requiredToolNames: draftToSave.requiredToolNames,
-          executionMode: draftToSave.executionMode,
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
@@ -445,7 +435,7 @@ export function PlaybookPromptsPage() {
   const startCreateTemplate = () => {
     setIsCreatingTemplate(true);
     setSelectedTemplateId('');
-    setTemplateDraft(normalizeNodeTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
+    setTemplateDraft(normalizeNodeTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', title: '' }));
   };
 
   const cancelCreateTemplate = () => {
@@ -461,7 +451,6 @@ export function PlaybookPromptsPage() {
       ...current,
       title,
       key: isCreatingTemplate ? slugify(title) : current.key,
-      type: isCreatingTemplate ? slugify(title) : current.type,
     }));
   };
 
@@ -580,7 +569,6 @@ export function PlaybookPromptsPage() {
         return {
           ...current,
           nodeType: 'action',
-          executionMode: 'action',
           assignedAgentId: null,
           selectedAction: current.selectedAction ?? 'index',
           iteratorConfig: null,
@@ -591,7 +579,6 @@ export function PlaybookPromptsPage() {
       return {
         ...current,
         nodeType: 'agent',
-        executionMode: 'agent',
         selectedAction: null,
         iteratorConfig: null,
         routerConfig: null,
@@ -600,7 +587,7 @@ export function PlaybookPromptsPage() {
   };
 
   const templateNodeType: PlaybookNodeType = templateDraft.nodeType
-    ?? (templateDraft.type === 'iterator' ? 'iterator' : templateDraft.executionMode === 'action' ? 'action' : 'agent');
+    ?? 'agent';
 
   const isLoading = promptLoading || templateLoading;
 
@@ -850,7 +837,7 @@ export function PlaybookPromptsPage() {
                               <div className="font-medium">{item.title}</div>
                               <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
                             </div>
-                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
                             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                               <BadgeInfo className="h-3.5 w-3.5" />
                               v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
@@ -882,7 +869,7 @@ export function PlaybookPromptsPage() {
                     <div>
                       <CardTitle>{isCreatingTemplate ? t('playbook.templates.actions.createTemplate') : (templateDraft.title || t('playbook.templates.selectTemplate'))}</CardTitle>
                       <CardDescription className="break-all">
-                        {isCreatingTemplate ? t('playbook.templates.createDescription') : (templateDraft.type || t('playbook.templates.selectTemplate'))}
+                        {isCreatingTemplate ? t('playbook.templates.createDescription') : (templateDraft.key || t('playbook.templates.selectTemplate'))}
                       </CardDescription>
                     </div>
                     {!isCreatingTemplate && templateDraft.id && (
@@ -1053,7 +1040,7 @@ export function PlaybookPromptsPage() {
                         }))}
                       />
                     </div>
-                  ) : templateDraft.executionMode === 'agent' ? (
+                  ) : templateNodeType !== 'action' ? (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.agent')}</label>
                       <SearchableSelect

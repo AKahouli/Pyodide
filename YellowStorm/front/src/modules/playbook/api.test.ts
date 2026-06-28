@@ -391,7 +391,6 @@ describe('flow node template routes', () => {
           items: [
             {
               id: 'router-default',
-              type: 'router-default',
               nodeType: 'router',
               title: 'Router',
               description: 'Route work',
