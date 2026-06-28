@@ -26,7 +26,44 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
 
     expect(enriched.confidence).toBeCloseTo(0.65);
     expect(enriched.diagnostics).toHaveLength(2);
+    expect(enriched.validationStatus).toBe('valid_with_warnings');
+    expect(enriched.blockingReasons).toBeUndefined();
     expect(enriched.repairSummary).toBeNull();
+  });
+
+  it('marks warning-only suggestions as valid with warnings', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan(), {}, [
+      { severity: 'warning', stage: 'parser', code: 'warn', message: 'warn' },
+    ]);
+
+    expect(enriched.validationStatus).toBe('valid_with_warnings');
+    expect(enriched.blockingReasons).toBeUndefined();
+  });
+
+  it('marks clean suggestions as valid', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan(), {}, []);
+
+    expect(enriched.validationStatus).toBe('valid');
+    expect(enriched.blockingReasons).toBeUndefined();
+  });
+
+  it('keeps suggestions with final validation diagnostics apply-ready', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan({
+      changes: [{
+        type: 'create_node',
+        nodeRef: 'draft',
+        anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+        task: {
+          title: 'Draft',
+          description: 'Draft',
+          inputPorts: [{ id: 'context', artifactKind: 'text', required: true }],
+        },
+      }],
+    }), {}, []);
+
+    expect(enriched.validationStatus).toBe('valid_with_warnings');
+    expect(enriched.validationDiagnostics?.length).toBeGreaterThan(0);
+    expect(enriched.blockingReasons).toBeUndefined();
   });
 
   it('caps diagnostic confidence penalties', () => {
@@ -54,5 +91,6 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
 
     expect(enriched.validationDiagnostics).toBeUndefined();
     expect(enriched.confidence).toBe(0.85);
+    expect(enriched.validationStatus).toBe('valid');
   });
 });

@@ -111,6 +111,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(suggestions[0].validationDiagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ message: 'Router classify label "no" has no outgoing edge' }),
       ]));
+      expect(suggestions[0].validationStatus).toBe('valid_with_warnings');
+      expect(suggestions[0].blockingReasons).toBeUndefined();
       expect(suggestions[0].repairSummary).toBeNull();
     });
 

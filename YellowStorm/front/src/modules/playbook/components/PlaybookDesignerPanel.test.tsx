@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
-import type { DesignMessage, HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse } from '../types';
+import type { DesignMessage, HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
 
 type StoreSnapshot = {
   currentPlaybook: Playbook | null;
@@ -316,6 +316,38 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(screen.queryByLabelText('interrupt.scopeLabel')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeInTheDocument();
     expect(screen.queryByText('designer.empty')).not.toBeInTheDocument();
+  });
+
+  it('allows history suggestions with validation warnings', async () => {
+    storeState.copilotMode = 'design';
+    const user = userEvent.setup();
+    const onApplyHistorySuggestion = vi.fn();
+    const suggestion: PlaybookIntentSuggestion = {
+      id: 'blocked-plan',
+      kind: 'workflow_plan',
+      label: 'Blocked plan',
+      summary: 'Validation warnings are non-blocking.',
+      reason: 'A required input is unbound.',
+      confidence: 0.9,
+      impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+      changes: [],
+      validationStatus: 'blocked',
+      isDirectIntentFallback: false,
+    };
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      history={[{ id: 'history-1', suggestion, intent: 'Build blocked workflow', appliedAt: Date.now(), playbookId: 'playbook-1', playbookName: 'Test playbook' }]}
+      onApplyHistorySuggestion={onApplyHistorySuggestion}
+    />);
+
+    await user.click(screen.getByRole('button', { name: 'intentBar.history.title' }));
+
+    expect(screen.getByText('Build blocked workflow')).toBeInTheDocument();
+    const historyButton = screen.getByRole('button', { name: /Build blocked workflow/ });
+    expect(historyButton).toBeEnabled();
+    await user.click(historyButton);
+    expect(onApplyHistorySuggestion).toHaveBeenCalledWith(suggestion);
   });
 
   it('submits the selected scope and memory consent', async () => {

@@ -298,6 +298,8 @@ interface PlaybookIntentWorkflowPlanSuggestion {
   changes: PlaybookIntentWorkflowChange[];
   diagnostics?: PlaybookIntentDiagnostic[];
   validationDiagnostics?: PlaybookIntentDiagnostic[];
+  validationStatus?: 'valid' | 'valid_with_warnings' | 'blocked';
+  blockingReasons?: string[];
   repairSummary?: string | null;
   isDirectIntentFallback: false;
 }

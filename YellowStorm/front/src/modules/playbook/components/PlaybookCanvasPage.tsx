@@ -1436,7 +1436,6 @@ function PlaybookCanvasInner() {
     options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean },
   ) => {
     if (!playbook) return;
-
     const shouldSave = options?.save ?? true;
     const shouldClearSuggestions = options?.clearSuggestions ?? true;
     const shouldFocus = options?.focus ?? true;

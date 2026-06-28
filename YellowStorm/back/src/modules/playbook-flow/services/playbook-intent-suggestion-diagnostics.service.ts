@@ -5,6 +5,7 @@ import { PlaybookFlowValidatorService } from './playbook-flow-validator.service'
 import type { PlaybookIntentSuggestion, PlaybookIntentTaskDraft, PlaybookIntentWorkflowChange } from './playbook-flow-intent.service';
 
 type WorkflowPlanSuggestion = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
+type IntentSuggestionValidationStatus = NonNullable<WorkflowPlanSuggestion['validationStatus']>;
 
 interface FlowDraft {
   nodes: FlowNode[];
@@ -25,13 +26,20 @@ export class PlaybookIntentSuggestionDiagnosticsService {
   ): WorkflowPlanSuggestion {
     const validationDiagnostics = this.collectValidationDiagnostics(suggestion, flow);
     const allDiagnostics = [...diagnostics, ...validationDiagnostics];
+    const validationStatus = this.classifyValidation(allDiagnostics);
     return {
       ...suggestion,
       confidence: this.scoreConfidence(suggestion.confidence, allDiagnostics),
       ...(allDiagnostics.length ? { diagnostics: allDiagnostics } : {}),
       ...(validationDiagnostics.length ? { validationDiagnostics } : {}),
+      validationStatus,
       repairSummary: null,
     };
+  }
+
+  private classifyValidation(diagnostics: PlaybookIntentDiagnostic[]): IntentSuggestionValidationStatus {
+    if (diagnostics.length > 0) return 'valid_with_warnings';
+    return 'valid';
   }
 
   private scoreConfidence(baseConfidence: number, diagnostics: PlaybookIntentDiagnostic[]): number {
