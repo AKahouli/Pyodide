@@ -99,20 +99,55 @@ def test_build_sandbox_prompt_note_warns_against_storage_names() -> None:
     assert "metadata storage filenames" in note
 
 
-def test_build_prompt_input_context_rewrites_storage_filename_for_prompt() -> None:
+def test_build_prompt_input_context_compacts_document_for_prompt() -> None:
     prompt_context = build_prompt_input_context(
         {
             "default": {
+                "kind": "document",
                 "name": "CV_Kevin_Diallo.pdf",
                 "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
                 "metadata": {
+                    "documentId": "doc-1",
+                    "workspaceId": "workspace-1",
+                    "workspaceName": "Workspace One",
                     "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                    "mimeType": "application/pdf",
                 },
             }
         }
     )
 
-    assert prompt_context["default"]["metadata"]["filename"] == "CV_Kevin_Diallo.pdf"
+    assert prompt_context["default"] == {
+        "kind": "document",
+        "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+        "documentId": "doc-1",
+        "workspaceId": "workspace-1",
+        "workspaceName": "Workspace One",
+        "name": "CV_Kevin_Diallo.pdf",
+        "mimeType": "application/pdf",
+    }
+
+
+def test_build_prompt_input_context_preserves_non_document_structured_data() -> None:
+    prompt_context = build_prompt_input_context(
+        {
+            "default": {
+                "items": [
+                    {"id": "finding-1", "title": "Missing docs", "severity": "high"},
+                    {"name": "homepage", "path": "/home", "handler": "IndexController"},
+                ],
+                "summary": "Keep this structured input intact.",
+            }
+        }
+    )
+
+    assert prompt_context["default"] == {
+        "items": [
+            {"id": "finding-1", "title": "Missing docs", "severity": "high"},
+            {"name": "homepage", "path": "/home", "handler": "IndexController"},
+        ],
+        "summary": "Keep this structured input intact.",
+    }
 
 
 def test_build_step_tool_scope_preserves_opaque_document_refs() -> None:

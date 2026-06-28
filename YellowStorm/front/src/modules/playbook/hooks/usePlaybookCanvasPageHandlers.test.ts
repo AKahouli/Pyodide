@@ -357,14 +357,15 @@ describe('usePlaybookCanvasPageHandlers', () => {
     confirmSpy.mockRestore();
   });
 
-  it('toggles copilot and closes editor when opening', () => {
+  it('toggles copilot, switches to design mode, and closes editor when opening from run mode', () => {
     const { result } = buildHandler({ pageMode: 'run', designerOpen: false });
 
     act(() => {
       result.current.handleToggleCopilot();
     });
 
-    expect(setCopilotMode).toHaveBeenCalledWith('interrupt');
+    expect(setCopilotMode).toHaveBeenCalledWith('design');
+    expect(setPageMode).toHaveBeenCalledWith('design');
     expect(setDesignerOpen).toHaveBeenCalledWith(true);
     expect(setEditorOpen).toHaveBeenCalledWith(false);
   });

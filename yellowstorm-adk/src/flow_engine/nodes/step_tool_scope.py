@@ -194,6 +194,28 @@ def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
 def _sanitize_for_prompt(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized = {key: _sanitize_for_prompt(item) for key, item in value.items()}
+        kind = str(sanitized.get("kind") or "").strip().lower()
+        file_ref = _file_ref_from_dict(sanitized) if kind == "document" else None
+        if file_ref is not None and file_ref.get("kind") == "document":
+            compact: dict[str, Any] = {
+                "kind": "document",
+                "path": file_ref.get("filepath", ""),
+                "documentId": file_ref.get("document_id", ""),
+                "workspaceId": file_ref.get("workspace_id", ""),
+                "workspaceName": file_ref.get("workspace_name", ""),
+                "name": file_ref.get("filename", ""),
+            }
+            metadata = sanitized.get("metadata") if isinstance(sanitized.get("metadata"), dict) else {}
+            mime_type = str(
+                sanitized.get("mimeType")
+                or sanitized.get("mime_type")
+                or metadata.get("mimeType")
+                or metadata.get("mime_type")
+                or ""
+            ).strip()
+            if mime_type:
+                compact["mimeType"] = mime_type
+            return compact
         display_name = _display_filename(sanitized)
         metadata = sanitized.get("metadata")
         if display_name and isinstance(metadata, dict):

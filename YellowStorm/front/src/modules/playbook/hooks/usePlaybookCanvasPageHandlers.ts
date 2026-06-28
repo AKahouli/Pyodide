@@ -226,13 +226,16 @@ export function usePlaybookCanvasPageHandlers({
   const handleToggleCopilot = useCallback(() => {
     const nextOpen = !designerOpen;
     if (nextOpen) {
-      setCopilotMode(pageMode === 'run' ? 'interrupt' : 'design');
+      setCopilotMode('design');
+      if (pageMode === 'run') {
+        setPageMode('design');
+      }
     }
     setDesignerOpen(nextOpen);
     if (nextOpen) {
       setEditorOpen(false);
     }
-  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen]);
+  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen, setPageMode]);
 
   const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
     setPageMode(mode);
