@@ -8,6 +8,7 @@ import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './play
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
+import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -33,6 +34,7 @@ export class PlaybookFlowIntentConstructionService {
     private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
       new PlaybookIntentGraphBindingResolverService(),
     ),
+    private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
   ) {}
 
   async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentConstructionStartResult> {
@@ -145,10 +147,11 @@ export class PlaybookFlowIntentConstructionService {
         designCatalog: this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog),
         selectedNodeId: context.selectedNodeId,
       });
-      if (built.diagnostics.length) {
-        this.logger.warn(`playbook_intent_builder_diagnostics items=${built.diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
+      const diagnostics = [...parsed.diagnostics, ...built.diagnostics];
+      if (diagnostics.length) {
+        this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
       }
-      return [built.suggestion];
+      return [this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, context.flow, diagnostics)];
     } catch (error) {
       this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
       return [];

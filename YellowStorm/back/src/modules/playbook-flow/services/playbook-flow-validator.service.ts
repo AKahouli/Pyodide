@@ -11,10 +11,12 @@ import {
   isNodeInCycle,
 } from '../utils/playbook-flow-validation-graph.util';
 
-interface ValidationError {
+export interface PlaybookFlowValidationError {
   rule: number;
   message: string;
 }
+
+type ValidationError = PlaybookFlowValidationError;
 
 interface ValidateOptions {
   allowDraftRouters?: boolean;
@@ -25,8 +27,17 @@ interface ValidateOptions {
 @Injectable()
 export class PlaybookFlowValidatorService {
   validate(nodes: FlowNode[], controlEdges: ControlEdge[], dataBindings: DataBinding[], options: ValidateOptions = {}): void {
-    const errors: ValidationError[] = [];
+    const errors = this.collectValidationErrors(nodes, controlEdges, dataBindings, options);
+    if (errors.length > 0) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        errors.map((e) => e.message).join('; '),
+      );
+    }
+  }
 
+  collectValidationErrors(nodes: FlowNode[], controlEdges: ControlEdge[], dataBindings: DataBinding[], options: ValidateOptions = {}): PlaybookFlowValidationError[] {
+    const errors: PlaybookFlowValidationError[] = [];
     errors.push(...this.checkUniqueNodeIds(nodes));
     errors.push(...this.checkDuplicateControlEdges(controlEdges));
     errors.push(...this.checkEdgeEndpoints(controlEdges, nodes));
@@ -45,13 +56,7 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkPreviousIterationOnCycle(nodes, controlEdges, dataBindings));
     errors.push(...this.checkBindingTypeMatch(nodes, dataBindings));
     errors.push(...this.checkErrorRoutingCoverage(nodes, controlEdges));
-
-    if (errors.length > 0) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        errors.map((e) => e.message).join('; '),
-      );
-    }
+    return errors;
   }
 
   private checkUniqueNodeIds(nodes: FlowNode[]): ValidationError[] {

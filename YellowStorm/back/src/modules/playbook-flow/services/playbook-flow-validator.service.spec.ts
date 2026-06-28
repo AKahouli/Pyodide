@@ -78,6 +78,22 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Data binding binding-1 source port source-node.missing does not exist');
   });
 
+  it('collects validation errors without throwing', () => {
+    const errors = service.collectValidationErrors(buildNodes(), [], [{
+      id: 'binding-1',
+      targetNode: 'target-node',
+      targetPort: 'prompt',
+      sourceKind: 'node-output',
+      sourceNode: 'source-node',
+      sourcePort: 'missing',
+      iteration: 'current',
+    }] as any);
+
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 7, message: 'Data binding binding-1 source port source-node.missing does not exist' }),
+    ]));
+  });
+
   it('rejects bindings whose target port does not exist', () => {
     expect(() => {
       service.validate(buildNodes(), [], [{

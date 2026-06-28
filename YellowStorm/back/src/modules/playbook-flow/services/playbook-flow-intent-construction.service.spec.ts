@@ -78,6 +78,42 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(suggestions[0].changes.some((c: any) => c.type === 'create_node' && c.task.title === 'test')).toBe(false);
     });
 
+    it('attaches diagnostics and lowers confidence for invalid compiled blueprint drafts', () => {
+      const service = new PlaybookFlowIntentConstructionService({
+        normalizeConstructionSuggestions: jest.fn(),
+        buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
+      } as any);
+      const context = makeContext(true);
+      context.nodeTemplates = [
+        ...context.nodeTemplates,
+        { id: 'tpl-router', key: 'router.template', nodeType: 'router', title: 'Router', category: 'control', inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true },
+      ];
+      const raw = JSON.stringify({
+        blueprint: {
+          version: 2,
+          title: 'Route one branch',
+          summary: 'Router missing one label edge',
+          nodes: [
+            { ref: 'classify', label: 'Classify', purpose: '', nodeTemplateKey: 'router.template', primitive: { kind: 'router', router: { outputLabels: ['yes', 'no'], defaultLabel: 'no' } } },
+            { ref: 'yes_step', label: 'Yes', purpose: '', nodeTemplateKey: 'generic.agent_step' },
+          ],
+          links: [{ sourceRef: 'classify', targetRef: 'yes_step', kind: 'conditional', routerLabel: 'yes' }],
+        },
+      });
+
+      const suggestions = (service as any).buildBlueprintSuggestions(raw, context, { intent: 'test' });
+
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].confidence).toBeLessThan(0.85);
+      expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: 'invariant_validator', code: 'validator_rule_4' }),
+      ]));
+      expect(suggestions[0].validationDiagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ message: 'Router classify label "no" has no outgoing edge' }),
+      ]));
+      expect(suggestions[0].repairSummary).toBeNull();
+    });
+
     it('emits blueprint workflow plans as progressive cumulative deltas', async () => {
       const service = createService();
       const job = {

@@ -10,10 +10,6 @@ type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard
 type CreateEdgeChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_edge' | 'delete_edge' }> & { type: 'create_edge' };
 type CreateBindingChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_data_binding' }>;
 
-// These artifact kinds are all serializable text-based content that can be
-// connected without an explicit conversion node (e.g. collector `data` → AI task `text`).
-const COMPATIBLE_ARTIFACT_KINDS: ReadonlySet<ArtifactKind> = new Set(['text', 'data', 'code', 'document']);
-
 interface PortCatalog {
   inputPorts: Map<string, Map<string, ArtifactKind>>;
   outputPorts: Map<string, Map<string, ArtifactKind>>;
@@ -108,6 +104,13 @@ export class PlaybookIntentGraphBindingResolverService {
 
     const sourcePorts = catalog.outputPorts.get(sourceId);
     const targetPorts = catalog.inputPorts.get(targetId);
+    if (edge.edgeKind === 'conditional' || edge.routerLabel) {
+      return {
+        ...edge,
+        edgeKind: 'conditional',
+        ...(edge.routerLabel ? { routerLabel: edge.routerLabel } : {}),
+      };
+    }
     let sourcePort = this.resolvePort(sourcePorts, edge.sourceOutputPortId || null, null);
     let targetPort = this.resolvePort(targetPorts, edge.targetInputPortId || null, sourcePort.kind);
 
@@ -196,6 +199,7 @@ export class PlaybookIntentGraphBindingResolverService {
     catalog: PortCatalog,
     context: IntentWorkflowValidationContext,
   ): PlaybookIntentWorkflowChange | null {
+    if (edge.edgeKind === 'conditional' || edge.routerLabel) return null;
     const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog);
     const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog);
     if (!sourceId || !targetId || !edge.sourceOutputPortId || !edge.targetInputPortId) return null;
@@ -252,12 +256,12 @@ export class PlaybookIntentGraphBindingResolverService {
   private areArtifactKindsCompatible(sourceKind: ArtifactKind | null, targetKind: ArtifactKind | null): boolean {
     if (!sourceKind || !targetKind) return true;
     if (sourceKind === targetKind) return true;
-    return COMPATIBLE_ARTIFACT_KINDS.has(sourceKind) && COMPATIBLE_ARTIFACT_KINDS.has(targetKind);
+    return false;
   }
 
   private edgeKey(edge: PlaybookIntentWorkflowChange): string {
     if (edge.type !== 'create_edge') return '';
-    return [edge.sourceTaskId || this.scopedRef(edge.sourceIteratorNodeRef || null, edge.sourceNodeRef), edge.targetTaskId || this.scopedRef(edge.targetIteratorNodeRef || null, edge.targetNodeRef), edge.sourceOutputPortId || '', edge.targetInputPortId || ''].join(':');
+    return [edge.sourceTaskId || this.scopedRef(edge.sourceIteratorNodeRef || null, edge.sourceNodeRef), edge.targetTaskId || this.scopedRef(edge.targetIteratorNodeRef || null, edge.targetNodeRef), edge.edgeKind || '', edge.routerLabel || '', edge.sourceOutputPortId || '', edge.targetInputPortId || ''].join(':');
   }
 
   private bindingKey(binding: PlaybookIntentWorkflowChange): string {

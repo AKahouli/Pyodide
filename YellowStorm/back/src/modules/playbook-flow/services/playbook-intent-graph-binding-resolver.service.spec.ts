@@ -135,7 +135,7 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
     ]));
   });
 
-  it('accepts edges between compatible artifact kinds (data to text)', () => {
+  it('rejects direct edges between different artifact kinds', () => {
     const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
@@ -154,8 +154,9 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
       }],
     });
 
-    expect(result.changes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'create_edge', sourceOutputPortId: 'artifact_list', targetInputPortId: 'input_1' }),
+    expect(result.changes).toHaveLength(0);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'edge_artifact_mismatch', severity: 'error', repairable: true }),
     ]));
   });
 

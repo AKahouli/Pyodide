@@ -16,10 +16,13 @@ import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.s
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import { PlaybookFlowPrimitiveRegistryService } from './playbook-flow-primitive-registry.service';
+import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
 import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
 import type { PlaybookIntentTraceEntry, PlaybookIntentTraceResponse } from '../interfaces/playbook-flow-intent-trace.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 import { PlaybookFlowIntentTraceService } from './playbook-flow-intent-trace.service';
 import { parseDesignResourceLine } from '../utils/playbook-flow-safe-text.util';
 
@@ -110,6 +113,22 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   nodeTemplateKey?: string | null;
+  routerConfig?: {
+    outputLabels: string[];
+    maxIterations?: number | null;
+    conditions?: Array<{
+      label: string;
+      sourceNode?: string | null;
+      sourcePort?: string | null;
+      path?: string | null;
+      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+      value?: unknown;
+    }>;
+    defaultLabel?: string | null;
+  } | null;
+  humanApprovalConfig?: Record<string, unknown> | null;
+  retryPolicy?: { maxRetries: number; delayMs?: number } | null;
+  modelId?: string | null;
   inputPorts?: Array<{
     id: string;
     name?: string | null;
@@ -143,6 +162,12 @@ export interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       nodeTemplateKey?: string | null;
+      routerConfig?: PlaybookIntentTaskDraft['routerConfig'];
+      humanApprovalConfig?: PlaybookIntentTaskDraft['humanApprovalConfig'];
+      retryPolicy?: PlaybookIntentTaskDraft['retryPolicy'];
+      modelId?: string | null;
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'];
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'];
       inputPorts?: Array<{
         id: string;
         name?: string | null;
@@ -158,6 +183,9 @@ export interface PlaybookIntentTaskDraft {
     edges: Array<{
       sourceNodeRef: string;
       targetNodeRef: string;
+      edgeKind?: 'sequential' | 'conditional';
+      routerLabel?: string | null;
+      priority?: number | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
     }>;
@@ -211,6 +239,9 @@ export type PlaybookIntentWorkflowChange =
     targetIteratorNodeRef?: string | null;
     sourceOutputPortId?: string | null;
     targetInputPortId?: string | null;
+    edgeKind?: 'sequential' | 'conditional';
+    routerLabel?: string | null;
+    priority?: number | null;
   }
   | {
     type: 'create_data_binding';
@@ -265,6 +296,9 @@ interface PlaybookIntentWorkflowPlanSuggestion {
     businessOutcome: string;
   };
   changes: PlaybookIntentWorkflowChange[];
+  diagnostics?: PlaybookIntentDiagnostic[];
+  validationDiagnostics?: PlaybookIntentDiagnostic[];
+  repairSummary?: string | null;
   isDirectIntentFallback: false;
 }
 
@@ -317,6 +351,8 @@ export class PlaybookFlowIntentService {
     private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
       new PlaybookIntentGraphBindingResolverService(),
     ),
+    private readonly primitiveRegistry: PlaybookFlowPrimitiveRegistryService = new PlaybookFlowPrimitiveRegistryService(),
+    private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
     private readonly skillService?: SkillService,
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
@@ -450,6 +486,7 @@ export class PlaybookFlowIntentService {
         description: template.description || '',
         category: template.category,
         semanticNodeType: template.nodeType,
+        primitiveKind: template.nodeType,
         isDefault: template.key === DEFAULT_GENERIC_NODE_TEMPLATE_KEY,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
@@ -465,7 +502,24 @@ export class PlaybookFlowIntentService {
           description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        selectedAction: template.selectedAction,
+        requiredToolNames: template.requiredToolNames,
+        iteratorConfig: template.iteratorConfig,
+        routerConfig: template.routerConfig,
+        humanApprovalConfig: template.humanApprovalConfig,
+        retryPolicy: template.retryPolicy,
+        modelId: template.modelId,
       })), null, 2),
+      primitive_catalog: JSON.stringify(this.primitiveRegistry.getPromptCatalog(), null, 2),
+      blueprint_schema_version: '2',
+      blueprint_schema_hint: JSON.stringify({
+        blueprint: {
+          version: 2,
+          nodes: ['ref', 'label', 'purpose', 'nodeTemplateKey', 'primitive', 'inputPorts', 'outputPorts'],
+          links: ['sourceRef', 'targetRef', 'kind', 'routerLabel', 'sourceOutputPortId', 'targetInputPortId'],
+          bindings: ['sourceKind', 'sourceRef', 'sourcePort', 'targetRef', 'targetPort'],
+        },
+      }, null, 2),
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
@@ -755,10 +809,11 @@ export class PlaybookFlowIntentService {
             designCatalog: this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog),
             selectedNodeId: args.context.selectedNodeId,
           });
-          if (buildResult.diagnostics.length) {
-            this.logger.warn(`playbook_intent_builder_diagnostics items=${buildResult.diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
+          const diagnostics = [...parsed.diagnostics, ...buildResult.diagnostics];
+          if (diagnostics.length) {
+            this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
           }
-          return [buildResult.suggestion];
+          return [this.suggestionDiagnostics.enrichWorkflowPlan(buildResult.suggestion, args.context.flow, diagnostics)];
         } catch (error) {
           this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
           this.logger.warn('playbook_intent_invalid_blueprint_output rule=build_failed');

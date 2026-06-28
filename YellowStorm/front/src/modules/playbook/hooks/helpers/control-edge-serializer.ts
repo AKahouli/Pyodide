@@ -241,17 +241,19 @@ export function resolveIntentEdgePorts(
 }
 
 export function edgeMatchesIntentPortPair(
-  edge: Pick<PlaybookEdge, 'sourceId' | 'targetId' | 'sourceOutputPortId' | 'targetInputPortId'>,
+  edge: Pick<PlaybookEdge, 'sourceId' | 'targetId' | 'sourceOutputPortId' | 'targetInputPortId'> & { routerLabel?: string | null },
   sourceId: string,
   targetId: string,
   sourceOutputPortId?: string | null,
   targetInputPortId?: string | null,
+  routerLabel?: string | null,
 ): boolean {
   return (
     edge.sourceId === sourceId &&
     edge.targetId === targetId &&
     (sourceOutputPortId == null || edge.sourceOutputPortId === sourceOutputPortId) &&
-    (targetInputPortId == null || edge.targetInputPortId === targetInputPortId)
+    (targetInputPortId == null || edge.targetInputPortId === targetInputPortId) &&
+    (routerLabel == null || edge.routerLabel === routerLabel)
   );
 }
 

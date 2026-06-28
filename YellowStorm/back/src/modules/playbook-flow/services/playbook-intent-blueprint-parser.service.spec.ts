@@ -362,6 +362,121 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_duplicate_target')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
+  it('accepts v2 router primitives, conditional links, and snake_case router aliases', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        version: 2,
+        title: 'Route work',
+        nodes: [
+          {
+            ref: 'classify',
+            label: 'Classify',
+            node_template_key: 'router.template',
+            primitive: {
+              kind: 'router',
+              router: {
+                output_labels: ['approved', 'rejected'],
+                default_label: 'rejected',
+                conditions: [{ label: 'approved', source_ref: 'classify', source_port: 'score', operator: 'gte', value: 0.8 }],
+              },
+            },
+          },
+          { ref: 'approve', label: 'Approve', nodeTemplateKey: 'generic.agent_step' },
+        ],
+        links: [{ source_ref: 'classify', target_ref: 'approve', edge_kind: 'conditional', router_label: 'approved', priority: 2 }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.version).toBe(2);
+    expect(result.blueprint.nodes[0].primitive?.kind).toBe('router');
+    expect(result.blueprint.nodes[0].routerConfig).toEqual(expect.objectContaining({
+      outputLabels: ['approved', 'rejected'],
+      defaultLabel: 'rejected',
+    }));
+    expect(result.blueprint.nodes[0].routerConfig?.conditions?.[0]).toEqual(expect.objectContaining({
+      label: 'approved',
+      sourceRef: 'classify',
+      sourcePort: 'score',
+      operator: 'gte',
+    }));
+    expect(result.blueprint.links[0]).toEqual(expect.objectContaining({ kind: 'conditional', routerLabel: 'approved', priority: 2 }));
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('requires labels on conditional links', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Missing label',
+        nodes: [
+          { ref: 'router', label: 'Router', nodeTemplateKey: 'router.template' },
+          { ref: 'next', label: 'Next', nodeTemplateKey: 'generic.agent_step' },
+        ],
+        links: [{ sourceRef: 'router', targetRef: 'next', kind: 'conditional' }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.links).toEqual([]);
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_link_conditional_missing_label')).toMatchObject({ stage: 'parser', severity: 'warning' });
+  });
+
+  it('deduplicates conditional links by router label and snake_case ports', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Route branches',
+        nodes: [
+          { ref: 'router', label: 'Router', nodeTemplateKey: 'router.template' },
+          { ref: 'next', label: 'Next', nodeTemplateKey: 'generic.agent_step' },
+        ],
+        links: [
+          { source_ref: 'router', target_ref: 'next', source_output_port_id: 'yes', target_input_port_id: 'default', edge_kind: 'conditional', router_label: 'yes' },
+          { source_ref: 'router', target_ref: 'next', source_output_port_id: 'no', target_input_port_id: 'default', edge_kind: 'conditional', router_label: 'no' },
+          { sourceRef: 'router', targetRef: 'next', sourceOutputPortId: 'yes', targetInputPortId: 'default', edgeKind: 'conditional', routerLabel: 'yes' },
+        ],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.links.map((link) => link.routerLabel)).toEqual(['yes', 'no']);
+    expect(result.diagnostics.find((d) => d.code === 'blueprint_link_duplicate')).toMatchObject({ stage: 'parser', severity: 'warning' });
+  });
+
+  it('accepts iterator child primitives and catalog refs', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Iterator child primitive',
+        nodes: [{
+          ref: 'loop',
+          label: 'Loop',
+          nodeTemplateKey: 'iterator.template',
+          iteratorBody: {
+            steps: [{
+              ref: 'child_router',
+              title: 'Child router',
+              nodeTemplateKey: 'router.template',
+              primitive: { kind: 'router', router: { outputLabels: ['yes', 'no'], defaultLabel: 'no' } },
+              connector_refs: [{ connector_slug: 'google-drive', action_key: 'search' }],
+              skill_refs: [{ skill_slug: 'classify' }],
+            }],
+            edges: [],
+          },
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+    const child = result.blueprint.nodes[0].iteratorBody?.steps[0];
+
+    expect(child?.primitive?.router?.outputLabels).toEqual(['yes', 'no']);
+    expect(child?.connectorRefs).toEqual([{ connectorSlug: 'google-drive', actionKey: 'search', reason: null }]);
+    expect(child?.skillRefs).toEqual([{ skillSlug: 'classify', reason: null }]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it('drops bindings with mismatched artifact kinds', () => {
     const raw = JSON.stringify({
       blueprint: {

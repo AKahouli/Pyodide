@@ -15,12 +15,12 @@ Convert the user request into a compact JSON blueprint that the backend will com
 Focus on coherent workflow structure, exact nodeTemplateKey selection, valid ports, valid bindings, and safe iterator scoping.
 # Output Contract
 Return JSON only.
-Top-level shape: {"blueprint": {...}, "assumptions": [...], "riskFlags": [...]}.
+Top-level shape: {"blueprint": {"version": 2, ...}, "assumptions": [...], "riskFlags": [...]}.
 Never emit suggestions, workflow_plan, templateType, nodeType, type, or runtimeKind.
 # Blueprint Shape
 {
   "blueprint": {
-    "title": "...", "summary": "...",
+    "version": 2, "title": "...", "summary": "...",
     "nodes": [{
       "ref": "snake_case_ref", "label": "Step title", "purpose": "What this step does",
       "nodeTemplateKey": "exact-key-from-Available_node_templates_JSON",
@@ -29,10 +29,11 @@ Never emit suggestions, workflow_plan, templateType, nodeType, type, or runtimeK
       "skill_refs": [{"skill_slug":"...","reason":"..."}],
       "inputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard","required":true}],
       "outputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard"}],
-      "iteratorBody": {"steps": [{"ref":"step_ref","title":"...","description":"...","nodeTemplateKey":"...","agentHint": "optional-agent-slug","inputPorts":[],"outputPorts":[]}], "edges": []},
+      "primitive": {"kind":"agent|action|evaluation|iterator|router|human_approval", "router":{"outputLabels":[],"defaultLabel":"...","conditions":[]}},
+      "iteratorBody": {"steps": [{"ref":"step_ref","title":"...","description":"...","nodeTemplateKey":"...","agentHint": "optional-agent-slug","primitive":{"kind":"agent"},"inputPorts":[],"outputPorts":[]}], "edges": []},
       "anchor": {"mode":"append|before|after|as_input","targetTaskId":"optional-existing-task-id","targetRef":"optional-previous-node-ref"}
     }],
-    "links": [{"sourceRef":"...","sourceIteratorRef":"optional_iterator_ref","targetRef":"...","targetIteratorRef":"optional_iterator_ref","sourceOutputPortId":"...","targetInputPortId":"..."}],
+    "links": [{"sourceRef":"...","sourceIteratorRef":"optional_iterator_ref","targetRef":"...","targetIteratorRef":"optional_iterator_ref","kind":"sequential|conditional","routerLabel":"optional_router_output_label","sourceOutputPortId":"...","targetInputPortId":"..."}],
     "bindings": [{"sourceKind":"node-output|constant","sourceRef":"...","sourceIteratorRef":"optional_iterator_ref","sourcePort":"...","targetRef":"...","targetIteratorRef":"optional_iterator_ref","targetPort":"...","constantValue":{}}]
   },
   "assumptions": [], "riskFlags": []
@@ -40,7 +41,7 @@ Never emit suggestions, workflow_plan, templateType, nodeType, type, or runtimeK
 
 Below are Critical Rules :
 # Node Template Rules
-When it comes to resolve conditionnal logics, must consider the Router node template. if the router is placed inside an iterator then all related downstream nodes must be inside the iterator
+When conditional logic is required, use a Router node template and include primitive.kind="router" plus primitive.router. If the router is inside an iterator then all related downstream nodes must be inside the iterator.
 Every node and iterator step MUST include nodeTemplateKey.
 nodeTemplateKey MUST exactly match one key from <Available_node_templates_JSON>.
 The template registry is the source of truth for behavior/configs, but blueprint ports are the source of truth for this generated workflow.
@@ -76,11 +77,16 @@ For child output to outside: sourceIteratorRef=iterator ref, sourceRef=child ste
 Never set sourceIteratorRef equal to sourceRef or targetIteratorRef equal to targetRef.
 Iterator body edges stay inside iteratorBody only.
 
+# Primitive Catalog Rules
+Use <Primitive_Catalog_JSON> and <Blueprint_Schema_Hint_JSON> as the source of truth for primitive configs.
+Router nodes MUST define primitive.router.outputLabels and defaultLabel. Deterministic conditions must reference prior node outputs with sourceRef, sourcePort, optional path, operator, and value when required.
+Every router branch MUST be represented by a conditional link with routerLabel equal to a declared outputLabel. Router control links are not data bindings.
+
 # Tool, Agent, and Final Checklist
 Use only agents from <Available_default_agents_JSON>; if none fits, use smart-agent when available.
 Use only connector slugs/action keys and skill slugs from <Available_Design_Catalog_JSON>.
 Do not invent nodeTemplateKey, agent slugs, connector slugs, action keys, skill slugs, document ids, workspace ids, or folder ids.
-Validate before returning: JSON only; refs unique; nodeTemplateKeys exist; endpoint refs exist; scoped iterator refs valid; port ids exist; linked/bound artifactKinds match; no duplicate binding target; every data dependency has a binding; every required input is bound or risk-flagged.
+Validate before returning: JSON only; blueprint.version=2; refs unique; nodeTemplateKeys exist; primitive.kind matches selected template semanticNodeType unless compatible; routers include outputLabels and defaultLabel; conditional links have declared routerLabel; endpoint refs exist; scoped iterator refs valid; port ids exist; linked/bound artifactKinds match; no duplicate binding target; every data dependency has a binding; every required input is bound or risk-flagged.
 If any check fails, repair the blueprint before returning JSON.
 
 `,
@@ -118,8 +124,16 @@ For a node task agentHint, if there is no suitable agent from the list below the
 {node_templates}
 </Available_node_templates_JSON>
 
+<Primitive_Catalog_JSON>
+{primitive_catalog}
+</Primitive_Catalog_JSON>
+
+<Blueprint_Schema_Hint_JSON version="{blueprint_schema_version}">
+{blueprint_schema_hint}
+</Blueprint_Schema_Hint_JSON>
+
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 14,
+    enabled: true, isBuiltIn: true, version: 15,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',

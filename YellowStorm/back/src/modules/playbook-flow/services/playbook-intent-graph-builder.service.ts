@@ -32,6 +32,10 @@ interface BuilderNodeTemplate {
   enabled: boolean;
   recommendedAgentTypeSlug: string | null;
   iteratorConfig?: unknown;
+  routerConfig?: PlaybookIntentTaskDraft['routerConfig'];
+  humanApprovalConfig?: unknown;
+  retryPolicy?: PlaybookIntentTaskDraft['retryPolicy'];
+  modelId?: string | null;
   inputPorts?: BuilderNodeTemplatePort[];
   outputPorts?: BuilderNodeTemplatePort[];
 }
@@ -74,6 +78,13 @@ interface BuildResult {
 }
 
 type BuilderPort = NonNullable<PlaybookIntentTaskDraft['inputPorts']>[number];
+type RouterConditionLike = {
+  label: string;
+  sourceRef?: string | null;
+  sourceIteratorRef?: string | null;
+  sourceNode?: string | null;
+  sourcePort?: string | null;
+};
 
 interface ReferencedPorts {
   inputsByRef: Map<string, Set<string>>;
@@ -164,7 +175,8 @@ export class PlaybookIntentGraphBuilderService {
     const template = this.resolveNodeTemplate(node.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), referencedPorts.inputKindsByRef.get(node.ref), diagnostics);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
+    const routerConfig = this.buildRouterConfig(node, template, diagnostics);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, routerConfig ? this.withRouterOutputPorts(node.outputPorts, routerConfig.outputLabels) : node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
     const agentSlug = this.resolveAgentSlug(node, template);
 
     const task: PlaybookIntentTaskDraft = {
@@ -172,6 +184,10 @@ export class PlaybookIntentGraphBuilderService {
       description: node.purpose || node.label,
       ...(agentSlug ? { agentSlug } : {}),
       nodeTemplateKey: template.key,
+      ...(routerConfig ? { routerConfig } : {}),
+      ...(node.humanApprovalConfig ? { humanApprovalConfig: node.humanApprovalConfig } : template.humanApprovalConfig ? { humanApprovalConfig: template.humanApprovalConfig as Record<string, unknown> } : {}),
+      ...(template.retryPolicy ? { retryPolicy: template.retryPolicy } : {}),
+      ...(template.modelId ? { modelId: template.modelId } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
       ...(node.connectorRefs?.length ? { toolBindings: this.buildToolBindings(node, options, diagnostics) } : {}),
@@ -276,17 +292,37 @@ export class PlaybookIntentGraphBuilderService {
       .map((step) => this.buildIteratorStep(step, options, diagnostics, referencedPorts))
       .filter((step): step is NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] => step !== null);
     const validStepRefs = new Set(steps.map((s) => s.nodeRef));
+    const routerLabelsByStepRef = new Map(steps
+      .filter((step) => step.routerConfig)
+      .map((step) => [step.nodeRef, new Set(step.routerConfig!.outputLabels)]));
     const edges = body.edges
       .filter((edge) => validStepRefs.has(edge.sourceRef) && validStepRefs.has(edge.targetRef))
       .slice(0, options.limits.maxIteratorBodyEdges)
+      .filter((edge) => this.isValidIteratorBodyEdge(ownerRef, edge, routerLabelsByStepRef, diagnostics))
       .map((edge) => ({
         sourceNodeRef: edge.sourceRef,
         targetNodeRef: edge.targetRef,
+        ...(edge.kind ? { edgeKind: edge.kind } : {}),
+        ...(edge.routerLabel ? { routerLabel: edge.routerLabel } : {}),
         ...(edge.sourceOutputPortId ? { sourceOutputPortId: edge.sourceOutputPortId } : {}),
         ...(edge.targetInputPortId ? { targetInputPortId: edge.targetInputPortId } : {}),
       }));
 
     return { steps, edges };
+  }
+
+  private isValidIteratorBodyEdge(
+    ownerRef: string,
+    edge: NonNullable<PlaybookIntentBlueprintNode['iteratorBody']>['edges'][number],
+    routerLabelsByStepRef: Map<string, Set<string>>,
+    diagnostics: PlaybookIntentDiagnostic[],
+  ): boolean {
+    const routerLabels = routerLabelsByStepRef.get(edge.sourceRef) || null;
+    const edgeKind = edge.kind || (routerLabels ? 'conditional' : undefined);
+    if (edgeKind !== 'conditional') return true;
+    if (routerLabels?.has(edge.routerLabel || '')) return true;
+    this.recordDiagnostic(diagnostics, 'builder_conditional_edge_invalid_router_label', `${ownerRef}.${edge.sourceRef}->${edge.targetRef}`);
+    return false;
   }
 
   private buildIteratorStep(
@@ -297,14 +333,23 @@ export class PlaybookIntentGraphBuilderService {
   ): NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number] | null {
     const template = this.resolveNodeTemplate(step.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
+    const nodeLike = { ...step, label: step.title, purpose: step.description || step.title } as PlaybookIntentBlueprintNode;
+    const routerConfig = this.buildRouterConfig(nodeLike, template, diagnostics);
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), referencedPorts.inputKindsByRef.get(step.ref), diagnostics);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, routerConfig ? this.withRouterOutputPorts(step.outputPorts, routerConfig.outputLabels) : step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
     return {
       nodeRef: step.ref,
       title: step.title,
       description: step.description || step.title,
       nodeTemplateKey: template.key,
       ...(template.recommendedAgentTypeSlug ? { agentSlug: template.recommendedAgentTypeSlug } : {}),
+      ...(step.agentHint ? { agentSlug: step.agentHint } : {}),
+      ...(routerConfig ? { routerConfig } : {}),
+      ...(template.humanApprovalConfig ? { humanApprovalConfig: template.humanApprovalConfig as Record<string, unknown> } : {}),
+      ...(template.retryPolicy ? { retryPolicy: template.retryPolicy } : {}),
+      ...(template.modelId ? { modelId: template.modelId } : {}),
+      ...(step.connectorRefs?.length ? { toolBindings: this.buildToolBindings(nodeLike, options, diagnostics) } : {}),
+      ...(step.skillRefs?.length ? { skillBindings: this.buildSkillBindings(nodeLike, options, diagnostics) } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
     };
@@ -322,6 +367,65 @@ export class PlaybookIntentGraphBuilderService {
 
   private supportsIteratorBody(template: BuilderNodeTemplate): boolean {
     return Boolean(template.iteratorConfig);
+  }
+
+  private buildRouterConfig(
+    node: PlaybookIntentBlueprintNode,
+    template: BuilderNodeTemplate,
+    diagnostics: PlaybookIntentDiagnostic[],
+  ): PlaybookIntentTaskDraft['routerConfig'] | null {
+    const source = node.primitive?.router || node.routerConfig || template.routerConfig || null;
+    const isRouter = (node.primitive?.kind || template.nodeType) === 'router' || Boolean(source);
+    if (!isRouter) return null;
+    if (!source) {
+      this.recordDiagnostic(diagnostics, 'builder_router_primitive_missing_config', node.ref);
+      return null;
+    }
+    const outputLabels = [...new Set((source.outputLabels || []).map((label) => label.trim()).filter(Boolean))];
+    if (outputLabels.length === 0) {
+      this.recordDiagnostic(diagnostics, 'builder_router_missing_output_labels', node.ref);
+      return null;
+    }
+    const defaultLabel = source.defaultLabel && outputLabels.includes(source.defaultLabel) ? source.defaultLabel : null;
+    return {
+      outputLabels,
+      maxIterations: source.maxIterations ?? template.routerConfig?.maxIterations ?? 1,
+      defaultLabel,
+      conditions: (source.conditions || [])
+        .filter((condition) => {
+          const isKnownLabel = outputLabels.includes(condition.label);
+          if (!isKnownLabel) this.recordDiagnostic(diagnostics, 'builder_router_condition_unknown_label', `${node.ref}:${condition.label}`);
+          return isKnownLabel;
+        })
+        .map((condition) => ({
+          label: condition.label,
+          sourceNode: this.resolveRouterConditionSourceNode(condition),
+          sourcePort: condition.sourcePort,
+          ...(condition.path ? { path: condition.path } : {}),
+          operator: condition.operator,
+          ...(Object.prototype.hasOwnProperty.call(condition, 'value') ? { value: condition.value } : {}),
+        })),
+    };
+  }
+
+  private resolveRouterConditionSourceNode(
+    condition: RouterConditionLike,
+  ): string | null {
+    if ('sourceRef' in condition) return this.scopedRef(condition.sourceIteratorRef, condition.sourceRef || null);
+    return condition.sourceNode || null;
+  }
+
+  private withRouterOutputPorts(
+    ports: PlaybookIntentBlueprintPort[] | undefined,
+    outputLabels: string[],
+  ): PlaybookIntentBlueprintPort[] {
+    const byId = new Map((ports || []).map((port) => [port.id, port]));
+    for (const label of outputLabels) {
+      if (!byId.has(label)) {
+        byId.set(label, { id: label, name: label, artifactKind: 'text' });
+      }
+    }
+    return [...byId.values()];
   }
 
   private recordDiagnostic(diagnostics: PlaybookIntentDiagnostic[], code: string, itemId: string): void {
@@ -352,35 +456,44 @@ export class PlaybookIntentGraphBuilderService {
   ): BuilderPort[] {
     const ports: BuilderPort[] = [];
     const seen = new Set<string>();
-    if (blueprintPorts?.length) {
-      for (const port of blueprintPorts) {
-        if (!port.id || !port.artifactKind) {
-          this.recordDiagnostic(diagnostics, 'builder_port_missing_fields', `${ownerRef}.${port.id || '?'}`);
-          continue;
-        }
-        if (seen.has(port.id)) continue;
-        seen.add(port.id);
-        ports.push({
-          id: port.id,
-          artifactKind: port.artifactKind as BuilderPort['artifactKind'],
-          required: port.required === true,
-          ...(port.name ? { name: port.name } : {}),
-        });
-      }
-      return ports;
-    }
-
     for (const port of templatePorts || []) {
       if (!port.id || !port.artifactKind) continue;
-      if (!referencedTemplatePorts?.has(port.id)) continue;
+      if (!port.required && !referencedTemplatePorts?.has(port.id)) continue;
       if (seen.has(port.id)) continue;
       seen.add(port.id);
       ports.push({
         id: port.id,
         artifactKind: (referencedTemplatePortKinds?.get(port.id) || port.artifactKind) as BuilderPort['artifactKind'],
-        required: false,
+        required: port.required === true,
         ...(port.name ? { name: port.name } : {}),
       });
+    }
+
+    if (blueprintPorts?.length) {
+      const byId = new Map(ports.map((port) => [port.id, port]));
+      for (const port of blueprintPorts) {
+        if (!port.id || !port.artifactKind) {
+          this.recordDiagnostic(diagnostics, 'builder_port_missing_fields', `${ownerRef}.${port.id || '?'}`);
+          continue;
+        }
+        const existing = byId.get(port.id);
+        if (existing) {
+          existing.name = port.name || existing.name;
+          existing.artifactKind = port.artifactKind as BuilderPort['artifactKind'];
+          existing.required = existing.required === true || port.required === true;
+          continue;
+        }
+        seen.add(port.id);
+        const nextPort = {
+          id: port.id,
+          artifactKind: port.artifactKind as BuilderPort['artifactKind'],
+          required: port.required === true,
+          ...(port.name ? { name: port.name } : {}),
+        };
+        byId.set(port.id, nextPort);
+        ports.push(nextPort);
+      }
+      return ports;
     }
     return ports;
   }
@@ -505,6 +618,15 @@ export class PlaybookIntentGraphBuilderService {
       this.recordDiagnostic(diagnostics, 'builder_edge_unknown_ref', `${link.sourceRef}->${link.targetRef}`);
       return null;
     }
+    const sourceNode = options.blueprint.nodes.find((node) => node.ref === link.sourceRef);
+    const routerConfig = sourceNode ? (sourceNode.primitive?.router || sourceNode.routerConfig) : null;
+    const edgeKind = link.kind || (routerConfig ? 'conditional' : undefined);
+    if (edgeKind === 'conditional') {
+      if (!routerConfig || !link.routerLabel || !routerConfig.outputLabels.includes(link.routerLabel)) {
+        this.recordDiagnostic(diagnostics, 'builder_conditional_edge_invalid_router_label', `${link.sourceRef}->${link.targetRef}`);
+        return null;
+      }
+    }
     return {
       type: 'create_edge',
       sourceTaskId: source.taskId,
@@ -513,8 +635,11 @@ export class PlaybookIntentGraphBuilderService {
       targetTaskId: target.taskId,
       targetNodeRef: target.nodeRef,
       ...(target.iteratorNodeRef ? { targetIteratorNodeRef: target.iteratorNodeRef } : {}),
-      ...(link.sourceOutputPortId ? { sourceOutputPortId: link.sourceOutputPortId } : {}),
+      ...(link.sourceOutputPortId || (edgeKind === 'conditional' && link.routerLabel) ? { sourceOutputPortId: link.sourceOutputPortId || link.routerLabel } : {}),
       ...(link.targetInputPortId ? { targetInputPortId: link.targetInputPortId } : {}),
+      ...(edgeKind ? { edgeKind } : {}),
+      ...(link.routerLabel ? { routerLabel: link.routerLabel } : {}),
+      ...(link.priority != null ? { priority: link.priority } : {}),
     };
   }
 

@@ -463,11 +463,26 @@ export type PlaybookIntentOperationType =
 
 export type PlaybookIntentSuggestionKind = 'single_change' | 'workflow_plan';
 
+export interface PlaybookIntentDiagnostic {
+  severity: 'info' | 'warning' | 'error';
+  stage: 'parser' | 'template_resolver' | 'port_compiler' | 'graph_builder' | 'binding_resolver' | 'invariant_validator' | 'repair';
+  code: string;
+  path?: string;
+  itemId?: string;
+  message: string;
+  repairable?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
   nodeTemplateKey?: string | null;
+  routerConfig?: RouterConfig | null;
+  humanApprovalConfig?: HumanApprovalConfig | null;
+  retryPolicy?: RetryPolicy | null;
+  modelId?: string | null;
   toolBindings?: ToolBinding[];
   skillBindings?: TaskSkillBinding[];
   inputPorts?: Array<{
@@ -488,6 +503,12 @@ export interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       nodeTemplateKey?: string | null;
+      routerConfig?: RouterConfig | null;
+      humanApprovalConfig?: HumanApprovalConfig | null;
+      retryPolicy?: RetryPolicy | null;
+      modelId?: string | null;
+      toolBindings?: ToolBinding[];
+      skillBindings?: TaskSkillBinding[];
       inputPorts?: Array<{
         id: string;
         name?: string | null;
@@ -503,6 +524,9 @@ export interface PlaybookIntentTaskDraft {
     edges: Array<{
       sourceNodeRef: string;
       targetNodeRef: string;
+      edgeKind?: ControlEdgeKind;
+      routerLabel?: string | null;
+      priority?: number | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
     }>;
@@ -560,6 +584,9 @@ export type PlaybookIntentWorkflowChange =
       targetIteratorNodeRef?: string | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
+      edgeKind?: ControlEdgeKind;
+      routerLabel?: string | null;
+      priority?: number | null;
     }
   | {
       type: 'create_data_binding';
@@ -628,6 +655,9 @@ export interface PlaybookIntentWorkflowPlanSuggestion {
   confidence: number;
   impact: PlaybookIntentWorkflowImpact;
   changes: PlaybookIntentWorkflowChange[];
+  diagnostics?: PlaybookIntentDiagnostic[];
+  validationDiagnostics?: PlaybookIntentDiagnostic[];
+  repairSummary?: string | null;
   isDirectIntentFallback: false;
 }
 

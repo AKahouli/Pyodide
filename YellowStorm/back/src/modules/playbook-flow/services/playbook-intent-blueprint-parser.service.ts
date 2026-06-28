@@ -9,6 +9,9 @@ import {
   PlaybookIntentBlueprintNode,
   PlaybookIntentBlueprintParseResult,
   PlaybookIntentBlueprintPort,
+  PlaybookIntentBlueprintPrimitiveConfig,
+  PlaybookIntentBlueprintRouterCondition,
+  PlaybookIntentBlueprintRouterConfig,
   PlaybookIntentBlueprintSkillRef,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
@@ -19,6 +22,8 @@ const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = 
 
 const ANCHOR_MODES = ['append', 'before', 'after', 'as_input'] as const;
 type AnchorMode = typeof ANCHOR_MODES[number];
+const EDGE_KINDS = ['sequential', 'conditional'] as const;
+const ROUTER_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] as const;
 
 @Injectable()
 export class PlaybookIntentBlueprintParserService {
@@ -47,6 +52,7 @@ export class PlaybookIntentBlueprintParserService {
 
     return {
       blueprint: {
+        version: blueprintNode.version === 2 ? 2 : 1,
         title,
         summary,
         nodes,
@@ -131,6 +137,8 @@ export class PlaybookIntentBlueprintParserService {
       const inputPorts = this.parsePorts(raw.inputPorts, diagnostics, `${ref}.inputs`);
       const outputPorts = this.parsePorts(raw.outputPorts, diagnostics, `${ref}.outputs`);
       const anchor = this.parseAnchor(raw.anchor);
+      const primitive = this.parsePrimitive(raw.primitive, diagnostics, ref);
+      const routerConfig = primitive?.router || this.parseRouterConfig(raw.routerConfig ?? raw.router_config, diagnostics, ref);
 
       accepted.push({
         ref,
@@ -138,6 +146,9 @@ export class PlaybookIntentBlueprintParserService {
         purpose,
         nodeTemplateKey,
         agentHint: this.asString(raw.agentHint) || null,
+        ...(primitive ? { primitive: routerConfig ? { ...primitive, router: routerConfig } : primitive } : routerConfig ? { primitive: { kind: 'router', router: routerConfig } } : {}),
+        ...(routerConfig ? { routerConfig } : {}),
+        ...(this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) ? { humanApprovalConfig: this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) as Record<string, unknown> } : {}),
         inputPorts,
         outputPorts,
         connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, diagnostics, ref),
@@ -298,11 +309,16 @@ export class PlaybookIntentBlueprintParserService {
       this.recordDiagnostic(diagnostics, 'blueprint_iterator_step_missing_fields', `${ownerRef}.step.${ref || '?'}`);
       return null;
     }
+    const primitive = this.parsePrimitive(raw.primitive, diagnostics, `${ownerRef}.${ref}`);
     return {
       ref,
       title,
       description: this.asString(raw.description),
       nodeTemplateKey,
+      agentHint: this.asString(raw.agentHint) || null,
+      connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, diagnostics, `${ownerRef}.${ref}`),
+      skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, diagnostics, `${ownerRef}.${ref}`),
+      ...(primitive ? { primitive } : {}),
       inputPorts: this.parsePorts(raw.inputPorts, diagnostics, `${ownerRef}.${ref}.inputs`),
       outputPorts: this.parsePorts(raw.outputPorts, diagnostics, `${ownerRef}.${ref}.outputs`),
     };
@@ -329,8 +345,9 @@ export class PlaybookIntentBlueprintParserService {
     return {
       sourceRef,
       targetRef,
-      ...(this.asString(raw.sourceOutputPortId) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId) } : {}),
-      ...(this.asString(raw.targetInputPortId) ? { targetInputPortId: this.asString(raw.targetInputPortId) } : {}),
+      ...this.parseEdgeMetadata(raw, diagnostics, `${ownerRef}.${sourceRef}->${targetRef}`),
+      ...(this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id) } : {}),
+      ...(this.asString(raw.targetInputPortId ?? raw.target_input_port_id) ? { targetInputPortId: this.asString(raw.targetInputPortId ?? raw.target_input_port_id) } : {}),
     };
   }
 
@@ -350,10 +367,15 @@ export class PlaybookIntentBlueprintParserService {
         continue;
       }
       const raw = item as Record<string, unknown>;
-      const sourceRef = this.asString(raw.sourceRef);
-      const targetRef = this.asString(raw.targetRef);
-      const sourceIteratorRef = this.asString(raw.sourceIteratorRef);
-      const targetIteratorRef = this.asString(raw.targetIteratorRef);
+      const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+      const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref);
+      const edgeMetadata = this.parseEdgeMetadata(raw, diagnostics, `${sourceRef || '?'}->${targetRef || '?'}`);
+      if (edgeMetadata.kind === 'conditional' && !edgeMetadata.routerLabel) {
+        this.recordDiagnostic(diagnostics, 'blueprint_link_conditional_missing_label', `${sourceRef || '?'}->${targetRef || '?'}`);
+        continue;
+      }
       if (!sourceRef || !targetRef) {
         this.recordDiagnostic(diagnostics, 'blueprint_link_missing_refs', `${sourceRef || '?'}->${targetRef || '?'}`);
         continue;
@@ -366,7 +388,9 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDiagnostic(diagnostics, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
         continue;
       }
-      const key = `${sourceIteratorRef}.${sourceRef}::${targetIteratorRef}.${targetRef}::${raw.sourceOutputPortId || ''}::${raw.targetInputPortId || ''}`;
+      const sourceOutputPortId = this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id);
+      const targetInputPortId = this.asString(raw.targetInputPortId ?? raw.target_input_port_id);
+      const key = `${sourceIteratorRef}.${sourceRef}::${targetIteratorRef}.${targetRef}::${sourceOutputPortId}::${targetInputPortId}::${edgeMetadata.routerLabel || ''}`;
       if (seenKeys.has(key)) {
         this.recordDiagnostic(diagnostics, 'blueprint_link_duplicate', key);
         continue;
@@ -377,8 +401,10 @@ export class PlaybookIntentBlueprintParserService {
         targetRef,
         ...(sourceIteratorRef ? { sourceIteratorRef } : {}),
         ...(targetIteratorRef ? { targetIteratorRef } : {}),
-        ...(this.asString(raw.sourceOutputPortId) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId) } : {}),
-        ...(this.asString(raw.targetInputPortId) ? { targetInputPortId: this.asString(raw.targetInputPortId) } : {}),
+        ...edgeMetadata,
+        ...(sourceOutputPortId ? { sourceOutputPortId } : {}),
+        ...(targetInputPortId ? { targetInputPortId } : {}),
+        ...(typeof raw.priority === 'number' ? { priority: raw.priority } : {}),
       });
     }
     return accepted;
@@ -412,9 +438,9 @@ export class PlaybookIntentBlueprintParserService {
         continue;
       }
       const raw = item as Record<string, unknown>;
-      const targetRef = this.asString(raw.targetRef);
-      const targetIteratorRef = this.asString(raw.targetIteratorRef);
-      const targetPort = this.asString(raw.targetPort);
+      const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref);
+      const targetPort = this.asString(raw.targetPort ?? raw.target_port);
       if (!targetRef || !targetPort) {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_target', `${targetRef || '?'}.${targetPort || '?'}`);
         continue;
@@ -456,9 +482,9 @@ export class PlaybookIntentBlueprintParserService {
         continue;
       }
 
-      const sourceRef = this.asString(raw.sourceRef);
-      const sourceIteratorRef = this.asString(raw.sourceIteratorRef);
-      const sourcePort = this.asString(raw.sourcePort);
+      const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref);
+      const sourcePort = this.asString(raw.sourcePort ?? raw.source_port);
       if (!sourceRef || !sourcePort) {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_source', key);
         continue;
@@ -541,6 +567,108 @@ export class PlaybookIntentBlueprintParserService {
       ...(this.asString(raw.mimeType) ? { mimeType: this.asString(raw.mimeType) } : {}),
       ...(this.asString(raw.label) ? { label: this.asString(raw.label) } : {}),
     };
+  }
+
+  private parsePrimitive(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): PlaybookIntentBlueprintPrimitiveConfig | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const kind = this.asString(raw.kind);
+    if (!kind) {
+      this.recordDiagnostic(diagnostics, 'blueprint_primitive_invalid', ownerRef);
+      return null;
+    }
+    const router = this.parseRouterConfig(raw.router ?? raw.routerConfig ?? raw.router_config, diagnostics, ownerRef);
+    return {
+      kind,
+      ...(router ? { router } : {}),
+      ...(this.asRecord(raw.iterator) ? { iterator: this.asRecord(raw.iterator) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.humanApproval ?? raw.human_approval) ? { humanApproval: this.asRecord(raw.humanApproval ?? raw.human_approval) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.evaluation) ? { evaluation: this.asRecord(raw.evaluation) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.action) ? { action: this.asRecord(raw.action) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.metadata) ? { metadata: this.asRecord(raw.metadata) as Record<string, unknown> } : {}),
+    };
+  }
+
+  private parseRouterConfig(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): PlaybookIntentBlueprintRouterConfig | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const outputLabels = this.asStringArray(raw.outputLabels ?? raw.output_labels);
+    if (outputLabels.length === 0) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_config_invalid', ownerRef);
+      return null;
+    }
+    const uniqueLabels = [...new Set(outputLabels)];
+    const conditions = Array.isArray(raw.conditions)
+      ? raw.conditions
+        .map((condition) => this.parseRouterCondition(condition, diagnostics, ownerRef, uniqueLabels))
+        .filter((condition): condition is NonNullable<typeof condition> => condition !== null)
+      : [];
+    const defaultLabel = this.asString(raw.defaultLabel ?? raw.default_label) || null;
+    if (defaultLabel && !uniqueLabels.includes(defaultLabel)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_config_invalid', `${ownerRef}.defaultLabel`);
+    }
+    return {
+      outputLabels: uniqueLabels,
+      ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : typeof raw.max_iterations === 'number' ? { maxIterations: raw.max_iterations } : {}),
+      ...(conditions.length ? { conditions } : {}),
+      ...(defaultLabel ? { defaultLabel } : {}),
+    };
+  }
+
+  private parseRouterCondition(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+    outputLabels: string[],
+  ): PlaybookIntentBlueprintRouterCondition | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const label = this.asString(raw.label);
+    const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref ?? raw.sourceNode ?? raw.source_node);
+    const sourcePort = this.asString(raw.sourcePort ?? raw.source_port);
+    const operator = this.asString(raw.operator) as PlaybookIntentBlueprintRouterCondition['operator'];
+    if (!label || !sourceRef || !sourcePort || !(ROUTER_OPERATORS as readonly string[]).includes(operator) || !outputLabels.includes(label)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_condition_invalid', ownerRef);
+      return null;
+    }
+    return {
+      label,
+      sourceRef,
+      sourcePort,
+      ...(this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref) ? { sourceIteratorRef: this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref) } : {}),
+      ...(this.asString(raw.path) ? { path: this.asString(raw.path) } : {}),
+      operator,
+      ...(Object.prototype.hasOwnProperty.call(raw, 'value') ? { value: raw.value } : {}),
+    };
+  }
+
+  private parseEdgeMetadata(
+    raw: Record<string, unknown>,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): Pick<PlaybookIntentBlueprintLink, 'kind' | 'routerLabel'> {
+    const kind = this.asString(raw.kind) || this.asString(raw.edgeKind ?? raw.edge_kind);
+    const routerLabel = this.asString(raw.routerLabel ?? raw.router_label) || null;
+    if (kind && !(EDGE_KINDS as readonly string[]).includes(kind)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_link_invalid_kind', ownerRef);
+      return routerLabel ? { routerLabel } : {};
+    }
+    return {
+      ...(kind ? { kind: kind as PlaybookIntentBlueprintLink['kind'] } : {}),
+      ...(routerLabel ? { routerLabel } : {}),
+    };
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   }
 
   private asString(value: unknown): string {

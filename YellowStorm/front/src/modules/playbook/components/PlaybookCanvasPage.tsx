@@ -1337,14 +1337,18 @@ function PlaybookCanvasInner() {
     [repackIteratorChildren],
   );
 
-  const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default'): Edge => ({
-    id: `e-${sourceId}-${sourceOutputPortId}-${targetId}-${targetInputPortId}`,
+  const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default', options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null }): Edge => ({
+    id: `e-${sourceId}-${sourceOutputPortId}-${targetId}-${targetInputPortId}${options?.routerLabel ? `-${options.routerLabel}` : ''}`,
     source: sourceId,
     target: targetId,
     sourceHandle: sourceOutputPortId,
     targetHandle: targetInputPortId,
-    type: 'animated',
+    type: options?.kind === 'conditional' || options?.routerLabel ? 'conditional' : 'animated',
+    animated: !(options?.kind === 'conditional' || options?.routerLabel),
     data: {
+      kind: options?.kind ?? 'sequential',
+      routerLabel: options?.routerLabel ?? null,
+      priority: options?.priority ?? null,
       sourceOutputPortId,
       targetInputPortId,
       isTypeMatch: undefined,
@@ -1542,6 +1546,10 @@ function PlaybookCanvasInner() {
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
+      routerConfig: PlaybookIntentTaskDraft['routerConfig'] | undefined,
+      humanApprovalConfig: PlaybookIntentTaskDraft['humanApprovalConfig'] | undefined,
+      retryPolicy: PlaybookIntentTaskDraft['retryPolicy'] | undefined,
+      modelId: string | null | undefined,
       anchorTask: PlaybookTask | null,
       order: number,
       toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
@@ -1580,11 +1588,15 @@ function PlaybookCanvasInner() {
         inputFiles: [],
         taskType: isIterator
           ? 'iterator'
+          : matchedNodeType === 'router'
+            ? 'router'
           : matchedNodeType === 'evaluation'
             ? 'evaluation'
             : 'generic',
         nodeType: isIterator ? 'iterator' : matchedNodeType,
         nodeTemplateKey: nodeTemplateKey ?? matchedTemplate?.key ?? null,
+        routerConfig: routerConfig ?? matchedTemplate?.routerConfig ?? null,
+        humanApprovalConfig: humanApprovalConfig ?? matchedTemplate?.humanApprovalConfig ?? null,
         iteratorConfig: isIterator
           ? matchedTemplate?.iteratorConfig
             ? { ...matchedTemplate.iteratorConfig }
@@ -1611,10 +1623,8 @@ function PlaybookCanvasInner() {
             : isIterator
             ? getDefaultIteratorOutputPorts()
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
-        retryPolicy: matchedTemplate?.retryPolicy
-          ? { ...matchedTemplate.retryPolicy }
-          : null,
-        modelId: matchedTemplate?.modelId ?? null,
+        retryPolicy: retryPolicy ?? (matchedTemplate?.retryPolicy ? { ...matchedTemplate.retryPolicy } : null),
+        modelId: modelId ?? matchedTemplate?.modelId ?? null,
         toolBindings,
         skillBindings,
       };
@@ -1728,6 +1738,10 @@ function PlaybookCanvasInner() {
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
+      routerConfig: PlaybookIntentTaskDraft['routerConfig'] | undefined,
+      humanApprovalConfig: PlaybookIntentTaskDraft['humanApprovalConfig'] | undefined,
+      retryPolicy: PlaybookIntentTaskDraft['retryPolicy'] | undefined,
+      modelId: string | null | undefined,
       mode: 'append' | 'before' | 'after' | 'as_input',
       targetTaskId: string | null,
       nodeRef: string | null,
@@ -1768,6 +1782,10 @@ function PlaybookCanvasInner() {
         inputPorts,
         outputPorts,
         iteratorBody,
+        routerConfig,
+        humanApprovalConfig,
+        retryPolicy,
+        modelId,
         anchorTask,
         nextTasks.length,
         toolBindings,
@@ -1793,8 +1811,14 @@ function PlaybookCanvasInner() {
             step.inputPorts,
             step.outputPorts,
             undefined,
+            step.routerConfig,
+            step.humanApprovalConfig,
+            step.retryPolicy,
+            step.modelId,
             newTask,
             nextTasks.length + index + 1,
+            step.toolBindings,
+            step.skillBindings,
           );
           const childPosition = getIteratorBodyChildPosition(newTask.positionX, newTask.positionY, index, iteratorBody.steps.length);
           childTask.positionX = childPosition.x;
@@ -2122,10 +2146,12 @@ function PlaybookCanvasInner() {
       targetId: string,
       sourceOutputPortId: string,
       targetInputPortId: string,
+      options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null; autoBind?: boolean },
     ) => {
+      const isConditional = options?.kind === 'conditional' || Boolean(options?.routerLabel);
       const targetTask = nextTasks.find((task) => task.id === targetId);
       const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetInputPortId);
-      if (targetInputPort?.required) {
+      if (targetInputPort?.required && !isConditional) {
         nextEdges = nextEdges.filter((edge) => {
           const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
           const matchesTargetPort = edge.target === targetId
@@ -2142,21 +2168,26 @@ function PlaybookCanvasInner() {
       }
 
       if (nextEdges.some((edge) => {
-        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
         return edge.source === sourceId
           && edge.target === targetId
           && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourceOutputPortId
-          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId;
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId
+          && (edgeData.routerLabel ?? null) === (options?.routerLabel ?? null);
       })) {
         return;
       }
 
       nextEdges = [
         ...nextEdges,
-        markEdgeChanged(createProgrammaticEdge(sourceId, targetId, sourceOutputPortId, targetInputPortId)),
+        markEdgeChanged(createProgrammaticEdge(sourceId, targetId, sourceOutputPortId, targetInputPortId, {
+          kind: isConditional ? 'conditional' : options?.kind,
+          routerLabel: options?.routerLabel,
+          priority: options?.priority,
+        })),
       ];
 
-      if (targetInputPort?.required) {
+      if (targetInputPort?.required && !isConditional && options?.autoBind !== false) {
         upsertNodeOutputBinding(targetId, targetInputPortId, sourceId, sourceOutputPortId);
       }
     };
@@ -2284,6 +2315,9 @@ function PlaybookCanvasInner() {
       sourceOutputPortId?: string | null,
       targetInputPortId?: string | null,
       sourceIteratorNodeRef?: string | null,
+      edgeKind?: 'sequential' | 'conditional',
+      routerLabel?: string | null,
+      priority?: number | null,
     ) => {
       const resolvedSourceId = resolveScopedTaskReference(sourceTaskId, sourceNodeRef, sourceIteratorNodeRef);
       const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
@@ -2294,24 +2328,27 @@ function PlaybookCanvasInner() {
 
       const sourceTask = nextTasks.find((task) => task.id === resolvedSourceId) || null;
       const targetTask = nextTasks.find((task) => task.id === resolvedTargetId) || null;
+      const isConditional = edgeKind === 'conditional' || Boolean(routerLabel);
       if (!sourceTask || !targetTask) {
         return;
       }
 
       if (type === 'delete_edge') {
         const deletedEdges = nextEdges.filter((edge) => {
-          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
           return edgeMatchesIntentPortPair(
             {
               sourceId: edge.source,
               targetId: edge.target,
               sourceOutputPortId: edgeData.sourceOutputPortId || edge.sourceHandle || undefined,
               targetInputPortId: edgeData.targetInputPortId || edge.targetHandle || undefined,
+              routerLabel: edgeData.routerLabel ?? null,
             },
             resolvedSourceId,
             resolvedTargetId,
             sourceOutputPortId,
             targetInputPortId,
+            routerLabel,
           );
         });
         deletedEdges.forEach((edge) => changedEdgeIds.add(edge.id));
@@ -2325,24 +2362,32 @@ function PlaybookCanvasInner() {
         return;
       }
 
-      const resolvedPorts = resolveIntentEdgePorts(sourceTask, targetTask, sourceOutputPortId, targetInputPortId);
+      const resolvedPorts = resolveIntentEdgePorts(sourceTask, targetTask, sourceOutputPortId || routerLabel, targetInputPortId);
       if (!resolvedPorts) {
+        console.warn('[IntentApply] Dropped edge with unresolved ports:', {
+          sourceNode: resolvedSourceId,
+          targetNode: resolvedTargetId,
+          sourceOutputPortId: sourceOutputPortId || routerLabel,
+          targetInputPortId,
+        });
         return;
       }
 
       if (nextEdges.some((edge) => {
-        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
         return edgeMatchesIntentPortPair(
           {
             sourceId: edge.source,
             targetId: edge.target,
             sourceOutputPortId: edgeData.sourceOutputPortId || edge.sourceHandle || undefined,
             targetInputPortId: edgeData.targetInputPortId || edge.targetHandle || undefined,
+            routerLabel: edgeData.routerLabel ?? null,
           },
           resolvedSourceId,
           resolvedTargetId,
           resolvedPorts.sourceOutputPortId,
           resolvedPorts.targetInputPortId,
+          routerLabel,
         );
       })) {
         return;
@@ -2365,6 +2410,7 @@ function PlaybookCanvasInner() {
         resolvedTargetId,
         resolvedPorts.sourceOutputPortId,
         resolvedPorts.targetInputPortId,
+        { kind: isConditional ? 'conditional' : 'sequential', routerLabel, priority, autoBind: !isConditional },
       );
     };
 
@@ -2415,6 +2461,10 @@ function PlaybookCanvasInner() {
         change.task.inputPorts,
         change.task.outputPorts,
         change.task.iteratorBody,
+        change.task.routerConfig,
+        change.task.humanApprovalConfig,
+        change.task.retryPolicy,
+        change.task.modelId,
         change.anchorMode,
         change.targetTaskId,
         null,
@@ -2458,6 +2508,10 @@ function PlaybookCanvasInner() {
           change.task.inputPorts,
           change.task.outputPorts,
           change.task.iteratorBody,
+          change.task.routerConfig,
+          change.task.humanApprovalConfig,
+          change.task.retryPolicy,
+          change.task.modelId,
           change.anchor.mode,
           change.anchor.targetTaskId,
           change.anchor.nodeRef,
@@ -2483,6 +2537,9 @@ function PlaybookCanvasInner() {
           change.sourceOutputPortId,
           change.targetInputPortId,
           change.sourceIteratorNodeRef,
+          change.edgeKind,
+          change.routerLabel,
+          change.priority,
         );
         continue;
       }

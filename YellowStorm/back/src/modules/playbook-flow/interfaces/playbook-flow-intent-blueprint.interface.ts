@@ -7,11 +7,53 @@ export interface PlaybookIntentBlueprintPort {
   required?: boolean;
 }
 
+export type PlaybookIntentBlueprintVersion = 1 | 2;
+export type PlaybookIntentBlueprintEdgeKind = 'sequential' | 'conditional';
+export type PlaybookIntentPrimitiveKind =
+  | 'agent'
+  | 'action'
+  | 'evaluation'
+  | 'iterator'
+  | 'router'
+  | 'human_approval'
+  | string;
+
+export interface PlaybookIntentBlueprintRouterCondition {
+  label: string;
+  sourceRef: string;
+  sourceIteratorRef?: string | null;
+  sourcePort: string;
+  path?: string | null;
+  operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+  value?: unknown;
+}
+
+export interface PlaybookIntentBlueprintRouterConfig {
+  outputLabels: string[];
+  maxIterations?: number | null;
+  conditions?: PlaybookIntentBlueprintRouterCondition[];
+  defaultLabel?: string | null;
+}
+
+export interface PlaybookIntentBlueprintPrimitiveConfig {
+  kind: PlaybookIntentPrimitiveKind;
+  router?: PlaybookIntentBlueprintRouterConfig;
+  iterator?: Record<string, unknown>;
+  humanApproval?: Record<string, unknown>;
+  evaluation?: Record<string, unknown>;
+  action?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface PlaybookIntentBlueprintIteratorStep {
   ref: string;
   title: string;
   description?: string;
   nodeTemplateKey: string;
+  agentHint?: string | null;
+  connectorRefs?: PlaybookIntentBlueprintConnectorRef[];
+  skillRefs?: PlaybookIntentBlueprintSkillRef[];
+  primitive?: PlaybookIntentBlueprintPrimitiveConfig;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
 }
@@ -21,6 +63,8 @@ export interface PlaybookIntentBlueprintIteratorBody {
   edges: Array<{
     sourceRef: string;
     targetRef: string;
+    kind?: PlaybookIntentBlueprintEdgeKind;
+    routerLabel?: string | null;
     sourceOutputPortId?: string | null;
     targetInputPortId?: string | null;
   }>;
@@ -32,6 +76,9 @@ export interface PlaybookIntentBlueprintNode {
   purpose: string;
   nodeTemplateKey: string;
   agentHint?: string | null;
+  primitive?: PlaybookIntentBlueprintPrimitiveConfig;
+  routerConfig?: PlaybookIntentBlueprintRouterConfig;
+  humanApprovalConfig?: Record<string, unknown>;
   inputPorts?: PlaybookIntentBlueprintPort[];
   outputPorts?: PlaybookIntentBlueprintPort[];
   connectorRefs?: PlaybookIntentBlueprintConnectorRef[];
@@ -60,8 +107,11 @@ export interface PlaybookIntentBlueprintLink {
   targetRef: string;
   sourceIteratorRef?: string | null;
   targetIteratorRef?: string | null;
+  kind?: PlaybookIntentBlueprintEdgeKind;
+  routerLabel?: string | null;
   sourceOutputPortId?: string | null;
   targetInputPortId?: string | null;
+  priority?: number | null;
 }
 
 export interface PlaybookIntentBlueprintBinding {
@@ -86,6 +136,7 @@ export interface PlaybookIntentBlueprintBinding {
 }
 
 export interface PlaybookIntentBlueprint {
+  version?: PlaybookIntentBlueprintVersion;
   title: string;
   summary: string;
   nodes: PlaybookIntentBlueprintNode[];

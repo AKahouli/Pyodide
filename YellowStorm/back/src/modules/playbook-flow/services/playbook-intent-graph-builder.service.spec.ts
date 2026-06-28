@@ -281,7 +281,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     ]));
   });
 
-  it('does not inherit required flags from template input ports', () => {
+  it('preserves required flags from template input ports', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Template node',
       summary: '',
@@ -304,7 +304,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
 
     const createChange = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
 
-    expect(createChange?.task.inputPorts?.[0]).toEqual(expect.objectContaining({ id: 'input-context', required: false }));
+    expect(createChange?.task.inputPorts?.[0]).toEqual(expect.objectContaining({ id: 'input-context', required: true }));
   });
 
   it('rejects edges with incompatible artifact kinds and logs an error', () => {
@@ -455,7 +455,7 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(node.task.outputPorts?.map((p: { id: string }) => p.id)).toEqual(['draft']);
   });
 
-  it('keeps explicit blueprint ports instead of injecting referenced template ports', () => {
+  it('keeps explicit blueprint ports and preserves referenced required template ports', () => {
     const template = makeTemplate({
       inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'text', required: true }],
       outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'document' }],
@@ -485,9 +485,77 @@ describe('PlaybookIntentGraphBuilderService', () => {
     });
 
     const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
-    expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['custom']);
-    expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).not.toContain('context');
+    expect(node?.task.inputPorts?.map((p: { id: string }) => p.id)).toEqual(['context', 'custom']);
     expect(node?.task.outputPorts).toBeUndefined();
+  });
+
+  it('compiles router primitives into task config, output ports, and conditional edges without data bindings', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Route',
+      summary: '',
+      nodes: [
+        {
+          ref: 'classify',
+          label: 'Classify',
+          purpose: '',
+          nodeTemplateKey: 'router.template',
+          primitive: { kind: 'router', router: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected' } },
+        },
+        { ref: 'approve', label: 'Approve', purpose: '', nodeTemplateKey: 'generic.agent_step' },
+      ],
+      links: [{ sourceRef: 'classify', targetRef: 'approve', kind: 'conditional', routerLabel: 'approved' }],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({ key: 'router.template', nodeType: 'router' }), genericTemplate()],
+      selectedNodeId: null,
+    });
+
+    const router = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'classify');
+    const edge = suggestion.changes.find((c: Change): c is CreateEdgeChange => c.type === 'create_edge');
+
+    expect(router?.task.routerConfig).toEqual(expect.objectContaining({ outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected' }));
+    expect(router?.task.outputPorts?.map((port: { id: string }) => port.id)).toEqual(['approved', 'rejected']);
+    expect(edge).toEqual(expect.objectContaining({ edgeKind: 'conditional', routerLabel: 'approved', sourceOutputPortId: 'approved' }));
+    expect(suggestion.changes.some((c: Change) => c.type === 'create_data_binding')).toBe(false);
+  });
+
+  it('rejects conditional router edges with labels missing from the source router', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Bad route',
+      summary: '',
+      nodes: [
+        {
+          ref: 'classify',
+          label: 'Classify',
+          purpose: '',
+          nodeTemplateKey: 'router.template',
+          primitive: { kind: 'router', router: { outputLabels: ['approved'], defaultLabel: 'approved' } },
+        },
+        { ref: 'reject', label: 'Reject', purpose: '', nodeTemplateKey: 'generic.agent_step' },
+      ],
+      links: [{ sourceRef: 'classify', targetRef: 'reject', kind: 'conditional', routerLabel: 'rejected' }],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({ key: 'router.template', nodeType: 'router' }), genericTemplate()],
+      selectedNodeId: null,
+    });
+
+    expect(result.suggestion.changes.some((c: Change) => c.type === 'create_edge')).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'builder_conditional_edge_invalid_router_label', itemId: 'classify->reject' }),
+    ]));
   });
 
   it('creates an edge for node-output bindings without requiring an explicit link', () => {
@@ -560,6 +628,86 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(firstStep?.inputPorts).toBeUndefined();
     expect(secondStep?.inputPorts?.map((port: { id: string }) => port.id)).toEqual(['bound']);
     expect(secondStep?.outputPorts).toBeUndefined();
+  });
+
+  it('rejects iterator body conditional edges with undeclared router labels', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Iterator router',
+      summary: '',
+      nodes: [{
+        ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template',
+        iteratorBody: {
+          steps: [
+            {
+              ref: 'route_child',
+              title: 'Route child',
+              nodeTemplateKey: 'router.template',
+              primitive: { kind: 'router', router: { outputLabels: ['yes'], defaultLabel: 'yes' } },
+            },
+            { ref: 'no_child', title: 'No child', nodeTemplateKey: 'generic.agent_step' },
+          ],
+          edges: [{ sourceRef: 'route_child', targetRef: 'no_child', kind: 'conditional', routerLabel: 'no' }],
+        },
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG }),
+        genericTemplate({ key: 'router.template', nodeType: 'router' }),
+        genericTemplate(),
+      ],
+      selectedNodeId: null,
+    });
+
+    const iterator = result.suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'loop');
+    expect(iterator?.task.iteratorBody?.edges).toEqual([]);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'builder_conditional_edge_invalid_router_label', itemId: 'loop.route_child->no_child' }),
+    ]));
+  });
+
+  it('synthesizes iterator child router output ports from declared labels', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Iterator router outputs',
+      summary: '',
+      nodes: [{
+        ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template',
+        iteratorBody: {
+          steps: [{
+            ref: 'route_child',
+            title: 'Route child',
+            nodeTemplateKey: 'router.template',
+            primitive: { kind: 'router', router: { outputLabels: ['yes', 'no'], defaultLabel: 'no' } },
+          }],
+          edges: [],
+        },
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG }),
+        genericTemplate({ key: 'router.template', nodeType: 'router' }),
+      ],
+      selectedNodeId: null,
+    });
+
+    const iterator = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'loop');
+    const routeChild = iterator?.task.iteratorBody?.steps.find((step: { nodeRef: string }) => step.nodeRef === 'route_child');
+    expect(routeChild?.outputPorts?.map((port: { id: string }) => port.id)).toEqual(['yes', 'no']);
   });
 
   it('targets iterator child inputs with scoped external links instead of collapsing onto parent items', () => {
