@@ -165,6 +165,20 @@ export function shouldAutoLayoutAfterConstruction(
   return previousStatus !== 'completed' && currentStatus === 'completed';
 }
 
+export function buildIntentEdgeOptions(
+  edgeKind?: 'sequential' | 'conditional',
+  routerLabel?: string | null,
+  priority?: number | null,
+) {
+  const isConditional = edgeKind === 'conditional' || Boolean(routerLabel);
+  return {
+    kind: isConditional ? 'conditional' as const : 'sequential' as const,
+    routerLabel,
+    priority,
+    autoBind: !isConditional,
+  };
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1875,6 +1889,7 @@ function PlaybookCanvasInner() {
             targetId,
             resolvedPorts.sourceOutputPortId,
             resolvedPorts.targetInputPortId,
+            buildIntentEdgeOptions(edge.edgeKind, edge.routerLabel, edge.priority),
           );
         });
       }
@@ -2328,7 +2343,6 @@ function PlaybookCanvasInner() {
 
       const sourceTask = nextTasks.find((task) => task.id === resolvedSourceId) || null;
       const targetTask = nextTasks.find((task) => task.id === resolvedTargetId) || null;
-      const isConditional = edgeKind === 'conditional' || Boolean(routerLabel);
       if (!sourceTask || !targetTask) {
         return;
       }
@@ -2410,7 +2424,7 @@ function PlaybookCanvasInner() {
         resolvedTargetId,
         resolvedPorts.sourceOutputPortId,
         resolvedPorts.targetInputPortId,
-        { kind: isConditional ? 'conditional' : 'sequential', routerLabel, priority, autoBind: !isConditional },
+        buildIntentEdgeOptions(edgeKind, routerLabel, priority),
       );
     };
 

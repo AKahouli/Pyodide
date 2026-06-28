@@ -50,6 +50,8 @@ function createService(overrides: Partial<{
     undefined,
     undefined,
     undefined,
+    undefined,
+    undefined,
     overrides.skillService,
     overrides.connectorService,
     overrides.workspaceService,
@@ -343,7 +345,13 @@ describe('PlaybookFlowIntentService normalization', () => {
           inputPorts: [{ id: 'input', name: 'Input', artifactKind: 'text', required: true, description: 'Input text' }],
           outputPorts: [{ id: 'output', name: 'Output', artifactKind: 'text', description: 'Output text' }],
           recommendedAgentTypeSlug: null,
+          selectedAction: 'classify',
+          requiredToolNames: ['policy-engine'],
           iteratorConfig: null,
+          routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+          humanApprovalConfig: { promptTemplate: 'Approve?' },
+          retryPolicy: { maxRetries: 2, delayMs: 1000 },
+          modelId: 'model-router',
           enabled: true,
         }] }),
       } as unknown as PlaybookFlowNodeTemplateService,
@@ -405,6 +413,20 @@ describe('PlaybookFlowIntentService normalization', () => {
       key: 'generic.agent_step',
       semanticNodeType: 'agent',
       isDefault: true,
+      selectedAction: 'classify',
+      requiredToolNames: ['policy-engine'],
+      routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+      humanApprovalConfig: { promptTemplate: 'Approve?' },
+      retryPolicy: { maxRetries: 2, delayMs: 1000 },
+      modelId: 'model-router',
+    }));
+    expect(context.nodeTemplates[0]).toEqual(expect.objectContaining({
+      selectedAction: 'classify',
+      requiredToolNames: ['policy-engine'],
+      routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+      humanApprovalConfig: { promptTemplate: 'Approve?' },
+      retryPolicy: { maxRetries: 2, delayMs: 1000 },
+      modelId: 'model-router',
     }));
     expect(nodeTemplates[0].nodeType).toBeUndefined();
     expect(context.userPrompt).toContain('"availableWorkspaces"');
@@ -664,12 +686,10 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.userTemplate).toContain('{available_design_catalog}');
     expect(prompt?.systemTemplate).toContain('"blueprint"');
     expect(prompt?.systemTemplate).toContain('sourceKind');
-    expect(prompt?.systemTemplate).toContain('"constant"');
-    expect(prompt?.systemTemplate).toContain('attached images');
-    expect(prompt?.systemTemplate).toContain('visible entities');
+    expect(prompt?.systemTemplate).toContain('node-output|constant');
     expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
-    expect(prompt?.systemTemplate).toContain('semantic metadata');
-    expect(prompt?.version).toBe(14);
+    expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
+    expect(prompt?.version).toBe(15);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {

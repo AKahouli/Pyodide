@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -168,5 +168,34 @@ describe('shouldAutoLayoutAfterConstruction', () => {
 
   it('returns false for repeated completed status updates', () => {
     expect(shouldAutoLayoutAfterConstruction('completed', 'completed')).toBe(false);
+  });
+});
+
+describe('buildIntentEdgeOptions', () => {
+  it('preserves iterator conditional edge metadata and disables auto binding', () => {
+    expect(buildIntentEdgeOptions('conditional', 'approved', 2)).toEqual({
+      kind: 'conditional',
+      routerLabel: 'approved',
+      priority: 2,
+      autoBind: false,
+    });
+  });
+
+  it('treats router labels as conditional even when edge kind is omitted', () => {
+    expect(buildIntentEdgeOptions(undefined, 'approved', null)).toEqual({
+      kind: 'conditional',
+      routerLabel: 'approved',
+      priority: null,
+      autoBind: false,
+    });
+  });
+
+  it('auto-binds only non-conditional iterator edges', () => {
+    expect(buildIntentEdgeOptions('sequential', null, null)).toEqual({
+      kind: 'sequential',
+      routerLabel: null,
+      priority: null,
+      autoBind: true,
+    });
   });
 });

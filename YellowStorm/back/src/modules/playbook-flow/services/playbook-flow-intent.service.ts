@@ -569,7 +569,13 @@ export class PlaybookFlowIntentService {
           description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        selectedAction: template.selectedAction,
+        requiredToolNames: template.requiredToolNames,
         iteratorConfig: template.iteratorConfig,
+        routerConfig: template.routerConfig,
+        humanApprovalConfig: template.humanApprovalConfig,
+        retryPolicy: template.retryPolicy,
+        modelId: template.modelId,
         enabled: template.enabled,
       })),
     };

@@ -15,6 +15,7 @@ import type {
   PlaybookIntentTaskDraft,
   PlaybookIntentWorkflowChange,
 } from './playbook-flow-intent.service';
+import type { FlowNodeTemplateHumanApprovalConfig } from '../interfaces/playbook-flow-node-template.interface';
 
 type WorkflowPlanSuggestion = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
@@ -31,9 +32,11 @@ interface BuilderNodeTemplate {
   nodeType: string;
   enabled: boolean;
   recommendedAgentTypeSlug: string | null;
+  selectedAction?: string | null;
+  requiredToolNames?: string[];
   iteratorConfig?: unknown;
   routerConfig?: PlaybookIntentTaskDraft['routerConfig'];
-  humanApprovalConfig?: unknown;
+  humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | PlaybookIntentTaskDraft['humanApprovalConfig'];
   retryPolicy?: PlaybookIntentTaskDraft['retryPolicy'];
   modelId?: string | null;
   inputPorts?: BuilderNodeTemplatePort[];
@@ -185,7 +188,7 @@ export class PlaybookIntentGraphBuilderService {
       ...(agentSlug ? { agentSlug } : {}),
       nodeTemplateKey: template.key,
       ...(routerConfig ? { routerConfig } : {}),
-      ...(node.humanApprovalConfig ? { humanApprovalConfig: node.humanApprovalConfig } : template.humanApprovalConfig ? { humanApprovalConfig: template.humanApprovalConfig as Record<string, unknown> } : {}),
+      ...(node.humanApprovalConfig ? { humanApprovalConfig: node.humanApprovalConfig } : template.humanApprovalConfig ? { humanApprovalConfig: { ...template.humanApprovalConfig } } : {}),
       ...(template.retryPolicy ? { retryPolicy: template.retryPolicy } : {}),
       ...(template.modelId ? { modelId: template.modelId } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
@@ -345,7 +348,7 @@ export class PlaybookIntentGraphBuilderService {
       ...(template.recommendedAgentTypeSlug ? { agentSlug: template.recommendedAgentTypeSlug } : {}),
       ...(step.agentHint ? { agentSlug: step.agentHint } : {}),
       ...(routerConfig ? { routerConfig } : {}),
-      ...(template.humanApprovalConfig ? { humanApprovalConfig: template.humanApprovalConfig as Record<string, unknown> } : {}),
+      ...(template.humanApprovalConfig ? { humanApprovalConfig: { ...template.humanApprovalConfig } } : {}),
       ...(template.retryPolicy ? { retryPolicy: template.retryPolicy } : {}),
       ...(template.modelId ? { modelId: template.modelId } : {}),
       ...(step.connectorRefs?.length ? { toolBindings: this.buildToolBindings(nodeLike, options, diagnostics) } : {}),

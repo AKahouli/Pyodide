@@ -525,6 +525,68 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(suggestion.changes.some((c: Change) => c.type === 'create_data_binding')).toBe(false);
   });
 
+  it('falls back to template router config when the blueprint omits router primitive config', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Route fallback',
+      summary: '',
+      nodes: [
+        { ref: 'classify', label: 'Classify', purpose: '', nodeTemplateKey: 'router.template' },
+        { ref: 'approve', label: 'Approve', purpose: '', nodeTemplateKey: 'generic.agent_step' },
+      ],
+      links: [{ sourceRef: 'classify', targetRef: 'approve', kind: 'conditional', routerLabel: 'approved' }],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate({
+          key: 'router.template',
+          nodeType: 'router',
+          routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+        }),
+        genericTemplate(),
+      ],
+      selectedNodeId: null,
+    });
+
+    const router = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'classify');
+    expect(router?.task.routerConfig).toEqual(expect.objectContaining({ outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected' }));
+    expect(router?.task.outputPorts?.map((port: { id: string }) => port.id)).toEqual(['approved', 'rejected']);
+  });
+
+  it('applies template human approval config, retry policy, and model id', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      title: 'Approval',
+      summary: '',
+      nodes: [{ ref: 'approval', label: 'Approval', purpose: '', nodeTemplateKey: 'approval.template' }],
+      links: [],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({
+        key: 'approval.template',
+        nodeType: 'human_approval',
+        humanApprovalConfig: { promptTemplate: 'Approve this?' },
+        retryPolicy: { maxRetries: 3, delayMs: 500 },
+        modelId: 'model-approval',
+      })],
+      selectedNodeId: null,
+    });
+
+    const approval = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(approval?.task.humanApprovalConfig).toEqual({ promptTemplate: 'Approve this?' });
+    expect(approval?.task.retryPolicy).toEqual({ maxRetries: 3, delayMs: 500 });
+    expect(approval?.task.modelId).toBe('model-approval');
+  });
+
   it('rejects conditional router edges with labels missing from the source router', () => {
     const blueprint: PlaybookIntentBlueprint = {
       version: 2,
