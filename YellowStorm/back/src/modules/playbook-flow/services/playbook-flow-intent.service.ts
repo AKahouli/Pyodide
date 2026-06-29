@@ -19,6 +19,7 @@ import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-build
 import { PlaybookFlowPrimitiveRegistryService } from './playbook-flow-primitive-registry.service';
 import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
 import { PlaybookIntentBlueprintRepairService } from './playbook-intent-blueprint-repair.service';
+import { PlaybookIntentBlueprintCompilerService } from './playbook-intent-blueprint-compiler.service';
 import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
@@ -350,13 +351,19 @@ export class PlaybookFlowIntentService {
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly traceService: PlaybookFlowIntentTraceService = new PlaybookFlowIntentTraceService(),
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
-    private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
-    private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
+    blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
+    graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
       new PlaybookIntentGraphBindingResolverService(),
     ),
     private readonly primitiveRegistry: PlaybookFlowPrimitiveRegistryService = new PlaybookFlowPrimitiveRegistryService(),
-    private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
-    private readonly blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
+    suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
+    blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
+    private readonly blueprintCompiler: PlaybookIntentBlueprintCompilerService = new PlaybookIntentBlueprintCompilerService(
+      blueprintParser,
+      blueprintRepair,
+      graphBuilder,
+      suggestionDiagnostics,
+    ),
     private readonly skillService?: SkillService,
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
@@ -378,7 +385,7 @@ export class PlaybookFlowIntentService {
     const lastTrace = this.recordTrace(flowId, ownerId, 'intent.analyze', context, rawOutput);
 
     return {
-      suggestions: this.normalizeConstructionOutput({ raw: rawOutput, dto, context }),
+      suggestions: this.normalizeConstructionOutput({ raw: rawOutput, context }),
       model: context.model,
       settings: context.effectiveSettings,
       lastTrace,
@@ -603,22 +610,7 @@ export class PlaybookFlowIntentService {
   }
 
   buildGraphBuilderDesignCatalog(catalog: AvailableDesignCatalog): BuilderDesignCatalog {
-    return {
-      connectors: catalog.availableConnectors.map((connector) => ({
-        id: connector.id,
-        slug: connector.connectorSlug,
-        name: connector.name,
-      })),
-      connectorActions: catalog.availableConnectorActions.map((action) => ({
-        connectorSlug: action.connectorSlug,
-        actionKey: action.actionKey,
-      })),
-      skills: catalog.availableSkills.map((skill) => ({
-        id: skill.id,
-        slug: skill.skillSlug,
-        name: skill.name,
-      })),
-    };
+    return this.blueprintCompiler.buildGraphBuilderDesignCatalog(catalog);
   }
 
   private async buildAvailableDesignCatalog(ownerId: string): Promise<AvailableDesignCatalog> {
@@ -804,45 +796,9 @@ export class PlaybookFlowIntentService {
 
   normalizeConstructionOutput(args: {
     raw: string;
-    dto: RequestPlaybookFlowIntentDto;
     context: PlaybookIntentAnalysisContext;
   }): PlaybookIntentSuggestion[] {
-    if (this.blueprintParser.hasBlueprintShape(args.raw)) {
-      const parsed = this.blueprintParser.parse(args.raw);
-      if (parsed) {
-        try {
-          const designCatalog = this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog);
-          const repaired = this.blueprintRepair.repair({
-            blueprint: parsed.blueprint,
-            templates: args.context.nodeTemplates,
-            designCatalog,
-            existingContext: args.context.validationContext,
-          });
-          const buildResult = this.graphBuilder.build({
-            blueprint: repaired.blueprint,
-            context: args.context.validationContext,
-            limits: args.context.limits,
-            templates: args.context.nodeTemplates,
-            designCatalog,
-            selectedNodeId: args.context.selectedNodeId,
-          });
-          const diagnostics = [...parsed.diagnostics, ...repaired.diagnostics, ...buildResult.diagnostics];
-          if (diagnostics.length) {
-            this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
-          }
-          return [this.suggestionDiagnostics.enrichWorkflowPlan(buildResult.suggestion, args.context.flow, diagnostics, repaired.repairSummary)];
-        } catch (error) {
-          this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
-          this.logger.warn('playbook_intent_invalid_blueprint_output rule=build_failed');
-          return [];
-        }
-      }
-      this.logger.warn('playbook_intent_invalid_blueprint_output rule=parse_failed');
-      return [];
-    }
-
-    this.logger.warn('playbook_intent_invalid_blueprint_output rule=missing_blueprint');
-    return [];
+    return this.blueprintCompiler.compile({ raw: args.raw, context: args.context });
   }
 
   private buildDesignAssessmentSystemPrompt(): string {

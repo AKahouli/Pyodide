@@ -1,0 +1,13 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Router template config fallback",
+    "summary": "Use router config from the template.",
+    "nodes": [
+      { "ref": "route", "label": "Route", "purpose": "Route with template defaults", "nodeTemplateKey": "router.template", "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+      { "ref": "yes_step", "label": "Yes step", "purpose": "Yes branch", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "payload", "artifactKind": "data" }] }
+    ],
+    "links": [{ "sourceRef": "route", "targetRef": "yes_step", "kind": "conditional", "routerLabel": "yes", "targetInputPortId": "payload" }]
+  },
+  "expected": { "minNodes": 2, "minEdges": 1, "routerNodeRef": "route", "routerLabels": ["yes", "no"], "edgeRouterLabels": ["yes"], "repairCodes": ["repair_router_link_source_port_set"] }
+}

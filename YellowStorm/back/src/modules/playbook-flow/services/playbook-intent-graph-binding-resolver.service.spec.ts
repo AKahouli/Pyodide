@@ -135,11 +135,11 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
     ]));
   });
 
-  it('rejects direct edges between different artifact kinds', () => {
+  it('rejects direct edges between incompatible artifact kinds', () => {
     const result = service.resolveWorkflowChanges({
       context: makeContext({
         existingTaskIds: ['source', 'target'],
-        outputPortsByTaskId: [['source', [['artifact_list', 'data']]]],
+        outputPortsByTaskId: [['source', [['artifact_list', 'image']]]],
         inputPortsByTaskId: [['target', [['input_1', 'text']]]],
       }),
       deletedTaskIds: new Set(),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { playbookEdgesToFlowEdges, resolveIntentEdgePorts } from './control-edge-serializer';
-import type { PlaybookEdge, PlaybookTask } from '../../types';
+import { controlEdgesToFlowEdges, edgeMatchesIntentPortPair, playbookEdgesToFlowEdges, resolveIntentEdgePorts } from './control-edge-serializer';
+import type { ControlEdge, PlaybookEdge, PlaybookTask } from '../../types';
 
 describe('playbookEdgesToFlowEdges', () => {
   it('preserves explicit iterator context input ports', () => {
@@ -67,6 +67,45 @@ describe('playbookEdgesToFlowEdges', () => {
   });
 });
 
+describe('controlEdgesToFlowEdges', () => {
+  it('applies router conditional edges with labels and handles preserved', () => {
+    const edges: ControlEdge[] = [{
+      id: 'route-approved',
+      kind: 'conditional',
+      source: 'router-1',
+      target: 'approved-step',
+      routerLabel: 'approved',
+      sourceOutputPortId: 'approved',
+      targetInputPortId: 'payload',
+      priority: 1,
+    }];
+
+    expect(controlEdgesToFlowEdges(edges)[0]).toEqual(expect.objectContaining({
+      id: 'route-approved',
+      source: 'router-1',
+      target: 'approved-step',
+      sourceHandle: 'approved',
+      targetHandle: 'payload',
+      type: 'conditional',
+      animated: false,
+      data: expect.objectContaining({
+        kind: 'conditional',
+        routerLabel: 'approved',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'payload',
+        priority: 1,
+      }),
+    }));
+  });
+
+  it('keeps router branches distinct by router label', () => {
+    const route = { sourceId: 'router-1', targetId: 'target-1', sourceOutputPortId: 'approved', targetInputPortId: 'payload', routerLabel: 'approved' };
+
+    expect(edgeMatchesIntentPortPair(route, 'router-1', 'target-1', 'approved', 'payload', 'approved')).toBe(true);
+    expect(edgeMatchesIntentPortPair(route, 'router-1', 'target-1', 'approved', 'payload', 'rejected')).toBe(false);
+  });
+});
+
 describe('resolveIntentEdgePorts', () => {
   it('preserves exact requested ports for visual edges when artifact kinds differ', () => {
     const sourceTask = {
@@ -103,6 +142,26 @@ describe('resolveIntentEdgePorts', () => {
     expect(resolveIntentEdgePorts(sourceTask, targetTask, 'excel_file', null)).toEqual({
       sourceOutputPortId: 'excel_file',
       targetInputPortId: 'input-data',
+    });
+  });
+
+  it('preserves iterator router output labels when resolving child conditional edges', () => {
+    const routerStep = {
+      id: 'iterator.file_router',
+      nodeType: 'router',
+      outputPorts: [
+        { id: 'docx', name: 'DOCX', artifactKind: 'data' },
+        { id: 'pdf', name: 'PDF', artifactKind: 'data' },
+      ],
+    } as PlaybookTask;
+    const childStep = {
+      id: 'iterator.pdf_step',
+      inputPorts: [{ id: 'file', name: 'File', artifactKind: 'data', required: true }],
+    } as PlaybookTask;
+
+    expect(resolveIntentEdgePorts(routerStep, childStep, 'pdf', 'file')).toEqual({
+      sourceOutputPortId: 'pdf',
+      targetInputPortId: 'file',
     });
   });
 });

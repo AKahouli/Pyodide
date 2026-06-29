@@ -1,0 +1,18 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Iterator conditional edge frontend",
+    "summary": "Preserve iterator conditional edge metadata for frontend rendering.",
+    "nodes": [
+      { "ref": "loop", "label": "Loop", "purpose": "Loop over files", "nodeTemplateKey": "iterator", "inputPorts": [{ "id": "items", "artifactKind": "data", "required": true }], "primitive": { "kind": "iterator" }, "iteratorBody": { "steps": [
+        { "ref": "file_router", "title": "File router", "nodeTemplateKey": "router.basic", "primitive": { "kind": "router", "router": { "outputLabels": ["docx", "pdf"], "defaultLabel": "docx" } }, "inputPorts": [{ "id": "file", "artifactKind": "data" }] },
+        { "ref": "docx_step", "title": "DOCX step", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "file", "artifactKind": "data" }] },
+        { "ref": "pdf_step", "title": "PDF step", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "file", "artifactKind": "data" }] }
+      ], "edges": [
+        { "sourceRef": "file_router", "targetRef": "docx_step", "kind": "conditional", "routerLabel": "docx", "targetInputPortId": "file" },
+        { "sourceRef": "file_router", "targetRef": "pdf_step", "kind": "conditional", "routerLabel": "pdf", "targetInputPortId": "file" }
+      ] } }
+    ]
+  },
+  "expected": { "minNodes": 1, "iteratorNodeRef": "loop", "iteratorRouterRef": "file_router", "routerLabels": ["docx", "pdf"], "noAutoBindRouterLabels": ["docx", "pdf"] }
+}

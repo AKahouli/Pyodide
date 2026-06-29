@@ -318,7 +318,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(screen.queryByText('designer.empty')).not.toBeInTheDocument();
   });
 
-  it('allows history suggestions with validation warnings', async () => {
+  it('shows blocked history suggestions as available for explicit user apply', async () => {
     storeState.copilotMode = 'design';
     const user = userEvent.setup();
     const onApplyHistorySuggestion = vi.fn();
@@ -326,7 +326,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       id: 'blocked-plan',
       kind: 'workflow_plan',
       label: 'Blocked plan',
-      summary: 'Validation warnings are non-blocking.',
+      summary: 'Validation status is blocked but history apply remains explicit.',
       reason: 'A required input is unbound.',
       confidence: 0.9,
       impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },

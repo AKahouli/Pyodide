@@ -5,11 +5,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartResult, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
 import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
-import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
-import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
-import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
-import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
-import { PlaybookIntentBlueprintRepairService } from './playbook-intent-blueprint-repair.service';
+import { PlaybookIntentBlueprintCompilerService } from './playbook-intent-blueprint-compiler.service';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -31,12 +27,7 @@ export class PlaybookFlowIntentConstructionService {
 
   constructor(
     private readonly intentService: PlaybookFlowIntentService,
-    private readonly blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
-    private readonly graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
-      new PlaybookIntentGraphBindingResolverService(),
-    ),
-    private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
-    private readonly blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
+    private readonly blueprintCompiler: PlaybookIntentBlueprintCompilerService = new PlaybookIntentBlueprintCompilerService(),
   ) {}
 
   async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentConstructionStartResult> {
@@ -110,7 +101,7 @@ export class PlaybookFlowIntentConstructionService {
         raw += content;
       }
 
-      const suggestions = this.buildBlueprintSuggestions(raw, context, dto);
+      const suggestions = this.buildBlueprintSuggestions(raw, context);
       await this.emitSuggestions(job, suggestions);
       if (job.abortController.signal.aborted) return;
       job.status = 'completed';
@@ -129,42 +120,8 @@ export class PlaybookFlowIntentConstructionService {
   private buildBlueprintSuggestions(
     raw: string,
     context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>,
-    dto: RequestPlaybookFlowIntentDto,
   ): PlaybookIntentSuggestion[] {
-    if (!this.blueprintParser.hasBlueprintShape(raw)) {
-      this.logger.warn('playbook_intent_construction_invalid_blueprint_output rule=missing_blueprint');
-      return [];
-    }
-    const parsed = this.blueprintParser.parse(raw);
-    if (!parsed) {
-      this.logger.warn('playbook_intent_construction_invalid_blueprint_output rule=parse_failed');
-      return [];
-    }
-    try {
-      const designCatalog = this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog);
-      const repaired = this.blueprintRepair.repair({
-        blueprint: parsed.blueprint,
-        templates: context.nodeTemplates,
-        designCatalog,
-        existingContext: context.validationContext,
-      });
-      const built = this.graphBuilder.build({
-        blueprint: repaired.blueprint,
-        context: context.validationContext,
-        limits: context.limits,
-        templates: context.nodeTemplates,
-        designCatalog,
-        selectedNodeId: context.selectedNodeId,
-      });
-      const diagnostics = [...parsed.diagnostics, ...repaired.diagnostics, ...built.diagnostics];
-      if (diagnostics.length) {
-        this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
-      }
-      return [this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, context.flow, diagnostics, repaired.repairSummary)];
-    } catch (error) {
-      this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
-      return [];
-    }
+    return this.blueprintCompiler.compile({ raw, context });
   }
 
   private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0): Promise<number> {

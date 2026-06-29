@@ -678,7 +678,8 @@ export class PlaybookIntentGraphBuilderService {
       return null;
     }
     const sourceNode = options.blueprint.nodes.find((node) => node.ref === link.sourceRef);
-    const routerConfig = sourceNode ? (sourceNode.primitive?.router || sourceNode.routerConfig) : null;
+    const sourceTemplate = sourceNode ? options.templates.find((template) => template.enabled && template.key === sourceNode.nodeTemplateKey) : null;
+    const routerConfig = sourceNode ? (sourceNode.primitive?.router || sourceNode.routerConfig || sourceTemplate?.routerConfig) : null;
     const edgeKind = link.kind || (routerConfig ? 'conditional' : undefined);
     if (edgeKind === 'conditional') {
       if (!routerConfig || !link.routerLabel || !routerConfig.outputLabels.includes(link.routerLabel)) {

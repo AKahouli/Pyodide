@@ -4,7 +4,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
   function createService(): PlaybookFlowIntentConstructionService {
     return new PlaybookFlowIntentConstructionService({
       normalizeConstructionSuggestions: jest.fn().mockReturnValue([]),
-      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
     } as any);
   }
 
@@ -55,7 +54,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const normalizeConstructionSuggestions = jest.fn();
       const service = new PlaybookFlowIntentConstructionService({
         normalizeConstructionSuggestions,
-        buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
       } as any);
 
       const raw = JSON.stringify({
@@ -70,7 +68,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
         },
       });
 
-      const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(true), { intent: 'test' });
+      const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(true));
       expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
       expect(suggestions).toHaveLength(1);
       expect(suggestions[0].kind).toBe('workflow_plan');
@@ -81,7 +79,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
     it('attaches diagnostics and lowers confidence for invalid compiled blueprint drafts', () => {
       const service = new PlaybookFlowIntentConstructionService({
         normalizeConstructionSuggestions: jest.fn(),
-        buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
       } as any);
       const context = makeContext(true);
       context.nodeTemplates = [
@@ -101,7 +98,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
         },
       });
 
-      const suggestions = (service as any).buildBlueprintSuggestions(raw, context, { intent: 'test' });
+      const suggestions = (service as any).buildBlueprintSuggestions(raw, context);
 
       expect(suggestions).toHaveLength(1);
       expect(suggestions[0].confidence).toBeLessThan(0.85);
@@ -166,7 +163,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const suggestions = (service as any).buildBlueprintSuggestions(
         JSON.stringify({ suggestions: [] }),
         makeContext(true),
-        { intent: 'test' },
       );
       expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
       expect(suggestions).toEqual([]);

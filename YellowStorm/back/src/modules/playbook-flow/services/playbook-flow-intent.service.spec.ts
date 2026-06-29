@@ -53,6 +53,7 @@ function createService(overrides: Partial<{
     undefined,
     undefined,
     undefined,
+    undefined,
     overrides.skillService,
     overrides.connectorService,
     overrides.workspaceService,
@@ -1153,7 +1154,6 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       };
       const suggestions = (service as any).normalizeConstructionOutput({
         raw,
-        dto: { intent: 'test' },
         context: {
           ...context,
           httpClient: { post: jest.fn() },
@@ -1187,7 +1187,6 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       const ctx = makeContext();
       const suggestions = (service as any).normalizeConstructionOutput({
         raw,
-        dto: { intent: 'test' },
         context: {
           httpClient: { post: jest.fn() },
           flow: {},

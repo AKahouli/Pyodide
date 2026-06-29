@@ -1,0 +1,18 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Router inside iterator",
+    "summary": "Route each item inside an iterator body.",
+    "nodes": [
+      { "ref": "loop", "label": "Loop", "purpose": "Process items", "nodeTemplateKey": "iterator", "inputPorts": [{ "id": "items", "artifactKind": "data", "required": true }], "outputPorts": [{ "id": "results", "artifactKind": "data" }], "primitive": { "kind": "iterator" }, "iteratorBody": { "steps": [
+        { "ref": "classify", "title": "Classify", "nodeTemplateKey": "router.basic", "primitive": { "kind": "router", "router": { "outputLabels": ["word", "pdf"], "defaultLabel": "word" } }, "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+        { "ref": "word_step", "title": "Word step", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+        { "ref": "pdf_step", "title": "PDF step", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] }
+      ], "edges": [
+        { "sourceRef": "classify", "targetRef": "word_step", "kind": "conditional", "routerLabel": "word", "targetInputPortId": "input" },
+        { "sourceRef": "classify", "targetRef": "pdf_step", "kind": "conditional", "routerLabel": "pdf", "targetInputPortId": "input" }
+      ] } }
+    ]
+  },
+  "expected": { "minNodes": 1, "iteratorNodeRef": "loop", "iteratorRouterRef": "classify", "routerLabels": ["word", "pdf"], "repairCodes": ["repair_router_output_port_added", "repair_router_link_source_port_set"] }
+}

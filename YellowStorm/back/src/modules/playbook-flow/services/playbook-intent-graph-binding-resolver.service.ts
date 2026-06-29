@@ -7,6 +7,7 @@ import type {
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 
 type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+const TEXT_SERIALIZABLE_ARTIFACT_KINDS = new Set<ArtifactKind>(['text', 'data', 'code', 'document']);
 type CreateEdgeChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_edge' | 'delete_edge' }> & { type: 'create_edge' };
 type CreateBindingChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_data_binding' }>;
 
@@ -256,7 +257,7 @@ export class PlaybookIntentGraphBindingResolverService {
   private areArtifactKindsCompatible(sourceKind: ArtifactKind | null, targetKind: ArtifactKind | null): boolean {
     if (!sourceKind || !targetKind) return true;
     if (sourceKind === targetKind) return true;
-    return false;
+    return TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(sourceKind) && TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(targetKind);
   }
 
   private edgeKey(edge: PlaybookIntentWorkflowChange): string {

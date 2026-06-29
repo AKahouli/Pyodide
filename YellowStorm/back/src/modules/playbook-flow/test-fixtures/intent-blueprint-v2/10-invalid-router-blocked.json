@@ -1,0 +1,13 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Invalid router blocked",
+    "summary": "Invalid router edge is blocked by diagnostics.",
+    "nodes": [
+      { "ref": "route", "label": "Route", "purpose": "Route", "nodeTemplateKey": "router.basic", "primitive": { "kind": "router", "router": { "outputLabels": ["known"], "defaultLabel": "known" } }, "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+      { "ref": "target", "label": "Target", "purpose": "Target", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "payload", "artifactKind": "data" }] }
+    ],
+    "links": [{ "sourceRef": "route", "targetRef": "target", "kind": "conditional", "routerLabel": "unknown", "targetInputPortId": "payload" }]
+  },
+  "expected": { "minNodes": 2, "diagnosticCodes": ["builder_conditional_edge_invalid_router_label"], "validationStatus": "valid_with_warnings" }
+}
