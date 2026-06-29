@@ -112,6 +112,63 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('accepts shorthand string skill refs', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Catalog refs',
+        nodes: [{
+          ref: 'collect_source_cvs',
+          label: 'Collect source CVs',
+          purpose: 'Collect CV files',
+          nodeTemplateKey: 'collector',
+          skill_refs: ['docx'],
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].skillRefs).toEqual([{ skillSlug: 'docx', reason: null }]);
+    expect(result.diagnostics.find((diagnostic) => diagnostic.code === 'blueprint_skill_ref_invalid')).toBeUndefined();
+  });
+
+  it('lifts misplaced iterator body links and bindings into blueprint-level links', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Misplaced links',
+        nodes: [
+          { ref: 'collect_source_cvs', label: 'Collect source CVs', purpose: '', nodeTemplateKey: 'collector', outputPorts: [{ id: 'source_cv_list', artifactKind: 'data' }] },
+          {
+            ref: 'iterate_cvs', label: 'Process each CV', purpose: '', nodeTemplateKey: 'iterator', inputPorts: [{ id: 'items', artifactKind: 'data' }],
+            iteratorBody: {
+              steps: [
+                { ref: 'extract_cv_content', title: 'Extract CV content', nodeTemplateKey: 'ai-document-intelligence', inputPorts: [{ id: 'cv_document', artifactKind: 'document' }], outputPorts: [{ id: 'cv_content', artifactKind: 'data' }] },
+                { ref: 'map_cv_to_template', title: 'Map CV to template', nodeTemplateKey: 'generic-ai-task', inputPorts: [{ id: 'cv_content_in', artifactKind: 'data' }] },
+              ],
+              links: [
+                { sourceRef: 'collect_source_cvs', targetRef: 'iterate_cvs', kind: 'sequential' },
+                { sourceRef: 'extract_cv_content', sourceIteratorRef: 'iterate_cvs', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', kind: 'sequential' },
+              ],
+              bindings: [
+                { sourceKind: 'node-output', sourceRef: 'collect_source_cvs', sourcePort: 'source_cv_list', targetRef: 'iterate_cvs', targetPort: 'items' },
+                { sourceKind: 'node-output', sourceRef: 'extract_cv_content', sourceIteratorRef: 'iterate_cvs', sourcePort: 'cv_content', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', targetPort: 'cv_content_in' },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.links).toEqual([
+      expect.objectContaining({ sourceRef: 'collect_source_cvs', targetRef: 'iterate_cvs' }),
+      expect.objectContaining({ sourceRef: 'extract_cv_content', sourceIteratorRef: 'iterate_cvs', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs' }),
+    ]);
+    expect(result.blueprint.bindings).toHaveLength(2);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code.includes('unknown_ref'))).toEqual([]);
+  });
+
   it('drops malformed connector and skill refs', () => {
     const raw = JSON.stringify({
       blueprint: {

@@ -21,14 +21,14 @@ import { PlaybookFlowPrimitiveRegistryService, type PlaybookPrimitiveRuntimeSpec
 type WorkflowPlanSuggestion = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 
-interface BuilderNodeTemplatePort {
+export interface BuilderNodeTemplatePort {
   id: string;
   name: string;
   artifactKind: string;
   required?: boolean;
 }
 
-interface BuilderNodeTemplate {
+export interface BuilderNodeTemplate {
   key: string;
   nodeType: string;
   enabled: boolean;

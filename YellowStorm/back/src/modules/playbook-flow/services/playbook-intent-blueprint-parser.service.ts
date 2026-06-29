@@ -41,8 +41,18 @@ export class PlaybookIntentBlueprintParserService {
 
     const diagnostics: PlaybookIntentDiagnostic[] = [];
     const nodes = this.parseNodes(blueprintNode.nodes, diagnostics);
-    const links = this.parseLinks(blueprintNode.links, nodes, diagnostics);
-    const bindings = this.parseBindings(blueprintNode.bindings, nodes, diagnostics);
+    const misplacedLinks: unknown[] = [];
+    const misplacedBindings: unknown[] = [];
+    for (const node of Array.isArray(blueprintNode.nodes) ? blueprintNode.nodes : []) {
+      if (!node || typeof node !== 'object') continue;
+      const iteratorBody = (node as Record<string, unknown>).iteratorBody;
+      if (!iteratorBody || typeof iteratorBody !== 'object') continue;
+      const rawBody = iteratorBody as Record<string, unknown>;
+      if (Array.isArray(rawBody.links)) misplacedLinks.push(...rawBody.links);
+      if (Array.isArray(rawBody.bindings)) misplacedBindings.push(...rawBody.bindings);
+    }
+    const links = this.parseLinks([...(Array.isArray(blueprintNode.links) ? blueprintNode.links : []), ...misplacedLinks], nodes, diagnostics);
+    const bindings = this.parseBindings([...(Array.isArray(blueprintNode.bindings) ? blueprintNode.bindings : []), ...misplacedBindings], nodes, diagnostics);
     const summary = this.asString(blueprintNode.summary) || this.asString(root.summary);
     const title = this.asString(blueprintNode.title) || this.asString(root.title) || summary || nodes[0]?.label;
     if (!title) {
@@ -202,6 +212,16 @@ export class PlaybookIntentBlueprintParserService {
     const accepted: PlaybookIntentBlueprintSkillRef[] = [];
     const seen = new Set<string>();
     for (const item of value) {
+      if (typeof item === 'string') {
+        const skillSlug = this.asString(item);
+        if (!skillSlug || seen.has(skillSlug)) {
+          this.recordDiagnostic(diagnostics, skillSlug ? 'blueprint_skill_ref_duplicate' : 'blueprint_skill_ref_missing_fields', `${ownerRef}:${skillSlug || '?'}`);
+          continue;
+        }
+        seen.add(skillSlug);
+        accepted.push({ skillSlug, reason: null });
+        continue;
+      }
       if (!item || typeof item !== 'object') {
         this.recordDiagnostic(diagnostics, 'blueprint_skill_ref_invalid', ownerRef);
         continue;

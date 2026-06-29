@@ -111,9 +111,12 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(suggestions[0].validationDiagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ message: 'Router classify label "no" has no outgoing edge' }),
       ]));
+      expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: 'repair', code: 'repair_router_link_source_port_set' }),
+      ]));
       expect(suggestions[0].validationStatus).toBe('valid_with_warnings');
       expect(suggestions[0].blockingReasons).toBeUndefined();
-      expect(suggestions[0].repairSummary).toBeNull();
+      expect(suggestions[0].repairSummary).toContain('Set router link source port to yes.');
     });
 
     it('emits blueprint workflow plans as progressive cumulative deltas', async () => {

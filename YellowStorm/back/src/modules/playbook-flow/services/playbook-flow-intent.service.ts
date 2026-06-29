@@ -18,6 +18,7 @@ import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprin
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
 import { PlaybookFlowPrimitiveRegistryService } from './playbook-flow-primitive-registry.service';
 import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
+import { PlaybookIntentBlueprintRepairService } from './playbook-intent-blueprint-repair.service';
 import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
@@ -355,6 +356,7 @@ export class PlaybookFlowIntentService {
     ),
     private readonly primitiveRegistry: PlaybookFlowPrimitiveRegistryService = new PlaybookFlowPrimitiveRegistryService(),
     private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
+    private readonly blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
     private readonly skillService?: SkillService,
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
@@ -809,19 +811,26 @@ export class PlaybookFlowIntentService {
       const parsed = this.blueprintParser.parse(args.raw);
       if (parsed) {
         try {
-          const buildResult = this.graphBuilder.build({
+          const designCatalog = this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog);
+          const repaired = this.blueprintRepair.repair({
             blueprint: parsed.blueprint,
+            templates: args.context.nodeTemplates,
+            designCatalog,
+            existingContext: args.context.validationContext,
+          });
+          const buildResult = this.graphBuilder.build({
+            blueprint: repaired.blueprint,
             context: args.context.validationContext,
             limits: args.context.limits,
             templates: args.context.nodeTemplates,
-            designCatalog: this.buildGraphBuilderDesignCatalog(args.context.availableDesignCatalog),
+            designCatalog,
             selectedNodeId: args.context.selectedNodeId,
           });
-          const diagnostics = [...parsed.diagnostics, ...buildResult.diagnostics];
+          const diagnostics = [...parsed.diagnostics, ...repaired.diagnostics, ...buildResult.diagnostics];
           if (diagnostics.length) {
             this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
           }
-          return [this.suggestionDiagnostics.enrichWorkflowPlan(buildResult.suggestion, args.context.flow, diagnostics)];
+          return [this.suggestionDiagnostics.enrichWorkflowPlan(buildResult.suggestion, args.context.flow, diagnostics, repaired.repairSummary)];
         } catch (error) {
           this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
           this.logger.warn('playbook_intent_invalid_blueprint_output rule=build_failed');

@@ -47,6 +47,12 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
     expect(enriched.blockingReasons).toBeUndefined();
   });
 
+  it('preserves repair summaries when repairs were applied', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan(), {}, [], ['Added router output port excel_file.']);
+
+    expect(enriched.repairSummary).toBe('Added router output port excel_file.');
+  });
+
   it('keeps suggestions with final validation diagnostics apply-ready', () => {
     const enriched = service.enrichWorkflowPlan(workflowPlan({
       changes: [{

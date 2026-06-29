@@ -9,6 +9,7 @@ import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprin
 import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
 import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
+import { PlaybookIntentBlueprintRepairService } from './playbook-intent-blueprint-repair.service';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -35,6 +36,7 @@ export class PlaybookFlowIntentConstructionService {
       new PlaybookIntentGraphBindingResolverService(),
     ),
     private readonly suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
+    private readonly blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
   ) {}
 
   async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentConstructionStartResult> {
@@ -139,19 +141,26 @@ export class PlaybookFlowIntentConstructionService {
       return [];
     }
     try {
-      const built = this.graphBuilder.build({
+      const designCatalog = this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog);
+      const repaired = this.blueprintRepair.repair({
         blueprint: parsed.blueprint,
+        templates: context.nodeTemplates,
+        designCatalog,
+        existingContext: context.validationContext,
+      });
+      const built = this.graphBuilder.build({
+        blueprint: repaired.blueprint,
         context: context.validationContext,
         limits: context.limits,
         templates: context.nodeTemplates,
-        designCatalog: this.intentService.buildGraphBuilderDesignCatalog(context.availableDesignCatalog),
+        designCatalog,
         selectedNodeId: context.selectedNodeId,
       });
-      const diagnostics = [...parsed.diagnostics, ...built.diagnostics];
+      const diagnostics = [...parsed.diagnostics, ...repaired.diagnostics, ...built.diagnostics];
       if (diagnostics.length) {
         this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
       }
-      return [this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, context.flow, diagnostics)];
+      return [this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, context.flow, diagnostics, repaired.repairSummary)];
     } catch (error) {
       this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
       return [];

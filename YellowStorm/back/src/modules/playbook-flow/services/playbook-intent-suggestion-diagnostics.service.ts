@@ -23,6 +23,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     suggestion: WorkflowPlanSuggestion,
     flow: { nodes?: FlowNode[]; controlEdges?: ControlEdge[]; dataBindings?: DataBinding[] },
     diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary?: string[],
   ): WorkflowPlanSuggestion {
     const validationDiagnostics = this.collectValidationDiagnostics(suggestion, flow);
     const allDiagnostics = [...diagnostics, ...validationDiagnostics];
@@ -33,7 +34,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
       ...(allDiagnostics.length ? { diagnostics: allDiagnostics } : {}),
       ...(validationDiagnostics.length ? { validationDiagnostics } : {}),
       validationStatus,
-      repairSummary: null,
+      repairSummary: repairSummary && repairSummary.length > 0 ? repairSummary.join(' ') : null,
     };
   }
 

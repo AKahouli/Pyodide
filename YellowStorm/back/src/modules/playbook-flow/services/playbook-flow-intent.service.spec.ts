@@ -52,6 +52,7 @@ function createService(overrides: Partial<{
     undefined,
     undefined,
     undefined,
+    undefined,
     overrides.skillService,
     overrides.connectorService,
     overrides.workspaceService,
