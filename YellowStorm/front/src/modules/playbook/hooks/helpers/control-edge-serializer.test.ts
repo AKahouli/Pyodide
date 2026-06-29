@@ -84,4 +84,25 @@ describe('resolveIntentEdgePorts', () => {
       targetInputPortId: 'items',
     });
   });
+
+  it('uses the requested router output port instead of the first compatible output', () => {
+    const sourceTask = {
+      id: 'classify_file',
+      nodeType: 'router',
+      outputPorts: [
+        { id: 'word_file', name: 'Word File', artifactKind: 'data' },
+        { id: 'excel_file', name: 'Excel File', artifactKind: 'data' },
+        { id: 'pptx_file', name: 'PowerPoint File', artifactKind: 'data' },
+      ],
+    } as PlaybookTask;
+    const targetTask = {
+      id: 'generate_excel_doc',
+      inputPorts: [{ id: 'input-data', name: 'File Data', artifactKind: 'data', required: true }],
+    } as PlaybookTask;
+
+    expect(resolveIntentEdgePorts(sourceTask, targetTask, 'excel_file', null)).toEqual({
+      sourceOutputPortId: 'excel_file',
+      targetInputPortId: 'input-data',
+    });
+  });
 });

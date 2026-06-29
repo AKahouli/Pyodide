@@ -1876,7 +1876,7 @@ function PlaybookCanvasInner() {
           const resolvedPorts = resolveIntentEdgePorts(
             sourceTask,
             targetTask,
-            edge.sourceOutputPortId,
+            edge.sourceOutputPortId || edge.routerLabel,
             edge.targetInputPortId,
           );
           if (!resolvedPorts) {

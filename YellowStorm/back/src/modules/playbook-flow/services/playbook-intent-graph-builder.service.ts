@@ -16,6 +16,7 @@ import type {
   PlaybookIntentWorkflowChange,
 } from './playbook-flow-intent.service';
 import type { FlowNodeTemplateHumanApprovalConfig } from '../interfaces/playbook-flow-node-template.interface';
+import { PlaybookFlowPrimitiveRegistryService, type PlaybookPrimitiveRuntimeSpec } from './playbook-flow-primitive-registry.service';
 
 type WorkflowPlanSuggestion = Extract<PlaybookIntentSuggestion, { kind: 'workflow_plan' }>;
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
@@ -108,6 +109,7 @@ export class PlaybookIntentGraphBuilderService {
 
   constructor(
     private readonly resolver: PlaybookIntentGraphBindingResolverService,
+    private readonly primitiveRegistry: PlaybookFlowPrimitiveRegistryService = new PlaybookFlowPrimitiveRegistryService(),
   ) {}
 
   build(options: BuildOptions): BuildResult {
@@ -177,12 +179,15 @@ export class PlaybookIntentGraphBuilderService {
   ): PlaybookIntentWorkflowChange | null {
     const template = this.resolveNodeTemplate(node.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
+    const runtimeSpec = this.resolvePrimitiveRuntimeSpec(node, diagnostics);
+    this.appendPrimitiveDiagnostics(runtimeSpec, node, this.supportsIteratorBody(template), diagnostics);
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), referencedPorts.inputKindsByRef.get(node.ref), diagnostics);
     const routerConfig = this.buildRouterConfig(node, template, diagnostics);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, routerConfig ? this.withRouterOutputPorts(node.outputPorts, routerConfig.outputLabels) : node.outputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
+    const normalizedOutputPorts = this.normalizeOutputPorts(node.outputPorts, node, runtimeSpec, routerConfig);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, normalizedOutputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
     const agentSlug = this.resolveAgentSlug(node, template);
 
-    const task: PlaybookIntentTaskDraft = {
+    let task: PlaybookIntentTaskDraft = {
       title: node.label,
       description: node.purpose || node.label,
       ...(agentSlug ? { agentSlug } : {}),
@@ -200,6 +205,7 @@ export class PlaybookIntentGraphBuilderService {
     if (node.iteratorBody && !this.supportsIteratorBody(template)) {
       this.recordDiagnostic(diagnostics, 'builder_iterator_body_not_supported_by_template', node.ref);
     }
+    task = this.applyPrimitiveTaskPatch(task, node, runtimeSpec);
 
     return {
       type: 'create_node',
@@ -337,10 +343,13 @@ export class PlaybookIntentGraphBuilderService {
     const template = this.resolveNodeTemplate(step.nodeTemplateKey, options.templates, diagnostics);
     if (!template) return null;
     const nodeLike = { ...step, label: step.title, purpose: step.description || step.title } as PlaybookIntentBlueprintNode;
+    const runtimeSpec = this.resolvePrimitiveRuntimeSpec(nodeLike, diagnostics);
+    this.appendPrimitiveDiagnostics(runtimeSpec, nodeLike, this.supportsIteratorBody(template), diagnostics);
     const routerConfig = this.buildRouterConfig(nodeLike, template, diagnostics);
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), referencedPorts.inputKindsByRef.get(step.ref), diagnostics);
-    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, routerConfig ? this.withRouterOutputPorts(step.outputPorts, routerConfig.outputLabels) : step.outputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
-    return {
+    const normalizedOutputPorts = this.normalizeOutputPorts(step.outputPorts, nodeLike, runtimeSpec, routerConfig);
+    const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, normalizedOutputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
+    const task = this.applyPrimitiveTaskPatch({
       nodeRef: step.ref,
       title: step.title,
       description: step.description || step.title,
@@ -355,7 +364,54 @@ export class PlaybookIntentGraphBuilderService {
       ...(step.skillRefs?.length ? { skillBindings: this.buildSkillBindings(nodeLike, options, diagnostics) } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
-    };
+    }, nodeLike, runtimeSpec);
+    return task as NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number];
+  }
+
+  private resolvePrimitiveRuntimeSpec(
+    node: PlaybookIntentBlueprintNode,
+    diagnostics: PlaybookIntentDiagnostic[],
+  ): PlaybookPrimitiveRuntimeSpec | null {
+    const kind = node.primitive?.kind;
+    if (!kind) return null;
+    const runtimeSpec = this.primitiveRegistry.getRuntimeSpec(kind);
+    if (!runtimeSpec && !this.primitiveRegistry.isKnownPrimitive(kind)) {
+      this.recordDiagnostic(diagnostics, 'builder_primitive_kind_unknown', `${node.ref}:${kind}`);
+    }
+    return runtimeSpec;
+  }
+
+  private appendPrimitiveDiagnostics(
+    runtimeSpec: PlaybookPrimitiveRuntimeSpec | null,
+    node: PlaybookIntentBlueprintNode,
+    supportsIteratorBody: boolean,
+    diagnostics: PlaybookIntentDiagnostic[],
+  ): void {
+    for (const diagnostic of runtimeSpec?.validateNode?.({ node, supportsIteratorBody }) || []) {
+      diagnostics.push(diagnostic);
+      this.logger.warn(`playbook_intent_builder_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
+    }
+  }
+
+  private normalizeOutputPorts(
+    ports: PlaybookIntentBlueprintPort[] | undefined,
+    node: PlaybookIntentBlueprintNode,
+    runtimeSpec: PlaybookPrimitiveRuntimeSpec | null,
+    routerConfig: PlaybookIntentTaskDraft['routerConfig'] | null,
+  ): PlaybookIntentBlueprintPort[] | undefined {
+    if (node.primitive && runtimeSpec?.normalizeOutputPorts) {
+      return runtimeSpec.normalizeOutputPorts(ports, node.primitive);
+    }
+    return routerConfig ? this.withRouterOutputPorts(ports, routerConfig.outputLabels) : ports;
+  }
+
+  private applyPrimitiveTaskPatch<T extends PlaybookIntentTaskDraft>(
+    task: T,
+    node: PlaybookIntentBlueprintNode,
+    runtimeSpec: PlaybookPrimitiveRuntimeSpec | null,
+  ): T {
+    if (!node.primitive || !runtimeSpec?.compileTaskPatch) return task;
+    return { ...task, ...runtimeSpec.compileTaskPatch(node.primitive) };
   }
 
   private resolveNodeTemplate(

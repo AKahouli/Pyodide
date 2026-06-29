@@ -1,4 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import type {
+  PlaybookIntentBlueprintNode,
+  PlaybookIntentBlueprintPort,
+  PlaybookIntentBlueprintPrimitiveConfig,
+} from '../interfaces/playbook-flow-intent-blueprint.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
+import type { PlaybookIntentTaskDraft } from './playbook-flow-intent.service';
 
 export interface PlaybookPrimitivePromptSpec {
   kind: string;
@@ -8,6 +15,21 @@ export interface PlaybookPrimitivePromptSpec {
   topologyRules: string[];
   configSchemaHint: Record<string, unknown>;
   promptInstructions: string;
+}
+
+export interface PlaybookPrimitiveRuntimeContext {
+  node: PlaybookIntentBlueprintNode;
+  supportsIteratorBody: boolean;
+}
+
+export interface PlaybookPrimitiveRuntimeSpec {
+  kind: string;
+  normalizeOutputPorts?: (
+    ports: PlaybookIntentBlueprintPort[] | undefined,
+    primitive: PlaybookIntentBlueprintPrimitiveConfig,
+  ) => PlaybookIntentBlueprintPort[] | undefined;
+  compileTaskPatch?: (primitive: PlaybookIntentBlueprintPrimitiveConfig) => Partial<PlaybookIntentTaskDraft>;
+  validateNode?: (context: PlaybookPrimitiveRuntimeContext) => PlaybookIntentDiagnostic[];
 }
 
 const PRIMITIVES: PlaybookPrimitivePromptSpec[] = [
@@ -75,9 +97,62 @@ const PRIMITIVES: PlaybookPrimitivePromptSpec[] = [
   },
 ];
 
+const RUNTIME_SPECS: PlaybookPrimitiveRuntimeSpec[] = [
+  {
+    kind: 'router',
+    normalizeOutputPorts: (ports, primitive) => {
+      const labels = [...new Set((primitive.router?.outputLabels || []).map((label) => label.trim()).filter(Boolean))];
+      if (labels.length === 0) return ports;
+      const byId = new Map((ports || []).map((port) => [port.id, port]));
+      for (const label of labels) {
+        if (!byId.has(label)) byId.set(label, { id: label, name: label, artifactKind: 'text' });
+      }
+      return [...byId.values()];
+    },
+  },
+  {
+    kind: 'human_approval',
+    compileTaskPatch: (primitive) => primitive.humanApproval
+      ? { humanApprovalConfig: { ...primitive.humanApproval } }
+      : {},
+  },
+  {
+    kind: 'iterator',
+    validateNode: ({ node, supportsIteratorBody }) => {
+      if (!supportsIteratorBody || node.iteratorBody) return [];
+      return [{
+        severity: 'warning',
+        stage: 'graph_builder',
+        code: 'builder_iterator_primitive_missing_body',
+        itemId: node.ref,
+        message: 'Iterator primitive requires iteratorBody steps.',
+      }];
+    },
+  },
+];
+
 @Injectable()
 export class PlaybookFlowPrimitiveRegistryService {
   getPromptCatalog(): PlaybookPrimitivePromptSpec[] {
-    return PRIMITIVES;
+    return PRIMITIVES.map((primitive) => ({
+      ...primitive,
+      selectionRules: [...primitive.selectionRules],
+      topologyRules: [...primitive.topologyRules],
+      configSchemaHint: this.cloneJsonRecord(primitive.configSchemaHint),
+    }));
+  }
+
+  getRuntimeSpec(kind: string | null | undefined): PlaybookPrimitiveRuntimeSpec | null {
+    if (!kind) return null;
+    return RUNTIME_SPECS.find((spec) => spec.kind === kind) || null;
+  }
+
+  isKnownPrimitive(kind: string | null | undefined): boolean {
+    if (!kind) return false;
+    return PRIMITIVES.some((primitive) => primitive.kind === kind);
+  }
+
+  private cloneJsonRecord(value: Record<string, unknown>): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
   }
 }

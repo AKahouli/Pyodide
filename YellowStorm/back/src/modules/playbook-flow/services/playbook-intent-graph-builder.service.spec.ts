@@ -587,6 +587,82 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(approval?.task.modelId).toBe('model-approval');
   });
 
+  it('applies human approval primitive config through the registry runtime hook', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Approval primitive',
+      summary: '',
+      nodes: [{
+        ref: 'approval',
+        label: 'Approval',
+        purpose: '',
+        nodeTemplateKey: 'approval.template',
+        primitive: { kind: 'human_approval', humanApproval: { promptTemplate: 'Approve this?', approvalMode: 'approve_reject' } },
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({ key: 'approval.template', nodeType: 'human_approval' })],
+      selectedNodeId: null,
+    });
+
+    const approval = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(approval?.task.humanApprovalConfig).toEqual({ promptTemplate: 'Approve this?', approvalMode: 'approve_reject' });
+  });
+
+  it('warns and continues for unknown primitive kinds', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Custom primitive',
+      summary: '',
+      nodes: [{ ref: 'custom', label: 'Custom', purpose: '', nodeTemplateKey: 'generic.agent_step', primitive: { kind: 'custom_unknown' } }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate()],
+      selectedNodeId: null,
+    });
+
+    expect(result.suggestion.changes.some((change: Change) => change.type === 'create_node')).toBe(true);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'builder_primitive_kind_unknown', itemId: 'custom:custom_unknown' }),
+    ]));
+  });
+
+  it('warns when an iterator primitive omits iterator body steps', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Iterator missing body',
+      summary: '',
+      nodes: [{ ref: 'loop', label: 'Loop', purpose: '', nodeTemplateKey: 'iterator.template', primitive: { kind: 'iterator' } }],
+      links: [],
+      bindings: [],
+    };
+
+    const result = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({ key: 'iterator.template', iteratorConfig: ITERATOR_CONFIG })],
+      selectedNodeId: null,
+    });
+
+    expect(result.suggestion.changes.some((change: Change) => change.type === 'create_node')).toBe(true);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'builder_iterator_primitive_missing_body', itemId: 'loop' }),
+    ]));
+  });
+
   it('rejects conditional router edges with labels missing from the source router', () => {
     const blueprint: PlaybookIntentBlueprint = {
       version: 2,
