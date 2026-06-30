@@ -17,6 +17,7 @@ export { useWorkspaceStore, useWorkspaces, useDocuments, useSelectedWorkspace, u
 
 // Page (was modules/classifier)
 export { WorkspacePage } from './components/WorkspacePage';
+export { WorkspaceHubPage } from './components/WorkspaceHubPage';
 
 // Components
 export { WorkspaceButton } from './components/WorkspaceButton';

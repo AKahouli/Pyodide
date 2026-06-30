@@ -60,6 +60,9 @@ const ProjectPage = React.lazy(() =>
 const WorkspacePage = React.lazy(() =>
   import("./modules/workspace").then((m) => ({ default: m.WorkspacePage }))
 );
+const WorkspaceHubPage = React.lazy(() =>
+  import("./modules/workspace").then((m) => ({ default: m.WorkspaceHubPage }))
+);
 import {
   AdminGuard,
   AdminLayout,
@@ -233,7 +236,7 @@ export const router = createHashRouter([
         path: 'workspace',
         element: (
           <Suspense fallback={null}>
-            <WorkspacePage />
+            <WorkspaceHubPage />
           </Suspense>
         ),
       },
