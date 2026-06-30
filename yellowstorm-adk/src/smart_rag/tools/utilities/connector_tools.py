@@ -831,9 +831,7 @@ def _apply_streamable_http_context_headers(
     agent_id: Optional[str] = None,
 ) -> Dict[str, str]:
     headers = dict(auth_headers)
-    # Per-agent memory isolation: the binding's auth_headers already carry the
-    # X-Tenant-Id / X-User-Id; the agent id is only known here, so inject it as
-    # X-Agent-Id (the memory MCP builds its scope from tenant:user:agent).
+
     if agent_id:
         headers["X-Agent-Id"] = agent_id
     file_names = context.get("file_names") or []
