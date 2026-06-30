@@ -142,6 +142,7 @@ class AgentFactory:
         brain_documents: Optional[list] = None,
         conversation_brain_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         connector_bindings: Optional[List[Dict[str, Any]]] = None,
     ) -> Agent:
         """Create an agent with optional tools including calculator, web search, document search, and in-memory extraction.
@@ -267,6 +268,7 @@ class AgentFactory:
                             brain_ids=brain_ids,
                             brain_documents=brain_documents,
                             session_id=session_id,
+                            agent_id=agent_id,
                         ),
                     )
                 )
