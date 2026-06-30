@@ -173,9 +173,7 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
     ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
-    ...(node.deepSearch === true || metadata.deep_search === true
-      ? { deep_search: true }
-      : {}),
+    deep_search: node.deepSearch === true,
   };
 }
 
