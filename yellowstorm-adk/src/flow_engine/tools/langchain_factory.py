@@ -1690,7 +1690,7 @@ def _create_deep_search_tool() -> Optional[StructuredTool]:
             result = await call_mcp_tool(
                 "streamable_http",
                 mcp_url,
-                {"X-Deep-Search": "true"},
+                {"headers": {"X-Deep-Search": "true"}},
                 "search_relevant_documents",
                 {"query": query, "workspace_id": workspace_id, "top_k": top_k},
             )
@@ -1786,6 +1786,10 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        # When deep search is off, strip the header so the MCP server hides
+        # search_relevant_documents, and filter the action below.
+        if not deep_search:
+            binding_auth_headers.pop("X-Deep-Search", None)
         if (
             connector_id
             and output_workspace_id
@@ -1820,6 +1824,10 @@ def _create_connector_mcp_tools(
             if raw_actions
             else []
         )
+        # When deep search is off, drop the gated MCP action so the agent
+        # never sees search_relevant_documents as a connector tool.
+        if not deep_search:
+            actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
         if not actions:
             continue
 
