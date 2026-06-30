@@ -510,6 +510,7 @@ def create_search_agent_with_tools(
                         brain_ids=final_workspace_names,
                         brain_documents=agent_config.get("brain_documents", []),
                         session_id=config.session_id,
+                        agent_id=agent_config.get("id"),
                     ),
                 )
             )
@@ -657,6 +658,7 @@ def create_standard_agent_with_tools(
 
     agent = agent_factory.create_agent(
         name=agent_name,
+        agent_id=agent_config.get("id"),
         prompt=enhanced_prompt,
         chatbot_name=chatbot_name,
         calculator_tool=True if "calculator" in tools else False,

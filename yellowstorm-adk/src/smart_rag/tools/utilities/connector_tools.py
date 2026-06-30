@@ -33,6 +33,7 @@ class ConnectorToolContext:
     workspace_names: Optional[List[str]] = None
     brain_documents: Optional[List[Dict[str, Any]]] = None
     session_id: Optional[str] = None
+    agent_id: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -827,8 +828,12 @@ def _apply_streamable_http_context_headers(
     auth_headers: Dict[str, str],
     context: Dict[str, List[str]],
     session_id: Optional[str],
+    agent_id: Optional[str] = None,
 ) -> Dict[str, str]:
     headers = dict(auth_headers)
+
+    if agent_id:
+        headers["X-Agent-Id"] = agent_id
     file_names = context.get("file_names") or []
     workspace_ids = context.get("workspace_ids") or []
     header_workspace_ids = context.get("header_workspace_ids") or workspace_ids
@@ -1069,6 +1074,7 @@ def create_connector_tools(
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
                 _session_id: Optional[str] = context.session_id,
+                _agent_id: Optional[str] = context.agent_id,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -1098,6 +1104,7 @@ def create_connector_tools(
                         _auth_headers,
                         _connector_context,
                         _session_id,
+                        _agent_id,
                     )
                     if _transport_type == "streamable_http"
                     else dict(_auth_headers)
