@@ -8,7 +8,6 @@ import { useWorkyUiStore } from '../uiStore';
 import { BudgetControl } from './BudgetControl';
 import { ChatMessageThread } from './ChatMessageThread';
 import { HumanTaskPanel } from './HumanTaskPanel';
-import { InteractionPanel } from './InteractionPanel';
 import { MemoryProposalCard } from './MemoryProposalCard';
 import { OrchestratorStatusHeader } from './OrchestratorStatusHeader';
 import { PromptBar } from './PromptBar';
@@ -18,6 +17,8 @@ import type { WorkyStream, WorkyTask } from '../types';
 
 interface OrchestratorPanelProps {
   streamId: string;
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
 }
 
 type OrchestratorTab = 'chat' | 'details';
@@ -39,7 +40,11 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-export function OrchestratorPanel({ streamId }: OrchestratorPanelProps): JSX.Element {
+export function OrchestratorPanel({
+  streamId,
+  onWhatsAppClick,
+  whatsappConnected,
+}: OrchestratorPanelProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [activeTab, setActiveTab] = useState<OrchestratorTab>('chat');
   const boardQuery = useBoard(streamId);
@@ -110,7 +115,12 @@ export function OrchestratorPanel({ streamId }: OrchestratorPanelProps): JSX.Ele
         <OrchestratorTabs activeTab={activeTab} onChange={setActiveTab} />
       </div>
       {activeTab === 'chat' ? (
-        <ChatPanel streamId={streamId} status={streamQuery.data?.status} />
+        <ChatPanel
+          streamId={streamId}
+          status={streamQuery.data?.status}
+          onWhatsAppClick={onWhatsAppClick}
+          whatsappConnected={whatsappConnected}
+        />
       ) : (
         <DetailsPanel streamId={streamId} stream={streamQuery.data} humanTasks={humanTasks} />
       )}
@@ -159,12 +169,28 @@ function OrchestratorTabs({ activeTab, onChange }: OrchestratorTabsProps): JSX.E
   );
 }
 
-function ChatPanel({ streamId, status }: { streamId: string; status?: WorkyStream['status'] }): JSX.Element {
+function ChatPanel({
+  streamId,
+  status,
+  onWhatsAppClick,
+  whatsappConnected,
+}: {
+  streamId: string;
+  status?: WorkyStream['status'];
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
+}): JSX.Element {
   return (
     <div id='worky-orchestrator-chat' role='tabpanel' aria-labelledby='worky-orchestrator-chat-tab' className='grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-2 overflow-hidden'>
-      <ChatMessageThread />
+      <ChatMessageThread streamId={streamId} />
       <div className='shrink-0'>
-        <PromptBar key={streamId} streamId={streamId} status={status} />
+        <PromptBar
+          key={streamId}
+          streamId={streamId}
+          status={status}
+          onWhatsAppClick={onWhatsAppClick}
+          whatsappConnected={whatsappConnected}
+        />
       </div>
     </div>
   );
@@ -173,7 +199,6 @@ function ChatPanel({ streamId, status }: { streamId: string; status?: WorkyStrea
 function DetailsPanel({ streamId, stream, humanTasks }: { streamId: string; stream?: WorkyStream; humanTasks: WorkyTask[] }): JSX.Element {
   return (
     <div id='worky-orchestrator-details' role='tabpanel' aria-labelledby='worky-orchestrator-details-tab' className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1'>
-      <InteractionPanel streamId={streamId} />
       {stream ? <StreamModelsControl stream={stream} /> : null}
       <BudgetControl streamId={streamId} />
       <HumanTaskPanel streamId={streamId} tasks={humanTasks} />

@@ -27,6 +27,9 @@ import type {
   WorkyStreamQueryParams,
   WorkyTask,
   WorkyTaskResult,
+  WorkyWhatsAppConnectResponse,
+  WorkyWhatsAppIntegration,
+  WorkyWhatsAppPairingResponse,
 } from './types';
 
 function unwrap<T>(response: { data: ApiResponse<T> }): T {
@@ -357,4 +360,64 @@ export async function synthesizeSpeech(text: string, voice?: string): Promise<Bl
     { responseType: 'blob' },
   );
   return response.data as Blob;
+}
+
+// =================================================================
+// WhatsApp integration (per stream)
+// =================================================================
+
+export async function getWorkyWhatsAppIntegration(
+  streamId: string,
+): Promise<WorkyWhatsAppIntegration | null> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppIntegration | null>>(
+    API_ENDPOINTS.worky.whatsappIntegration(streamId),
+  );
+  return unwrap(response);
+}
+
+export async function connectWorkyWhatsApp(
+  streamId: string,
+): Promise<WorkyWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
+    API_ENDPOINTS.worky.whatsappConnect(streamId),
+  );
+  return unwrap(response);
+}
+
+export async function getWorkyWhatsAppPairing(
+  streamId: string,
+  sessionId: string,
+): Promise<WorkyWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppPairingResponse>>(
+    API_ENDPOINTS.worky.whatsappPairing(streamId, sessionId),
+  );
+  return unwrap(response);
+}
+
+export async function reconnectWorkyWhatsApp(
+  streamId: string,
+  sessionId: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.worky.whatsappReconnect(streamId, sessionId),
+  );
+  return unwrap(response);
+}
+
+export async function disconnectWorkyWhatsAppSession(
+  streamId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.worky.whatsappSession(streamId, sessionId));
+}
+
+export async function deleteWorkyWhatsAppIntegration(streamId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.worky.whatsappIntegration(streamId));
+}
+
+export async function getWorkyWhatsAppSystemBotStatus(): Promise<{ connected: boolean }> {
+  const response = await apiClient.get<ApiResponse<{ connected: boolean }>>(
+    API_ENDPOINTS.worky.whatsappSystemBotStatus,
+  );
+  return unwrap(response);
 }

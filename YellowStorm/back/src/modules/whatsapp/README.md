@@ -473,6 +473,7 @@ Manual verification checklist:
 
 ## Related Documentation
 
+- [Worky ↔ WhatsApp bridge](../worky/README-WHATSAPP.md) — stream-scoped group bridge, planning ingress/egress
 - [Conversation Module](../conversation/README.md) — `StreamService.runSingleAgentStream()`, `RunSingleAgentRequest`, message pipeline
 - [Agent Module](../agent/README.md) — agent ownership and configuration
 - [Frontend WhatsApp UI](../../../front/src/modules/agent/whatsapp/README.md) — pairing UI, Socket.IO client

@@ -12,6 +12,7 @@ import { PlanDeltaToast } from './PlanDeltaToast';
 import { StreamControls } from './StreamControls';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
 import { useWorkyStore } from '../store';
@@ -21,7 +22,9 @@ import {
   useMessages,
   useStream,
   useUpdateStream,
+  useWorkyWhatsAppIntegration,
 } from '../query/hooks';
+import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -57,6 +60,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
+
+  useEffect(() => {
+    setWhatsappModalOpen(false);
+  }, [streamId]);
 
   useEffect(() => {
     setBoardLoading(boardQuery.isFetching);
@@ -283,7 +292,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         ) : null}
         <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
       </main>
-      <OrchestratorPanel streamId={streamId} />
+      <OrchestratorPanel
+        streamId={streamId}
+        onWhatsAppClick={() => setWhatsappModalOpen(true)}
+        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
+      />
       {orchestratorOpen ? (
         <button
           type='button'
@@ -307,6 +320,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
       />
+      {whatsappModalOpen ? (
+        <WorkyWhatsAppConnectModal
+          open
+          streamId={streamId}
+          onClose={() => setWhatsappModalOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

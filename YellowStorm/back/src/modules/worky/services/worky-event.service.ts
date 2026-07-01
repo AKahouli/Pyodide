@@ -22,11 +22,14 @@ interface WorkySseConnection {
  *   events on connect. In Part 1 the channel is fire-and-forget; if the
  *   client misses a frame it will fetch via REST on reconnect.
  */
+type ManagerMessageHook = (streamId: string, text: string) => void;
+
 @Injectable()
 export class WorkyEventService implements OnModuleDestroy {
   private readonly logger = new Logger(WorkyEventService.name);
   private readonly connections = new Map<string, WorkySseConnection>();
   private readonly streamConnections = new Map<string, Set<string>>();
+  private readonly managerMessageHooks: ManagerMessageHook[] = [];
 
   constructor(private readonly config: ConfigService) {}
 
@@ -99,6 +102,25 @@ export class WorkyEventService implements OnModuleDestroy {
     if (conns) {
       conns.delete(connectionId);
       if (conns.size === 0) this.streamConnections.delete(userKey);
+    }
+  }
+
+  /** Registers a hook called whenever a manager (AI) message is persisted. */
+  registerManagerMessageHook(hook: ManagerMessageHook): void {
+    this.managerMessageHooks.push(hook);
+  }
+
+  /** Called by WorkyPlanningService after a manager message is persisted. */
+  notifyManagerMessage(streamId: string, text: string): void {
+    for (const hook of this.managerMessageHooks) {
+      try {
+        hook(streamId, text);
+      } catch (err) {
+        this.logger.warn('Manager message hook threw', {
+          streamId,
+          error: (err as Error).message,
+        });
+      }
     }
   }
 

@@ -20,6 +20,7 @@ export interface WorkyBoardResponse {
     options: string[];
     taskId: string | null;
     blocksTaskIds: string[];
+    createdAt: string;
   }>;
 }
 
@@ -45,6 +46,7 @@ export class WorkyBoardController {
     const streamObjectId = new Types.ObjectId(streamId);
     const pending = await this.interactions
       .find({ streamId: streamObjectId, status: 'pending' })
+      .sort({ createdAt: 1 })
       .lean()
       .exec();
     const blockersByTaskId = new Map<string, string[]>();
@@ -72,6 +74,7 @@ export class WorkyBoardController {
         options: (p.options ?? []) as string[],
         taskId: p.taskId ? (p.taskId as Types.ObjectId).toString() : null,
         blocksTaskIds: (p.blocksTaskIds ?? []).map((t) => (t as Types.ObjectId).toString()),
+        createdAt: (p.createdAt as Date).toISOString(),
       })),
     };
   }

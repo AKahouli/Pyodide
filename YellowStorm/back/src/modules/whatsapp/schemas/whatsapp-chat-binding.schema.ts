@@ -23,6 +23,9 @@ export class WhatsAppChatBinding extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Conversation' })
   conversationId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'WorkyStream' })
+  workyStreamId?: Types.ObjectId;
+
   @Prop()
   lastMessageAt?: Date;
 

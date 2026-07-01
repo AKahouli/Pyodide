@@ -1,4 +1,4 @@
-import { Loader2, Mic, Send, Square } from 'lucide-react';
+import { Loader2, MessageCircle, Mic, Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
@@ -11,6 +11,8 @@ import type { WorkyStreamStatus } from '../types';
 interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
 }
 
 /**
@@ -20,7 +22,12 @@ interface PromptBarProps {
  * Keeping a single source of truth avoids two model-selection UIs
  * drifting out of sync and removes the per-turn override payload.
  */
-export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
+export function PromptBar({
+  streamId,
+  status,
+  onWhatsAppClick,
+  whatsappConnected,
+}: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
   const send = useSendMessage(streamId);
@@ -152,6 +159,26 @@ export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
             }
           }}
         />
+        {onWhatsAppClick ? (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            onClick={onWhatsAppClick}
+            disabled={isDisabled}
+            aria-label={t('whatsapp.openModal')}
+            data-testid='worky-prompt-whatsapp'
+            className='relative'
+          >
+            <MessageCircle className='h-4 w-4' />
+            {whatsappConnected ? (
+              <span
+                className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
+                data-testid='worky-prompt-whatsapp-connected'
+              />
+            ) : null}
+          </Button>
+        ) : null}
         {recorder.isSupported ? (
           <Button
             type='button'

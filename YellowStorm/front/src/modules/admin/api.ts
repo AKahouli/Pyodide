@@ -96,6 +96,11 @@ import type {
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
 } from './types';
+import type {
+  WorkyWhatsAppConnectResponse,
+  WorkyWhatsAppIntegration,
+  WorkyWhatsAppPairingResponse,
+} from '@/modules/worky/types';
 
 // Helper to build query string
 function buildQueryString(params: AnalyticsQueryParams): string {
@@ -1142,4 +1147,44 @@ export async function upsertTeamAutoBuilderConfig(
     data,
   );
   return response.data.data;
+}
+
+// =================================================================
+// Worky WhatsApp system bot (admin)
+// =================================================================
+
+export async function getAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.base,
+  );
+  return response.data.data;
+}
+
+export async function connectAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.connect,
+  );
+  return response.data.data;
+}
+
+export async function getAdminWorkyWhatsAppSystemBotPairing(
+  sessionId: string,
+): Promise<WorkyWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppPairingResponse>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.pairing(sessionId),
+  );
+  return response.data.data;
+}
+
+export async function reconnectAdminWorkyWhatsAppSystemBot(
+  sessionId: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.reconnect(sessionId),
+  );
+  return response.data.data;
+}
+
+export async function disconnectAdminWorkyWhatsAppSystemBot(sessionId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminWorkyWhatsAppSystemBot.session(sessionId));
 }

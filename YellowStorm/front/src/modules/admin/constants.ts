@@ -2,7 +2,7 @@
  * Admin Module Constants
  */
 
-import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2 } from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
 // Admin menu items with their required permissions
@@ -156,6 +156,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['workspaces.*', '*'],
     description: 'Manage workspace upload policies',
     descriptionKey: 'menu.workspaceSettings.description',
+  },
+  {
+    id: 'worky-whatsapp-system',
+    label: 'Worky WhatsApp System',
+    labelKey: 'menu.workyWhatsAppSystem.label',
+    path: '/admin/worky-whatsapp-system',
+    icon: MessageCircle,
+    permissions: ['worky.admin.governance', 'worky.admin.*', '*'],
+    description: 'Pair the shared Worky WhatsApp system bot',
+    descriptionKey: 'menu.workyWhatsAppSystem.description',
   },
   {
     id: 'tools',
