@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import { useWorkspaceStore } from '../../store';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth';
@@ -43,6 +44,9 @@ export function ShareWorkspaceDialog() {
   const revokeShare = useWorkspaceStore((state) => state.revokeShare);
   const searchUsers = useWorkspaceStore((state) => state.searchUsers);
   const fetchWorkspaceShares = useWorkspaceStore((state) => state.fetchWorkspaceShares);
+  const setWorkspaceVisibility = useWorkspaceStore((state) => state.setWorkspaceVisibility);
+  const isPublic = shareModalWorkspace?.isPublic ?? false;
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
 
   const [pendingShares, setPendingShares] = useState<PendingShare[]>([]);
 
@@ -105,6 +109,18 @@ export function ShareWorkspaceDialog() {
     }
   };
 
+  const handleToggleVisibility = async (next: boolean) => {
+    if (!shareModalWorkspace) return;
+    setVisibilityBusy(true);
+    try {
+      await setWorkspaceVisibility(shareModalWorkspace.id, next);
+    } catch {
+      // store surfaces the error
+    } finally {
+      setVisibilityBusy(false);
+    }
+  };
+
   const handleUpdatePermission = async (shareId: string, permission: WorkspacePermission) => {
     if (!shareModalWorkspace) return;
     await updateSharePermission(shareModalWorkspace.id, shareId, permission);
@@ -141,27 +157,52 @@ export function ShareWorkspaceDialog() {
 
         <ScrollArea className='flex-1'>
           <div className='p-4 space-y-4'>
-            <GroupShareSelector
-              existingEmails={pendingShares.map((s) => s.email)}
-              ownerEmail={user?.email ?? ''}
-              onExpand={handleAddGroupShares}
-              disabled={isSharingInProgress}
-            />
+            <div className='flex items-start justify-between gap-4 rounded-md border p-3'>
+              <div className='space-y-0.5'>
+                <p className='text-sm font-medium'>{t('sharing.visibility.title')}</p>
+                <p className='text-xs text-muted-foreground'>
+                  {isPublic ? t('sharing.visibility.publicHint') : t('sharing.visibility.privateHint')}
+                </p>
+              </div>
+              <Switch
+                checked={isPublic}
+                onCheckedChange={handleToggleVisibility}
+                disabled={visibilityBusy || isSharingInProgress}
+                aria-label={t('sharing.visibility.title')}
+              />
+            </div>
 
-            <UserSearchInput
-              pendingShares={pendingShares}
-              onRemovePending={handleRemovePending}
-              onAddPending={handleAddPending}
-              searchUsers={handleSearchUsers}
-              disabled={isSharingInProgress}
-            />
+            {isPublic && (
+              <p className='rounded-md bg-muted/50 p-3 text-xs text-muted-foreground'>
+                {t('sharing.visibility.publicNote')}
+              </p>
+            )}
 
-            {pendingShares.length > 0 && (
-              <Button onClick={handleShare} disabled={isSharingInProgress} className='w-full'>
-                {isSharingInProgress
-                  ? t('sharing.sharing')
-                  : t('sharing.invite')}
-              </Button>
+            {!isPublic && (
+              <>
+                <GroupShareSelector
+                  existingEmails={pendingShares.map((s) => s.email)}
+                  ownerEmail={user?.email ?? ''}
+                  onExpand={handleAddGroupShares}
+                  disabled={isSharingInProgress}
+                />
+
+                <UserSearchInput
+                  pendingShares={pendingShares}
+                  onRemovePending={handleRemovePending}
+                  onAddPending={handleAddPending}
+                  searchUsers={handleSearchUsers}
+                  disabled={isSharingInProgress}
+                />
+
+                {pendingShares.length > 0 && (
+                  <Button onClick={handleShare} disabled={isSharingInProgress} className='w-full'>
+                    {isSharingInProgress
+                      ? t('sharing.sharing')
+                      : t('sharing.invite')}
+                  </Button>
+                )}
+              </>
             )}
 
             <Separator />
