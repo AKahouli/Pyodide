@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import {
   Dialog,
@@ -20,97 +21,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { Agent } from '../types';
-
-interface AgentMemory {
-  id: string;
-  title: string;
-  summary: string;
-  content: string;
-  type: string;
-  keywords: string[];
-  valid_from: string | null;
-  valid_until: string | null;
-  created_at: string;
-  updated_at: string;
-}
+import { getAgentMemories, deleteAgentMemories, type MemoryCard } from '../memoryCardsApi';
 
 interface AgentMemoriesModalProps {
   agent: Agent;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-// Simulated latency for the webapp → mcp → postgres → mcp → webapp round-trip.
-const FAKE_FETCH_MS = 900;
-
-// Static fake dataset (no backend yet). Kept deterministic so the table is stable.
-function buildFakeMemories(agentName: string): AgentMemory[] {
-  return [
-    {
-      id: 'mem_01H9X2A',
-      title: 'Préférences de ton',
-      summary: `${agentName} doit répondre de façon concise et professionnelle.`,
-      content:
-        "L'utilisateur préfère des réponses courtes, sans formules de politesse superflues, et en français.",
-      type: 'preference',
-      keywords: ['ton', 'concision', 'français'],
-      valid_from: '2026-01-05T09:00:00Z',
-      valid_until: null,
-      created_at: '2026-01-05T09:00:00Z',
-      updated_at: '2026-02-11T14:22:00Z',
-    },
-    {
-      id: 'mem_01H9X3B',
-      title: 'Stack technique',
-      summary: 'Projet principal en NestJS + React.',
-      content:
-        'Backend NestJS (Mongo + gRPC), frontend React/Vite/Tailwind. Éviter les suggestions Angular.',
-      type: 'fact',
-      keywords: ['nestjs', 'react', 'tailwind'],
-      valid_from: '2026-01-12T10:30:00Z',
-      valid_until: null,
-      created_at: '2026-01-12T10:30:00Z',
-      updated_at: '2026-01-12T10:30:00Z',
-    },
-    {
-      id: 'mem_01H9X4C',
-      title: 'Fuseau horaire',
-      summary: 'Utilisateur basé à Tunis (UTC+1).',
-      content: 'Planifier les rappels et échéances en heure de Tunis.',
-      type: 'fact',
-      keywords: ['timezone', 'tunis'],
-      valid_from: '2026-01-20T08:00:00Z',
-      valid_until: '2026-12-31T23:59:00Z',
-      created_at: '2026-01-20T08:00:00Z',
-      updated_at: '2026-03-02T11:05:00Z',
-    },
-    {
-      id: 'mem_01H9X5D',
-      title: 'Objectif du trimestre',
-      summary: 'Livrer la refonte du hub workspace.',
-      content:
-        'Priorité au portage des features v1 vers la conversation v2 avant fin de trimestre.',
-      type: 'goal',
-      keywords: ['roadmap', 'workspace', 'v2'],
-      valid_from: '2026-01-01T00:00:00Z',
-      valid_until: '2026-03-31T23:59:00Z',
-      created_at: '2026-01-02T16:45:00Z',
-      updated_at: '2026-02-28T09:12:00Z',
-    },
-    {
-      id: 'mem_01H9X6E',
-      title: 'Format des livrables',
-      summary: 'Toujours fournir un récap + les fichiers touchés.',
-      content:
-        'À la fin d\'une tâche, résumer les changements et lister les fichiers avec des liens cliquables.',
-      type: 'instruction',
-      keywords: ['livrable', 'récap'],
-      valid_from: '2026-02-01T00:00:00Z',
-      valid_until: null,
-      created_at: '2026-02-01T12:00:00Z',
-      updated_at: '2026-02-01T12:00:00Z',
-    },
-  ];
 }
 
 function formatDate(iso: string | null): string {
@@ -122,21 +38,37 @@ function formatDate(iso: string | null): string {
 
 export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<AgentMemoriesModalProps>) {
   const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState<AgentMemory[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  const [rows, setRows] = useState<MemoryCard[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Simulate the (slow) fetch every time the modal is opened.
+  // Fetch the agent's memories each time the modal is opened.
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     setLoading(true);
     setRows([]);
     setSelected(new Set());
-    const timer = setTimeout(() => {
-      setRows(buildFakeMemories(agent.name));
-      setLoading(false);
-    }, FAKE_FETCH_MS);
-    return () => clearTimeout(timer);
-  }, [open, agent.name]);
+
+    getAgentMemories(agent.id)
+      .then((memories) => {
+        if (!cancelled) setRows(memories);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast.error('Impossible de charger les mémoires', {
+            description: err instanceof Error ? err.message : undefined,
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, agent.id]);
 
   const allSelected = rows.length > 0 && selected.size === rows.length;
 
@@ -153,18 +85,29 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
     });
   };
 
-  const deleteSelected = () => {
-    // Static: remove from local state only (no persistence yet).
-    setRows((prev) => prev.filter((r) => !selected.has(r.id)));
-    setSelected(new Set());
+  const deleteSelected = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setDeleting(true);
+    try {
+      await deleteAgentMemories(agent.id, ids);
+      setRows((prev) => prev.filter((r) => !selected.has(r.id)));
+      setSelected(new Set());
+      toast.success(
+        ids.length === 1 ? 'Mémoire supprimée' : `${ids.length} mémoires supprimées`,
+      );
+    } catch (err) {
+      toast.error('Échec de la suppression', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const selectedCount = selected.size;
   const hasRows = rows.length > 0;
-  const description = useMemo(
-    () => `Mémoires de l'agent « ${agent.name} »`,
-    [agent.name],
-  );
+  const description = useMemo(() => `Mémoires de l'agent « ${agent.name} »`, [agent.name]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -189,11 +132,15 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
               <Button
                 variant="destructive"
                 size="sm"
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || deleting}
                 onClick={deleteSelected}
                 className="gap-1.5"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                {deleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
                 Supprimer la sélection
               </Button>
             </div>
@@ -252,9 +199,11 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
                             {row.content}
                           </TableCell>
                           <TableCell>
-                            <Badge variant="secondary" className="text-[10px]">
-                              {row.type}
-                            </Badge>
+                            {row.type && (
+                              <Badge variant="secondary" className="text-[10px]">
+                                {row.type}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap gap-1">

@@ -116,18 +116,20 @@ export function AgentCardRich({
       )}
       onClick={(e) => e.stopPropagation()}
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={(e) => {
-          e.stopPropagation();
-          setMemoriesOpen(true);
-        }}
-        title="Mémoires"
-      >
-        <MdMemory className="h-4 w-4" />
-      </Button>
+      {agent.hasSmartMemory && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMemoriesOpen(true);
+          }}
+          title="Mémoires"
+        >
+          <MdMemory className="h-4 w-4" />
+        </Button>
+      )}
       {canEdit && onEdit && (
         <Button
           variant="ghost"

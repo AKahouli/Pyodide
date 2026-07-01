@@ -20,6 +20,7 @@ import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
 import whatsappConfig from './config/whatsapp.config';
 import workyConfig from './config/worky.config';
+import memoryCardsConfig from './config/memory-cards.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -62,6 +63,7 @@ import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
+import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
 
 @Module({
   imports: [
@@ -69,7 +71,7 @@ import { WorkyModule } from './modules/worky';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -120,6 +122,7 @@ import { WorkyModule } from './modules/worky';
     EvaluationModule,
     WidgetChatModule,
     WorkyModule,
+    MemoryCardsModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

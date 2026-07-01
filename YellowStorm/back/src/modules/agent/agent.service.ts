@@ -1170,7 +1170,34 @@ export class AgentService {
       }
     }
 
+    await this.applySmartMemoryFlag(owned);
+
     return owned;
+  }
+
+  /**
+   * Flags each agent response with `hasSmartMemory` = true when at least one of
+   * its connectors has the slug "smart-memory". Resolves the referenced
+   * connectors in a single query. Slugs are unique per creator, so a global
+   * lookup by slug is not reliable — we match against the agents' own connectors.
+   */
+  private async applySmartMemoryFlag(responses: IAgentResponse[]): Promise<void> {
+    const allConnectorIds = [
+      ...new Set(responses.flatMap((r) => r.connectors ?? [])),
+    ];
+    if (allConnectorIds.length === 0) return;
+
+    const connectors = await this.connectorService.findByIds(allConnectorIds);
+    const smartMemoryIds = new Set(
+      connectors.filter((c) => c.slug === 'smart-memory').map((c) => c.id),
+    );
+    if (smartMemoryIds.size === 0) return;
+
+    for (const response of responses) {
+      response.hasSmartMemory = (response.connectors ?? []).some((id) =>
+        smartMemoryIds.has(id),
+      );
+    }
   }
 
   async findByIds(ids: string[], userId: string): Promise<IAgentResponse[]> {
@@ -1436,6 +1463,7 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
+      hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
