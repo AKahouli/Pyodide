@@ -302,6 +302,12 @@ export const API_ENDPOINTS = {
     shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
     unshare: (id: string) => `/teams/${id}/unshare`,
   },
+  userGroups: {
+    list: '/user-groups',
+    byId: (id: string) => `/user-groups/${id}`,
+    members: (id: string) => `/user-groups/${id}/members`,
+    memberById: (id: string, userId: string) => `/user-groups/${id}/members/${userId}`,
+  },
   tools: {
     active: '/tools/active',
   },
