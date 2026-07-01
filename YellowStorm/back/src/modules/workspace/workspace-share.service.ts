@@ -41,9 +41,9 @@ export class WorkspaceShareService {
 
   /**
    * Throw if the user lacks access to any of the provided workspaceIds.
-   * Access = ownership OR an active share. Used by callers that accept a list
-   * of workspaceIds from the client (e.g. v2 session creation) and need to
-   * guard against IDs the user doesn't actually have access to.
+   * Access = ownership OR an active share OR a public workspace. Used by callers
+   * that accept a list of workspaceIds from the client (e.g. v2 session creation)
+   * and need to guard against IDs the user doesn't actually have access to.
    */
   async assertUserHasAccess(userId: string, workspaceIds: string[]): Promise<void> {
     if (workspaceIds.length === 0) return;
@@ -59,7 +59,7 @@ export class WorkspaceShareService {
     const objectIds = workspaceIds.map((id) => new Types.ObjectId(id));
     const userObjectId = new Types.ObjectId(userId);
 
-    const [owned, shared] = await Promise.all([
+    const [owned, shared, publicWs] = await Promise.all([
       this.workspaceModel
         .find({ _id: { $in: objectIds }, createdBy: userObjectId })
         .select('_id')
@@ -70,11 +70,17 @@ export class WorkspaceShareService {
         .select('workspaceId')
         .lean()
         .exec(),
+      this.workspaceModel
+        .find({ _id: { $in: objectIds }, isPublic: true })
+        .select('_id')
+        .lean()
+        .exec(),
     ]);
 
     const accessibleIds = new Set<string>([
       ...owned.map((w) => w._id.toString()),
       ...shared.map((s) => s.workspaceId.toString()),
+      ...publicWs.map((w) => w._id.toString()),
     ]);
 
     const missing = workspaceIds.filter((id) => !accessibleIds.has(id));
@@ -88,9 +94,9 @@ export class WorkspaceShareService {
 
   /**
    * Return whether a user has any kind of access (owner OR active share,
-   * read or readwrite) to a single workspace. Used by external services
-   * (indexing) that need a simple yes/no access check. Returns false for
-   * malformed ids rather than throwing.
+   * read or readwrite, OR the workspace is public) to a single workspace.
+   * Used by external services (indexing) that need a simple yes/no access
+   * check. Returns false for malformed ids rather than throwing.
    */
   async hasAccess(userId: string, workspaceId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(workspaceId)) {
@@ -100,16 +106,19 @@ export class WorkspaceShareService {
     const workspaceObjectId = new Types.ObjectId(workspaceId);
     const userObjectId = new Types.ObjectId(userId);
 
-    const [owned, shared] = await Promise.all([
+    const [owned, shared, isPublic] = await Promise.all([
       this.workspaceModel
         .exists({ _id: workspaceObjectId, createdBy: userObjectId })
         .exec(),
       this.shareModel
         .exists({ workspaceId: workspaceObjectId, sharedWithUserId: userObjectId })
         .exec(),
+      this.workspaceModel
+        .exists({ _id: workspaceObjectId, isPublic: true })
+        .exec(),
     ]);
 
-    return Boolean(owned || shared);
+    return Boolean(owned || shared || isPublic);
   }
 
   /**
