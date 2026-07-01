@@ -303,6 +303,8 @@
   "select.ownGroup": "My workspaces",
   "select.sharedGroup": "Shared with me",
   "select.sharedBy": "Shared by {{name}}",
+  "select.publicGroup": "Public",
+  "select.publicBy": "Public · {{name}}",
   "select.searchPlaceholder": "Search workspaces...",
   "select.selectedCount_one": "{{count}} selected",
   "select.selectedCount_other": "{{count}} selected",
