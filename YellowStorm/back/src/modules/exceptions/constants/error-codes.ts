@@ -131,6 +131,8 @@ export enum ErrorCode {
   WORKSPACE_SHARE_SYSTEM = 'ERR_1956',
   WORKSPACE_READ_ONLY = 'ERR_1957',
   WORKSPACE_SHARE_USER_NOT_FOUND = 'ERR_1958',
+  WORKSPACE_PUBLIC_NO_SHARE = 'ERR_1959',
+  WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM = 'ERR_1960',
 
   // Auth token missing (for SSE)
   AUTH_TOKEN_MISSING = 'ERR_1120',
@@ -476,6 +478,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKSPACE_SHARE_SYSTEM]: 'System workspaces cannot be shared.',
   [ErrorCode.WORKSPACE_READ_ONLY]: 'You have read-only access to this workspace.',
   [ErrorCode.WORKSPACE_SHARE_USER_NOT_FOUND]: 'One or more users were not found.',
+  [ErrorCode.WORKSPACE_PUBLIC_NO_SHARE]:
+    'This workspace is public and cannot be shared. Make it private first.',
+  [ErrorCode.WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM]: 'System workspaces cannot be made public.',
 
   [ErrorCode.AUTH_TOKEN_MISSING]: 'Authentication token is required.',
 

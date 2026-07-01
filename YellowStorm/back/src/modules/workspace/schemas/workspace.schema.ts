@@ -48,6 +48,9 @@ export class Workspace extends Document {
   @Prop({ type: Number, default: 0, min: 0 })
   shareCount!: number;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isPublic!: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'Conversation' })
   conversationId?: Types.ObjectId;
 
