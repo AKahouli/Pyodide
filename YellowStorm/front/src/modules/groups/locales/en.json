@@ -1,6 +1,41 @@
 {
-  "store.toasts.created": "Group created",
-  "store.toasts.updated": "Group updated",
-  "store.toasts.deleted": "Group deleted",
-  "store.errors.fetchFailed": "Failed to fetch groups"
+  "button": { "groups": "Groups", "manage": "Manage groups" },
+  "page": {
+    "title": "Groups",
+    "subtitle": "Create groups of people to share workspaces with them at once.",
+    "newGroup": "New group",
+    "emptyState": "You have no groups yet.",
+    "createFirst": "Create your first group",
+    "memberCount_one": "{{count}} member",
+    "memberCount_other": "{{count}} members",
+    "noDescription": "No description",
+    "deleteDialog": {
+      "title": "Delete group",
+      "description": "Delete \"{{name}}\"? Workspaces already shared with its members keep their access.",
+      "cancel": "Cancel",
+      "confirm": "Delete"
+    }
+  },
+  "dialog": {
+    "createTitle": "Create group",
+    "editTitle": "Edit group",
+    "nameLabel": "Name",
+    "namePlaceholder": "e.g. Marketing team",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Optional",
+    "membersLabel": "Members",
+    "searchPlaceholder": "Search users by email",
+    "noMembers": "No members yet.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "create": "Create"
+  },
+  "store": {
+    "errors": { "fetchFailed": "Failed to load groups." },
+    "toasts": {
+      "created": "Group \"{{name}}\" created",
+      "updated": "Group \"{{name}}\" updated",
+      "deleted": "Group \"{{name}}\" deleted"
+    }
+  }
 }

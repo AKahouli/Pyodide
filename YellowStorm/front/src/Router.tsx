@@ -54,6 +54,9 @@ const TeamsPage = React.lazy(() =>
 const TeamOrgChartPage = React.lazy(() =>
   import("./modules/team").then((m) => ({ default: m.TeamOrgChartPage }))
 );
+const GroupsPage = React.lazy(() =>
+  import("./modules/groups").then((m) => ({ default: m.GroupsPage }))
+);
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
@@ -221,6 +224,14 @@ export const router = createHashRouter([
         element: (
           <Suspense fallback={null}>
             <TeamOrgChartPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'groups',
+        element: (
+          <Suspense fallback={null}>
+            <GroupsPage />
           </Suspense>
         ),
       },
