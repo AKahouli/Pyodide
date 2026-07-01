@@ -1160,6 +1160,16 @@ export async function getAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppInt
   return response.data.data;
 }
 
+export async function updateAdminWorkyWhatsAppSystemBotExpectedPhone(
+  phoneNumber: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.patch<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.expectedPhone,
+    { phoneNumber },
+  );
+  return response.data.data;
+}
+
 export async function connectAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppConnectResponse> {
   const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
     API_ENDPOINTS.adminWorkyWhatsAppSystemBot.connect,

@@ -73,6 +73,7 @@ export const API_ENDPOINTS = {
   },
   adminWorkyWhatsAppSystemBot: {
     base: '/admin/worky/whatsapp-system-bot',
+    expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',
     connect: '/admin/worky/whatsapp-system-bot/connect',
     pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
     reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,

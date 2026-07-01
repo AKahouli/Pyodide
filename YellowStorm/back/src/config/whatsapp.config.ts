@@ -14,6 +14,4 @@ export default registerAs('whatsapp', () => ({
   processingTimeoutMs: Number.parseInt(process.env.WHATSAPP_PROCESSING_TIMEOUT_MS || '180000', 10),
   fallbackReply:
     process.env.WHATSAPP_FALLBACK_REPLY || 'I could not generate a response for this message.',
-  /** Phone number (digits only) added as second member of the Worky WhatsApp bridge group. */
-  workyGroupPhone: process.env.WHATSAPP_WORKY_GROUP_PHONE || '33753929093',
 }));

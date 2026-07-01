@@ -344,6 +344,7 @@ export interface WorkyWhatsAppIntegration {
   status: WorkyWhatsAppIntegrationStatus;
   sessionId?: string;
   phoneNumber?: string;
+  expectedPairingPhone?: string;
   displayName?: string;
   lastActivityAt?: string;
   errorMessage?: string;

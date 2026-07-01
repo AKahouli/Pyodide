@@ -63,11 +63,26 @@ describe('WorkyWhatsAppSystemBotConnectionService', () => {
         _id: integrationId,
         key: WORKY_WHATSAPP_SYSTEM_BOT_KEY,
         status: WhatsAppIntegrationStatus.CONNECTED,
+        expectedPairingPhone: '33753929093',
         pairedByUserId: new Types.ObjectId(),
       }),
     });
 
     await expect(service.connect(adminUserId)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('connect rejects when expected phone is not configured', async () => {
+    systemBotModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: integrationId,
+        key: WORKY_WHATSAPP_SYSTEM_BOT_KEY,
+        status: WhatsAppIntegrationStatus.DISCONNECTED,
+      }),
+    });
+
+    await expect(service.connect(adminUserId)).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED,
+    });
   });
 
   it('connect starts pairing for disconnected bot', async () => {
@@ -76,6 +91,7 @@ describe('WorkyWhatsAppSystemBotConnectionService', () => {
         _id: integrationId,
         key: WORKY_WHATSAPP_SYSTEM_BOT_KEY,
         status: WhatsAppIntegrationStatus.DISCONNECTED,
+        expectedPairingPhone: '33753929093',
       }),
     });
     systemBotModel.findOneAndUpdate.mockReturnValue({
@@ -97,18 +113,20 @@ describe('WorkyWhatsAppSystemBotConnectionService', () => {
 
 describe('WorkyWhatsAppSystemBotService', () => {
   let service: WorkyWhatsAppSystemBotService;
-  const configService = {
-    get: jest.fn().mockReturnValue('33753929093'),
+  const systemBotModel = {
+    findOne: jest.fn(),
+    findOneAndUpdate: jest.fn(),
+    updateOne: jest.fn(),
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WorkyWhatsAppSystemBotService,
-        { provide: ConfigService, useValue: configService },
         {
           provide: getModelToken(WorkyWhatsAppSystemBot.name),
-          useValue: { findOne: jest.fn(), updateOne: jest.fn() },
+          useValue: systemBotModel,
         },
       ],
     }).compile();
@@ -116,19 +134,35 @@ describe('WorkyWhatsAppSystemBotService', () => {
     service = module.get(WorkyWhatsAppSystemBotService);
   });
 
-  it('assertExpectedPhone accepts matching digits', () => {
-    expect(() => service.assertExpectedPhone('+33753929093')).not.toThrow();
+  it('assertExpectedPhone accepts matching digits', async () => {
+    systemBotModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        expectedPairingPhone: '33753929093',
+      }),
+    });
+
+    await expect(service.assertExpectedPhone('+33753929093')).resolves.toBeUndefined();
   });
 
-  it('assertExpectedPhone rejects mismatch', () => {
-    try {
-      service.assertExpectedPhone('+21600000000');
-      fail('expected throw');
-    } catch (error) {
-      expect(error).toBeInstanceOf(BadRequestException);
-      expect((error as BadRequestException).code).toBe(
-        ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH,
-      );
-    }
+  it('assertExpectedPhone rejects mismatch', async () => {
+    systemBotModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        expectedPairingPhone: '33753929093',
+      }),
+    });
+
+    await expect(service.assertExpectedPhone('+21600000000')).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH,
+    });
+  });
+
+  it('assertExpectedPhone rejects when phone is not configured', async () => {
+    systemBotModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({}),
+    });
+
+    await expect(service.assertExpectedPhone('+33753929093')).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED,
+    });
   });
 });

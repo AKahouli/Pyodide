@@ -5,7 +5,9 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
+  Body,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -22,6 +24,7 @@ import { WhatsAppIntegrationResponseDto } from '@modules/whatsapp/dto/whatsapp-i
 import { WhatsAppPairingResponseDto } from '@modules/whatsapp/dto/whatsapp-pairing-response.dto';
 import { RequirePermissions } from '../../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../../authorization/constants/permissions';
+import { UpdateWorkyWhatsAppSystemBotPhoneDto } from '../../dto/update-worky-whatsapp-system-bot-phone.dto';
 
 @ApiTags('Worky Admin')
 @ApiBearerAuth()
@@ -37,6 +40,17 @@ export class WorkyWhatsAppSystemBotAdminController {
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async getStatus(): Promise<WhatsAppIntegrationResponseDto> {
     return this.connectionService.getStatus();
+  }
+
+  @Patch('expected-phone')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_ADMIN_GOVERNANCE)
+  @ApiOperation({ summary: 'Save the expected system bot phone number for pairing' })
+  @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
+  async updateExpectedPhone(
+    @Body() dto: UpdateWorkyWhatsAppSystemBotPhoneDto,
+  ): Promise<WhatsAppIntegrationResponseDto> {
+    return this.connectionService.updateExpectedPhone(dto.phoneNumber);
   }
 
   @Post('connect')

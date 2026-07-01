@@ -20,6 +20,10 @@ export class WorkyWhatsAppSystemBot extends Document {
   @Prop({ trim: true })
   phoneNumber?: string;
 
+  /** Admin-configured digits-only phone that must be used when pairing the system bot. */
+  @Prop({ trim: true, maxlength: 20 })
+  expectedPairingPhone?: string;
+
   @Prop({ trim: true, maxlength: 200 })
   displayName?: string;
 

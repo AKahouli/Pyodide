@@ -416,7 +416,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
 
       if (integrationRef.kind === 'worky_system_bot') {
         try {
-          this.systemBotService.assertExpectedPhone(phoneNumber);
+          await this.systemBotService.assertExpectedPhone(phoneNumber);
         } catch (phoneError) {
           const message =
             phoneError instanceof Error ? phoneError.message : 'Phone number mismatch';

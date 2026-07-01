@@ -35,6 +35,7 @@ export class WorkyWhatsAppSystemBotConnectionService {
   async connect(adminUserId: string): Promise<WhatsAppConnectResponseDto> {
     this.assertEnabled();
     await this.connectivity.assertReachable(true);
+    await this.systemBotService.assertExpectedPhoneConfigured();
 
     const existing = await this.systemBotService.getOrCreateDocument();
     if (existing.status === WhatsAppIntegrationStatus.CONNECTED) {
@@ -107,6 +108,11 @@ export class WorkyWhatsAppSystemBotConnectionService {
 
   async getStatus(): Promise<WhatsAppIntegrationResponseDto> {
     return this.systemBotService.getStatus();
+  }
+
+  async updateExpectedPhone(phoneNumber: string): Promise<WhatsAppIntegrationResponseDto> {
+    const doc = await this.systemBotService.updateExpectedPairingPhone(phoneNumber);
+    return this.systemBotService.toResponse(doc);
   }
 
   async isConnected(): Promise<boolean> {

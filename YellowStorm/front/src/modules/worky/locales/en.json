@@ -235,6 +235,5 @@
   "whatsapp.refreshCode": "Refresh code",
   "whatsapp.cancel": "Cancel pairing",
   "whatsapp.loading": "Loading…",
-  "whatsapp.systemBotRequired": "The Worky WhatsApp system bot must be connected before you can link your number.",
-  "whatsapp.systemBotAdminLink": "Open admin settings"
+  "whatsapp.systemBotRequired": "The Worky WhatsApp system bot must be connected before you can link your number."
 }

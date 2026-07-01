@@ -235,6 +235,5 @@
   "whatsapp.refreshCode": "Actualiser le code",
   "whatsapp.cancel": "Annuler l'appairage",
   "whatsapp.loading": "Chargement…",
-  "whatsapp.systemBotRequired": "Le bot WhatsApp système Worky doit être connecté avant de lier votre numéro.",
-  "whatsapp.systemBotAdminLink": "Ouvrir les paramètres admin"
+  "whatsapp.systemBotRequired": "Le bot WhatsApp système Worky doit être connecté avant de lier votre numéro."
 }

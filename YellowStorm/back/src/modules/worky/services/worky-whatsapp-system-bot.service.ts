@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { BadRequestException } from '@modules/exceptions';
@@ -17,8 +16,11 @@ export class WorkyWhatsAppSystemBotService {
   constructor(
     @InjectModel(WorkyWhatsAppSystemBot.name)
     private readonly systemBotModel: Model<WorkyWhatsAppSystemBotDocument>,
-    private readonly configService: ConfigService,
   ) {}
+
+  normalizePhoneDigits(phone: string): string {
+    return phone.replace(/\D/g, '');
+  }
 
   async getOrCreateDocument(): Promise<WorkyWhatsAppSystemBotDocument> {
     const existing = await this.systemBotModel
@@ -82,6 +84,25 @@ export class WorkyWhatsAppSystemBotService {
     await this.systemBotModel.updateOne({ _id: integrationId }, { $set: patch }).exec();
   }
 
+  async updateExpectedPairingPhone(
+    phoneNumber: string,
+  ): Promise<WorkyWhatsAppSystemBotDocument> {
+    const digits = this.normalizePhoneDigits(phoneNumber);
+    if (digits.length < 8 || digits.length > 15) {
+      throw new BadRequestException(
+        ErrorCode.VALIDATION_ERROR,
+        'Phone number must contain 8 to 15 digits',
+      );
+    }
+    return this.systemBotModel
+      .findOneAndUpdate(
+        { key: WORKY_WHATSAPP_SYSTEM_BOT_KEY },
+        { $set: { expectedPairingPhone: digits } },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+  }
+
   async findConnected(): Promise<WorkyWhatsAppSystemBotDocument | null> {
     return this.systemBotModel
       .findOne({
@@ -107,14 +128,34 @@ export class WorkyWhatsAppSystemBotService {
     return doc;
   }
 
+  async getExpectedPhoneDigits(): Promise<string | null> {
+    const doc = await this.getOrCreateDocument();
+    const digits = this.normalizePhoneDigits(doc.expectedPairingPhone ?? '');
+    return digits || null;
+  }
+
+  async assertExpectedPhoneConfigured(): Promise<void> {
+    const expectedDigits = await this.getExpectedPhoneDigits();
+    if (!expectedDigits) {
+      throw new BadRequestException(
+        ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED,
+        'System bot phone is not configured',
+      );
+    }
+  }
+
   /**
-   * Validates that the paired phone matches WHATSAPP_WORKY_GROUP_PHONE.
-   * Throws if digits differ.
+   * Validates that the paired phone matches the admin-configured expectedPairingPhone.
    */
-  assertExpectedPhone(phoneNumber: string | undefined): void {
-    const expected = this.configService.get<string>('whatsapp.workyGroupPhone', '21651856582');
-    const expectedDigits = expected.replace(/\D/g, '');
-    const actualDigits = (phoneNumber ?? '').replace(/\D/g, '');
+  async assertExpectedPhone(phoneNumber: string | undefined): Promise<void> {
+    const expectedDigits = await this.getExpectedPhoneDigits();
+    if (!expectedDigits) {
+      throw new BadRequestException(
+        ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED,
+        'System bot phone is not configured',
+      );
+    }
+    const actualDigits = this.normalizePhoneDigits(phoneNumber ?? '');
     if (!actualDigits || actualDigits !== expectedDigits) {
       throw new BadRequestException(
         ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH,
@@ -123,15 +164,11 @@ export class WorkyWhatsAppSystemBotService {
     }
   }
 
-  getExpectedPhoneDigits(): string {
-    const expected = this.configService.get<string>('whatsapp.workyGroupPhone', '21651856582');
-    return expected.replace(/\D/g, '');
-  }
-
   toResponse(integration: {
     status: WhatsAppIntegrationStatus;
     sessionId?: string;
     phoneNumber?: string;
+    expectedPairingPhone?: string;
     displayName?: string;
     errorMessage?: string;
     lastActivityAt?: Date;
@@ -141,6 +178,7 @@ export class WorkyWhatsAppSystemBotService {
       status: integration.status,
       sessionId: integration.sessionId,
       phoneNumber: integration.phoneNumber,
+      expectedPairingPhone: integration.expectedPairingPhone,
       displayName: integration.displayName,
       errorMessage: integration.errorMessage,
       lastActivityAt: integration.lastActivityAt?.toISOString(),
