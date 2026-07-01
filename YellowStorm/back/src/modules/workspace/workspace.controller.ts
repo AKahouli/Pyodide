@@ -125,6 +125,18 @@ export class WorkspaceController {
   }
 
   /**
+   * List public workspaces (visible to all logged-in users)
+   */
+  @Get('public')
+  @ApiOperation({ summary: 'List public workspaces' })
+  async getPublic(
+    @CurrentUser() user: UserDocument,
+    @Query() query: WorkspaceQueryDto,
+  ) {
+    return this.workspaceService.findPublic(user._id.toString(), query);
+  }
+
+  /**
    * Get workspace by ID
    */
   @Get(':id')

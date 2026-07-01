@@ -62,3 +62,33 @@ describe('WorkspaceService.setVisibility', () => {
     expect(res.isPublic).toBe(true);
   });
 });
+
+describe('WorkspaceService.findPublic', () => {
+  it('queries public non-system workspaces excluding the requester and maps owner info', async () => {
+    const ownerId = new Types.ObjectId();
+    const ownerDoc = { _id: ownerId, email: 'o@x.io', profile: { firstName: 'O', lastName: 'W' } };
+    const wsDoc = {
+      _id: new Types.ObjectId(WS), name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
+      createdBy: ownerDoc, documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    const find = jest.fn().mockReturnValue({
+      populate: () => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: () => ({ exec: () => Promise.resolve([wsDoc]) }) }) }) }) }),
+    });
+    const countDocuments = jest.fn().mockReturnValue({ exec: () => Promise.resolve(1) });
+    const { svc, workspaceModel } = makeService({ workspaceModel: { find, countDocuments } });
+
+    const res = await svc.findPublic(OWNER, { page: 1, limit: 20 });
+
+    // Query must exclude requester's own + system + only public
+    const filterArg = find.mock.calls[0][0];
+    expect(filterArg.isPublic).toBe(true);
+    expect(filterArg.isSystem).toEqual({ $ne: true });
+    expect(filterArg.createdBy).toEqual({ $ne: expect.anything() });
+    expect(res.workspaces).toHaveLength(1);
+    expect(res.workspaces[0].owner.email).toBe('o@x.io');
+    expect(res.workspaces[0]).not.toHaveProperty('permission');
+    expect(res.pagination.total).toBe(1);
+    void workspaceModel;
+  });
+});

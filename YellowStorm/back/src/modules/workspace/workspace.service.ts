@@ -18,6 +18,8 @@ import {
   WorkspaceQueryParams,
   WorkspaceResponse,
   PaginatedWorkspaces,
+  PublicWorkspaceResponse,
+  PaginatedPublicWorkspaces,
 } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
 import { stripLeadingTrailingChar, collapseRepeatedChar } from '@common/utils';
@@ -326,6 +328,71 @@ export class WorkspaceService implements OnModuleInit {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * List public workspaces visible to any logged-in user, excluding the
+   * requester's own (those show under "my workspaces") and system workspaces.
+   */
+  async findPublic(
+    userId: string,
+    params: WorkspaceQueryParams,
+  ): Promise<PaginatedPublicWorkspaces> {
+    const { page = 1, limit = 20, search } = params;
+    const skip = (page - 1) * limit;
+
+    const query: Record<string, unknown> = {
+      isPublic: true,
+      isSystem: { $ne: true },
+      createdBy: { $ne: new Types.ObjectId(userId) },
+    };
+    if (search) {
+      const escaped = escapeRegex(search);
+      query.$or = [
+        { name: { $regex: escaped, $options: 'i' } },
+        { description: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+
+    const [workspaces, total] = await Promise.all([
+      this.workspaceModel
+        .find(query)
+        .populate('createdBy', 'email profile.firstName profile.lastName')
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.workspaceModel.countDocuments(query).exec(),
+    ]);
+
+    const mapped: PublicWorkspaceResponse[] = workspaces.map((ws) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const owner = (ws as any).createdBy;
+      return {
+        id: ws._id.toString(),
+        name: ws.name,
+        alias: ws.alias,
+        storagePrefix: ws.storagePrefix,
+        description: ws.description,
+        owner: {
+          id: owner._id.toString(),
+          email: owner.email,
+          firstName: owner.profile?.firstName,
+          lastName: owner.profile?.lastName,
+        },
+        documentCount: ws.documentCount,
+        usedStorage: ws.usedStorage,
+        allocatedStorage: ws.allocatedStorage,
+        createdAt: ws.createdAt.toISOString(),
+        updatedAt: ws.updatedAt.toISOString(),
+      };
+    });
+
+    return {
+      workspaces: mapped,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
 
