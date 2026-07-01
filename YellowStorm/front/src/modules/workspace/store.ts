@@ -1542,21 +1542,29 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       setWorkspaceVisibility: async (id, isPublic) => {
-        const updated = await workspaceApi.setVisibility(id, isPublic);
-        get().updateWorkspaceInCache(updated);
-        // Keep the open share modal in sync so its switch reflects the new state.
-        const { shareModalWorkspace } = get();
-        if (shareModalWorkspace?.id === id) {
-          set({ shareModalWorkspace: { ...shareModalWorkspace, isPublic } });
+        try {
+          const updated = await workspaceApi.setVisibility(id, isPublic);
+          get().updateWorkspaceInCache(updated);
+          // Keep the open share modal in sync so its switch reflects the new state.
+          const { shareModalWorkspace } = get();
+          if (shareModalWorkspace?.id === id) {
+            set({ shareModalWorkspace: { ...shareModalWorkspace, isPublic } });
+          }
+          // Public listing changed — drop its cache so the hub/pickers refetch.
+          set({ publicWorkspaces: new Map(), publicCurrentPage: 1 });
+          toast.success(
+            tToast(
+              isPublic ? 'sharing.visibilityPublic' : 'sharing.visibilityPrivate',
+              isPublic ? 'Workspace is now public' : 'Workspace is now private',
+            ),
+          );
+        } catch (err) {
+          const fallback = tError('setVisibility', 'Failed to update workspace visibility');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message });
+          toast.error(fallback, { description: message });
+          throw err;
         }
-        // Public listing changed — drop its cache so the hub/pickers refetch.
-        set({ publicWorkspaces: new Map(), publicCurrentPage: 1 });
-        toast.success(
-          tToast(
-            isPublic ? 'sharing.visibilityPublic' : 'sharing.visibilityPrivate',
-            isPublic ? 'Workspace is now public' : 'Workspace is now private',
-          ),
-        );
       },
 
       selectSharedWorkspace: async (workspaceId, shareId) => {

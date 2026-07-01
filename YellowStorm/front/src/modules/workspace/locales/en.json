@@ -241,6 +241,7 @@
   "store.errors.fetchWorkspaceShares": "Failed to fetch workspace shares",
   "store.errors.updateSharePermission": "Failed to update permission",
   "store.errors.revokeShare": "Failed to revoke access",
+  "store.errors.setVisibility": "Failed to update workspace visibility",
   "store.toast.sharing.shareSuccess": "Workspace shared",
   "store.toast.sharing.sharedWith": "Shared with {{count}} user(s).",
   "store.toast.sharing.notFound": "{{count}} user(s) not found",

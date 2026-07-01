@@ -56,4 +56,20 @@ describe('workspace store — public slice', () => {
     const cached = useWorkspaceStore.getState().workspaces.get(1)!.find((w) => w.id === 'w1');
     expect(cached!.isPublic).toBe(true);
   });
+
+  it('setWorkspaceVisibility surfaces the error and re-throws when the API call fails', async () => {
+    const ws: Workspace = {
+      id: 'w1', name: 'W', alias: 'w', createdBy: 'me',
+      documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: false,
+      createdAt: '2026-01-01', updatedAt: '2026-01-01',
+    };
+    useWorkspaceStore.setState({ workspaces: new Map([[1, [ws]]]), currentPage: 1 });
+    workspaceApiMock.setVisibility.mockRejectedValue(new Error('boom'));
+
+    await expect(useWorkspaceStore.getState().setWorkspaceVisibility('w1', true)).rejects.toThrow('boom');
+
+    expect(toastMock.error).toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().error).toBeTruthy();
+  });
 });

@@ -184,7 +184,7 @@ export function ShareWorkspaceDialog() {
                   existingEmails={pendingShares.map((s) => s.email)}
                   ownerEmail={user?.email ?? ''}
                   onExpand={handleAddGroupShares}
-                  disabled={isSharingInProgress}
+                  disabled={isSharingInProgress || visibilityBusy}
                 />
 
                 <UserSearchInput
@@ -192,7 +192,7 @@ export function ShareWorkspaceDialog() {
                   onRemovePending={handleRemovePending}
                   onAddPending={handleAddPending}
                   searchUsers={handleSearchUsers}
-                  disabled={isSharingInProgress}
+                  disabled={isSharingInProgress || visibilityBusy}
                 />
 
                 {pendingShares.length > 0 && (

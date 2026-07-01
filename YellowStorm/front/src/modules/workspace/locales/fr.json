@@ -240,6 +240,7 @@
   "store.errors.fetchWorkspaceShares": "Impossible de récupérer les partages",
   "store.errors.updateSharePermission": "Impossible de mettre à jour la permission",
   "store.errors.revokeShare": "Impossible de révoquer l'accès",
+  "store.errors.setVisibility": "Impossible de modifier la visibilité du workspace",
   "store.toast.sharing.shareSuccess": "Workspace partagé",
   "store.toast.sharing.sharedWith": "Partagé avec {{count}} utilisateur(s).",
   "store.toast.sharing.notFound": "{{count}} utilisateur(s) introuvable(s)",
