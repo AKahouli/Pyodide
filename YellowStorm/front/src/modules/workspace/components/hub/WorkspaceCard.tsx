@@ -44,7 +44,7 @@ export function WorkspaceCard({
   const docLabel = `${workspace.documentCount} doc${workspace.documentCount === 1 ? '' : 's'}`;
   const storageLabel = formatFileSize(workspace.usedStorage);
 
-  const isOwned = !workspace.isShared;
+  const isOwned = !workspace.isShared && !workspace.isReadOnly;
   const canSettings = isOwned && !!onSettings;
   const canShare = isOwned && !workspace.isPersonal && !!onShare;
   const canDelete = isOwned && !workspace.isPersonal && !!onDelete;
