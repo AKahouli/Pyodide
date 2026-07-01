@@ -88,6 +88,109 @@ describe('UserGroupService', () => {
     it('throws NotFound for a malformed id', async () => {
       await expect(service.findById(OWNER, 'not-an-id')).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it('drops null members (deleted user refs) from the response', async () => {
+      model.findById.mockReturnValue({
+        populate: () => ({
+          lean: () => ({
+            exec: () => Promise.resolve(leanGroup({ members: [null, memberDoc(MEMBER_A, 'a@x.io')] })),
+          }),
+        }),
+      });
+
+      const res = await service.findById(OWNER, new Types.ObjectId().toString());
+
+      expect(res.members).toHaveLength(1);
+      expect(res.memberCount).toBe(1);
+      expect(res.members[0]).toEqual({ id: MEMBER_A, email: 'a@x.io', firstName: 'F', lastName: 'L' });
+    });
+  });
+
+  describe('update', () => {
+    it('rejects renaming to a name that clashes with another group of the same owner', async () => {
+      const id = new Types.ObjectId().toString();
+      const hydratedDoc = {
+        _id: new Types.ObjectId(id),
+        name: 'Old Name',
+        description: '',
+        createdBy: new Types.ObjectId(OWNER),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
+      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ name: 'New Name' })) }) });
+
+      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(ConflictException);
+      expect(hydratedDoc.save).not.toHaveBeenCalled();
+    });
+
+    it('throws Forbidden when a non-owner tries to update', async () => {
+      const id = new Types.ObjectId().toString();
+      const hydratedDoc = {
+        _id: new Types.ObjectId(id),
+        name: 'Old Name',
+        description: '',
+        createdBy: new Types.ObjectId(OTHER),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
+
+      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(hydratedDoc.save).not.toHaveBeenCalled();
+    });
+
+    it('renames and updates the description, saving and returning the populated response', async () => {
+      const id = new Types.ObjectId().toString();
+      const hydratedDoc = {
+        _id: new Types.ObjectId(id),
+        name: 'Old Name',
+        description: 'Old desc',
+        createdBy: new Types.ObjectId(OWNER),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      model.findById
+        .mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) })
+        .mockReturnValueOnce({
+          populate: () => ({
+            lean: () => ({
+              exec: () =>
+                Promise.resolve(
+                  leanGroup({ _id: hydratedDoc._id, name: 'New Name', description: 'New desc' }),
+                ),
+            }),
+          }),
+        });
+      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+
+      const res = await service.update(OWNER, id, { name: 'New Name', description: 'New desc' });
+
+      expect(hydratedDoc.name).toBe('New Name');
+      expect(hydratedDoc.description).toBe('New desc');
+      expect(hydratedDoc.save).toHaveBeenCalledTimes(1);
+      expect(res.name).toBe('New Name');
+      expect(res.description).toBe('New desc');
+    });
+  });
+
+  describe('delete', () => {
+    it('deletes the group when called by its owner', async () => {
+      const id = new Types.ObjectId().toString();
+      const hydratedDoc = { _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) };
+      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
+      model.findByIdAndDelete.mockReturnValue({ exec: () => Promise.resolve(hydratedDoc) });
+
+      await service.delete(OWNER, id);
+
+      expect(model.findByIdAndDelete).toHaveBeenCalledWith(hydratedDoc._id);
+    });
+
+    it('throws Forbidden when a non-owner tries to delete', async () => {
+      const id = new Types.ObjectId().toString();
+      const hydratedDoc = { _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) };
+      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
+
+      await expect(service.delete(OWNER, id)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(model.findByIdAndDelete).not.toHaveBeenCalled();
+    });
   });
 
   describe('addMembers', () => {
@@ -113,6 +216,22 @@ describe('UserGroupService', () => {
       model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
       await expect(service.addMembers(OWNER, id, [MEMBER_A])).rejects.toBeInstanceOf(ForbiddenException);
     });
+
+    it('collapses duplicate ids before writing the $addToSet payload', async () => {
+      const id = new Types.ObjectId().toString();
+      model.findById
+        .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) }) })
+        .mockReturnValueOnce({
+          populate: () => ({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ members: [memberDoc(MEMBER_A, 'a@x.io'), memberDoc(MEMBER_B, 'b@x.io')] })) }) }),
+        });
+      model.updateOne.mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) });
+
+      await service.addMembers(OWNER, id, [MEMBER_A, MEMBER_A, MEMBER_B]);
+
+      const each = model.updateOne.mock.calls[0][1].$addToSet.members.$each;
+      expect(each).toHaveLength(2);
+      expect(new Set(each.map((oid: Types.ObjectId) => oid.toString())).size).toBe(2);
+    });
   });
 
   describe('removeMember', () => {
@@ -126,6 +245,12 @@ describe('UserGroupService', () => {
       const res = await service.removeMember(OWNER, id, MEMBER_A);
       expect(model.updateOne).toHaveBeenCalledWith({ _id: expect.anything() }, { $pull: { members: expect.anything() } });
       expect(res.memberCount).toBe(0);
+    });
+
+    it('throws Forbidden when a non-owner tries to remove a member', async () => {
+      const id = new Types.ObjectId().toString();
+      model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
+      await expect(service.removeMember(OWNER, id, MEMBER_A)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });
