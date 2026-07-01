@@ -212,6 +212,8 @@
   "sharing.permission.readwrite": "Read & write",
   "sharing.permission.readBadge": "Read",
   "sharing.permission.readwriteBadge": "Read & write",
+  "sharing.groups.selectPlaceholder": "Share with a group…",
+  "sharing.groups.add": "Add",
   "sharing.sharedNotification": "{{name}} shared \"{{workspace}}\" with you.",
   "sharing.revokedNotification": "Your access to \"{{workspace}}\" was revoked.",
   "store.errors.applySettings": "Failed to apply settings",

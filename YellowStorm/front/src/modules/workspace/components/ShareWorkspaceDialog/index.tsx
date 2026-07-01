@@ -19,6 +19,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth';
 import { UserSearchInput } from './UserSearchInput';
 import { ShareRow } from './ShareRow';
+import { GroupShareSelector } from './GroupShareSelector';
 import type { WorkspacePermission } from '../../types';
 
 interface PendingShare {
@@ -74,6 +75,20 @@ export function ShareWorkspaceDialog() {
     setPendingShares((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
+  const handleAddGroupShares = useCallback(
+    (shares: { email: string; permission: WorkspacePermission }[]) => {
+      if (shares.length === 0) return;
+      setPendingShares((prev) => [
+        ...prev,
+        ...shares.map((s) => ({
+          ...s,
+          id: `${Date.now().toString()}-${Math.random().toString(36).substring(2, 11)}-${s.email}`,
+        })),
+      ]);
+    },
+    [],
+  );
+
   const handleShare = async () => {
     if (!shareModalWorkspace || pendingShares.length === 0) return;
 
@@ -126,6 +141,13 @@ export function ShareWorkspaceDialog() {
 
         <ScrollArea className='flex-1'>
           <div className='p-4 space-y-4'>
+            <GroupShareSelector
+              existingEmails={pendingShares.map((s) => s.email)}
+              ownerEmail={user?.email ?? ''}
+              onExpand={handleAddGroupShares}
+              disabled={isSharingInProgress}
+            />
+
             <UserSearchInput
               pendingShares={pendingShares}
               onRemovePending={handleRemovePending}
