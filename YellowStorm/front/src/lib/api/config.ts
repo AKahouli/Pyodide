@@ -95,6 +95,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
     sharedWithMe: '/workspaces/shared-with-me',
+    public: '/workspaces/public',
+    visibility: (id: string) => `/workspaces/${id}/visibility`,
   },
   workspaceShares: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,

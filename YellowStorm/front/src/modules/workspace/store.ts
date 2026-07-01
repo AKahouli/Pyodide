@@ -1522,6 +1522,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                 isSystem: false,
                 isPersonal: false,
                 shareCount: 0,
+                isPublic: false,
                 createdAt: cached.createdAt,
                 updatedAt: cached.updatedAt,
               }
