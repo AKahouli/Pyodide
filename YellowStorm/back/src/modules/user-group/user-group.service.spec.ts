@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { UserGroupService } from './user-group.service';
 import { UserGroup } from './schemas/user-group.schema';
 import { LoggerService } from '../logger';
@@ -123,7 +123,7 @@ describe('UserGroupService', () => {
       expect(hydratedDoc.save).not.toHaveBeenCalled();
     });
 
-    it('throws Forbidden when a non-owner tries to update', async () => {
+    it('throws NotFound when a non-owner tries to update', async () => {
       const id = new Types.ObjectId().toString();
       const hydratedDoc = {
         _id: new Types.ObjectId(id),
@@ -134,7 +134,7 @@ describe('UserGroupService', () => {
       };
       model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
 
-      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(NotFoundException);
       expect(hydratedDoc.save).not.toHaveBeenCalled();
     });
 
@@ -183,12 +183,12 @@ describe('UserGroupService', () => {
       expect(model.findByIdAndDelete).toHaveBeenCalledWith(hydratedDoc._id);
     });
 
-    it('throws Forbidden when a non-owner tries to delete', async () => {
+    it('throws NotFound when a non-owner tries to delete', async () => {
       const id = new Types.ObjectId().toString();
       const hydratedDoc = { _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) };
       model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
 
-      await expect(service.delete(OWNER, id)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.delete(OWNER, id)).rejects.toBeInstanceOf(NotFoundException);
       expect(model.findByIdAndDelete).not.toHaveBeenCalled();
     });
   });
@@ -211,10 +211,10 @@ describe('UserGroupService', () => {
       expect(res.memberCount).toBe(2);
     });
 
-    it('throws Forbidden when a non-owner tries to add members', async () => {
+    it('throws NotFound when a non-owner tries to add members', async () => {
       const id = new Types.ObjectId().toString();
       model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
-      await expect(service.addMembers(OWNER, id, [MEMBER_A])).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.addMembers(OWNER, id, [MEMBER_A])).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('collapses duplicate ids before writing the $addToSet payload', async () => {
@@ -247,10 +247,10 @@ describe('UserGroupService', () => {
       expect(res.memberCount).toBe(0);
     });
 
-    it('throws Forbidden when a non-owner tries to remove a member', async () => {
+    it('throws NotFound when a non-owner tries to remove a member', async () => {
       const id = new Types.ObjectId().toString();
       model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
-      await expect(service.removeMember(OWNER, id, MEMBER_A)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.removeMember(OWNER, id, MEMBER_A)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

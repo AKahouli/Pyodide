@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -130,7 +129,7 @@ export class UserGroupService {
       throw new NotFoundException(ErrorCode.USER_GROUP_NOT_FOUND);
     }
     if (group.createdBy.toString() !== userId) {
-      throw new ForbiddenException(ErrorCode.USER_GROUP_NOT_FOUND);
+      throw new NotFoundException(ErrorCode.USER_GROUP_NOT_FOUND);
     }
     return group;
   }
