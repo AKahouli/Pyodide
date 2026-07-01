@@ -56,6 +56,12 @@ export function WorkspaceCard({
     </span>
   ) : null;
 
+  const publicBadge = workspace.isPublicItem ? (
+    <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
+      Public
+    </span>
+  ) : null;
+
   const actions = hasActions ? (
     <div
       className={cn(
@@ -133,6 +139,7 @@ export function WorkspaceCard({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium tracking-tight">{workspace.name}</span>
             {sharedBadge}
+            {publicBadge}
             {workspace.isReadOnly && (
               <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />
             )}
@@ -186,6 +193,7 @@ export function WorkspaceCard({
             {workspace.isShared ? 'Partagé' : 'Workspace'}
           </span>
           {sharedBadge}
+          {publicBadge}
         </div>
         {workspace.isReadOnly && <Lock className="h-3 w-3 text-muted-foreground" />}
       </div>

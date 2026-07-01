@@ -26,6 +26,7 @@ export function WorkspaceHubPage() {
   const navigate = useNavigate();
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
   const fetchSharedWorkspaces = useWorkspaceStore((s) => s.fetchSharedWorkspaces);
+  const fetchPublicWorkspaces = useWorkspaceStore((s) => s.fetchPublicWorkspaces);
   const openCreateModal = useWorkspaceStore((s) => s.openCreateModal);
   const openSettingsModal = useWorkspaceStore((s) => s.openSettingsModal);
   const openShareModal = useWorkspaceStore((s) => s.openShareModal);
@@ -41,7 +42,8 @@ export function WorkspaceHubPage() {
   useEffect(() => {
     fetchWorkspaces(1);
     fetchSharedWorkspaces(1);
-  }, [fetchWorkspaces, fetchSharedWorkspaces]);
+    fetchPublicWorkspaces(1);
+  }, [fetchWorkspaces, fetchSharedWorkspaces, fetchPublicWorkspaces]);
 
   const handleOpen = (id: string) => navigate(`/workspace/${id}`);
 
@@ -69,7 +71,10 @@ export function WorkspaceHubPage() {
   };
 
   const showInitialLoader =
-    isLoadingWorkspaces && filters.counts.mine === 0 && filters.counts.shared === 0;
+    isLoadingWorkspaces &&
+    filters.counts.mine === 0 &&
+    filters.counts.shared === 0 &&
+    filters.counts.public === 0;
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
