@@ -1200,6 +1200,23 @@ export class AgentService {
     }
   }
 
+  /**
+   * Whether the user may modify the given agent (owner, or shared at the
+   * 'write' level). Default agents are treated as read-only here. Used to gate
+   * agent-memory deletion so read-only recipients can view but not delete.
+   */
+  async canWriteAgent(userId: string, agentId: string): Promise<boolean> {
+    const agent = await this.agentModel
+      .findById(agentId)
+      .select('createdBy isDefault')
+      .lean()
+      .exec();
+    if (!agent || agent.isDefault) return false;
+    if (agent.createdBy?.toString() === userId) return true;
+    const permission = await this.agentShareService.getSharePermission(userId, agentId);
+    return permission === 'write';
+  }
+
   async findByIds(ids: string[], userId: string): Promise<IAgentResponse[]> {
     const agents = await this.agentModel
       .find({
