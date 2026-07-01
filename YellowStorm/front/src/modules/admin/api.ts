@@ -58,9 +58,11 @@ import type {
   UpdateAdminPlaybookSettingsRequest,
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
+  PlaybookPromptImportPayload,
   UpsertPlaybookPromptRequest,
   PlaybookNodeTemplateListResponse,
   PlaybookNodeTemplateResponse,
+  PlaybookNodeTemplateImportPayload,
   CreatePlaybookNodeTemplateRequest,
   UpdatePlaybookNodeTemplateRequest,
   ToolListResponse,
@@ -577,6 +579,16 @@ export async function deletePlaybookPrompt(key: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminPlaybookPrompts.byKey(key));
 }
 
+export async function importPlaybookPrompts(
+  data: PlaybookPromptImportPayload,
+): Promise<PlaybookPromptListResponse> {
+  const response = await apiClient.put<ApiResponse<PlaybookPromptListResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.import,
+    data,
+  );
+  return response.data.data;
+}
+
 // Playbook Node Templates API
 
 export async function getPlaybookNodeTemplates(): Promise<PlaybookNodeTemplateListResponse> {
@@ -616,6 +628,16 @@ export async function updatePlaybookNodeTemplate(
 
 export async function deletePlaybookNodeTemplate(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminPlaybookNodeTemplates.byId(id));
+}
+
+export async function importPlaybookNodeTemplates(
+  data: PlaybookNodeTemplateImportPayload,
+): Promise<PlaybookNodeTemplateListResponse> {
+  const response = await apiClient.put<ApiResponse<PlaybookNodeTemplateListResponse>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.import,
+    data,
+  );
+  return response.data.data;
 }
 
 export async function getDefaultModel(): Promise<AdminModelResponse | null> {
@@ -755,6 +777,13 @@ export async function updateSkill(id: string, data: UpdateSkillRequest): Promise
 
 export async function deleteSkill(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminSkills.byId(id));
+}
+
+export async function exportSkill(id: string): Promise<Blob> {
+  const response = await apiClient.get<Blob>(API_ENDPOINTS.adminSkills.export(id), {
+    responseType: 'blob',
+  });
+  return response.data;
 }
 
 export async function importSkill(file: File): Promise<SkillResponse> {

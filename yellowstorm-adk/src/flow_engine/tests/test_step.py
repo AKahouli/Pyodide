@@ -145,6 +145,66 @@ class TestStepPrompt:
 
         assert "Trigger Context:" not in prompt
 
+    def test_build_prompt_moves_default_workspace_out_of_trigger_context(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={"brief": "Quarterly results"},
+            trigger_context={
+                "email": {"subject": "Q2 review"},
+                "__playbook_workspace_paths": {
+                    "69e9d92e6f3d08e123c1fed7": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+                },
+                "__playbook_default_workspace_path": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+                "__playbook_default_workspace_id": "69e9d92e6f3d08e123c1fed7",
+            },
+        )
+
+        assert "6984baadd6b2ec4585e8c707" not in prompt
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "69e9d92e6f3d08e123c1fed7"' in prompt
+        assert '"workspace_path": "mon-workspace-personnel"' in prompt
+        assert "Trigger Context:" in prompt
+        assert '"email": {' in prompt
+        assert "__playbook_default_workspace_path" not in prompt
+        assert "__playbook_default_workspace_id" not in prompt
+
+    def test_build_prompt_moves_default_workspace_out_of_resolved_inputs(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={
+                "brief": "Quarterly results",
+                "__playbook_default_workspace_id": "workspace-1",
+                "__playbook_default_workspace_path": "user-1/default-workspace",
+            },
+        )
+
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "workspace-1"' in prompt
+        assert '"workspace_path": "user-1/default-workspace"' in prompt
+        assert '"brief": "Quarterly results"' in prompt
+        assert "__playbook_default_workspace_id" not in prompt
+        assert "__playbook_default_workspace_path" not in prompt
+
+    def test_build_prompt_derives_default_workspace_path_from_workspace_map(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={
+                "__playbook_workspace_paths": {
+                    "workspace-1": "6984baadd6b2ec4585e8c707/default-workspace",
+                },
+                "__playbook_default_workspace_id": "workspace-1",
+            },
+        )
+
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "workspace-1"' in prompt
+        assert '"workspace_path": "default-workspace"' in prompt
+        assert "6984baadd6b2ec4585e8c707" not in prompt
+        assert "__playbook_workspace_paths" not in prompt
+
     def test_build_prompt_includes_structured_response_schema_when_required(self):
         prompt = build_step_prompt(
             label="Draft summary",

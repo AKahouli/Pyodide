@@ -19,7 +19,7 @@ describe('PlaybookFlowObservabilityService', () => {
         status: 'completed',
         duration_ms: 10,
       }],
-      llm_prompt_trace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Bearer secret' }],
+      llm_prompt_trace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Bearer secret', generated_output: 'done with token=abc' }],
       usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3, model: 'gpt-4o-mini' },
       semantic_match: { match_score: 0.9, missing_points: ['none'] },
       trace_metadata: { token: '123', safe: true },
@@ -44,7 +44,7 @@ describe('PlaybookFlowObservabilityService', () => {
       error: null,
     }]);
     expect(payload.llmPromptTrace).toEqual([
-      { stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Bearer [REDACTED]' },
+      { stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Bearer [REDACTED]', generatedOutput: 'done with token= [REDACTED]' },
     ]);
     expect(payload.usage).toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' });
     expect(payload.semanticMatch).toEqual(expect.objectContaining({ matchScore: 0.9, missingPoints: ['none'], changedPoints: [] }));
@@ -96,6 +96,21 @@ describe('PlaybookFlowObservabilityService', () => {
       label: 'Checked',
       description: 'Verified.',
     }]);
+  });
+
+  it('passes iterator iterations through to stream payloads', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'Iterator complete',
+      iterator_iterations: [
+        { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
+        'invalid',
+      ],
+    }, { executionId: 'exec-1', taskId: 'iterator-1' });
+
+    expect(payload.iteratorIterations).toEqual([
+      { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
+    ]);
+    expect(service.toStreamPayload(payload).iteratorIterations).toEqual(payload.iteratorIterations);
   });
 
   it('maps playbook citation sources to conversation citation components', () => {

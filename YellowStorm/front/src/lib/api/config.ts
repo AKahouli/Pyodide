@@ -211,6 +211,7 @@ export const API_ENDPOINTS = {
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,
+    export: (id: string) => `/admin/skills/${id}/export`,
     import: '/admin/skills/import',
   },
   adminSkillCategories: {
@@ -242,10 +243,12 @@ export const API_ENDPOINTS = {
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
+    import: '/admin/playbook-prompts/import',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
   },
   adminPlaybookNodeTemplates: {
     list: '/playbook-flow-templates',
+    import: '/playbook-flow-templates/import',
     byId: (id: string) => `/playbook-flow-templates/${id}`,
   },
   playbookNodeTemplates: {

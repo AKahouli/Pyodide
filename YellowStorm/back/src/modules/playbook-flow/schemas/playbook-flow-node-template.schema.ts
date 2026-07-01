@@ -114,7 +114,7 @@ export class FlowNodeTemplate {
           sourceNode: { type: String, default: null },
           sourcePort: { type: String, default: null },
           path: { type: String, default: null },
-          operator: { type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'], required: true },
+          operator: { type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'], required: true },
           value: { type: SchemaTypes.Mixed, default: null },
         }],
         default: [],
@@ -131,7 +131,7 @@ export class FlowNodeTemplate {
       sourceNode?: string | null;
       sourcePort?: string | null;
       path?: string | null;
-      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
       value?: unknown;
     }>;
     defaultLabel?: string | null;

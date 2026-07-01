@@ -394,7 +394,6 @@ describe('PlaybookFlowIntentService normalization', () => {
     const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
 
     expect(catalog).toEqual({
-      availableSkills: [{ id: 'skill-1', skillSlug: 'summarize-documents', name: 'summarize-documents', description: 'Summarize documents', category: 'Writing' }],
       availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
@@ -411,6 +410,7 @@ describe('PlaybookFlowIntentService normalization', () => {
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
+    expect(catalog.availableSkills).toBeUndefined();
     expect(nodeTemplates[0]).toEqual(expect.objectContaining({
       key: 'generic.agent_step',
       semanticNodeType: 'agent',
@@ -691,14 +691,14 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.systemTemplate).toContain('node-output|constant');
     expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
     expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
-    expect(prompt?.version).toBe(15);
+    expect(prompt?.version).toBe(16);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
     const designPrompt = DEFAULT_FLOW_PROMPTS.find((entry) => entry.key === 'intent.design_assessment');
     expect(designPrompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
     expect(designPrompt?.systemTemplate).toContain('If attached images are present');
-    expect(designPrompt?.version).toBe(5);
+    expect(designPrompt?.version).toBe(6);
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {

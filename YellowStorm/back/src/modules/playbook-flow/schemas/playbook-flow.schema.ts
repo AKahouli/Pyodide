@@ -74,7 +74,7 @@ export class RouterCondition {
   @Prop({ required: false, type: String })
   path?: string;
 
-  @Prop({ required: true, type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] })
+  @Prop({ required: true, type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] })
   operator!: string;
 
   @Prop({ required: false, type: Object })

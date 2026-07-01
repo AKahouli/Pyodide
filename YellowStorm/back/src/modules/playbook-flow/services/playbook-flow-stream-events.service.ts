@@ -111,7 +111,20 @@ export class PlaybookFlowStreamEventsService {
     });
   }
 
-  emitStepUpdate(executionId: string, nodeId: string, output?: string): void {
+  emitStepUpdate(
+    executionId: string,
+    nodeId: string,
+    output?: string,
+    observability?: {
+      toolTrace?: unknown[];
+      llmPromptTrace?: unknown[];
+      traceMetadata?: Record<string, unknown>;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      modelName?: string | null;
+    },
+  ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
 
@@ -122,6 +135,13 @@ export class PlaybookFlowStreamEventsService {
         taskId: nodeId,
         status: 'running',
         ...(output !== undefined ? { output } : {}),
+        ...(observability?.toolTrace !== undefined ? { toolTrace: observability.toolTrace } : {}),
+        ...(observability?.llmPromptTrace !== undefined ? { llmPromptTrace: observability.llmPromptTrace } : {}),
+        ...(observability?.traceMetadata !== undefined ? { traceMetadata: observability.traceMetadata } : {}),
+        ...(observability?.inputTokens !== undefined ? { inputTokens: observability.inputTokens } : {}),
+        ...(observability?.outputTokens !== undefined ? { outputTokens: observability.outputTokens } : {}),
+        ...(observability?.totalTokens !== undefined ? { totalTokens: observability.totalTokens } : {}),
+        ...(observability?.modelName !== undefined ? { modelName: observability.modelName } : {}),
       },
     });
   }
@@ -144,6 +164,7 @@ export class PlaybookFlowStreamEventsService {
       modelName?: string | null;
       semanticMatch?: unknown;
       traceMetadata?: Record<string, unknown>;
+      iteratorIterations?: Array<Record<string, unknown>>;
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
@@ -169,6 +190,7 @@ export class PlaybookFlowStreamEventsService {
     if (observability?.modelName !== undefined) data.modelName = observability.modelName;
     if (observability?.semanticMatch !== undefined) data.semanticMatch = observability.semanticMatch;
     if (observability?.traceMetadata !== undefined) data.traceMetadata = observability.traceMetadata;
+    if (observability?.iteratorIterations !== undefined) data.iteratorIterations = observability.iteratorIterations;
 
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_step_complete',

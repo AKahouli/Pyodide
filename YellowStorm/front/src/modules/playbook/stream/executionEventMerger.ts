@@ -186,19 +186,31 @@ export function mergeStepStarted(previous: PlaybookExecution | undefined, data: 
 
 export function mergeStepUpdated(previous: PlaybookExecution | undefined, data: PlaybookStepUpdateEvent): PlaybookExecution | undefined {
   if (!previous) return undefined;
+  const existing = previous.taskResults.find((task) => task.taskId === data.taskId);
   return {
     ...previous,
     taskResults: mergeTask(previous, {
       taskId: data.taskId,
-      status: 'running',
-      output: data.output ?? null,
+      status: existing?.status === 'pending' || existing?.status === 'running' || !existing
+        ? 'running'
+        : existing.status,
+      output: data.output ?? existing?.output ?? null,
       components: data.components,
       toolTrace: data.toolTrace,
       llmPromptTrace: data.llmPromptTrace,
+      inputTokens: data.inputTokens ?? null,
+      outputTokens: data.outputTokens ?? null,
+      totalTokens: data.totalTokens ?? null,
+      modelName: data.modelName ?? null,
+      traceMetadata: data.traceMetadata ?? null,
       artifacts: data.artifacts ? normalizeTaskArtifacts(data.artifacts) : undefined,
       startedAt: now(),
-      completedAt: null,
-      error: null,
+      completedAt: existing?.status === 'pending' || existing?.status === 'running' || !existing
+        ? null
+        : existing.completedAt,
+      error: existing?.status === 'pending' || existing?.status === 'running' || !existing
+        ? null
+        : existing.error,
       isStale: false,
       staleReason: null,
       invalidatedByTaskId: null,

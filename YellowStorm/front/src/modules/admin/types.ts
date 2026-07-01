@@ -985,6 +985,12 @@ export interface PlaybookPromptListResponse {
   items: PlaybookPromptResponse[];
 }
 
+export interface PlaybookPromptImportPayload {
+  version: 1;
+  type: 'playbook-prompts';
+  items: Array<Omit<PlaybookPromptResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
+}
+
 export interface UpsertPlaybookPromptRequest {
   title: string;
   category: string;
@@ -1031,6 +1037,12 @@ export interface PlaybookNodeTemplateResponse {
 
 export interface PlaybookNodeTemplateListResponse {
   items: PlaybookNodeTemplateResponse[];
+}
+
+export interface PlaybookNodeTemplateImportPayload {
+  version: 1;
+  type: 'playbook-node-templates';
+  items: Array<Omit<PlaybookNodeTemplateResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
 }
 
 export interface CreatePlaybookNodeTemplateRequest {

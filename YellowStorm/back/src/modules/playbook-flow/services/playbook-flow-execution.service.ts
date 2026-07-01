@@ -1814,6 +1814,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           outputs: (r as any).outputs,
           artifacts: r.artifacts,
           components: r.components,
+          iteratorIterations: (r as any).iteratorIterations,
           error: r.error,
           startedAt: r.startedAt,
           endedAt: r.endedAt,

@@ -119,6 +119,7 @@ import type {
   PlaybookDefinitionExport,
   TaskInputPort,
   TaskOutputPort,
+  PlaybookNodeType,
 } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, playbookEdgesToFlowEdges, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
@@ -177,6 +178,40 @@ export function buildIntentEdgeOptions(
     priority,
     autoBind: !isConditional,
   };
+}
+
+export function remapRouterConditionSourceNodes(task: PlaybookTask, childRefs: Map<string, string>): PlaybookTask {
+  const conditions = task.routerConfig?.conditions;
+  if (!conditions?.length) return task;
+  let changed = false;
+  const nextConditions = conditions.map((condition) => {
+    const sourceNode = condition.sourceNode ? childRefs.get(condition.sourceNode) : null;
+    if (!sourceNode) return condition;
+    changed = true;
+    return { ...condition, sourceNode };
+  });
+  return changed ? { ...task, routerConfig: { ...task.routerConfig!, conditions: nextConditions } } : task;
+}
+
+export function resolveIntentNodeSemantics(
+  explicitNodeType: PlaybookNodeType | null | undefined,
+  explicitTaskType: string | null | undefined,
+  templateNodeType: PlaybookNodeType | null | undefined,
+  isIterator: boolean,
+  hasRouterConfig = false,
+  hasHumanApprovalConfig = false,
+) {
+  const nodeType = explicitNodeType
+    ?? (hasRouterConfig ? 'router' : hasHumanApprovalConfig ? 'human_approval' : undefined)
+    ?? (isIterator ? 'iterator' : templateNodeType ?? 'agent');
+  const taskType = explicitTaskType ?? (nodeType === 'router'
+    ? 'router'
+    : nodeType === 'iterator'
+      ? 'iterator'
+      : nodeType === 'evaluation'
+        ? 'evaluation'
+        : 'generic');
+  return { nodeType, taskType };
 }
 
 function PlaybookCanvasInner() {
@@ -1556,6 +1591,8 @@ function PlaybookCanvasInner() {
       description: string,
       agentSlug: string | null | undefined,
       nodeTemplateKey: string | null | undefined,
+      explicitNodeType: PlaybookIntentTaskDraft['nodeType'] | undefined,
+      explicitTaskType: PlaybookIntentTaskDraft['taskType'] | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
@@ -1569,12 +1606,19 @@ function PlaybookCanvasInner() {
       skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ): PlaybookTask => {
       const matchedTemplate = findMatchingTemplate(title, description, nodeTemplateKey);
-      const matchedNodeType = matchedTemplate?.nodeType
-        ?? 'agent';
+      const matchedNodeType = matchedTemplate?.nodeType ?? null;
       const genericInputPorts = normalizeIntentInputPorts(inputPorts);
       const genericOutputPorts = normalizeIntentOutputPorts(outputPorts);
 
       const isIterator = isIntentIteratorTask(matchedTemplate, iteratorBody);
+      const semantics = resolveIntentNodeSemantics(
+        explicitNodeType,
+        explicitTaskType,
+        matchedNodeType,
+        isIterator,
+        Boolean(routerConfig),
+        Boolean(humanApprovalConfig),
+      );
 
       return {
         id: taskId,
@@ -1599,18 +1643,12 @@ function PlaybookCanvasInner() {
         notifyOnComplete: false,
         notifyEmails: [],
         inputFiles: [],
-        taskType: isIterator
-          ? 'iterator'
-          : matchedNodeType === 'router'
-            ? 'router'
-          : matchedNodeType === 'evaluation'
-            ? 'evaluation'
-            : 'generic',
-        nodeType: isIterator ? 'iterator' : matchedNodeType,
+        taskType: semantics.taskType,
+        nodeType: semantics.nodeType,
         nodeTemplateKey: nodeTemplateKey ?? matchedTemplate?.key ?? null,
         routerConfig: routerConfig ?? matchedTemplate?.routerConfig ?? null,
         humanApprovalConfig: humanApprovalConfig ?? matchedTemplate?.humanApprovalConfig ?? null,
-        iteratorConfig: isIterator
+        iteratorConfig: semantics.nodeType === 'iterator'
           ? matchedTemplate?.iteratorConfig
             ? { ...matchedTemplate.iteratorConfig }
             : {
@@ -1626,14 +1664,14 @@ function PlaybookCanvasInner() {
           ? genericInputPorts
           : matchedTemplate
             ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
-            : isIterator
+            : semantics.nodeType === 'iterator'
             ? getDefaultIteratorInputPorts()
             : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
         outputPorts: genericOutputPorts.length > 0
           ? genericOutputPorts
           : matchedTemplate
             ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
-            : isIterator
+            : semantics.nodeType === 'iterator'
             ? getDefaultIteratorOutputPorts()
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
         retryPolicy: retryPolicy ?? (matchedTemplate?.retryPolicy ? { ...matchedTemplate.retryPolicy } : null),
@@ -1750,6 +1788,8 @@ function PlaybookCanvasInner() {
       nodeTemplateKey: string | null | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
+      nodeType: PlaybookIntentTaskDraft['nodeType'] | undefined,
+      taskType: PlaybookIntentTaskDraft['taskType'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
       routerConfig: PlaybookIntentTaskDraft['routerConfig'] | undefined,
       humanApprovalConfig: PlaybookIntentTaskDraft['humanApprovalConfig'] | undefined,
@@ -1792,6 +1832,8 @@ function PlaybookCanvasInner() {
         taskDescription,
         agentSlug,
         nodeTemplateKey,
+        nodeType,
+        taskType,
         inputPorts,
         outputPorts,
         iteratorBody,
@@ -1821,6 +1863,8 @@ function PlaybookCanvasInner() {
             step.description,
             step.agentSlug,
             step.nodeTemplateKey,
+            step.nodeType,
+            step.taskType,
             step.inputPorts,
             step.outputPorts,
             undefined,
@@ -1847,6 +1891,10 @@ function PlaybookCanvasInner() {
           }
           iteratorChildRefs.set(step.nodeRef, childTask.id);
         });
+
+        nextTasks = nextTasks.map((task) => task.containerConfig?.parentIteratorId === newTask.id
+          ? remapRouterConditionSourceNodes(task, iteratorChildRefs)
+          : task);
 
         const seenChildEdgePairs = new Set<string>();
 
@@ -2473,6 +2521,8 @@ function PlaybookCanvasInner() {
         change.task.nodeTemplateKey,
         change.task.inputPorts,
         change.task.outputPorts,
+        change.task.nodeType,
+        change.task.taskType,
         change.task.iteratorBody,
         change.task.routerConfig,
         change.task.humanApprovalConfig,
@@ -2520,6 +2570,8 @@ function PlaybookCanvasInner() {
           change.task.nodeTemplateKey,
           change.task.inputPorts,
           change.task.outputPorts,
+          change.task.nodeType,
+          change.task.taskType,
           change.task.iteratorBody,
           change.task.routerConfig,
           change.task.humanApprovalConfig,
@@ -2846,10 +2898,27 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     const previousStatus = previousConstructionStatusRef.current;
     previousConstructionStatusRef.current = constructionStatus;
-    if (shouldAutoLayoutAfterConstruction(previousStatus, constructionStatus)) {
-      autoLayoutAfterGenerationRef.current?.();
+    if (!shouldAutoLayoutAfterConstruction(previousStatus, constructionStatus)) {
+      return;
     }
-  }, [constructionStatus]);
+    autoLayoutAfterGenerationRef.current?.();
+    // Re-fit the viewport once the new layout commits so the user sees the
+    // whole generated graph, not the last streamed node they were watching.
+    let frameOne = 0;
+    let frameTwo = 0;
+    frameOne = window.requestAnimationFrame(() => {
+      frameTwo = window.requestAnimationFrame(() => {
+        void reactFlow.fitView({
+          padding: isCompactCanvas ? 0.18 : 0.12,
+          duration: 350,
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frameOne);
+      window.cancelAnimationFrame(frameTwo);
+    };
+  }, [constructionStatus, reactFlow, isCompactCanvas]);
 
   useEffect(() => {
     if (!autoIntentRef.current) return;

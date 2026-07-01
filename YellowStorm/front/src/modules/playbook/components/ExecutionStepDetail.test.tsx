@@ -85,12 +85,26 @@ vi.mock('@/modules/conversation/utils', () => ({
   mapComponentsToContentParts: mapComponentsToContentPartsMock,
 }));
 
-vi.mock('@/components/ui/tabs', () => ({
-  Tabs: ({ children }: any) => <div>{children}</div>,
-  TabsList: ({ children }: any) => <div>{children}</div>,
-  TabsTrigger: ({ children }: any) => <button type="button">{children}</button>,
-  TabsContent: ({ children }: any) => <div>{children}</div>,
-}));
+vi.mock('@/components/ui/tabs', () => {
+  const React = require('react') as typeof import('react');
+  const TabsContext = React.createContext<{ activeValue: string; setActiveValue: (value: string) => void } | null>(null);
+
+  return {
+    Tabs: ({ children, defaultValue }: any) => {
+      const [activeValue, setActiveValue] = React.useState(defaultValue || '');
+      return <TabsContext.Provider value={{ activeValue, setActiveValue }}><div>{children}</div></TabsContext.Provider>;
+    },
+    TabsList: ({ children }: any) => <div>{children}</div>,
+    TabsTrigger: ({ children, value }: any) => {
+      const context = React.useContext(TabsContext);
+      return <button type="button" onClick={() => context?.setActiveValue(value)}>{children}</button>;
+    },
+    TabsContent: ({ children, value }: any) => {
+      const context = React.useContext(TabsContext);
+      return context?.activeValue === value ? <div>{children}</div> : null;
+    },
+  };
+});
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -1470,6 +1484,7 @@ describe('ExecutionStepDetail', () => {
           stage: 'initial_request',
           model: 'gpt-5.4-mini',
           prompt: '## Validated Replay Baseline\n### Validated Tool Policy\n- Use tool: search',
+          generatedOutput: 'LLM selected the search tool.',
         },
       ],
     };
@@ -1481,6 +1496,8 @@ describe('ExecutionStepDetail', () => {
     await userEvent.click(screen.getByText('1.').closest('button')!);
 
     expect(screen.getByText(/Use tool: search/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText('detail.prompts.outputLabel'));
+    expect(screen.getByText('LLM selected the search tool.')).toBeInTheDocument();
   });
 
   it('renders reasoning chain when present', async () => {

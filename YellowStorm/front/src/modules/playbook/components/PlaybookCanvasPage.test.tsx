@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildIntentEdgeOptions, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -197,5 +197,49 @@ describe('buildIntentEdgeOptions', () => {
       priority: null,
       autoBind: true,
     });
+  });
+});
+
+describe('resolveIntentNodeSemantics', () => {
+  it('lets primitive-derived router semantics override stale agent template metadata', () => {
+    expect(resolveIntentNodeSemantics('router', 'router', 'agent', false)).toEqual({
+      nodeType: 'router',
+      taskType: 'router',
+    });
+  });
+
+  it('treats generated tasks with router config as routers when node type is absent', () => {
+    expect(resolveIntentNodeSemantics(undefined, undefined, 'agent', false, true)).toEqual({
+      nodeType: 'router',
+      taskType: 'router',
+    });
+  });
+
+  it('treats generated tasks with human approval config as human approval when node type is absent', () => {
+    expect(resolveIntentNodeSemantics(undefined, undefined, 'agent', false, false, true)).toEqual({
+      nodeType: 'human_approval',
+      taskType: 'generic',
+    });
+  });
+});
+
+describe('remapRouterConditionSourceNodes', () => {
+  it('rewrites iterator child router condition source refs to generated node ids', () => {
+    const task = {
+      id: 'router-id',
+      routerConfig: {
+        outputLabels: ['documents', 'other'],
+        defaultLabel: 'other',
+        conditions: [
+          { label: 'documents', sourceNode: 'extract_extension', sourcePort: 'extension', operator: 'equals' as const, value: '.docx' },
+          { label: 'other', sourceNode: 'external-node', sourcePort: 'extension', operator: 'exists' as const },
+        ],
+      },
+    } as any;
+
+    const remapped = remapRouterConditionSourceNodes(task, new Map([['extract_extension', 'intent-node-extract']]));
+
+    expect(remapped.routerConfig.conditions[0].sourceNode).toBe('intent-node-extract');
+    expect(remapped.routerConfig.conditions[1].sourceNode).toBe('external-node');
   });
 });

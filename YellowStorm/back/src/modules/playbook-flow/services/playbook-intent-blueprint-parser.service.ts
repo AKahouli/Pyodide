@@ -23,7 +23,7 @@ const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = 
 const ANCHOR_MODES = ['append', 'before', 'after', 'as_input'] as const;
 type AnchorMode = typeof ANCHOR_MODES[number];
 const EDGE_KINDS = ['sequential', 'conditional'] as const;
-const ROUTER_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] as const;
+const ROUTER_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] as const;
 
 @Injectable()
 export class PlaybookIntentBlueprintParserService {
@@ -45,11 +45,21 @@ export class PlaybookIntentBlueprintParserService {
     const misplacedBindings: unknown[] = [];
     for (const node of Array.isArray(blueprintNode.nodes) ? blueprintNode.nodes : []) {
       if (!node || typeof node !== 'object') continue;
-      const iteratorBody = (node as Record<string, unknown>).iteratorBody;
+      const rawNode = node as Record<string, unknown>;
+      const iteratorRef = this.asString(rawNode.ref);
+      const iteratorBody = rawNode.iteratorBody;
       if (!iteratorBody || typeof iteratorBody !== 'object') continue;
       const rawBody = iteratorBody as Record<string, unknown>;
-      if (Array.isArray(rawBody.links)) misplacedLinks.push(...rawBody.links);
-      if (Array.isArray(rawBody.bindings)) misplacedBindings.push(...rawBody.bindings);
+      const stepRefs = new Set(
+        (nodes.find((parsedNode) => parsedNode.ref === iteratorRef)?.iteratorBody?.steps || [])
+          .map((step) => step.ref),
+      );
+      if (Array.isArray(rawBody.links)) {
+        misplacedLinks.push(...rawBody.links.map((link) => this.inferIteratorScopedEntry(link, iteratorRef, stepRefs)));
+      }
+      if (Array.isArray(rawBody.bindings)) {
+        misplacedBindings.push(...rawBody.bindings.map((binding) => this.inferIteratorScopedEntry(binding, iteratorRef, stepRefs)));
+      }
     }
     const links = this.parseLinks([...(Array.isArray(blueprintNode.links) ? blueprintNode.links : []), ...misplacedLinks], nodes, diagnostics);
     const bindings = this.parseBindings([...(Array.isArray(blueprintNode.bindings) ? blueprintNode.bindings : []), ...misplacedBindings], nodes, diagnostics);
@@ -544,6 +554,21 @@ export class PlaybookIntentBlueprintParserService {
       node.ref,
       new Set((node.iteratorBody?.steps || []).map((step) => step.ref)),
     ]));
+  }
+
+  private inferIteratorScopedEntry(value: unknown, iteratorRef: string, stepRefs: Set<string>): unknown {
+    const raw = this.asRecord(value);
+    if (!raw || !iteratorRef || stepRefs.size === 0) return value;
+    const scoped = { ...raw };
+    const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+    const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+    if (sourceRef && stepRefs.has(sourceRef) && !this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref)) {
+      scoped.sourceIteratorRef = iteratorRef;
+    }
+    if (targetRef && stepRefs.has(targetRef) && !this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref)) {
+      scoped.targetIteratorRef = iteratorRef;
+    }
+    return scoped;
   }
 
   private hasEndpointRef(

@@ -403,6 +403,35 @@ describe('PlaybookFlowValidatorService', () => {
     }).not.toThrow();
   });
 
+  it('accepts router conditions that read the router input port', () => {
+    expect(() => {
+      service.validate([
+        ...buildNodes(),
+        buildRouterNode({
+          input: { ports: [{ id: 'file_data', type: 'data', required: true }] },
+          output: { ports: [{ id: 'pdf', type: 'data' }, { id: 'other', type: 'data' }] },
+          routerConfig: {
+            outputLabels: ['pdf', 'other'],
+            maxIterations: 1,
+            defaultLabel: 'other',
+            conditions: [{
+              label: 'pdf',
+              sourceNode: 'router-1',
+              sourcePort: 'file_data',
+              path: '$.path',
+              operator: 'contains',
+              value: '.pdf',
+            }],
+          },
+        }),
+      ] as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-1' },
+        { id: 'edge-2', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'pdf' },
+        { id: 'edge-3', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'other' },
+      ] as any, [] as any, { allowUnboundRequiredPorts: true });
+    }).not.toThrow();
+  });
+
   it('still rejects runnable routers when a non-reserved label has no outgoing edge', () => {
     expect(() => {
       service.validate([

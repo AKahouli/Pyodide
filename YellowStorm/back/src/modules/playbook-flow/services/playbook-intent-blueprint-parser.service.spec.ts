@@ -147,11 +147,11 @@ describe('PlaybookIntentBlueprintParserService', () => {
               ],
               links: [
                 { sourceRef: 'collect_source_cvs', targetRef: 'iterate_cvs', kind: 'sequential' },
-                { sourceRef: 'extract_cv_content', sourceIteratorRef: 'iterate_cvs', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', kind: 'sequential' },
+                { sourceRef: 'extract_cv_content', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', kind: 'sequential' },
               ],
               bindings: [
                 { sourceKind: 'node-output', sourceRef: 'collect_source_cvs', sourcePort: 'source_cv_list', targetRef: 'iterate_cvs', targetPort: 'items' },
-                { sourceKind: 'node-output', sourceRef: 'extract_cv_content', sourceIteratorRef: 'iterate_cvs', sourcePort: 'cv_content', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', targetPort: 'cv_content_in' },
+                { sourceKind: 'node-output', sourceRef: 'extract_cv_content', sourcePort: 'cv_content', targetRef: 'map_cv_to_template', targetIteratorRef: 'iterate_cvs', targetPort: 'cv_content_in' },
               ],
             },
           },
@@ -434,7 +434,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
               router: {
                 output_labels: ['approved', 'rejected'],
                 default_label: 'rejected',
-                conditions: [{ label: 'approved', source_ref: 'classify', source_port: 'score', operator: 'gte', value: 0.8 }],
+                conditions: [{ label: 'approved', source_ref: 'classify', source_port: 'score', path: '$.extension_normalized', operator: 'in', value: ['pdf', 'txt'] }],
               },
             },
           },
@@ -456,7 +456,9 @@ describe('PlaybookIntentBlueprintParserService', () => {
       label: 'approved',
       sourceRef: 'classify',
       sourcePort: 'score',
-      operator: 'gte',
+      path: '$.extension_normalized',
+      operator: 'in',
+      value: ['pdf', 'txt'],
     }));
     expect(result.blueprint.links[0]).toEqual(expect.objectContaining({ kind: 'conditional', routerLabel: 'approved', priority: 2 }));
     expect(result.diagnostics).toEqual([]);

@@ -525,6 +525,63 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(suggestion.changes.some((c: Change) => c.type === 'create_data_binding')).toBe(false);
   });
 
+  it('compiles conditional edges from iterator child routers', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Route files',
+      summary: '',
+      nodes: [{
+        ref: 'loop',
+        label: 'Loop',
+        purpose: '',
+        nodeTemplateKey: 'iterator.template',
+        iteratorBody: {
+          steps: [
+            { ref: 'detect', title: 'Detect', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'metadata', artifactKind: 'data' }] },
+            {
+              ref: 'route',
+              title: 'Route',
+              nodeTemplateKey: 'router.template',
+              primitive: { kind: 'router', router: { outputLabels: ['pdf', 'other'], defaultLabel: 'other' } },
+              inputPorts: [{ id: 'input_1', artifactKind: 'data' }],
+            },
+            { ref: 'handle_pdf', title: 'Handle PDF', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'input_data', artifactKind: 'data' }] },
+          ],
+          edges: [],
+        },
+      }],
+      links: [
+        { sourceRef: 'detect', sourceIteratorRef: 'loop', targetRef: 'route', targetIteratorRef: 'loop', sourceOutputPortId: 'metadata', targetInputPortId: 'input_1' },
+        { sourceRef: 'route', sourceIteratorRef: 'loop', targetRef: 'handle_pdf', targetIteratorRef: 'loop', kind: 'conditional', routerLabel: 'pdf' },
+      ],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate({ key: 'iterator.template', nodeType: 'iterator', iteratorConfig: ITERATOR_CONFIG }),
+        genericTemplate({ key: 'router.template', nodeType: 'router' }),
+        genericTemplate(),
+      ],
+      selectedNodeId: null,
+    });
+
+    expect(suggestion.changes.find((c: Change): c is CreateEdgeChange =>
+      c.type === 'create_edge'
+      && c.sourceNodeRef === 'route'
+      && c.sourceIteratorNodeRef === 'loop'
+      && c.targetNodeRef === 'handle_pdf'
+      && c.targetIteratorNodeRef === 'loop',
+    )).toEqual(expect.objectContaining({
+      edgeKind: 'conditional',
+      routerLabel: 'pdf',
+      sourceOutputPortId: 'pdf',
+    }));
+  });
+
   it('falls back to template router config when the blueprint omits router primitive config', () => {
     const blueprint: PlaybookIntentBlueprint = {
       version: 2,
@@ -846,6 +903,64 @@ describe('PlaybookIntentGraphBuilderService', () => {
     const iterator = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node' && c.nodeRef === 'loop');
     const routeChild = iterator?.task.iteratorBody?.steps.find((step: { nodeRef: string }) => step.nodeRef === 'route_child');
     expect(routeChild?.outputPorts?.map((port: { id: string }) => port.id)).toEqual(['yes', 'no']);
+  });
+
+  it('lets router primitives override stale agent template semantics and preserves conditions', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Classify extensions',
+      summary: '',
+      nodes: [{
+        ref: 'classify_router',
+        label: 'Classify by Extension',
+        purpose: 'Route files by normalized extension',
+        nodeTemplateKey: 'router-1',
+        primitive: {
+          kind: 'router',
+          router: {
+            outputLabels: ['documents', 'spreadsheets', 'unclassified'],
+            defaultLabel: 'unclassified',
+            maxIterations: 1,
+            conditions: [{
+              label: 'documents',
+              sourceRef: 'extract_extension',
+              sourcePort: 'output-data',
+              path: '$.extension_normalized',
+              operator: 'in',
+              value: ['docx', 'pdf', 'txt'],
+            }],
+          },
+        },
+      }],
+      links: [],
+      bindings: [],
+    };
+
+    const { suggestion }: { suggestion: WorkflowPlan } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [genericTemplate({ key: 'router-1', nodeType: 'agent' })],
+      selectedNodeId: null,
+    });
+
+    const node = suggestion.changes.find((c: Change): c is CreateNodeChange => c.type === 'create_node');
+    expect(node?.task.nodeType).toBe('router');
+    expect(node?.task.taskType).toBe('router');
+    expect(node?.task.routerConfig).toEqual(expect.objectContaining({
+      outputLabels: ['documents', 'spreadsheets', 'unclassified'],
+      defaultLabel: 'unclassified',
+      maxIterations: 1,
+      conditions: [expect.objectContaining({
+        label: 'documents',
+        sourceNode: 'extract_extension',
+        sourcePort: 'output-data',
+        path: '$.extension_normalized',
+        operator: 'in',
+        value: ['docx', 'pdf', 'txt'],
+      })],
+    }));
+    expect(node?.task.outputPorts?.map((port) => port.id)).toEqual(['documents', 'spreadsheets', 'unclassified']);
   });
 
   it('targets iterator child inputs with scoped external links instead of collapsing onto parent items', () => {

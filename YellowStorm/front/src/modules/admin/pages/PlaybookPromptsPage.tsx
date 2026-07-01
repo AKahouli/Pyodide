@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, Save, FileText, BadgeInfo, ChevronDown, Plus, Trash2, LayoutGrid, X, Check, Palette, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, RefreshCw, Save, FileText, BadgeInfo, ChevronDown, Plus, Trash2, LayoutGrid, X, Check, Palette, Sparkles, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,12 +33,14 @@ import {
   getPlaybookPrompts,
   updatePlaybookPrompt,
   deletePlaybookPrompt,
+  importPlaybookPrompts,
   getPlaybookNodeTemplates,
   createPlaybookNodeTemplate,
   updatePlaybookNodeTemplate,
   deletePlaybookNodeTemplate,
+  importPlaybookNodeTemplates,
 } from '../api';
-import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
+import type { PlaybookPromptImportPayload, PlaybookPromptResponse, PlaybookNodeTemplateImportPayload, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -161,6 +163,31 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
   };
 }
 
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function readJsonFile<T>(file: File): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        resolve(JSON.parse(String(reader.result)) as T);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error('Invalid JSON'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
 export function PlaybookPromptsPage() {
   const { t } = useModuleTranslation('admin');
   const invalidateNodeTemplates = usePlaybookStore((s) => s.invalidateNodeTemplates);
@@ -174,6 +201,7 @@ export function PlaybookPromptsPage() {
   const [promptDraft, setPromptDraft] = useState<PlaybookPromptResponse>(EMPTY_PROMPT);
   const [isCreatingPrompt, setIsCreatingPrompt] = useState(false);
   const [promptDeleteDialogOpen, setPromptDeleteDialogOpen] = useState(false);
+  const promptImportInputRef = useRef<HTMLInputElement | null>(null);
 
   // ===== Node Templates State =====
   const [templateLoading, setTemplateLoading] = useState(true);
@@ -183,6 +211,7 @@ export function PlaybookPromptsPage() {
   const [templateDraft, setTemplateDraft] = useState<PlaybookNodeTemplateResponse>(EMPTY_NODE_TEMPLATE);
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const templateImportInputRef = useRef<HTMLInputElement | null>(null);
   
   // Data for selects
   const [connectors, setConnectors] = useState<Array<{ id: string; slug: string; name: string }>>([]);
@@ -345,6 +374,37 @@ export function PlaybookPromptsPage() {
     }
   };
 
+  const handleExportPrompts = () => {
+    downloadJson('playbook-prompts.json', {
+      version: 1,
+      type: 'playbook-prompts',
+      items: promptItems.map(({ id, createdAt, updatedAt, version, ...item }) => item),
+    } satisfies PlaybookPromptImportPayload);
+  };
+
+  const handleImportPrompts = async (file: File | undefined) => {
+    if (!file) return;
+    if (!window.confirm(t('playbook.prompts.import.confirm'))) return;
+    setPromptLoading(true);
+    try {
+      const data = await importPlaybookPrompts(await readJsonFile<PlaybookPromptImportPayload>(file));
+      const nextItems = data.items || [];
+      const first = nextItems[0] || null;
+      setPromptItems(nextItems);
+      setIsCreatingPrompt(false);
+      setSelectedPromptKey(first?.key || '');
+      syncPromptDraft(first);
+      toast.success(t('playbook.prompts.toasts.imported'));
+    } catch (err) {
+      toast.error(t('playbook.prompts.toasts.importFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setPromptLoading(false);
+      if (promptImportInputRef.current) promptImportInputRef.current.value = '';
+    }
+  };
+
   const handleSaveTemplate = async () => {
     if (!templateDraft.key || !templateDraft.title) {
       toast.error(t('playbook.templates.toasts.validationError'));
@@ -429,6 +489,38 @@ export function PlaybookPromptsPage() {
       toast.error(t('playbook.templates.toasts.deleteFailed'), {
         description: err instanceof Error ? err.message : 'Unknown error',
       });
+    }
+  };
+
+  const handleExportTemplates = () => {
+    downloadJson('playbook-node-templates.json', {
+      version: 1,
+      type: 'playbook-node-templates',
+      items: templateItems.map(({ id, createdAt, updatedAt, version, ...item }) => item),
+    } satisfies PlaybookNodeTemplateImportPayload);
+  };
+
+  const handleImportTemplates = async (file: File | undefined) => {
+    if (!file) return;
+    if (!window.confirm(t('playbook.templates.import.confirm'))) return;
+    setTemplateLoading(true);
+    try {
+      const data = await importPlaybookNodeTemplates(await readJsonFile<PlaybookNodeTemplateImportPayload>(file));
+      const nextItems = data.items || [];
+      const first = nextItems[0] || null;
+      setTemplateItems(nextItems);
+      setIsCreatingTemplate(false);
+      setSelectedTemplateId(first?.id || '');
+      syncTemplateDraft(first);
+      invalidateNodeTemplates();
+      toast.success(t('playbook.templates.toasts.imported'));
+    } catch (err) {
+      toast.error(t('playbook.templates.toasts.importFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setTemplateLoading(false);
+      if (templateImportInputRef.current) templateImportInputRef.current.value = '';
     }
   };
 
@@ -637,10 +729,27 @@ export function PlaybookPromptsPage() {
                   <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
-                    <Button variant="outline" size="sm" onClick={startCreatePrompt}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      {t('playbook.prompts.actions.create')}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleExportPrompts} disabled={promptItems.length === 0}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.export')}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => promptImportInputRef.current?.click()}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.import')}
+                      </Button>
+                      <input
+                        ref={promptImportInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(event) => { void handleImportPrompts(event.target.files?.[0]); }}
+                      />
+                      <Button variant="outline" size="sm" onClick={startCreatePrompt}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.create')}
+                      </Button>
+                    </div>
                   </div>
                   <CardDescription>{t('playbook.prompts.slots', { count: promptItems.length })}</CardDescription>
                 </CardHeader>
@@ -810,10 +919,27 @@ export function PlaybookPromptsPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2"><LayoutGrid className="h-5 w-5" /> {t('playbook.templates.registry')}</CardTitle>
-                    <Button variant="outline" size="sm" onClick={startCreateTemplate}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      {t('playbook.templates.actions.create')}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleExportTemplates} disabled={templateItems.length === 0}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.export')}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => templateImportInputRef.current?.click()}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.import')}
+                      </Button>
+                      <input
+                        ref={templateImportInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(event) => { void handleImportTemplates(event.target.files?.[0]); }}
+                      />
+                      <Button variant="outline" size="sm" onClick={startCreateTemplate}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.create')}
+                      </Button>
+                    </div>
                   </div>
                   <CardDescription>{t('playbook.templates.slots', { count: templateItems.length })}</CardDescription>
                 </CardHeader>

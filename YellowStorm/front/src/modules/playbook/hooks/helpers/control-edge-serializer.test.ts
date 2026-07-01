@@ -164,4 +164,30 @@ describe('resolveIntentEdgePorts', () => {
       targetInputPortId: 'file',
     });
   });
+
+  it('matches backend text-serializable kinds when resolving generated topology links', () => {
+    const detectStep = {
+      id: 'iterator.detect_extension',
+      outputPorts: [{ id: 'output_data', name: 'Metadata', artifactKind: 'data' }],
+    } as PlaybookTask;
+    const routerStep = {
+      id: 'iterator.route_by_extension',
+      nodeType: 'router',
+      inputPorts: [{ id: 'input_1', name: 'Extension Input', artifactKind: 'text', required: false }],
+      outputPorts: [{ id: 'pdf', name: 'PDF', artifactKind: 'text' }],
+    } as PlaybookTask;
+    const handlerStep = {
+      id: 'iterator.handle_pdf',
+      inputPorts: [{ id: 'input_data', name: 'PDF File', artifactKind: 'data', required: false }],
+    } as PlaybookTask;
+
+    expect(resolveIntentEdgePorts(detectStep, routerStep, null, null)).toEqual({
+      sourceOutputPortId: 'output_data',
+      targetInputPortId: 'input_1',
+    });
+    expect(resolveIntentEdgePorts(routerStep, handlerStep, 'pdf', null)).toEqual({
+      sourceOutputPortId: 'pdf',
+      targetInputPortId: 'input_data',
+    });
+  });
 });

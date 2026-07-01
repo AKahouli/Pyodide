@@ -103,7 +103,7 @@ export type FlowNodeKind = 'step' | 'router' | 'iterator' | 'human_approval';
 export type ControlEdgeKind = 'sequential' | 'conditional';
 export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'constant' | 'expression';
 export type DataBindingIterationRef = 'current' | 'previous';
-export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
 export type AdvisorScoringMode = 'llm' | 'heuristic';
 export type HitlMode = 'auto' | 'manual' | 'off';
 export type HitlSensitivity = 'minimal' | 'balanced' | 'strict';
@@ -479,6 +479,8 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   nodeTemplateKey?: string | null;
+  nodeType?: PlaybookNodeType | null;
+  taskType?: string | null;
   routerConfig?: RouterConfig | null;
   humanApprovalConfig?: HumanApprovalConfig | null;
   retryPolicy?: RetryPolicy | null;
@@ -503,6 +505,8 @@ export interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       nodeTemplateKey?: string | null;
+      nodeType?: PlaybookNodeType | null;
+      taskType?: string | null;
       routerConfig?: RouterConfig | null;
       humanApprovalConfig?: HumanApprovalConfig | null;
       retryPolicy?: RetryPolicy | null;
@@ -1163,6 +1167,7 @@ export interface LLMPromptTraceItem {
   stage: string;
   model: string;
   prompt: string;
+  generatedOutput?: string | null;
 }
 
 export interface SemanticMatchResult {
@@ -1913,6 +1918,11 @@ export interface PlaybookStepUpdateEvent {
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  modelName?: string | null;
+  traceMetadata?: Record<string, unknown> | null;
   artifacts?: TaskArtifact[];
 }
 

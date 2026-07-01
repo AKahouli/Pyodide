@@ -284,6 +284,48 @@ export class SkillService {
     return this.create(createdBy, parsed);
   }
 
+  async exportPackage(id: string): Promise<{ filename: string; buffer: Buffer; skill: ISkillResponse }> {
+    const skill = await this.findById(id);
+    const zip = new AdmZip();
+
+    zip.addFile('SKILL.md', Buffer.from(this.buildSkillMd(skill), 'utf8'));
+    for (const file of skill.files) {
+      const path = this.normalizeExportedPath(file.path);
+      zip.addFile(path, Buffer.from(file.content, 'utf8'));
+    }
+
+    return {
+      filename: `${this.slugifyFilename(skill.name)}.zip`,
+      buffer: zip.toBuffer(),
+      skill,
+    };
+  }
+
+  private buildSkillMd(skill: ISkillResponse): string {
+    const frontmatter = yaml.dump({
+      name: skill.name,
+      description: skill.description,
+      license: skill.license || undefined,
+      compatibility: skill.compatibility || undefined,
+      metadata: Object.keys(skill.metadata).length ? skill.metadata : undefined,
+      'allowed-tools': skill.allowedTools.length ? skill.allowedTools.join(' ') : undefined,
+    }, { skipInvalid: true, lineWidth: -1 }).trim();
+
+    return `---\n${frontmatter}\n---\n${skill.instructions.trim()}\n`;
+  }
+
+  private normalizeExportedPath(path: string): string {
+    const normalized = path.replaceAll('\\', '/').replace(/^\/+/, '');
+    if (!normalized || normalized.split('/').includes('..')) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, `Skill file path cannot be exported: ${path}`);
+    }
+    return normalized;
+  }
+
+  private slugifyFilename(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'skill';
+  }
+
   private parseSkillPackage(input: {
     skillMdContent: string;
     packageName: string;

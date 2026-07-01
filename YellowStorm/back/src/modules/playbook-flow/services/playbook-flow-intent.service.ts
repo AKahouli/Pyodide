@@ -33,6 +33,7 @@ export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNorma
 const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
 const NO_RESOLVED_DESIGN_RESOURCES = '[]';
 const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
+const ROUTER_CONDITION_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] as const;
 
 type IntentUserMessageContent = string | Array<
   | { type: 'text'; text: string }
@@ -89,6 +90,8 @@ export interface AvailableDesignCatalog {
   }>;
 }
 
+type PromptAvailableDesignCatalog = Omit<AvailableDesignCatalog, 'availableSkills'>;
+
 type PlaybookIntentOperationType =
   | 'create_node'
   | 'insert_before'
@@ -115,6 +118,8 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   nodeTemplateKey?: string | null;
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval' | null;
+  taskType?: string | null;
   routerConfig?: {
     outputLabels: string[];
     maxIterations?: number | null;
@@ -123,7 +128,7 @@ export interface PlaybookIntentTaskDraft {
       sourceNode?: string | null;
       sourcePort?: string | null;
       path?: string | null;
-      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
       value?: unknown;
     }>;
     defaultLabel?: string | null;
@@ -164,6 +169,8 @@ export interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       nodeTemplateKey?: string | null;
+      nodeType?: PlaybookIntentTaskDraft['nodeType'];
+      taskType?: string | null;
       routerConfig?: PlaybookIntentTaskDraft['routerConfig'];
       humanApprovalConfig?: PlaybookIntentTaskDraft['humanApprovalConfig'];
       retryPolicy?: PlaybookIntentTaskDraft['retryPolicy'];
@@ -321,10 +328,12 @@ export interface PlaybookIntentAnalysisContext {
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
   availableDesignCatalog: AvailableDesignCatalog;
-  nodeTemplates: Array<{ id: string; key: string; nodeType: string; title: string; description?: string; category: string;
+  nodeTemplates: Array<{
+    id: string; key: string; nodeType: string; title: string; description?: string; category: string;
     inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
     outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
-    recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown }>;
+    recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown
+  }>;
 }
 
 const DEFAULT_GENERIC_NODE_TEMPLATE_KEY = 'generic.agent_step';
@@ -368,7 +377,7 @@ export class PlaybookFlowIntentService {
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
     private readonly workspaceDocumentService?: WorkspaceDocumentService,
-  ) {}
+  ) { }
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
@@ -534,7 +543,7 @@ export class PlaybookFlowIntentService {
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
-      available_design_catalog: JSON.stringify(availableDesignCatalog, null, 2),
+      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog), null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -651,6 +660,14 @@ export class PlaybookFlowIntentService {
           })),
       ),
       availableWorkspaces: await this.buildAvailableWorkspaceCatalog(workspaces.workspaces || []),
+    };
+  }
+
+  private buildPromptAvailableDesignCatalog(catalog: AvailableDesignCatalog): PromptAvailableDesignCatalog {
+    return {
+      availableConnectors: catalog.availableConnectors,
+      availableConnectorActions: catalog.availableConnectorActions,
+      availableWorkspaces: catalog.availableWorkspaces,
     };
   }
 
@@ -1491,6 +1508,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
+    const nodeType = this.normalizeNodeType(item.nodeType);
+    const taskType = this.normalizeText(item.taskType);
+    const routerConfig = this.normalizeRouterConfig(item.routerConfig, title || fallbackTitle || 'create_node');
+    const humanApprovalConfig = this.normalizeRecord(item.humanApprovalConfig);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1500,6 +1521,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         description,
         ...(agentSlug ? { agentSlug } : {}),
         ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+        ...(nodeType ? { nodeType } : {}),
+        ...(taskType ? { taskType } : {}),
+        ...(routerConfig ? { routerConfig } : {}),
+        ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
         ...(inputPorts.length ? { inputPorts } : {}),
         ...(outputPorts.length ? { outputPorts } : {}),
         ...(iteratorBody ? { iteratorBody } : {}),
@@ -1518,6 +1543,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
+    const nodeType = this.normalizeNodeType(item.nodeType);
+    const taskType = this.normalizeText(item.taskType);
+    const routerConfig = this.normalizeRouterConfig(item.routerConfig, title || fallbackTitle || 'update_node');
+    const humanApprovalConfig = this.normalizeRecord(item.humanApprovalConfig);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1526,6 +1555,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       ...(description ? { description } : {}),
       ...(agentSlug ? { agentSlug } : {}),
       ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+      ...(nodeType ? { nodeType } : {}),
+      ...(taskType ? { taskType } : {}),
+      ...(routerConfig ? { routerConfig } : {}),
+      ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
       ...(iteratorBody ? { iteratorBody } : {}),
@@ -1555,6 +1588,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           const description = this.normalizeText(draft.description);
           const agentSlug = this.normalizeText(draft.agentSlug);
           const nodeTemplateKey = this.normalizeText(draft.nodeTemplateKey);
+          const nodeType = this.normalizeNodeType(draft.nodeType);
+          const taskType = this.normalizeText(draft.taskType);
+          const routerConfig = this.normalizeRouterConfig(draft.routerConfig, nodeRef);
+          const humanApprovalConfig = this.normalizeRecord(draft.humanApprovalConfig);
           const inputPorts = this.normalizeInputPorts(draft.inputPorts, limits);
           const outputPorts = this.normalizeOutputPorts(draft.outputPorts, limits);
           return {
@@ -1563,6 +1600,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
             description,
             ...(agentSlug ? { agentSlug } : {}),
             ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+            ...(nodeType ? { nodeType } : {}),
+            ...(taskType ? { taskType } : {}),
+            ...(routerConfig ? { routerConfig } : {}),
+            ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
             ...(inputPorts.length ? { inputPorts } : {}),
             ...(outputPorts.length ? { outputPorts } : {}),
           };
@@ -1688,6 +1729,68 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       || value === 'dashboard'
       ? value
       : '';
+  }
+
+  private normalizeNodeType(value: unknown): PlaybookIntentTaskDraft['nodeType'] | undefined {
+    const nodeType = this.normalizeText(value);
+    if (nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation' || nodeType === 'iterator' || nodeType === 'router' || nodeType === 'human_approval') {
+      return nodeType;
+    }
+    return undefined;
+  }
+
+  private normalizeRouterConfig(value: unknown, itemId: string): PlaybookIntentTaskDraft['routerConfig'] | undefined {
+    const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    if (!raw) return undefined;
+    const outputLabels = Array.isArray(raw.outputLabels)
+      ? raw.outputLabels.map((label) => this.normalizeText(label)).filter(Boolean)
+      : [];
+    if (outputLabels.length === 0) {
+      this.logger.warn(`playbook_intent_direct_plan_drop rule=router_config_missing_output_labels item=${itemId}`);
+      return undefined;
+    }
+    const defaultLabel = this.normalizeText(raw.defaultLabel);
+    const conditions = this.normalizeRouterConditions(raw.conditions, itemId, outputLabels);
+    return {
+      outputLabels: [...new Set(outputLabels)],
+      ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : {}),
+      ...(defaultLabel ? { defaultLabel } : {}),
+      ...(conditions.length ? { conditions } : {}),
+    };
+  }
+
+  private normalizeRouterConditions(
+    value: unknown,
+    itemId: string,
+    outputLabels: string[],
+  ): NonNullable<NonNullable<PlaybookIntentTaskDraft['routerConfig']>['conditions']> {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((condition, index) => {
+        const raw = condition && typeof condition === 'object' && !Array.isArray(condition) ? condition as Record<string, unknown> : null;
+        if (!raw) return null;
+        const label = this.normalizeText(raw.label);
+        const sourceNode = this.normalizeText(raw.sourceNode);
+        const sourcePort = this.normalizeText(raw.sourcePort);
+        const operator = this.normalizeText(raw.operator) as NonNullable<NonNullable<PlaybookIntentTaskDraft['routerConfig']>['conditions']>[number]['operator'];
+        if (!label || !outputLabels.includes(label) || !sourcePort || !(ROUTER_CONDITION_OPERATORS as readonly string[]).includes(operator)) {
+          this.logger.warn(`playbook_intent_direct_plan_drop rule=router_condition_invalid item=${itemId}:${index}`);
+          return null;
+        }
+        return {
+          label,
+          ...(sourceNode ? { sourceNode } : {}),
+          sourcePort,
+          ...(this.normalizeText(raw.path) ? { path: this.normalizeText(raw.path) } : {}),
+          operator,
+          ...(Object.prototype.hasOwnProperty.call(raw, 'value') ? { value: raw.value } : {}),
+        };
+      })
+      .filter((condition): condition is NonNullable<typeof condition> => condition !== null);
+  }
+
+  private normalizeRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : undefined;
   }
 
   private normalizeInputPorts(value: unknown, limits: IntentNormalizationLimits): NonNullable<PlaybookIntentTaskDraft['inputPorts']> {

@@ -14,6 +14,7 @@ vi.mock('../api', () => ({
   getPlaybookPrompts: vi.fn().mockResolvedValue({ items: [] }),
   updatePlaybookPrompt: vi.fn(),
   deletePlaybookPrompt: vi.fn(),
+  importPlaybookPrompts: vi.fn(),
   getPlaybookNodeTemplates: vi.fn().mockResolvedValue({
     items: [
       {
@@ -80,6 +81,7 @@ vi.mock('../api', () => ({
     ...payload,
   })),
   deletePlaybookNodeTemplate: vi.fn(),
+  importPlaybookNodeTemplates: vi.fn(),
 }));
 
 vi.mock('@/modules/playbook', async () => {

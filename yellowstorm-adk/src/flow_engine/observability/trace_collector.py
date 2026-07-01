@@ -39,6 +39,12 @@ class TraceCollector:
             )
         )
 
+    def record_prompt_output(self, generated_output: str) -> None:
+        if not self._llm_prompt_trace:
+            logger.warning("Dropped LLM generated output: no prompt trace item exists")
+            return
+        self._llm_prompt_trace[-1].generated_output = redact_string(generated_output, MAX_PROMPT_LENGTH)
+
     def record_tool_call(
         self,
         *,
@@ -76,10 +82,10 @@ class TraceCollector:
             model=usage.model or self._usage.model,
         )
 
-    def build_payload(self) -> dict[str, Any]:
-        if not self._tool_trace and not self._llm_prompt_trace:
+    def build_payload(self, log_empty: bool = True) -> dict[str, Any]:
+        if log_empty and not self._tool_trace and not self._llm_prompt_trace:
             logger.warning("No tool trace or LLM prompt trace captured during execution")
-        elif not self._tool_trace and self._llm_prompt_trace:
+        elif log_empty and not self._tool_trace and self._llm_prompt_trace:
             logger.warning("No tool trace captured: execution had LLM prompts but no tool calls")
         payload: dict[str, Any] = {
             "tool_trace": [asdict(item) for item in self._tool_trace],

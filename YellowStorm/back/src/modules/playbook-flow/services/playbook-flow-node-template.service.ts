@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { FlowNodeTemplate, FlowNodeTemplateDocument } from '../schemas/playbook-flow-node-template.schema';
 import {
   FlowNodeTemplateListResponse,
+  FlowNodeTemplateImportPayload,
   FlowNodeTemplateResponse,
   CreateFlowNodeTemplateRequest,
   UpdateFlowNodeTemplateRequest,
@@ -162,6 +163,45 @@ export class PlaybookFlowNodeTemplateService {
     if (!existing) throw new NotFoundException('Template not found');
     await this.templateModel.findByIdAndDelete(id).exec();
     this.invalidateCache();
+  }
+
+  async replaceAll(payload: FlowNodeTemplateImportPayload, userId: string): Promise<FlowNodeTemplateListResponse> {
+    const keys = payload.items.map((item) => item.key.trim());
+    if (keys.some((key) => !key)) throw new BadRequestException('Import contains an empty template key');
+    if (new Set(keys).size !== keys.length) throw new BadRequestException('Import contains duplicate template keys');
+
+    const userObjectId = new Types.ObjectId(userId);
+    const docs = payload.items.map((item) => ({
+      key: item.key.trim(), nodeType: item.nodeType,
+      title: item.title.trim(), description: item.description?.trim() || '',
+      icon: item.icon?.trim() || '', color: item.color?.trim() || '',
+      category: item.category.trim(), inputPorts: (item.inputPorts || []).map((port) => ({ ...port, required: port.required ?? false })),
+      outputPorts: item.outputPorts || [], promptTemplate: item.promptTemplate || '',
+      recommendedAgentTypeSlug: item.recommendedAgentTypeSlug ?? null,
+      requiredToolNames: item.requiredToolNames || [],
+      assignedAgentId: item.assignedAgentId ?? null,
+      selectedAction: item.selectedAction ?? null,
+      iteratorConfig: item.iteratorConfig ?? null,
+      routerConfig: item.routerConfig ?? null,
+      humanApprovalConfig: item.humanApprovalConfig ?? null,
+      retryPolicy: item.retryPolicy ?? null,
+      modelId: item.modelId ?? null,
+      enabled: item.enabled ?? true, version: 1, isBuiltIn: item.isBuiltIn ?? false,
+      createdBy: userObjectId, updatedBy: userObjectId,
+    }));
+
+    if (docs.length) {
+      await this.templateModel.bulkWrite(docs.map((doc) => ({
+        updateOne: {
+          filter: { key: doc.key },
+          update: { $set: doc },
+          upsert: true,
+        },
+      })), { ordered: true });
+    }
+    await this.templateModel.deleteMany({ key: { $nin: keys } }).exec();
+    this.invalidateCache();
+    return this.findAll();
   }
 
   async resetCache(): Promise<void> {

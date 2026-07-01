@@ -313,7 +313,10 @@ export class PlaybookFlowValidatorService {
           return;
         }
 
-        const sourcePort = sourceNode.output?.ports?.find((port) => port.id === condition.sourcePort);
+        const isSelfInputCondition = condition.sourceNode === node.id;
+        const sourcePort = isSelfInputCondition
+          ? sourceNode.input?.ports?.find((port) => port.id === condition.sourcePort)
+          : sourceNode.output?.ports?.find((port) => port.id === condition.sourcePort);
         if (!sourcePort) {
           errors.push({
             rule: 5,
@@ -321,6 +324,8 @@ export class PlaybookFlowValidatorService {
           });
           return;
         }
+
+        if (isSelfInputCondition) return;
 
         if (!canReachTarget(adjacency, condition.sourceNode, node.id)) {
           errors.push({

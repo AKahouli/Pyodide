@@ -89,6 +89,7 @@ type RouterConditionLike = {
   sourceNode?: string | null;
   sourcePort?: string | null;
 };
+type BlueprintEndpointNode = Pick<PlaybookIntentBlueprintNode, 'ref' | 'nodeTemplateKey' | 'primitive' | 'routerConfig'>;
 
 interface ReferencedPorts {
   inputsByRef: Map<string, Set<string>>;
@@ -183,6 +184,7 @@ export class PlaybookIntentGraphBuilderService {
     this.appendPrimitiveDiagnostics(runtimeSpec, node, this.supportsIteratorBody(template), diagnostics);
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, node.inputPorts, `${node.ref}.inputs`, referencedPorts.inputsByRef.get(node.ref), referencedPorts.inputKindsByRef.get(node.ref), diagnostics);
     const routerConfig = this.buildRouterConfig(node, template, diagnostics);
+    const nodeType = this.resolveNodeType(node, template, routerConfig);
     const normalizedOutputPorts = this.normalizeOutputPorts(node.outputPorts, node, runtimeSpec, routerConfig);
     const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, normalizedOutputPorts, `${node.ref}.outputs`, referencedPorts.outputsByRef.get(node.ref), referencedPorts.outputKindsByRef.get(node.ref), diagnostics);
     const agentSlug = this.resolveAgentSlug(node, template);
@@ -192,6 +194,8 @@ export class PlaybookIntentGraphBuilderService {
       description: node.purpose || node.label,
       ...(agentSlug ? { agentSlug } : {}),
       nodeTemplateKey: template.key,
+      nodeType,
+      taskType: this.resolveTaskType(nodeType),
       ...(routerConfig ? { routerConfig } : {}),
       ...(node.humanApprovalConfig ? { humanApprovalConfig: node.humanApprovalConfig } : template.humanApprovalConfig ? { humanApprovalConfig: { ...template.humanApprovalConfig } } : {}),
       ...(template.retryPolicy ? { retryPolicy: template.retryPolicy } : {}),
@@ -346,6 +350,7 @@ export class PlaybookIntentGraphBuilderService {
     const runtimeSpec = this.resolvePrimitiveRuntimeSpec(nodeLike, diagnostics);
     this.appendPrimitiveDiagnostics(runtimeSpec, nodeLike, this.supportsIteratorBody(template), diagnostics);
     const routerConfig = this.buildRouterConfig(nodeLike, template, diagnostics);
+    const nodeType = this.resolveNodeType(nodeLike, template, routerConfig);
     const inputPorts: BuilderPort[] = this.mergePorts(template.inputPorts, step.inputPorts, `${step.ref}.inputs`, referencedPorts.inputsByRef.get(step.ref), referencedPorts.inputKindsByRef.get(step.ref), diagnostics);
     const normalizedOutputPorts = this.normalizeOutputPorts(step.outputPorts, nodeLike, runtimeSpec, routerConfig);
     const outputPorts: BuilderPort[] = this.mergePorts(template.outputPorts, normalizedOutputPorts, `${step.ref}.outputs`, referencedPorts.outputsByRef.get(step.ref), referencedPorts.outputKindsByRef.get(step.ref), diagnostics);
@@ -354,6 +359,8 @@ export class PlaybookIntentGraphBuilderService {
       title: step.title,
       description: step.description || step.title,
       nodeTemplateKey: template.key,
+      nodeType,
+      taskType: this.resolveTaskType(nodeType),
       ...(template.recommendedAgentTypeSlug ? { agentSlug: template.recommendedAgentTypeSlug } : {}),
       ...(step.agentHint ? { agentSlug: step.agentHint } : {}),
       ...(routerConfig ? { routerConfig } : {}),
@@ -465,6 +472,30 @@ export class PlaybookIntentGraphBuilderService {
           ...(Object.prototype.hasOwnProperty.call(condition, 'value') ? { value: condition.value } : {}),
         })),
     };
+  }
+
+  private resolveNodeType(
+    node: PlaybookIntentBlueprintNode,
+    template: BuilderNodeTemplate,
+    routerConfig: PlaybookIntentTaskDraft['routerConfig'] | null,
+  ): NonNullable<PlaybookIntentTaskDraft['nodeType']> {
+    const primitiveKind = node.primitive?.kind;
+    if (primitiveKind === 'router' || routerConfig) return 'router';
+    if (primitiveKind === 'iterator') return 'iterator';
+    if (primitiveKind === 'human_approval') return 'human_approval';
+    if (primitiveKind === 'action') return 'action';
+    if (primitiveKind === 'evaluation') return 'evaluation';
+    if (template.nodeType === 'router' || template.nodeType === 'iterator' || template.nodeType === 'human_approval' || template.nodeType === 'action' || template.nodeType === 'evaluation') {
+      return template.nodeType;
+    }
+    return 'agent';
+  }
+
+  private resolveTaskType(nodeType: NonNullable<PlaybookIntentTaskDraft['nodeType']>): string {
+    if (nodeType === 'router') return 'router';
+    if (nodeType === 'iterator') return 'iterator';
+    if (nodeType === 'evaluation') return 'evaluation';
+    return 'generic';
   }
 
   private resolveRouterConditionSourceNode(
@@ -677,7 +708,7 @@ export class PlaybookIntentGraphBuilderService {
       this.recordDiagnostic(diagnostics, 'builder_edge_unknown_ref', `${link.sourceRef}->${link.targetRef}`);
       return null;
     }
-    const sourceNode = options.blueprint.nodes.find((node) => node.ref === link.sourceRef);
+    const sourceNode = this.findBlueprintEndpointNode(link.sourceRef, link.sourceIteratorRef || null, options);
     const sourceTemplate = sourceNode ? options.templates.find((template) => template.enabled && template.key === sourceNode.nodeTemplateKey) : null;
     const routerConfig = sourceNode ? (sourceNode.primitive?.router || sourceNode.routerConfig || sourceTemplate?.routerConfig) : null;
     const edgeKind = link.kind || (routerConfig ? 'conditional' : undefined);
@@ -770,6 +801,15 @@ export class PlaybookIntentGraphBuilderService {
     };
     if (explicitEdgeKeys.has(this.blueprintEdgeKey(link))) return null;
     return this.buildCreateEdgeChange(link, options, diagnostics);
+  }
+
+  private findBlueprintEndpointNode(ref: string, iteratorRef: string | null, options: BuildOptions): BlueprintEndpointNode | null {
+    if (!iteratorRef || ref === iteratorRef) {
+      return options.blueprint.nodes.find((node) => node.ref === ref) || null;
+    }
+    return options.blueprint.nodes
+      .find((node) => node.ref === iteratorRef)
+      ?.iteratorBody?.steps.find((step) => step.ref === ref) || null;
   }
 
   private blueprintEdgeKey(link: PlaybookIntentBlueprintLink): string {

@@ -137,6 +137,11 @@ def build_prompt_input_context(input_context: dict[str, Any]) -> dict[str, Any]:
     return sanitized if isinstance(sanitized, dict) else {}
 
 
+def sanitize_trigger_context_for_prompt(trigger_context: dict[str, Any]) -> dict[str, Any]:
+    sanitized = _sanitize_workspace_paths_for_prompt(trigger_context)
+    return sanitized if isinstance(sanitized, dict) else {}
+
+
 def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_context, list):
         return []
@@ -193,13 +198,18 @@ def _normalize_workspace_context(raw_context: Any) -> list[dict[str, Any]]:
 
 def _sanitize_for_prompt(value: Any) -> Any:
     if isinstance(value, dict):
-        sanitized = {key: _sanitize_for_prompt(item) for key, item in value.items()}
+        sanitized = {
+            key: _sanitize_workspace_paths_for_prompt(item)
+            if key in ("__playbook_workspace_paths", "__playbook_default_workspace_path")
+            else _sanitize_for_prompt(item)
+            for key, item in value.items()
+        }
         kind = str(sanitized.get("kind") or "").strip().lower()
         file_ref = _file_ref_from_dict(sanitized) if kind == "document" else None
         if file_ref is not None and file_ref.get("kind") == "document":
             compact: dict[str, Any] = {
                 "kind": "document",
-                "path": file_ref.get("filepath", ""),
+                "path": _prompt_document_path(file_ref.get("filepath", "")),
                 "documentId": file_ref.get("document_id", ""),
                 "workspaceId": file_ref.get("workspace_id", ""),
                 "workspaceName": file_ref.get("workspace_name", ""),
@@ -226,6 +236,22 @@ def _sanitize_for_prompt(value: Any) -> Any:
 
     if isinstance(value, list):
         return [_sanitize_for_prompt(item) for item in value]
+
+    return value
+
+
+def _sanitize_workspace_paths_for_prompt(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_workspace_paths_for_prompt(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [_sanitize_workspace_paths_for_prompt(item) for item in value]
+
+    if isinstance(value, str):
+        return _prompt_document_path(value)
 
     return value
 
@@ -366,6 +392,19 @@ def _storage_filepath(value: dict[str, Any]) -> str:
         if normalized:
             return normalized
     return ""
+
+
+def _prompt_document_path(filepath: str) -> str:
+    normalized = str(filepath or "").strip().strip("/")
+    parts = normalized.split("/")
+    if len(parts) >= 2 and _looks_like_object_id(parts[0]):
+        return "/".join(parts[1:])
+    return normalized
+
+
+def _looks_like_object_id(value: str) -> bool:
+    # MongoDB ObjectIds identify the owner segment currently prefixed to storage paths.
+    return len(value) == 24 and all(char in "0123456789abcdefABCDEF" for char in value)
 
 
 def _display_filename(value: dict[str, Any]) -> str:

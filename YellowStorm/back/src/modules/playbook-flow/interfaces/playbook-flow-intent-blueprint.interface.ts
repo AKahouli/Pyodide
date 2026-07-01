@@ -24,7 +24,7 @@ export interface PlaybookIntentBlueprintRouterCondition {
   sourceIteratorRef?: string | null;
   sourcePort: string;
   path?: string | null;
-  operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+  operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
   value?: unknown;
 }
 

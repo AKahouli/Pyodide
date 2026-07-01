@@ -81,6 +81,42 @@ export class PlaybookExecutionNodeEventHandlerService {
     this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
   }
 
+  async handleTraceUpdate(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
+    const tracePayload = this.observabilityService.extractTraceUpdatePayload(payload, {
+      executionId,
+      taskId: taskNodeId,
+    });
+
+    await this.taskResultModel.updateOne(
+      { executionId, taskId: taskNodeId, iteration },
+      {
+        $set: {
+          toolTrace: tracePayload.toolTrace,
+          llmPromptTrace: tracePayload.llmPromptTrace,
+          usage: tracePayload.usage,
+          traceMetadata: tracePayload.traceMetadata,
+        },
+        $setOnInsert: {
+          executionId,
+          taskId: taskNodeId,
+          iteration,
+          startedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+
+    this.streamEvents.emitStepUpdate(executionId, taskNodeId, undefined, {
+      toolTrace: tracePayload.toolTrace,
+      llmPromptTrace: tracePayload.llmPromptTrace,
+      traceMetadata: tracePayload.traceMetadata,
+      inputTokens: tracePayload.usage?.inputTokens ?? null,
+      outputTokens: tracePayload.usage?.outputTokens ?? null,
+      totalTokens: tracePayload.usage?.totalTokens ?? null,
+      modelName: tracePayload.usage?.model ?? null,
+    });
+  }
+
   async handleCompleted(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
     await this.tokenBufferService?.flushTask({ executionId, taskId: taskNodeId, iteration });
     const resultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
@@ -98,6 +134,7 @@ export class PlaybookExecutionNodeEventHandlerService {
           outputs: resultPayload.outputs,
           artifacts: resultPayload.artifacts,
           components: resultPayload.components,
+          iteratorIterations: resultPayload.iteratorIterations,
           toolTrace: resultPayload.toolTrace,
           reasoningChain: resultPayload.reasoningChain ?? [],
           llmPromptTrace: resultPayload.llmPromptTrace,

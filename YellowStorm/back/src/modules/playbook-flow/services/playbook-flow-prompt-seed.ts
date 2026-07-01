@@ -26,7 +26,6 @@ Never emit suggestions, workflow_plan, templateType, nodeType, type, or runtimeK
       "nodeTemplateKey": "exact-key-from-Available_node_templates_JSON",
       "agentHint": "optional-agent-slug",
       "connector_refs": [{"connector_slug":"...","action_key":"...","reason":"..."}],
-      "skill_refs": [{"skill_slug":"...","reason":"..."}],
       "inputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard","required":true}],
       "outputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard"}],
       "primitive": {"kind":"agent|action|evaluation|iterator|router|human_approval", "router":{"outputLabels":[],"defaultLabel":"...","conditions":[]}},
@@ -84,8 +83,8 @@ Every router branch MUST be represented by a conditional link with routerLabel e
 
 # Tool, Agent, and Final Checklist
 Use only agents from <Available_default_agents_JSON>; if none fits, use smart-agent when available.
-Use only connector slugs/action keys and skill slugs from <Available_Design_Catalog_JSON>.
-Do not invent nodeTemplateKey, agent slugs, connector slugs, action keys, skill slugs, document ids, workspace ids, or folder ids.
+Use only connector slugs/action keys from <Available_Design_Catalog_JSON>.
+Do not invent nodeTemplateKey, agent slugs, connector slugs, action keys, document ids, workspace ids, or folder ids.
 Validate before returning: JSON only; blueprint.version=2; refs unique; nodeTemplateKeys exist; primitive.kind matches selected template semanticNodeType unless compatible; routers include outputLabels and defaultLabel; conditional links have declared routerLabel; endpoint refs exist; scoped iterator refs valid; port ids exist; linked/bound artifactKinds match; no duplicate binding target; every data dependency has a binding; every required input is bound or risk-flagged.
 If any check fails, repair the blueprint before returning JSON.
 
@@ -133,7 +132,7 @@ For a node task agentHint, if there is no suitable agent from the list below the
 </Blueprint_Schema_Hint_JSON>
 
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 15,
+    enabled: true, isBuiltIn: true, version: 16,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -152,7 +151,7 @@ Must always start by asking the mandatory informations like data sources/expecte
 For every clarification question, include 2 to 4 short clickable relevant choices that cover likely answers. Do not include an "other" choice; the UI adds that.
 When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
 
-Use <Available_Design_Catalog_JSON> as read-only context for available skills, connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. When referring to tools in assessment output, use connector slugs, skill slugs, and connector action keys; ids are runtime-only and imports/exports are slug-based. Never invent skill slugs, connector slugs, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
+Use <Available_Design_Catalog_JSON> as read-only context for available connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. When referring to tools in assessment output, use connector slugs and connector action keys; ids are runtime-only and imports/exports are slug-based. Never invent connector slugs, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
 
 Must never suggest unreferenced connectors or generic business application, suggest only the relevant one regarding the user intent and the given availableConnectors
 
@@ -186,7 +185,7 @@ Context: {selected_task_context}
 
 <Available_node_templates_JSON>
 {node_templates}
-</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 5,
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 6,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',

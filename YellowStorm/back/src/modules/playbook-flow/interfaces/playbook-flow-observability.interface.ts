@@ -15,6 +15,7 @@ export interface FlowLlmPromptTraceItem {
   stage: string;
   model: string;
   prompt: string;
+  generatedOutput?: string | null;
 }
 
 export interface FlowUsageSummary {
@@ -48,4 +49,5 @@ export interface FlowCompletedResultPayload {
   usage?: FlowUsageSummary | null;
   semanticMatch?: FlowSemanticMatchSummary | null;
   traceMetadata?: Record<string, unknown>;
+  iteratorIterations?: Array<Record<string, unknown>>;
 }

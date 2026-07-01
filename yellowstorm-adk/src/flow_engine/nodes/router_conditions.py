@@ -14,6 +14,10 @@ def _dot_get(value: Any, path: str | None) -> Any:
     if not path:
         return value
 
+    path = path.removeprefix("$.").removeprefix("$")
+    if not path:
+        return value
+
     current = value
     for part in path.split("."):
         if isinstance(current, dict):
@@ -38,6 +42,21 @@ def _read_source_value(state: ExecutionState, source_node: str, source_port: str
     next_iteration = state["iterations"].get(source_node, 0)
     payload = state["task_outputs"].get((source_node, max(0, next_iteration - 1)))
     value = _extract_port_value(payload, source_port)
+    return _dot_get(value, path)
+
+
+def _read_self_input_value(
+    state: ExecutionState,
+    node_inputs: dict[str, Any],
+    source_port: str,
+    path: str | None,
+) -> Any:
+    if source_port in node_inputs:
+        value = node_inputs[source_port]
+    elif "_item" in state.get("inputs", {}):
+        value = state["inputs"]["_item"]
+    else:
+        value = None
     return _dot_get(value, path)
 
 
@@ -84,7 +103,12 @@ def _matches(operator: str, actual: Any, expected: Any) -> bool:
     return False
 
 
-def choose_deterministic_label(node_config: dict[str, Any], state: ExecutionState) -> dict[str, Any] | None:
+def choose_deterministic_label(
+    node_config: dict[str, Any],
+    state: ExecutionState,
+    node_id: str | None = None,
+    node_inputs: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     router_config = node_config.get("router_config", {}) or {}
     conditions = router_config.get("conditions") or []
     if not conditions:
@@ -99,6 +123,22 @@ def choose_deterministic_label(node_config: dict[str, Any], state: ExecutionStat
         operator = condition.get("operator")
 
         if not source_node or not source_port or not operator:
+            continue
+
+        if node_id and source_node == node_id:
+            actual = _read_self_input_value(
+                state,
+                node_inputs or {},
+                source_port,
+                condition.get("path"),
+            )
+            if _matches(operator, actual, condition.get("value")):
+                return {
+                    "label": condition.get("label", default_label),
+                    "matched_condition_index": index,
+                    "used_default": False,
+                    "mode": "deterministic",
+                }
             continue
 
         if not _has_source_output(state, source_node):
