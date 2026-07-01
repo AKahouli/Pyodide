@@ -297,6 +297,10 @@ export enum ErrorCode {
   TEAM_GENERATE_FAILED = 'ERR_3312',
   TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
 
+  // User Group errors (3350-3399)
+  USER_GROUP_NOT_FOUND = 'ERR_3350',
+  USER_GROUP_ALREADY_EXISTS = 'ERR_3351',
+
   // Widget Chat errors (3400-3499)
   WIDGET_TOKEN_INVALID = 'ERR_3400',
   WIDGET_TOKEN_EXPIRED = 'ERR_3401',
@@ -663,6 +667,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TEAM_SELF_REFERENCE]: 'An agent cannot be its own parent.',
   [ErrorCode.TEAM_CYCLE_DETECTED]: 'This relationship would create a cycle in the hierarchy.',
   [ErrorCode.TEAM_AGENT_NOT_FOUND]: 'One or more agents were not found or do not belong to you.',
+  [ErrorCode.USER_GROUP_NOT_FOUND]: 'User group not found.',
+  [ErrorCode.USER_GROUP_ALREADY_EXISTS]: 'A group with this name already exists.',
   [ErrorCode.TEAM_SHARE_NOT_FOUND]: 'Team share not found.',
   [ErrorCode.TEAM_SHARE_SELF]: 'Cannot share a team with yourself.',
   [ErrorCode.TEAM_SHARE_EXISTS]: 'Team is already shared with this user.',
