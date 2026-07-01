@@ -1,0 +1,6 @@
+{
+  "store.toasts.created": "Group created",
+  "store.toasts.updated": "Group updated",
+  "store.toasts.deleted": "Group deleted",
+  "store.errors.fetchFailed": "Failed to fetch groups"
+}
