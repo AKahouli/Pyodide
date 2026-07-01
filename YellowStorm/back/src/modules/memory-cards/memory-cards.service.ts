@@ -98,15 +98,58 @@ export class MemoryCardsService implements OnModuleInit, OnModuleDestroy {
     return this.pool;
   }
 
-  async findByAgent(agentId: string): Promise<MemoryCardResponse[]> {
-    const { rows } = await this.getPool().query(
+  async findByAgent(
+    agentId: string,
+    options: { search?: string; limit?: number; offset?: number } = {},
+  ): Promise<{ memories: MemoryCardResponse[]; total: number }> {
+    const pool = this.getPool();
+
+    // Build the shared WHERE clause: always scoped by agent_id, and — when a
+    // search term is provided — an ILIKE across every displayed column except
+    // the id (dates/keywords are cast to text so they match too).
+    const conditions = ['agent_id::text = $1'];
+    const params: unknown[] = [agentId];
+
+    const search = options.search?.trim() ?? '';
+    if (search) {
+      params.push(`%${search}%`);
+      const p = `$${params.length}`;
+      conditions.push(
+        `(title ILIKE ${p} OR summary ILIKE ${p} OR content ILIKE ${p} OR type ILIKE ${p} ` +
+          `OR keywords::text ILIKE ${p} OR valid_from::text ILIKE ${p} OR valid_until::text ILIKE ${p} ` +
+          `OR created_at::text ILIKE ${p} OR updated_at::text ILIKE ${p})`,
+      );
+    }
+    const where = conditions.join(' AND ');
+
+    // Total count of the filtered set (for pagination controls).
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM memory_cards_metadata WHERE ${where}`,
+      params,
+    );
+    const total = (countResult.rows[0]?.total as number) ?? 0;
+
+    // Paginated page of rows.
+    const pageParams = [...params];
+    let limitClause = '';
+    if (options.limit !== undefined) {
+      pageParams.push(options.limit);
+      limitClause += ` LIMIT $${pageParams.length}`;
+    }
+    if (options.offset !== undefined) {
+      pageParams.push(options.offset);
+      limitClause += ` OFFSET $${pageParams.length}`;
+    }
+
+    const { rows } = await pool.query(
       `SELECT id, title, summary, content, type, keywords, valid_from, valid_until, created_at, updated_at
        FROM memory_cards_metadata
-       WHERE agent_id::text = $1
-       ORDER BY created_at DESC`,
-      [agentId],
+       WHERE ${where}
+       ORDER BY created_at DESC${limitClause}`,
+      pageParams,
     );
-    return rows.map((row) => mapRow(row as Record<string, unknown>));
+
+    return { memories: rows.map((row) => mapRow(row as Record<string, unknown>)), total };
   }
 
   async deleteMany(agentId: string, ids: string[]): Promise<number> {

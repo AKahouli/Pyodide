@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -12,6 +12,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -22,6 +30,8 @@ import {
 } from '@/components/ui/table';
 import type { Agent } from '../types';
 import { getAgentMemories, deleteAgentMemories, type MemoryCard } from '../memoryCardsApi';
+
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50] as const;
 
 interface AgentMemoriesModalProps {
   agent: Agent;
@@ -47,19 +57,38 @@ export function AgentMemoriesModal({
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [rows, setRows] = useState<MemoryCard[]>([]);
+  const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Fetch the agent's memories each time the modal is opened.
+  // Pagination + search state.
+  const [page, setPage] = useState(1); // 1-based
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0]);
+  const [searchInput, setSearchInput] = useState(''); // live input value
+  const [search, setSearch] = useState(''); // applied term (on Enter)
+  // Bumped to force a refetch of the current page (e.g. after a deletion).
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  // Reset pagination/search when the modal closes so it reopens clean.
+  useEffect(() => {
+    if (open) return;
+    setPage(1);
+    setPageSize(PAGE_SIZE_OPTIONS[0]);
+    setSearchInput('');
+    setSearch('');
+  }, [open]);
+
+  // Fetch the current page whenever the modal is open and any query input changes.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
-    setRows([]);
     setSelected(new Set());
 
-    getAgentMemories(agent.id)
-      .then((memories) => {
-        if (!cancelled) setRows(memories);
+    getAgentMemories(agent.id, { page, pageSize, search })
+      .then((res) => {
+        if (cancelled) return;
+        setRows(res.memories);
+        setTotal(res.total);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -75,7 +104,20 @@ export function AgentMemoriesModal({
     return () => {
       cancelled = true;
     };
-  }, [open, agent.id]);
+  }, [open, agent.id, page, pageSize, search, reloadNonce]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const applySearch = () => {
+    const term = searchInput.trim();
+    setPage(1);
+    setSearch(term);
+  };
+
+  const changePageSize = (value: string) => {
+    setPage(1);
+    setPageSize(Number(value));
+  };
 
   const allSelected = rows.length > 0 && selected.size === rows.length;
 
@@ -98,11 +140,18 @@ export function AgentMemoriesModal({
     setDeleting(true);
     try {
       await deleteAgentMemories(agent.id, ids);
-      setRows((prev) => prev.filter((r) => !selected.has(r.id)));
       setSelected(new Set());
       toast.success(
         ids.length === 1 ? 'Mémoire supprimée' : `${ids.length} mémoires supprimées`,
       );
+      // Refetch the current page from the server so total/pagination stay accurate.
+      // If we emptied the last page, step back one page (that itself triggers a refetch).
+      const removedWholePage = ids.length >= rows.length;
+      if (removedWholePage && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        setReloadNonce((n) => n + 1);
+      }
     } catch (err) {
       toast.error('Échec de la suppression', {
         description: err instanceof Error ? err.message : undefined,
@@ -124,37 +173,36 @@ export function AgentMemoriesModal({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        {loading ? (
-          <div className="flex items-center justify-center gap-3 py-20 text-sm text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Chargement des mémoires…
-          </div>
-        ) : (
-          <div className="min-w-0 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {rows.length} mémoire{rows.length === 1 ? '' : 's'}
-                {selectedCount > 0 ? ` · ${selectedCount} sélectionnée${selectedCount === 1 ? '' : 's'}` : ''}
-              </span>
-              {canDelete && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={selectedCount === 0 || deleting}
-                  onClick={deleteSelected}
-                  className="gap-1.5"
-                >
-                  {deleting ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Supprimer la sélection
-                </Button>
+        <div className="min-w-0 space-y-3">
+            {/* Search, submitted on Enter. */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applySearch();
+                }}
+                placeholder="Rechercher… (Entrée pour valider)"
+                className="pl-8 pr-8"
+              />
+              {loading && (
+                <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
               )}
             </div>
 
+            <div className="text-xs text-muted-foreground">
+              {total} mémoire{total === 1 ? '' : 's'}
+              {selectedCount > 0 ? ` · ${selectedCount} sélectionnée${selectedCount === 1 ? '' : 's'}` : ''}
+            </div>
+
             <div className="max-h-[60vh] overflow-x-auto overflow-y-auto rounded-md border">
+              {loading && rows.length === 0 ? (
+                <div className="flex items-center justify-center gap-3 py-20 text-sm text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Chargement des mémoires…
+                </div>
+              ) : (
               <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
@@ -245,9 +293,71 @@ export function AgentMemoriesModal({
                   )}
                 </TableBody>
               </Table>
+              )}
             </div>
-          </div>
-        )}
+
+            {/* Bottom bar: delete (only when a memory is selected) · page size · pagination. */}
+            <div className="flex items-center justify-between gap-3 border-t pt-3">
+              <div className="flex items-center gap-3">
+                {canDelete && selectedCount > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleting}
+                    onClick={deleteSelected}
+                    className="gap-1.5"
+                  >
+                    {deleting ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                    Supprimer la sélection
+                  </Button>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  Page {page} / {totalPages}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Select value={String(pageSize)} onValueChange={changePageSize}>
+                  <SelectTrigger className="h-8 w-[110px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <SelectItem key={size} value={String(size)}>
+                        {size} / page
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={loading || page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    aria-label="Page précédente"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={loading || page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    aria-label="Page suivante"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -27,15 +27,32 @@ export class MemoryCardsController {
   @Get()
   @ApiOperation({ summary: "List an agent's memory cards" })
   @ApiQuery({ name: 'agentId', required: true })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number (1-based)' })
+  @ApiQuery({ name: 'pageSize', required: false, description: 'Rows per page (10, 20, 30 or 50)' })
+  @ApiQuery({ name: 'search', required: false, description: 'Full-text search across all fields except id' })
   @ApiResponse({ status: 200, description: 'Memory cards retrieved' })
   async list(
     @Query('agentId') agentId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
   ): Promise<{ memories: MemoryCardResponse[]; total: number }> {
     if (!agentId) {
       throw new BadRequestException('agentId is required');
     }
-    const memories = await this.memoryCardsService.findByAgent(agentId);
-    return { memories, total: memories.length };
+    // Clamp pageSize to the allowed choices (default 10) and page to >= 1.
+    const allowedPageSizes = [10, 20, 30, 50];
+    const parsedPageSize = Number(pageSize);
+    const limit = allowedPageSizes.includes(parsedPageSize) ? parsedPageSize : 10;
+    const parsedPage = Number(page);
+    const currentPage = Number.isInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
+    const offset = (currentPage - 1) * limit;
+
+    return this.memoryCardsService.findByAgent(agentId, {
+      search: search?.trim() || undefined,
+      limit,
+      offset,
+    });
   }
 
   @Delete()

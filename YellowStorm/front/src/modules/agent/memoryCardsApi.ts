@@ -14,12 +14,35 @@ export interface MemoryCard {
   updated_at: string | null;
 }
 
-export async function getAgentMemories(agentId: string): Promise<MemoryCard[]> {
-  const response = await apiClient.get<ApiResponse<{ memories: MemoryCard[]; total: number }>>(
+export interface GetAgentMemoriesParams {
+  /** 1-based page number. */
+  page?: number;
+  /** Rows per page (10, 20, 30 or 50). */
+  pageSize?: number;
+  /** Free-text search across every field except id. */
+  search?: string;
+}
+
+export interface AgentMemoriesPage {
+  memories: MemoryCard[];
+  total: number;
+}
+
+export async function getAgentMemories(
+  agentId: string,
+  params: GetAgentMemoriesParams = {},
+): Promise<AgentMemoriesPage> {
+  const { page, pageSize, search } = params;
+  const query: Record<string, string | number> = { agentId };
+  if (page) query.page = page;
+  if (pageSize) query.pageSize = pageSize;
+  if (search) query.search = search;
+
+  const response = await apiClient.get<ApiResponse<AgentMemoriesPage>>(
     API_ENDPOINTS.memoryCards.base,
-    { params: { agentId } },
+    { params: query },
   );
-  return response.data.data.memories;
+  return response.data.data;
 }
 
 export async function deleteAgentMemories(agentId: string, ids: string[]): Promise<number> {

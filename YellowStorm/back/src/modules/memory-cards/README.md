@@ -74,12 +74,25 @@ All endpoints require authentication (global `JwtAuthGuard`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/memory-cards?agentId=<id>` | List the agent's memory cards |
+| `GET` | `/memory-cards?agentId=<id>` | List the agent's memory cards (paginated + searchable) |
 | `DELETE` | `/memory-cards?agentId=<id>` | Delete selected cards (body: `{ ids: string[] }`) |
+
+**GET query params**
+
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `agentId` | yes | – | Scope: the agent whose memories are listed |
+| `page` | no | `1` | 1-based page number |
+| `pageSize` | no | `10` | Rows per page; clamped to one of `10, 20, 30, 50` |
+| `search` | no | – | Case-insensitive `ILIKE` across **every field except `id`** (title, summary, content, type, keywords, and the four dates cast to text) |
+
+The search runs server-side (`page` resets to 1 on the client when the term
+changes). `total` is the count of the **filtered** set, so it drives the page
+count regardless of the current page.
 
 **GET response**
 ```json
-{ "memories": [ /* MemoryCard[] */ ], "total": 5 }
+{ "memories": [ /* MemoryCard[] (one page) */ ], "total": 42 }
 ```
 
 **DELETE request / response**
@@ -151,6 +164,7 @@ string array, all timestamps to ISO strings.
 
 - **Secrets**: DB credentials live only in the (gitignored) `.env`. The
   password used during setup was shared in plaintext and should be rotated.
-- **Tests**: `memory-cards.service.spec.ts` covers row normalisation and query
-  scoping (agent-id filter, `deleteMany` bounds). `canWriteAgent` is covered in
+- **Tests**: `memory-cards.service.spec.ts` covers row normalisation, query
+  scoping (agent-id filter, `deleteMany` bounds) and the paginated search path
+  (the `ILIKE` filter + `LIMIT`/`OFFSET` params). `canWriteAgent` is covered in
   the Agent module spec.
