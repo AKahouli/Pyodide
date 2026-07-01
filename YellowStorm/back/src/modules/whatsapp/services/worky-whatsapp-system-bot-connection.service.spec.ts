@@ -17,6 +17,7 @@ import { WorkyWhatsAppSystemBotConnectionService } from './worky-whatsapp-system
 
 describe('WorkyWhatsAppSystemBotConnectionService', () => {
   let service: WorkyWhatsAppSystemBotConnectionService;
+  const adminUserId = '507f1f77bcf86cd799439011';
   const integrationId = new Types.ObjectId();
   const systemBotModel = {
     findOne: jest.fn(),
@@ -66,11 +67,10 @@ describe('WorkyWhatsAppSystemBotConnectionService', () => {
       }),
     });
 
-    await expect(service.connect('admin-user')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.connect(adminUserId)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('connect starts pairing for disconnected bot', async () => {
-    const pairedByUserId = new Types.ObjectId();
     systemBotModel.findOne.mockReturnValue({
       exec: jest.fn().mockResolvedValue({
         _id: integrationId,
@@ -81,12 +81,12 @@ describe('WorkyWhatsAppSystemBotConnectionService', () => {
     systemBotModel.findOneAndUpdate.mockReturnValue({
       exec: jest.fn().mockResolvedValue({
         _id: integrationId,
-        pairedByUserId,
+        pairedByUserId: new Types.ObjectId(adminUserId),
         status: WhatsAppIntegrationStatus.PAIRING,
       }),
     });
 
-    const result = await service.connect('admin-user');
+    const result = await service.connect(adminUserId);
 
     expect(authStore.deleteAuthState).toHaveBeenCalledWith(integrationId);
     expect(sessionManager.startPairing).toHaveBeenCalled();

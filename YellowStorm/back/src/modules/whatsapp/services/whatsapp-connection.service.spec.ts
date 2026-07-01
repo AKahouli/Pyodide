@@ -5,6 +5,7 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { MongoBaileysAuthStore } from '../baileys/mongo-auth-state';
 import { WhatsAppIntegrationStatus } from '../schemas/agent-whatsapp-integration.schema';
+import { toAgentIntegrationRef } from '../interfaces/whatsapp-integration-ref.interface';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
 import { WhatsAppConnectivityService } from './whatsapp-connectivity.service';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
@@ -91,7 +92,13 @@ describe('WhatsAppConnectionService', () => {
   });
 
   it('starts pairing for a new connection', async () => {
-    const integration = { _id: new Types.ObjectId() };
+    const integration = {
+      _id: new Types.ObjectId(),
+      userId: new Types.ObjectId(userId),
+      agentId: new Types.ObjectId(agentId),
+      status: WhatsAppIntegrationStatus.PAIRING,
+      enabled: true,
+    };
     mockIntegrationService.getByAgentForUser.mockResolvedValue(null);
     mockIntegrationService.upsertIntegrationShell.mockResolvedValue(integration);
     mockSessionManager.getPairingSnapshot.mockReturnValue({
@@ -104,7 +111,7 @@ describe('WhatsAppConnectionService', () => {
     expect(mockConnectivity.assertReachable).toHaveBeenCalledWith(true);
     expect(mockAuthStore.deleteAuthState).toHaveBeenCalledWith(integration._id);
     expect(mockSessionManager.startPairing).toHaveBeenCalledWith(
-      integration,
+      toAgentIntegrationRef(integration as any),
       expect.any(String),
     );
     expect(result).toEqual({
@@ -137,7 +144,13 @@ describe('WhatsAppConnectionService', () => {
   });
 
   it('reconnects and returns refreshed integration response', async () => {
-    const integration = { _id: new Types.ObjectId(), status: WhatsAppIntegrationStatus.DISCONNECTED };
+    const integration = {
+      _id: new Types.ObjectId(),
+      userId: new Types.ObjectId(userId),
+      agentId: new Types.ObjectId(agentId),
+      status: WhatsAppIntegrationStatus.DISCONNECTED,
+      enabled: true,
+    };
     const refreshed = { status: WhatsAppIntegrationStatus.CONNECTED };
     const response = { status: 'CONNECTED' };
 
@@ -147,7 +160,10 @@ describe('WhatsAppConnectionService', () => {
 
     const result = await service.reconnect(userId, agentId, sessionId);
 
-    expect(mockSessionManager.reconnect).toHaveBeenCalledWith(integration, sessionId);
+    expect(mockSessionManager.reconnect).toHaveBeenCalledWith(
+      toAgentIntegrationRef(integration as any),
+      sessionId,
+    );
     expect(result).toBe(response);
   });
 

@@ -19,10 +19,13 @@ describe('WorkyBoardController', () => {
         taskId: taskObjectId,
         blocksTaskIds: [taskObjectId],
         status: 'pending',
+        createdAt: new Date(),
       },
     ];
     const interactionFind = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(pending) }),
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(pending) }),
+      }),
     });
     const interactionModel = { find: interactionFind } as any;
     const controller = new WorkyBoardController(taskService, interactionModel);

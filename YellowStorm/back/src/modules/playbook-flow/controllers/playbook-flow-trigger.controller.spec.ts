@@ -6,14 +6,17 @@ describe('PlaybookFlowTriggerController', () => {
   const flowId = String(new Types.ObjectId());
 
   const makeFlowService = (flow: Record<string, unknown>, updateResult: Record<string, unknown>) => ({
-    findOne: jest.fn().mockResolvedValue(flow),
+    findOneForWrite: jest.fn().mockResolvedValue(flow),
     update: jest.fn().mockResolvedValue(updateResult),
   });
 
   const makeGraphClient = () => ({
     createInboxSubscription: jest.fn().mockResolvedValue({
-      id: 'sub-1',
-      expirationDateTime: '2026-06-16T00:00:00.000Z',
+      subscription: {
+        id: 'sub-1',
+        expirationDateTime: '2026-06-16T00:00:00.000Z',
+      },
+      resolvedAppKey: 'm365',
     }),
   });
 

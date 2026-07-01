@@ -50,6 +50,11 @@ const makeService = (options: MakeOptions = {}) => {
         }),
       }),
     }),
+    findOne: jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      }),
+    }),
   };
   const interactionDoc = options.interaction
     ? {
@@ -65,6 +70,11 @@ const makeService = (options: MakeOptions = {}) => {
     findById: jest.fn().mockReturnValue({
       lean: jest.fn().mockReturnValue({
         exec: jest.fn().mockResolvedValue(interactionDoc),
+      }),
+    }),
+    findOne: jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
       }),
     }),
   };
@@ -150,7 +160,7 @@ describe('WorkyPlanningService.appendOwnerMessage', () => {
     });
     await expect(
       service.appendOwnerMessage(ownerId.toString(), streamId, { content: 'x' }),
-    ).rejects.toMatchObject({ code: 'ERR_3409' });
+    ).rejects.toMatchObject({ code: 'ERR_3509' });
   });
 
   it('accepts a message in start_validation_failed so the owner can recover the plan', async () => {

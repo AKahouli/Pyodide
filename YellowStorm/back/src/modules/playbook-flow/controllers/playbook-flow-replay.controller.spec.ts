@@ -13,12 +13,12 @@ describe('PlaybookFlowReplayController', () => {
     listReports: jest.fn(),
   };
   const flowService = {
-    findOne: jest.fn(),
+    findOneForWrite: jest.fn(),
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    flowService.findOne.mockResolvedValue({ id: 'flow-1' });
+    flowService.findOneForWrite.mockResolvedValue({ id: 'flow-1' });
   });
 
   it('forwards validate replay mode to the service', async () => {
@@ -33,7 +33,7 @@ describe('PlaybookFlowReplayController', () => {
       replayConfig: { replayToolTrace: true },
     });
 
-    expect(flowService.findOne).toHaveBeenCalledWith('flow-1', 'user-1');
+    expect(flowService.findOneForWrite).toHaveBeenCalledWith('flow-1', 'user-1');
     expect(replayService.validateTaskReplay).toHaveBeenCalledWith(
       'user-1',
       'flow-1',
@@ -60,7 +60,7 @@ describe('PlaybookFlowReplayController', () => {
 
     await controller.updateTaskReplayFormatGuide('user-1', 'flow-1', 'task-1', 'replay-1', dto);
 
-    expect(flowService.findOne).toHaveBeenCalledWith('flow-1', 'user-1');
+    expect(flowService.findOneForWrite).toHaveBeenCalledWith('flow-1', 'user-1');
     expect(replayService.updateTaskReplayFormatGuide).toHaveBeenCalledWith('flow-1', 'task-1', 'replay-1', dto);
   });
 
@@ -74,7 +74,7 @@ describe('PlaybookFlowReplayController', () => {
       offset: 2,
     } as any);
 
-    expect(flowService.findOne).toHaveBeenCalledWith('flow-1', 'user-1');
+    expect(flowService.findOneForWrite).toHaveBeenCalledWith('flow-1', 'user-1');
     expect(replayReportService.listReports).toHaveBeenCalledWith({
       flowId: 'flow-1',
       taskId: 'task-1',
@@ -110,7 +110,7 @@ describe('PlaybookFlowReplayController', () => {
 
     await controller.listTaskReplays('user-1', 'flow-1', 'task-1');
 
-    expect(flowService.findOne).toHaveBeenCalledWith('flow-1', 'user-1');
+    expect(flowService.findOneForWrite).toHaveBeenCalledWith('flow-1', 'user-1');
     expect(replayService.listTaskReplays).toHaveBeenCalledWith('flow-1', 'task-1');
   });
 });
