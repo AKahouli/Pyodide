@@ -109,6 +109,13 @@ def anyio_backend():
     return "asyncio"
 
 
+def _assert_step_events_without_tokens(events: list[dict]) -> None:
+    assert events[0]["type"] == "NodeStarted"
+    assert events[-1]["type"] == "NodeCompleted"
+    assert all(event["type"] in {"NodeStarted", "NodeTraceUpdate", "NodeCompleted"} for event in events)
+    assert "NodeToken" not in {event["type"] for event in events}
+
+
 class TestStepPrompt:
     def test_build_prompt_includes_prompt_contract_sections(self):
         prompt = build_step_prompt(
@@ -1346,7 +1353,7 @@ async def test_run_step_emits_structured_result_payload(monkeypatch):
     assert payload["outputs"]["summary"]["content"] == "Executive summary"
     assert payload["outputs"]["report"]["ref"] == "https://example.com/report.pdf"
     assert payload["artifacts"][1]["filename"] == "report.pdf"
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1406,7 +1413,7 @@ async def test_run_step_suppresses_token_stream_for_data_visualizer(monkeypatch)
     )
 
     assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1465,7 +1472,7 @@ async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
 
     assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1528,4 +1535,4 @@ async def test_run_step_preserves_opaque_structured_refs(monkeypatch):
 
     payload = result["task_outputs"][("step-1", 0)]
     assert payload["outputs"]["report"]["ref"] == {"document_id": "doc-1"}
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
