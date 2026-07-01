@@ -46,7 +46,14 @@ export class MongoBaileysAuthStore {
     }
     if (existing?.encryptedKeys) {
       try {
-        const parsed = JSON.parse(this.cryptoService.decrypt(existing.encryptedKeys));
+        // Signal keys (sessions, sender-keys, pre-keys) contain Buffers. They
+        // MUST be revived with Baileys' BufferJSON.reviver or they come back as
+        // plain `{type:'Buffer',data:[...]}` objects, corrupting decryption
+        // (Bad MAC / "serialized is not iterable") after a process restart.
+        const parsed = JSON.parse(
+          this.cryptoService.decrypt(existing.encryptedKeys),
+          baileys.BufferJSON.reviver,
+        );
         Object.assign(keyFiles, parsed);
       } catch (error) {
         this.logger.warn('Failed to decrypt WhatsApp keys; starting fresh keys', {
@@ -57,7 +64,10 @@ export class MongoBaileysAuthStore {
     }
 
     const persistKeys = async () => {
-      const encryptedKeys = this.cryptoService.encrypt(JSON.stringify(keyFiles));
+      // Use BufferJSON.replacer so Buffers survive the round-trip to MongoDB.
+      const encryptedKeys = this.cryptoService.encrypt(
+        JSON.stringify(keyFiles, baileys.BufferJSON.replacer),
+      );
       await this.authSessionModel.findOneAndUpdate(
         { integrationId },
         { $set: { encryptedKeys } },

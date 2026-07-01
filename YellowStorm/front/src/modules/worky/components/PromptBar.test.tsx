@@ -173,4 +173,32 @@ describe('PromptBar composer', () => {
       expect(screen.queryByTestId('worky-send-error')).not.toBeInTheDocument();
     });
   });
+
+  it('shows WhatsApp button and calls onWhatsAppClick', () => {
+    const onWhatsAppClick = vi.fn();
+    render(
+      <TestProviders>
+        <PromptBar
+          streamId={STREAM_ID}
+          status='active'
+          onWhatsAppClick={onWhatsAppClick}
+          whatsappConnected
+        />
+      </TestProviders>,
+    );
+
+    fireEvent.click(screen.getByTestId('worky-prompt-whatsapp'));
+    expect(onWhatsAppClick).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('worky-prompt-whatsapp-connected')).toBeInTheDocument();
+  });
+
+  it('disables WhatsApp button when stream is archived', () => {
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='archived' onWhatsAppClick={vi.fn()} />
+      </TestProviders>,
+    );
+
+    expect(screen.getByTestId('worky-prompt-whatsapp')).toBeDisabled();
+  });
 });

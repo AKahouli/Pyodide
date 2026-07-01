@@ -24,7 +24,7 @@ import {
   isWhatsAppPairing,
   normalizeQrDataUrl,
   resolveWhatsAppErrorMessage,
-} from './whatsapp-integration-utils';
+} from '@/lib/whatsapp-integration-utils';
 
 const PAIRING_POLL_MS = 2500;
 

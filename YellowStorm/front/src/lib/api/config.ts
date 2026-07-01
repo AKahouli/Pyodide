@@ -71,6 +71,13 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminWorkyWhatsAppSystemBot: {
+    base: '/admin/worky/whatsapp-system-bot',
+    connect: '/admin/worky/whatsapp-system-bot/connect',
+    pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
+    reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,
+    session: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}`,
+  },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
   },
@@ -529,5 +536,14 @@ export const API_ENDPOINTS = {
     governancePolicy: '/worky/admin/governance-policy',
     sttTranscribe: '/worky/stt/transcribe',
     ttsSpeak: '/worky/tts/speak',
+    whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
+    whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
+    whatsappPairing: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/pairing`,
+    whatsappReconnect: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/reconnect`,
+    whatsappSession: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}`,
+    whatsappSystemBotStatus: '/worky/whatsapp-system-bot/status',
   },
 } as const;

@@ -103,6 +103,7 @@ const makeService = (options: MakeOptions = {}) => {
     error: jest.fn(),
     debug: jest.fn(),
   } as any;
+  const whatsappConnection = { forwardManagerMessage: jest.fn().mockResolvedValue(undefined) } as any;
   const service = new WorkyPlanningService(
     streamModel as any,
     messageModel as any,
@@ -113,6 +114,7 @@ const makeService = (options: MakeOptions = {}) => {
     models,
     config,
     logger,
+    whatsappConnection,
   );
   return { service, streamModel, messageModel, interactionModel, taskService, events, models, ownerId, streamObjectId };
 };

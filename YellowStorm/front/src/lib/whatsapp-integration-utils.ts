@@ -1,3 +1,5 @@
+import { parseApiError } from '@/lib/api-error';
+
 const WHATSAPP_NETWORK_ERROR_CODE = 'ERR_3219';
 
 export function normalizeQrDataUrl(qrCode: string | undefined): string | undefined {
@@ -55,4 +57,17 @@ export function resolveWhatsAppErrorMessage(
     return networkUnreachableLabel;
   }
   return codeOrMessage;
+}
+
+/** Maps API / axios rejections to a user-facing WhatsApp error string. */
+export function resolveWhatsAppApiError(
+  error: unknown,
+  networkUnreachableLabel: string,
+): string {
+  const apiError = parseApiError(error);
+  return (
+    resolveWhatsAppErrorMessage(apiError.code, networkUnreachableLabel) ||
+    resolveWhatsAppErrorMessage(apiError.message, networkUnreachableLabel) ||
+    networkUnreachableLabel
+  );
 }

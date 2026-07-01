@@ -1,10 +1,65 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, User, Volume2, VolumeX } from 'lucide-react';
 import { format } from 'date-fns';
 import { useModuleTranslation } from '@/modules/localization';
 import { synthesizeSpeech } from '../api';
 import { useWorkyAssistantText, useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
+import { ChatClarificationCard } from './ChatClarificationCard';
+import type { WorkyMessage, WorkyPendingClarification } from '../types';
+
+type ChatThreadItem =
+  | { kind: 'message'; message: WorkyMessage }
+  | { kind: 'clarification'; clarification: WorkyPendingClarification };
+
+/** Extracts a numeric sort key from a createdAt ISO string, falling back to
+ *  the timestamp encoded in a MongoDB ObjectId, then to `fallback`. */
+function resolveItemTimestamp(createdAt: string | undefined, id: string, fallback: number): number {
+  if (createdAt) {
+    const parsed = new Date(createdAt).getTime();
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (/^[0-9a-f]{24}$/i.test(id)) return parseInt(id.slice(0, 8), 16) * 1000;
+  return fallback;
+}
+
+/** Builds a chronologically-ordered thread by interleaving persisted messages
+ *  with pending clarifications so each owner turn is followed immediately by
+ *  the manager's reply or question. */
+function toChronologicalThread(
+  messages: WorkyMessage[],
+  clarifications: WorkyPendingClarification[],
+): ChatThreadItem[] {
+  type SortableItem = ChatThreadItem & { sortAt: number; tieBreaker: number };
+
+  const sortable: SortableItem[] = [
+    ...messages.map((message, index): SortableItem => ({
+      kind: 'message',
+      message,
+      sortAt: resolveItemTimestamp(message.createdAt, message.id, 0),
+      tieBreaker: index,
+    })),
+    ...clarifications.map((clarification, index): SortableItem => ({
+      kind: 'clarification',
+      clarification,
+      sortAt: resolveItemTimestamp(clarification.createdAt, clarification.id, Number.MAX_SAFE_INTEGER),
+      tieBreaker: messages.length + index,
+    })),
+  ];
+
+  return sortable
+    .sort((a, b) => {
+      if (a.sortAt !== b.sortAt) return a.sortAt - b.sortAt;
+      // When timestamps are equal, messages come before clarifications.
+      if (a.kind !== b.kind) return a.kind === 'message' ? -1 : 1;
+      return a.tieBreaker - b.tieBreaker;
+    })
+    .map(({ kind, ...rest }): ChatThreadItem =>
+      kind === 'message'
+        ? { kind, message: (rest as { message: WorkyMessage }).message }
+        : { kind, clarification: (rest as { clarification: WorkyPendingClarification }).clarification },
+    );
+}
 
 function formatMessageTime(value: string): string {
   const date = new Date(value);
@@ -12,16 +67,65 @@ function formatMessageTime(value: string): string {
   return format(date, 'HH:mm');
 }
 
+function MessageBubble({ message }: { message: WorkyMessage }): JSX.Element {
+  const { t } = useModuleTranslation('worky');
+
+  return (
+    <li
+      data-testid={`worky-message-${message.role}`}
+      className={cn(
+        'flex w-full gap-1.5',
+        message.role === 'owner' ? 'justify-end' : 'justify-start',
+      )}
+    >
+      <div className={cn('flex-none pt-1', message.role === 'owner' ? 'order-2' : 'order-1')}>
+        {message.role === 'owner' ? (
+          <User className='h-3.5 w-3.5 text-muted-foreground' aria-hidden />
+        ) : (
+          <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
+        )}
+      </div>
+      <div
+        className={cn(
+          'min-w-0 max-w-[85%] rounded-2xl border px-2.5 py-1.5 shadow-sm',
+          message.role === 'owner'
+            ? 'order-1 rounded-br-sm border-primary/30 bg-primary/10'
+            : 'order-2 rounded-bl-sm border-border/60 bg-background/80',
+        )}
+      >
+        <div className='flex items-baseline justify-between gap-2'>
+          <span className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
+            {t(`messages.role.${message.role}`)}
+          </span>
+          <span className='text-[10px] tabular-nums text-muted-foreground'>
+            {formatMessageTime(message.createdAt)}
+          </span>
+        </div>
+        <p className='mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90'>
+          {message.content}
+        </p>
+      </div>
+    </li>
+  );
+}
 // ponytail: Gemini TTS voice names; update if WORKY_TTS_MODEL changes provider.
 const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda', 'Orus'];
 
-export function ChatMessageThread(): JSX.Element {
+export function ChatMessageThread({ streamId }: { streamId?: string } = {}): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const assistantText = useWorkyAssistantText();
   const streaming = useWorkyStore((s) => s.streaming);
+  const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
+  const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
+  const threadItems = useMemo(
+    () =>
+      showClarifications
+        ? toChronologicalThread(messages, pendingClarifications)
+        : messages.map((message) => ({ kind: 'message' as const, message })),
+    [messages, pendingClarifications, showClarifications],
+  );
   const containerRef = useRef<HTMLUListElement>(null);
-
   // Read-aloud: opt-in toggle. When on, each new agent message is spoken via
   // OpenRouter TTS. Off by default so we don't fire paid calls / hit autoplay
   // blocks unprompted.
@@ -75,9 +179,8 @@ export function ChatMessageThread(): JSX.Element {
     const node = containerRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages.length, assistantText]);
-
-  const hasContent = messages.length > 0 || assistantText.length > 0;
+  }, [threadItems.length, assistantText, streaming]);
+  const hasContent = messages.length > 0 || assistantText.length > 0 || showClarifications;
 
   return (
     <section
@@ -127,62 +230,35 @@ export function ChatMessageThread(): JSX.Element {
       {hasContent ? (
         <ul
           ref={containerRef}
-          className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 text-xs'
+          className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2 text-xs'
           data-testid='worky-message-list'
         >
-          {messages.map((m) => (
-            <li
-              key={m.id}
-              data-testid={`worky-message-${m.role}`}
-              className={cn(
-                'flex w-full gap-2',
-                m.role === 'owner' ? 'justify-end' : 'justify-start',
-              )}
-            >
-              <div className={cn('flex-none pt-1', m.role === 'owner' ? 'order-2' : 'order-1')}>
-                {m.role === 'owner' ? (
-                  <User className='h-3.5 w-3.5 text-muted-foreground' aria-hidden />
-                ) : (
-                  <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
-                )}
-              </div>
-              <div
-                className={cn(
-                  'min-w-0 max-w-[82%] rounded-2xl border px-3 py-2 shadow-sm',
-                  m.role === 'owner'
-                    ? 'order-1 rounded-br-sm border-primary/30 bg-primary/10'
-                    : 'order-2 rounded-bl-sm border-border/60 bg-background/80',
-                )}
-              >
-                <div className='flex items-baseline justify-between gap-2'>
-                  <span className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
-                    {t(`messages.role.${m.role}`)}
-                  </span>
-                  <span className='text-[10px] tabular-nums text-muted-foreground'>
-                    {formatMessageTime(m.createdAt)}
-                  </span>
-                </div>
-                <p className='mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90'>
-                  {m.content}
-                </p>
-              </div>
-            </li>
-          ))}
+          {threadItems.map((item) =>
+            item.kind === 'message' ? (
+              <MessageBubble key={item.message.id} message={item.message} />
+            ) : (
+              <ChatClarificationCard
+                key={item.clarification.id}
+                streamId={streamId as string}
+                clarification={item.clarification}
+              />
+            ),
+          )}
           {streaming && assistantText ? (
             <li
               data-testid='worky-message-streaming'
-              className='flex w-full justify-start gap-2'
+              className='flex w-full justify-start gap-1.5'
             >
-              <div className='flex-none pt-1'>
+              <div className='flex-none pt-0.5'>
                 <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
               </div>
-              <div className='min-w-0 max-w-[82%] rounded-2xl rounded-bl-sm border border-primary/30 bg-primary/5 px-3 py-2 shadow-sm'>
+              <div className='min-w-0 max-w-[85%] rounded-2xl rounded-bl-sm border border-primary/30 bg-primary/5 px-2.5 py-1.5 shadow-sm'>
                 <div className='flex items-baseline justify-between gap-2'>
                   <span className='text-[10px] font-semibold uppercase tracking-wide text-primary'>
                     {t('messages.role.manager')}
                   </span>
                 </div>
-                <p className='mt-1 whitespace-pre-wrap break-words text-xs italic leading-relaxed text-foreground/90'>
+                <p className='mt-0.5 whitespace-pre-wrap break-words text-xs italic leading-snug text-foreground/90'>
                   {assistantText}
                 </p>
               </div>

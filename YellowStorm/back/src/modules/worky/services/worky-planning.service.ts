@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -11,6 +11,7 @@ import { BadRequestException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyRuntimeClient } from './worky-runtime.client';
 import { WorkyEventService } from './worky-event.service';
+import { WorkyWhatsAppConnectionService } from '@modules/whatsapp/services/worky-whatsapp-connection.service';
 import { WorkyTaskService } from './worky-task.service';
 import { ModelsService } from '../../models/models.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
@@ -30,6 +31,15 @@ export interface StartTurnInput {
   // resolved LiteLLM identifier to the runtime.
   managerModelIdOverride?: string | null;
   workerModelIdOverride?: string | null;
+}
+
+/** Tracks assistant text for a single planning turn so we can forward to
+ *  WhatsApp even when the runtime streams tokens but never emits
+ *  `assistant.message`. */
+interface TurnWhatsAppDelivery {
+  streamedAssistantText: string;
+  whatsappDelivered: boolean;
+  turnStartedAt: Date;
 }
 
 export interface ContextSnapshot {
@@ -78,6 +88,9 @@ export class WorkyPlanningService {
     private readonly models: ModelsService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
+    @Optional()
+    @Inject(forwardRef(() => WorkyWhatsAppConnectionService))
+    private readonly whatsappConnection: WorkyWhatsAppConnectionService | null,
   ) {
     this.logger.setContext(WorkyPlanningService.name);
   }
@@ -173,6 +186,12 @@ export class WorkyPlanningService {
         input.managerModelIdOverride,
         input.workerModelIdOverride,
       );
+      this.logger.log('Worky planning turn started', {
+        streamId: input.streamId,
+        userId: input.userId,
+        triggerKind: input.triggerKind,
+        ownerMessage: this.formatResponseForLog(input.content, 500),
+      });
       const response = await fetch(`${this.runtime.baseURL}/runtime/streams/${input.streamId}/planning-turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,6 +227,16 @@ export class WorkyPlanningService {
       // SSE state machine — a "frame" ends with a blank line.
       let eventName: string | null = null;
       let dataLines: string[] = [];
+      const whatsappDelivery: TurnWhatsAppDelivery = {
+        streamedAssistantText: '',
+        whatsappDelivered: false,
+        turnStartedAt: new Date(),
+      };
+      const handleFrame = async (frame: RuntimePlanningFrame): Promise<boolean> => {
+        subject.next({ frame });
+        await this.emitRuntimeFrame(input, frame, whatsappDelivery);
+        return frame.type === 'planning.done' || frame.type === 'planning.error';
+      };
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { value, done } = await reader.read();
@@ -224,9 +253,7 @@ export class WorkyPlanningService {
             eventName = null;
             dataLines = [];
             if (!frame) continue;
-            subject.next({ frame });
-            await this.emitRuntimeFrame(input, frame);
-            if (frame.type === 'planning.done' || frame.type === 'planning.error') {
+            if (await handleFrame(frame)) {
               subject.complete();
               return;
             }
@@ -242,7 +269,25 @@ export class WorkyPlanningService {
           }
         }
       }
-      // End of body without an explicit terminal — emit a `planning.done`
+      // Parse any trailing frame left in the buffer when the stream closes.
+      if (eventName || dataLines.length > 0) {
+        const frame = this.parseFrame(eventName, dataLines);
+        if (frame && (await handleFrame(frame))) {
+          subject.complete();
+          return;
+        }
+      }
+      await this.ensureWhatsAppDelivery(input.streamId, whatsappDelivery);
+      const implicitAssistantText = whatsappDelivery.streamedAssistantText.trim();
+      if (implicitAssistantText) {
+        this.logger.log('Worky IA chat turn completed (implicit)', {
+          streamId: input.streamId,
+          triggerKind: input.triggerKind,
+          assistantResponse: this.formatResponseForLog(implicitAssistantText),
+          contentLength: implicitAssistantText.length,
+          whatsappDelivered: whatsappDelivery.whatsappDelivered,
+        });
+      }
       // so subscribers always see a terminal frame. Also fan out the
       // terminal to the per-(user, stream) SSE channel so the
       // frontend's "Manager is working…" chip clears; the `stream.updated`
@@ -293,7 +338,11 @@ export class WorkyPlanningService {
     return { type, emitted_at: emittedAt, payload: innerPayload };
   }
 
-  private async emitRuntimeFrame(input: StartTurnInput, frame: RuntimePlanningFrame): Promise<void> {
+  private async emitRuntimeFrame(
+    input: StartTurnInput,
+    frame: RuntimePlanningFrame,
+    delivery: TurnWhatsAppDelivery,
+  ): Promise<void> {
     if (frame.type === 'planning.ack') {
       this.events.emit(input.userId, input.streamId, {
         type: 'stream.updated',
@@ -303,15 +352,28 @@ export class WorkyPlanningService {
       return;
     }
     if (frame.type === 'planning.token') {
+      const chunk = String(frame.payload.text ?? '');
+      if (chunk) delivery.streamedAssistantText += chunk;
       this.events.emit(input.userId, input.streamId, {
         type: 'assistant_token',
         emittedAt: Date.now(),
-        payload: { text: frame.payload.text ?? '' },
+        payload: { text: chunk },
       });
       return;
     }
     if (frame.type === 'assistant.message') {
-      await this.persistManagerMessage(input, frame);
+      await this.persistManagerMessage(input, frame, delivery);
+      return;
+    }
+    if (frame.type === 'interaction.requested') {
+      const question = String(frame.payload.question ?? '').trim();
+      if (question) {
+        this.logger.log('Worky IA clarification received from runtime', {
+          streamId: input.streamId,
+          content: this.formatResponseForLog(question),
+          contentLength: question.length,
+        });
+      }
       return;
     }
     if (frame.type === 'planning.delta.applied') {
@@ -333,6 +395,15 @@ export class WorkyPlanningService {
       return;
     }
     if (frame.type === 'planning.done') {
+      await this.ensureWhatsAppDelivery(input.streamId, delivery);
+      const assistantText = delivery.streamedAssistantText.trim();
+      this.logger.log('Worky IA chat turn completed', {
+        streamId: input.streamId,
+        triggerKind: input.triggerKind,
+        assistantResponse: assistantText ? this.formatResponseForLog(assistantText) : null,
+        contentLength: assistantText.length,
+        whatsappDelivered: delivery.whatsappDelivered,
+      });
       this.events.emit(input.userId, input.streamId, {
         type: 'stream.terminal',
         emittedAt: Date.now(),
@@ -364,6 +435,7 @@ export class WorkyPlanningService {
   private async persistManagerMessage(
     input: StartTurnInput,
     frame: RuntimePlanningFrame,
+    delivery: TurnWhatsAppDelivery,
   ): Promise<void> {
     const content = String((frame.payload as { text?: unknown }).text ?? '').trim();
     if (!content) {
@@ -373,6 +445,12 @@ export class WorkyPlanningService {
       });
       return;
     }
+    this.logger.log('Worky IA response received from runtime', {
+      streamId: input.streamId,
+      triggerKind: input.triggerKind,
+      content: this.formatResponseForLog(content),
+      contentLength: content.length,
+    });
     const message = await this.messages.create({
       streamId: new Types.ObjectId(input.streamId),
       role: 'manager',
@@ -389,6 +467,113 @@ export class WorkyPlanningService {
         content,
       },
     });
+    this.logger.log('Worky IA response persisted to chat', {
+      streamId: input.streamId,
+      messageId: (message._id as Types.ObjectId).toString(),
+      contentLength: content.length,
+    });
+  }
+
+  /** Forwards a manager (AI) reply to the Worky WhatsApp group when connected. */
+  private async deliverManagerMessageToWhatsApp(streamId: string, text: string): Promise<boolean> {
+    const content = text.trim();
+    if (!content) return false;
+
+    this.logger.log('Forwarding manager message to WhatsApp', {
+      streamId,
+      contentLength: content.length,
+      preview: content.slice(0, 80),
+    });
+
+    try {
+      if (!this.whatsappConnection) {
+        this.logger.warn('WhatsApp forward skipped: connection service unavailable', { streamId });
+        return false;
+      }
+      await this.whatsappConnection.forwardManagerMessage(streamId, content);
+      this.logger.log('Manager message forwarded to WhatsApp group', { streamId });
+      return true;
+    } catch (err) {
+      this.logger.warn('WhatsApp forward failed', {
+        streamId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  private async tryDeliverToWhatsApp(
+    streamId: string,
+    text: string,
+    delivery: TurnWhatsAppDelivery,
+  ): Promise<void> {
+    if (delivery.whatsappDelivered) return;
+    delivery.whatsappDelivered = await this.deliverManagerMessageToWhatsApp(streamId, text);
+  }
+
+  /** Sends exactly one IA reply to WhatsApp per planning turn. */
+  private async ensureWhatsAppDelivery(
+    streamId: string,
+    delivery: TurnWhatsAppDelivery,
+  ): Promise<void> {
+    if (delivery.whatsappDelivered) return;
+
+    const since = delivery.turnStartedAt;
+    const latestManager = await this.messages
+      .findOne({
+        streamId: new Types.ObjectId(streamId),
+        role: 'manager',
+        createdAt: { $gte: since },
+      })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    const managerText = String(latestManager?.content ?? '').trim();
+    if (managerText) {
+      this.logger.log('Worky IA WhatsApp delivery from manager message', {
+        streamId,
+        contentLength: managerText.length,
+      });
+      await this.tryDeliverToWhatsApp(streamId, managerText, delivery);
+      if (delivery.whatsappDelivered) return;
+    }
+
+    const clarification = await this.interactions
+      .findOne({
+        streamId: new Types.ObjectId(streamId),
+        status: 'pending',
+        type: { $in: ['clarification', 'assignment_disambiguation'] },
+        createdAt: { $gte: since },
+      })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    const question = String(clarification?.question ?? '').trim();
+    if (question) {
+      this.logger.log('Worky IA WhatsApp delivery from clarification', {
+        streamId,
+        contentLength: question.length,
+        interactionId: clarification?._id ? String(clarification._id) : null,
+      });
+      await this.tryDeliverToWhatsApp(streamId, question, delivery);
+      if (delivery.whatsappDelivered) return;
+    }
+
+    const streamed = delivery.streamedAssistantText.trim();
+    if (streamed) {
+      this.logger.log('Worky IA WhatsApp delivery from streamed tokens', {
+        streamId,
+        contentLength: streamed.length,
+      });
+      await this.tryDeliverToWhatsApp(streamId, streamed, delivery);
+    }
+  }
+
+  /** Truncates long assistant text so logs stay readable in the console. */
+  private formatResponseForLog(text: string, max = 2000): string {
+    const trimmed = text.trim();
+    if (trimmed.length <= max) return trimmed;
+    return `${trimmed.slice(0, max)}… (${trimmed.length} chars total)`;
   }
 
   private async resolveTurnModelIds(
