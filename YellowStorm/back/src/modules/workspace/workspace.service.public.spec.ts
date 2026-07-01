@@ -91,4 +91,35 @@ describe('WorkspaceService.findPublic', () => {
     expect(res.pagination.total).toBe(1);
     void workspaceModel;
   });
+
+  it('omits a public workspace whose owner user was deleted (populate yields null) without throwing', async () => {
+    const ownerId = new Types.ObjectId();
+    const ownerDoc = { _id: ownerId, email: 'o@x.io', profile: { firstName: 'O', lastName: 'W' } };
+    const wsWithOwner = {
+      _id: new Types.ObjectId(), name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
+      createdBy: ownerDoc, documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    const wsWithDeletedOwner = {
+      _id: new Types.ObjectId(WS), name: 'Orphan', alias: 'orphan', storagePrefix: 'orphan', description: 'd',
+      createdBy: null, documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    const find = jest.fn().mockReturnValue({
+      populate: () => ({
+        sort: () => ({
+          skip: () => ({ limit: () => ({ lean: () => ({ exec: () => Promise.resolve([wsWithOwner, wsWithDeletedOwner]) }) }) }),
+        }),
+      }),
+    });
+    const countDocuments = jest.fn().mockReturnValue({ exec: () => Promise.resolve(2) });
+    const { svc } = makeService({ workspaceModel: { find, countDocuments } });
+
+    const res = await svc.findPublic(OWNER, { page: 1, limit: 20 });
+
+    expect(res.workspaces).toHaveLength(1);
+    expect(res.workspaces[0].name).toBe('Pub');
+    expect(res.workspaces.some((w) => w.name === 'Orphan')).toBe(false);
+    expect(res.pagination.total).toBe(2);
+  });
 });

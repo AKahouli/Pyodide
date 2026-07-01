@@ -49,12 +49,20 @@ describe('workspace store — public slice', () => {
     };
     useWorkspaceStore.setState({ workspaces: new Map([[1, [ws]]]), currentPage: 1 });
     workspaceApiMock.setVisibility.mockResolvedValue({ ...ws, isPublic: true });
+    // The success path fires a fire-and-forget refetch of the public listing
+    // after clearing its cache; give it a valid paginated shape so it resolves.
+    workspaceApiMock.getPublicWorkspaces.mockResolvedValue({
+      workspaces: [pub], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
 
     await useWorkspaceStore.getState().setWorkspaceVisibility('w1', true);
 
     expect(workspaceApiMock.setVisibility).toHaveBeenCalledWith('w1', true);
     const cached = useWorkspaceStore.getState().workspaces.get(1)!.find((w) => w.id === 'w1');
     expect(cached!.isPublic).toBe(true);
+    // Cache was cleared synchronously; the refetch is fire-and-forget so it may
+    // still be in flight here — just confirm it was kicked off.
+    expect(workspaceApiMock.getPublicWorkspaces).toHaveBeenCalled();
   });
 
   it('setWorkspaceVisibility surfaces the error and re-throws when the API call fails', async () => {

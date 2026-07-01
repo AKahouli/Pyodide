@@ -1550,8 +1550,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           if (shareModalWorkspace?.id === id) {
             set({ shareModalWorkspace: { ...shareModalWorkspace, isPublic } });
           }
-          // Public listing changed — drop its cache so the hub/pickers refetch.
+          // Public listing changed — drop its cache and refetch so a mounted
+          // hub/picker doesn't show an empty Public section until remount.
           set({ publicWorkspaces: new Map(), publicCurrentPage: 1 });
+          void get().fetchPublicWorkspaces(1);
           toast.success(
             tToast(
               isPublic ? 'sharing.visibilityPublic' : 'sharing.visibilityPrivate',

@@ -367,28 +367,36 @@ export class WorkspaceService implements OnModuleInit {
       this.workspaceModel.countDocuments(query).exec(),
     ]);
 
-    const mapped: PublicWorkspaceResponse[] = workspaces.map((ws) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const owner = (ws as any).createdBy;
-      return {
-        id: ws._id.toString(),
-        name: ws.name,
-        alias: ws.alias,
-        storagePrefix: ws.storagePrefix,
-        description: ws.description,
-        owner: {
-          id: owner._id.toString(),
-          email: owner.email,
-          firstName: owner.profile?.firstName,
-          lastName: owner.profile?.lastName,
-        },
-        documentCount: ws.documentCount,
-        usedStorage: ws.usedStorage,
-        allocatedStorage: ws.allocatedStorage,
-        createdAt: ws.createdAt.toISOString(),
-        updatedAt: ws.updatedAt.toISOString(),
-      };
-    });
+    const mapped: PublicWorkspaceResponse[] = workspaces
+      .map((ws): PublicWorkspaceResponse | null => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const owner = (ws as any).createdBy;
+        // The owner user may have been deleted, leaving createdBy unresolved by
+        // populate (null). A public workspace with no existing owner shouldn't
+        // be listed — drop it rather than crash the listing endpoint.
+        if (!owner) {
+          return null;
+        }
+        return {
+          id: ws._id.toString(),
+          name: ws.name,
+          alias: ws.alias,
+          storagePrefix: ws.storagePrefix,
+          description: ws.description,
+          owner: {
+            id: owner._id.toString(),
+            email: owner.email,
+            firstName: owner.profile?.firstName,
+            lastName: owner.profile?.lastName,
+          },
+          documentCount: ws.documentCount,
+          usedStorage: ws.usedStorage,
+          allocatedStorage: ws.allocatedStorage,
+          createdAt: ws.createdAt.toISOString(),
+          updatedAt: ws.updatedAt.toISOString(),
+        };
+      })
+      .filter((ws): ws is PublicWorkspaceResponse => ws !== null);
 
     return {
       workspaces: mapped,
