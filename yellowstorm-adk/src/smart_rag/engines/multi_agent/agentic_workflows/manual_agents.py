@@ -66,6 +66,16 @@ async def handle_agents_provided_workflow(
         # STEP 1: Merge user_request brain_documents into each agent's brain_documents
         filtered_agents = DocumentHelpers.merge_user_request_brain_documents_into_agents(filtered_agents, user_request)
 
+        # STEP 1b: Inject deep_search tool when deep_search_enabled is True on the request.
+        # The factories detect deep search by tool name, so we must add the tool entry here —
+        # same bridge as single_agent.py:68-73 but applied to every tagged worker agent.
+        if getattr(user_request, "deep_search_enabled", False):
+            for agent in filtered_agents:
+                existing_tools = getattr(agent, "tools", None) or []
+                if not any(isinstance(t, dict) and t.get("name") == "deep_search" for t in existing_tools):
+                    agent.tools = [*existing_tools, {"name": "deep_search"}]
+                    logger.info(f"[MANUAL WORKFLOW] deep_search_enabled=True — added deep_search tool to agent {getattr(agent, 'name', 'unnamed')}")
+
         # STEP 2: Update user_request.agents by mapping on agent ID
         DocumentHelpers.update_agents_in_list_by_mapping(user_request.agents, filtered_agents)
 

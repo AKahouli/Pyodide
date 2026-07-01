@@ -17,6 +17,8 @@ export interface PointerSummary {
   lastEventAt: string;
   isShared: boolean;
   workspaceIds: string[];
+  selectedSkillIds: string[];
+  selectedConnectorIds: string[];
 }
 
 @Injectable()
@@ -146,6 +148,31 @@ export class ConversationV2SessionService {
       .exec();
   }
 
+  /**
+   * Persist the skill selection for a session. Called on every message send so
+   * the stored set always reflects the latest selection (mirrors v1's
+   * conversation-level `selectedSkills`). Re-display only — no access checks.
+   */
+  async setSelectedSkills(id: string, skillIds: string[]): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) return;
+    await this.model.updateOne(
+      { _id: new Types.ObjectId(id), deletedAt: null },
+      { $set: { selectedSkillIds: skillIds } },
+    );
+  }
+
+  /**
+   * Persist the connector selection for a session (mirrors setSelectedSkills),
+   * so the UI re-displays the selected connectors on reload. Re-display only.
+   */
+  async setSelectedConnectors(id: string, connectorIds: string[]): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) return;
+    await this.model.updateOne(
+      { _id: new Types.ObjectId(id), deletedAt: null },
+      { $set: { selectedConnectorIds: connectorIds } },
+    );
+  }
+
   async softDelete(ownerId: string, id: string) {
     if (!Types.ObjectId.isValid(id)) return null;
     return this.model
@@ -168,6 +195,8 @@ export class ConversationV2SessionService {
       lastEventAt: d.toISOString(),
       isShared: (doc.isShared as boolean | undefined) ?? false,
       workspaceIds: (doc.workspaceIds as string[] | undefined) ?? [],
+      selectedSkillIds: (doc.selectedSkillIds as string[] | undefined) ?? [],
+      selectedConnectorIds: (doc.selectedConnectorIds as string[] | undefined) ?? [],
     };
   };
 }

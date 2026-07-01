@@ -109,6 +109,7 @@ class RunAgentTeamRequest(BaseModel):
     agent_mode: str
     connector_repo: Optional[Dict[str, str]] = None
     skills: Optional[List[Skill]] = None  # Conversation-level skills selected by the user
+    deep_search_enabled: bool = False
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

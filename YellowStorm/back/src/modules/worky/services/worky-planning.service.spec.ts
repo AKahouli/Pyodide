@@ -75,7 +75,7 @@ const makeService = (options: MakeOptions = {}) => {
   const events = { emit: jest.fn() } as any;
   // Default admin model identifier. `null` = "no admin default
   // configured" (forces the planning service to reject with
-  // ERR_3430 when no other layer resolves a model id).
+  // ERR_3530 when no other layer resolves a model id).
   const defaultIdentifier =
     options.defaultModel === undefined ? 'gpt-4o-mini' : options.defaultModel;
   const defaultModelDoc = defaultIdentifier
@@ -150,7 +150,7 @@ describe('WorkyPlanningService.appendOwnerMessage', () => {
     });
     await expect(
       service.appendOwnerMessage(ownerId.toString(), streamId, { content: 'x' }),
-    ).rejects.toMatchObject({ code: 'ERR_3409' });
+    ).rejects.toMatchObject({ code: 'ERR_3509' });
   });
 
   it('accepts a message in start_validation_failed so the owner can recover the plan', async () => {
@@ -677,7 +677,7 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
     expect(capturedBody.worker_model_id).toBe('stream-worker');
   });
 
-  it('rejects the turn with ERR_3430 when no model resolves from any layer', async () => {
+  it('rejects the turn with ERR_3530 when no model resolves from any layer', async () => {
     const { service, ownerId, events } = makeService({ defaultModel: null });
     const frames: any[] = [];
     await new Promise<void>((resolve) => {

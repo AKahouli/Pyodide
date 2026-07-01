@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
+import axios from 'axios';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
@@ -54,7 +55,7 @@ export class IndexingService {
    * Queue a document for indexing and process immediately
    * Called after document upload completes
    */
-  async queueDocument(documentId: string): Promise<void> {
+  async queueDocument(documentId: string, deepSearch?: boolean): Promise<void> {
     if (!this.enabled) {
       this.logger.debug('Indexing disabled, skipping queue', { documentId });
       return;
@@ -95,7 +96,7 @@ export class IndexingService {
 
     // Process immediately (non-blocking)
     // If it fails, the cron job will retry later
-    this.processDocument(documentId).catch((err) => {
+    this.processDocument(documentId, deepSearch).catch((err) => {
       this.logger.warn('Immediate indexing failed, will retry via cron', {
         documentId,
         workspaceId,
@@ -108,7 +109,7 @@ export class IndexingService {
    * Process a single document
    * Called by cron job or manually
    */
-  async processDocument(documentId: string): Promise<void> {
+  async processDocument(documentId: string, deepSearch?: boolean): Promise<void> {
     const document = await this.documentModel.findById(documentId);
     if (!document) {
       throw new NotFoundException(
@@ -116,6 +117,11 @@ export class IndexingService {
         'Document not found',
       );
     }
+
+    // Resolve deep search: explicit param wins, else persisted flag from reindex.
+    // The cron does not pass deepSearch, so without this fallback any retry
+    // would silently drop the user's deep-search intent.
+    const effectiveDeepSearch = deepSearch ?? document.metadata?.deepSearchRequested === 'true';
 
     const workspaceId = document.workspaceId.toString();
 
@@ -135,6 +141,11 @@ export class IndexingService {
     document.indexingError = undefined;
     document.indexingTaskName = undefined;
     document.indexingTaskId = undefined;
+    // Clear the persisted flag so a future plain reindex does not inherit it
+    if (document.metadata?.deepSearchRequested !== undefined) {
+      document.metadata = { ...document.metadata };
+      delete document.metadata.deepSearchRequested;
+    }
     document.indexingStartedAt = new Date();
     await document.save();
 
@@ -192,6 +203,7 @@ export class IndexingService {
         oneshotPrompt: settings?.instruction,
         brainTag: settings?.tag,
         user_id: document.createdBy.toString(),
+        deepSearch: effectiveDeepSearch,
       });
 
       // Store API response IDs in metadata, keep status as PROCESSING
@@ -240,6 +252,7 @@ export class IndexingService {
   async reindexDocument(
     workspaceId: string,
     documentId: string,
+    deepSearch?: boolean,
   ): Promise<WorkspaceDocumentDoc> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -272,7 +285,7 @@ export class IndexingService {
     document.indexingStatus = IndexingStatus.PENDING;
     document.indexingError = undefined;
     const { download_id, indexing_id, ...restMetadata } = document.metadata || {};
-    document.metadata = restMetadata;
+    document.metadata = { ...restMetadata, deepSearchRequested: deepSearch === true ? 'true' : 'false' };
     await document.save();
 
     this.logger.debug('Document queued for re-indexing', {
@@ -281,7 +294,7 @@ export class IndexingService {
     });
 
     // Optionally process immediately (non-blocking)
-    this.processDocument(documentId).catch((err) => {
+    this.processDocument(documentId, deepSearch).catch((err) => {
       this.logger.warn('Immediate re-indexing failed, will retry in cron', {
         documentId,
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -541,6 +554,15 @@ export class IndexingService {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
+  }
+
+  async getCommunityGraphData(workspaceId: string): Promise<unknown> {
+    const url = this.configService.get<string>('indexing.communityGraphUrl', 'http://localhost:8000');
+    const response = await axios.get(`${url}/api/graph-data`, {
+      params: { workspace_id: workspaceId },
+      timeout: 30000,
+    });
+    return response.data;
   }
 
   /**

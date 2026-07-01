@@ -90,7 +90,7 @@ describe('WorkyInteractionService.respond', () => {
         interactionId: interactionObjectId.toString(),
         dto: { content: 'x' },
       }),
-    ).rejects.toMatchObject({ code: 'ERR_3410' });
+    ).rejects.toMatchObject({ code: 'ERR_3510' });
   });
 
   it('throws on an already-responded interaction', async () => {
@@ -102,7 +102,7 @@ describe('WorkyInteractionService.respond', () => {
         interactionId: interactionObjectId.toString(),
         dto: { content: 'x' },
       }),
-    ).rejects.toMatchObject({ code: 'ERR_3412' });
+    ).rejects.toMatchObject({ code: 'ERR_3512' });
   });
 
   it('derives an approved verdict from `approve: true` for an approval interaction', async () => {

@@ -42,6 +42,7 @@ describe('AgentService connector skill inheritance', () => {
     };
     const agentTypeService = {
       resolvePromptsInBatch: jest.fn().mockResolvedValue(new Map()),
+      findAllActive: jest.fn().mockResolvedValue([]),
     };
     const modelsService = {
       findById: jest.fn(),

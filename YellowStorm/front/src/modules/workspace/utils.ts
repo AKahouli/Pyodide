@@ -125,6 +125,24 @@ export interface FileValidationResult {
   errors: string[];
 }
 
+export const ALLOWED_EXTENSIONS = [
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'txt', 'csv', 'md', 'html', 'htm', 'json',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
+] as const;
+
+/**
+ * Check if a file is allowed by MIME type, with extension fallback.
+ * Browsers on Windows often report empty MIME for .md files.
+ */
+function isAllowedFile(file: File): boolean {
+  if (ALLOWED_MIME_TYPES.includes(file.type as typeof ALLOWED_MIME_TYPES[number])) {
+    return true;
+  }
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  return (ALLOWED_EXTENSIONS as readonly string[]).includes(ext);
+}
+
 /**
  * Validate files for upload
  * Returns valid files and any validation errors
@@ -139,8 +157,8 @@ export function validateFiles(files: File[]): FileValidationResult {
   }
 
   for (const file of files) {
-    // Check file type
-    if (!ALLOWED_MIME_TYPES.includes(file.type as typeof ALLOWED_MIME_TYPES[number])) {
+    // Check file type (MIME with extension fallback for unregistered types like .md)
+    if (!isAllowedFile(file)) {
       errors.push(`${file.name}: Unsupported file type`);
       continue;
     }

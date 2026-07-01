@@ -12,6 +12,7 @@ export interface Model {
   chefSlug: string;
   litellmModel: string;
   providers: string[];
+  type: string;
   isActive: boolean;
   isDefault: boolean;
 }

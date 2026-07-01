@@ -362,7 +362,7 @@ describe('WorkyStreamService.delete', () => {
       managerAgentId,
     });
 
-    await expect(service.delete(userId, streamObjectId.toString())).rejects.toMatchObject({ code: 'ERR_3401' });
+    await expect(service.delete(userId, streamObjectId.toString())).rejects.toMatchObject({ code: 'ERR_3501' });
     expect(streamModel.deleteOne).not.toHaveBeenCalled();
   });
 });

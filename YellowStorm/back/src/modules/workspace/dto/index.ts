@@ -14,3 +14,4 @@ export * from './share-workspace.dto';
 export * from './share-query.dto';
 export * from './update-share-permission.dto';
 export * from './workspace-share-response.dto';
+export * from './check-workspace-access.dto';

@@ -26,6 +26,9 @@ export class AiModel extends Document {
   @Prop({ type: [String], default: [] })
   providers!: string[]; // e.g., ["azure"]
 
+  @Prop({ default: '', index: true })
+  type!: string; // Classification: chat | embedding | image_generation | ... ('' = unclassified, set by admin)
+
   @Prop({ default: true })
   isActive!: boolean; // Can disable models
 
@@ -40,6 +43,7 @@ export const AiModelSchema = SchemaFactory.createForClass(AiModel);
 
 // Indexes
 AiModelSchema.index({ chefSlug: 1, isActive: 1 });
+AiModelSchema.index({ type: 1, isActive: 1 });
 AiModelSchema.index({ isActive: 1 });
 AiModelSchema.index({ isDefault: 1 });
 

@@ -372,6 +372,7 @@ export interface PlaybookTask {
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
+  deepSearch?: boolean;
 }
 
 export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
@@ -1046,6 +1047,7 @@ export interface Playbook {
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
   settings?: FlowSettings;
+  deepSearch?: boolean;
 }
 
 export interface CloneShareResult {
@@ -1483,6 +1485,7 @@ export interface PlaybookExecution {
   recursionBudgetUsed?: number | null;
   recursionBudgetMax?: number | null;
   routerDecisions?: RouterDecision[];
+  deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2069,6 +2072,7 @@ export interface CreatePlaybookData {
   name: string;
   description?: string;
   workspaces?: string[];
+  deepSearch?: boolean;
 }
 
 export interface GeneratePlaybookData {
@@ -2156,6 +2160,7 @@ export interface UpdatePlaybookData {
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  deepSearch?: boolean;
 }
 
 export interface ExecutePlaybookData {
@@ -2401,6 +2406,7 @@ export interface PlaybookState {
   connectorSidebarOpen: boolean;
   skillSidebarOpen: boolean;
   nodeEditorOpen: boolean;
+  graphPanelOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
@@ -2594,6 +2600,10 @@ export interface PlaybookActions {
   // Node Editor
   nodeEditorOpen: boolean;
   setNodeEditorOpen: (open: boolean) => void;
+
+  // Community Graph Panel
+  graphPanelOpen: boolean;
+  setGraphPanelOpen: (open: boolean) => void;
 
   // Workspace Explorer
   setWorkspaceExplorerOpen: (open: boolean) => void;
@@ -2791,6 +2801,7 @@ export interface FlowNode {
   retryPolicy?: RetryPolicy;
   hitlPolicy?: HitlPolicy;
   modelId?: string;
+  deepSearch?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -2903,6 +2914,7 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  deepSearch?: boolean;
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
@@ -2931,6 +2943,7 @@ export interface PlaybookDeltaPatchFields {
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
   workspaces?: string[];
+  deepSearch?: boolean;
 }
 
 export interface PatchPlaybookFlowDeltaData {

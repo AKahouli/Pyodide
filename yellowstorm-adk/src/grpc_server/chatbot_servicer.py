@@ -24,7 +24,7 @@ from structlog import get_logger
 from src.config.settings import get_settings
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
-from src.middleware.correlation import UserContext, user_ctx
+from src.middleware.correlation import UserContext, user_ctx, set_user_context, get_user_label
 # Import generated protobuf code (will be generated after running proto generation)
 try:
     from src.grpc_generated import chatbot_pb2, chatbot_pb2_grpc
@@ -270,7 +270,7 @@ class ChatbotServicer(
 
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
         username = request.user_context.username or 'unknown'
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         # Create asyncio queue
         queue: asyncio.Queue[dict] = asyncio.Queue()
         bg_task: Optional[asyncio.Task] = None
@@ -525,7 +525,7 @@ class ChatbotServicer(
         )
 
         username = request.user_context.username or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         queue: asyncio.Queue[dict] = asyncio.Queue()
         bg_task: Optional[asyncio.Task] = None
         get_task: Optional[asyncio.Task] = None
@@ -1079,6 +1079,7 @@ class ChatbotServicer(
             agent_mode="mono",
             connector_repo=self._build_connector_repo(pb_request),
             skills=self._build_skills(pb_request),
+            deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
         )
 
     async def _convert_agent_team_request_v2(
@@ -1369,7 +1370,7 @@ class ChatbotServicer(
             search_web=False,  # V2 removed this field, default to False
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
-            skills=skills,
+            deep_search_enabled=getattr(pb_request, 'deep_search_enabled', False),
         )
 
     async def _download_and_encode_images(
@@ -1990,7 +1991,7 @@ class ChatbotServicer(
         positioned nodes and edges.
         """
         username = request.user_context.username or request.user_context.user_id or "unknown"
-        user_token = user_ctx.set(username)
+        user_token = set_user_context(request.user_context.user_id, username)
         try:
             logger.info(
                 "[GeneratePlaybook] Request received",
@@ -2070,7 +2071,7 @@ class ChatbotServicer(
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 max_tokens=32000,
                 response_format={"type": "json_object"},
-                user=username,
+                user=get_user_label(),
             )
 
             raw = response.choices[0].message.content.strip()
@@ -2204,6 +2205,658 @@ class ChatbotServicer(
         return build_generate_playbook_prompt(
             agents_info, workspace_info, existing_playbook_json, prompt_overrides
         )
+
+    # ========== PLAYBOOK / LANGGRAPH RPCs ==========
+
+    async def RunPlaybookWorkflow(self, request, context):
+        """Execute a playbook workflow with server-streaming step updates."""
+        from src.flow_engine.legacy_runtime import (
+            run_playbook, register_task, remove_task,
+        )
+
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = set_user_context(request.user_context.user_id, username)
+        logger.info(
+            "[RunPlaybookWorkflow] Request received",
+            playbook_id=request.playbook_id,
+            username=username,
+            task_count=len(request.tasks),
+            agent_count=len(request.agents),
+            edge_count=len(request.edges),
+            execution_mode=request.execution_mode or "live",
+            validated_replay_count=len(request.validated_replays),
+            validated_replay_task_ids=[
+                replay.task_id for replay in request.validated_replays
+            ],
+        )
+        resolved_trigger_context = _parse_trigger_context_fallback(request)
+        logger.info(
+            "*************** [RunPlaybookWorkflow] triggerContext received",
+            triggerContext=resolved_trigger_context,
+        )
+        logger.info(
+            "[RunPlaybookWorkflow] Request payload",
+            request_payload=MessageToDict(
+                request,
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            ),
+        )
+
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
+        thread_id = f"{request.playbook_id}_{uuid.uuid4().hex[:8]}"
+        bg_task: Optional[asyncio.Task] = None
+
+        try:
+            tasks = [_proto_task_to_dict(t) for t in request.tasks]
+            agents = {a.id: _proto_agent_to_dict(a) for a in request.agents}
+            edges = [_proto_edge_to_dict(e) for e in request.edges]
+            logger.info(
+                "[ITERATOR_DEBUG RunPlaybookWorkflow] tasks after deserialization",
+                task_count=len(tasks),
+                tasks=[
+                    {
+                        "id": t.get("id"),
+                        "title": t.get("title"),
+                        "task_type": t.get("task_type"),
+                        "has_task_metadata": t.get("task_metadata") is not None,
+                        "task_metadata_keys": list(t["task_metadata"].keys()) if isinstance(t.get("task_metadata"), dict) else None,
+                        "task_metadata_iterator": (t.get("task_metadata") or {}).get("iterator") if isinstance(t.get("task_metadata"), dict) else None,
+                    }
+                    for t in tasks
+                ],
+            )
+
+            bg_task = asyncio.create_task(
+                run_playbook(
+                    playbook_id=request.playbook_id,
+                    tasks=tasks,
+                    agents=agents,
+                    edges=edges,
+                    query=request.query,
+                    workspace_context=_proto_workspace_context(
+                        request.workspace_context
+                    ),
+                    trigger_context=resolved_trigger_context,
+                    queue=queue,
+                    thread_id=thread_id,
+                    execution_mode=request.execution_mode or "live",
+                    validated_replays_by_task={
+                        replay.task_id: _proto_validated_replay_to_dict(replay)
+                        for replay in request.validated_replays
+                    } if request.validated_replays else {},
+                    evaluation_user_id=username,
+                    step_execution_modes=dict(request.step_execution_modes) if request.step_execution_modes else {},
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                    deep_search=getattr(request, "deep_search", False),
+                )
+            )
+            register_task(thread_id, bg_task)
+
+            async for chunk in self._stream_playbook_queue(queue, bg_task, thread_id):
+                yield chunk
+
+        except asyncio.CancelledError:
+            logger.info("[RunPlaybookWorkflow] Client cancelled stream")
+            if not bg_task.done():
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            return
+
+        except Exception as e:
+            logger.error(
+                "[RunPlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow failed: {str(e)}",
+            )
+
+        finally:
+            remove_task(thread_id)
+            user_ctx.reset(user_token)
+
+    async def ResumePlaybookWorkflow(self, request, context):
+        """Resume an interrupted playbook with server-streaming step updates."""
+        from src.flow_engine.legacy_runtime import (
+            resume_playbook, register_task, remove_task,
+        )
+
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = set_user_context(request.user_context.user_id, username)
+        logger.info(
+            "[ResumePlaybookWorkflow] Request received",
+            playbook_id=request.playbook_id,
+            thread_id=request.thread_id,
+            task_id=request.task_id,
+            username=username,
+        )
+
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
+        bg_task: Optional[asyncio.Task] = None
+
+        try:
+            human_response = {
+                "action": request.human_response.action,
+                "message": request.human_response.message,
+                "approved": request.human_response.approved,
+                "reason": request.human_response.reason,
+                "feedback": request.human_response.feedback,
+            }
+            bg_task = asyncio.create_task(
+                resume_playbook(
+                    playbook_id=request.playbook_id,
+                    thread_id=request.thread_id,
+                    human_response=human_response,
+                    task_id=request.task_id,
+                    queue=queue,
+                    tasks=[_proto_task_to_dict(t) for t in request.tasks],
+                    edges=[_proto_edge_to_dict(e) for e in request.edges],
+                    interrupt_id=getattr(request, "interrupt_id", "") or "",
+                )
+            )
+            register_task(request.thread_id, bg_task)
+
+            async for chunk in self._stream_playbook_queue(
+                queue, bg_task, request.thread_id
+            ):
+                yield chunk
+
+        except asyncio.CancelledError:
+            logger.info("[ResumePlaybookWorkflow] Client cancelled stream")
+            if not bg_task.done():
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            return
+
+        except Exception as e:
+            logger.error(
+                "[ResumePlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow resume failed: {str(e)}",
+            )
+
+        finally:
+            remove_task(request.thread_id)
+            user_ctx.reset(user_token)
+
+    async def StopPlaybookWorkflow(self, request, context):
+        """Stop a running playbook workflow by thread_id."""
+        from src.flow_engine.legacy_runtime import cancel_task
+
+        thread_id = request.thread_id
+        logger.info("[StopPlaybookWorkflow] Request received", thread_id=thread_id)
+
+        try:
+            cancelled = await cancel_task(thread_id)
+
+            if cancelled:
+                logger.info(
+                    "[StopPlaybookWorkflow] Workflow stopped", thread_id=thread_id
+                )
+                return chatbot_pb2.StopPlaybookWorkflowResponse(
+                    success=True,
+                    message=f"Workflow {thread_id} stopped successfully.",
+                )
+            else:
+                logger.warning(
+                    "[StopPlaybookWorkflow] No active workflow found",
+                    thread_id=thread_id,
+                )
+                return chatbot_pb2.StopPlaybookWorkflowResponse(
+                    success=False,
+                    message=f"No active workflow found for thread_id {thread_id}.",
+                )
+
+        except Exception as e:
+            logger.error("[StopPlaybookWorkflow] Error", error=str(e))
+            return chatbot_pb2.StopPlaybookWorkflowResponse(
+                success=False,
+                message=f"Error stopping workflow: {str(e)}",
+            )
+
+    async def _stream_playbook_queue(
+        self,
+        queue: asyncio.Queue,
+        bg_task: asyncio.Task,
+        thread_id: str = "",
+    ) -> AsyncGenerator["chatbot_pb2.PlaybookStreamChunk", None]:
+        """Drain *queue* and yield PlaybookStreamChunk messages.
+
+        Follows the same asyncio.wait(FIRST_COMPLETED) pattern used by
+        RunAgentTeam. Terminates when the sentinel ``None`` is received
+        from the queue (put by workflow_service after completion).
+
+        The *thread_id* is included in every yielded chunk so that the
+        client can use it to call StopPlaybookWorkflow while the stream
+        is still active.
+        """
+        while True:
+            get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                [get_task, bg_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if bg_task in done:
+                if bg_task.cancelled():
+                    logger.info(
+                        "[_stream_playbook_queue] Background task was cancelled"
+                    )
+                    get_task.cancel()
+                    raise asyncio.CancelledError()
+                exc = bg_task.exception()
+                if exc:
+                    logger.error(
+                        "[_stream_playbook_queue] Background task crashed",
+                        error=str(exc),
+                    )
+                    get_task.cancel()
+                    raise exc
+
+            item = await get_task
+
+            if item is None:
+                # Sentinel: stream finished.
+                yield chatbot_pb2.PlaybookStreamChunk(thread_id=thread_id)
+                return
+
+            if "step_update" in item:
+                chunk = _safe_build_step_update_chunk(
+                    item["step_update"],
+                    stream_name="_stream_playbook_queue",
+                    thread_id=thread_id,
+                )
+                if item["step_update"].get("interrupt"):
+                    logger.debug(
+                        "[servicer] yielding SUSPENDED chunk via gRPC",
+                        task=item["step_update"].get("task_id"),
+                        interrupt_type=item["step_update"]
+                        .get("interrupt", {})
+                        .get("type"),
+                    )
+                yield chunk
+            else:
+                logger.warning("[_stream_playbook_queue] Unknown queue item", item=item)
+
+    async def RunStep(self, request, context):
+        """Execute a single task with an agent."""
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
+        import time
+        from datetime import datetime
+
+        task_id = request.task.id if request.task else "unknown"
+        agent_name = request.agent.name if request.agent else "unknown"
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
+        logger.info(
+            "[RunStep] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
+        )
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = set_user_context(request.user_context.user_id, username)
+        logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name, username=username)
+
+        try:
+            task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
+            agent = _proto_agent_to_dict(request.agent)
+            validated_replay = (
+                _proto_validated_replay_to_dict(request.validated_replay)
+                if getattr(request, "validated_replay", None)
+                and request.validated_replay.task_id
+                else None
+            )
+            logger.info(
+                "[RunStep] Execution mode resolved",
+                task_id=task_id,
+                execution_mode=request.execution_mode or "live",
+                has_validated_replay=bool(validated_replay),
+                replay_id=(validated_replay or {}).get("replay_id"),
+                replay_tool_calls=len(
+                    (validated_replay or {}).get("tool_calls", []) or []
+                ),
+            )
+            resolved_trigger_context = _struct_to_dict(request.trigger_context)
+            if not resolved_trigger_context:
+                resolved_trigger_context = _parse_trigger_context_fallback(request)
+            logger.info(
+                "*************** [RunStep] triggerContext received",
+                triggerContext=resolved_trigger_context,
+            )
+
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
+                if _has_struct_payload(getattr(request, "trigger_context", None))
+                else None
+            )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                result = await execute_action_task(
+                    task,
+                    task_id=task_id,
+                    start_time=time.time(),
+                    started_at=datetime.utcnow().isoformat() + "Z",
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
+                )
+            else:
+                result = await execute_step(
+                    task=task,
+                    agent=agent,
+                    context_from_dependencies=request.context_from_dependencies,
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
+                    execution_mode=request.execution_mode or "live",
+                    validated_replay=validated_replay,
+                    evaluation_user_id=request.user_context.username
+                    or request.user_context.user_id
+                    or "unknown",
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                    user_language=getattr(request, "user_language", None) or "en",
+                )
+
+            return _build_step_response(result)
+
+        except Exception as e:
+            logger.error("[RunStep] Unhandled error", error=str(e), exc_info=True)
+            return chatbot_pb2.StepResponse(
+                status="failed",
+                result=chatbot_pb2.PlaybookTaskResult(
+                    task_id=task_id,
+                    status="failed",
+                    error=str(e),
+                ),
+            )
+        finally:
+            user_ctx.reset(user_token)
+
+    async def RunStepStream(self, request, context):
+        """Execute a single task and stream step updates in realtime."""
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
+        import time
+        from datetime import datetime
+
+        task_id = request.task.id if request.task else "unknown"
+        agent_name = request.agent.name if request.agent else "unknown"
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = set_user_context(request.user_context.user_id, username)
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
+        logger.info(
+            "[RunStepStream] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            username=username,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
+        )
+
+        queue: asyncio.Queue[dict] = asyncio.Queue(
+            maxsize=app_settings.STEP_STREAM_QUEUE_MAXSIZE
+        )
+
+        async def on_progress(progress: Dict[str, Any]) -> None:
+            await _put_progress_event(queue, progress)
+
+        try:
+            task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
+            agent = _proto_agent_to_dict(request.agent)
+            validated_replay = (
+                _proto_validated_replay_to_dict(request.validated_replay)
+                if getattr(request, "validated_replay", None)
+                and request.validated_replay.task_id
+                else None
+            )
+
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
+                if _has_struct_payload(getattr(request, "trigger_context", None))
+                else None
+            )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                bg_task = asyncio.create_task(
+                    execute_action_task(
+                        task,
+                        task_id=task_id,
+                        start_time=time.time(),
+                        started_at=datetime.utcnow().isoformat() + "Z",
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
+                        on_progress=on_progress,
+                    )
+                )
+            else:
+                bg_task = asyncio.create_task(
+                    execute_step(
+                        task=task,
+                        agent=agent,
+                        context_from_dependencies=request.context_from_dependencies,
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
+                        execution_mode=request.execution_mode or "live",
+                        validated_replay=validated_replay,
+                        evaluation_user_id=username,
+                        on_progress=on_progress,
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                    user_language=getattr(request, "user_language", None) or "en",
+                )
+                )
+
+            while True:
+                if bg_task.done():
+                    exception = bg_task.exception()
+                    if exception:
+                        raise exception
+                    break
+
+                try:
+                    progress = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+
+                if not progress:
+                    continue
+
+                step_update = {
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": progress.get("status", "in_progress"),
+                }
+                progress_result = _build_in_progress_result(task_id, progress)
+                if progress_result is not None:
+                    step_update["result"] = progress_result
+
+                yield _safe_build_step_update_chunk(
+                    step_update,
+                    stream_name="RunStepStream",
+                )
+
+            result = await bg_task
+            while not queue.empty():
+                progress = await queue.get()
+                if not progress:
+                    continue
+                drained_step_update = {
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": progress.get("status", "in_progress"),
+                }
+                progress_result = _build_in_progress_result(task_id, progress)
+                if progress_result is not None:
+                    drained_step_update["result"] = progress_result
+
+                yield _safe_build_step_update_chunk(
+                    drained_step_update,
+                    stream_name="RunStepStream",
+                )
+
+            if result.get("status") == "suspended" and result.get("interrupt"):
+                yield _safe_build_step_update_chunk(
+                    {
+                        "task_id": task_id,
+                        "task_title": task.get("title", ""),
+                        "status": "suspended",
+                        "interrupt": result.get("interrupt"),
+                    },
+                    stream_name="RunStepStream",
+                )
+            else:
+                step_result = result.get("result") or next(
+                    iter((result.get("results") or {}).values()), None
+                )
+                yield _safe_build_step_update_chunk(
+                    {
+                        "task_id": task_id,
+                        "task_title": task.get("title", ""),
+                        "status": result.get("status", "completed"),
+                        "result": step_result,
+                    },
+                    stream_name="RunStepStream",
+                )
+
+        except asyncio.CancelledError:
+            logger.info("[RunStepStream] Client cancelled stream")
+            if "bg_task" in locals() and not bg_task.done():
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except Exception:
+                    pass
+            return
+
+        except Exception as e:
+            logger.error("[RunStepStream] Unhandled error", error=str(e), exc_info=True)
+            yield _build_failed_step_update_chunk(
+                task_id=task_id,
+                task_title=task.get("title", "") if "task" in locals() else "",
+                error=str(e),
+            )
+        finally:
+            user_ctx.reset(user_token)
+
+    async def ResumeStep(self, request, context):
+        """Resume an interrupted step with human response."""
+        from src.flow_engine.legacy_runtime import resume_step
+
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = set_user_context(request.user_context.user_id, username)
+        logger.info(
+            "[ResumeStep] Request received",
+            thread_id=request.thread_id,
+            task_id=request.task_id,
+            username=username,
+        )
+
+        try:
+            human_response = {
+                "action": request.human_response.action,
+                "message": request.human_response.message,
+                "approved": request.human_response.approved,
+                "reason": request.human_response.reason,
+                "feedback": request.human_response.feedback,
+            }
+            result = await resume_step(
+                thread_id=request.thread_id,
+                human_response=human_response,
+                task_id=request.task_id,
+            )
+
+            return _build_step_response(result)
+
+        except Exception as e:
+            logger.error("[ResumeStep] Unhandled error", error=str(e), exc_info=True)
+            return chatbot_pb2.StepResponse(
+                status="failed",
+                result=chatbot_pb2.PlaybookTaskResult(
+                    task_id=request.task_id,
+                    status="failed",
+                    error=str(e),
+                ),
+            )
+        finally:
+            user_ctx.reset(user_token)
 
     async def EvaluateSemanticMatch(self, request, context):
         """Evaluate semantic similarity for a playbook step over the gRPC channel."""

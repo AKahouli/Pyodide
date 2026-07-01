@@ -325,6 +325,7 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         "Authorization": "Bearer token",
         "X-User-Id": "user-1",
         "workspace_id": '["workspace-1", "workspace-2", "workspace-alpha"]',
+        "Workspace-Id": "workspace-1,workspace-2",
         "x-conversation-id": "conversation-1",
         "x-workspace-paths": "workspace-alpha,workspace-beta",
     }

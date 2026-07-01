@@ -7,6 +7,8 @@ export { default as workspaceConfig } from './workspace.config';
 export { default as conversationConfig } from './conversation.config';
 export { default as conversationV2Config } from './conversation-v2.config';
 export { default as a2aAdminConfig } from './a2a-admin.config';
+export { default as grpcSecurityConfig } from './grpc-security.config';
+export { default as grpcSecurityV2Config } from './grpc-security-v2.config';
 export { default as telegramConfig } from './telegram.config';
 export { default as whatsappConfig } from './whatsapp.config';
 export { default as loggingConfig } from './logging.config';

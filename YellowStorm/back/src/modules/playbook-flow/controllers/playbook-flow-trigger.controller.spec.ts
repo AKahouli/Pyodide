@@ -12,8 +12,11 @@ describe('PlaybookFlowTriggerController', () => {
 
   const makeGraphClient = () => ({
     createInboxSubscription: jest.fn().mockResolvedValue({
-      id: 'sub-1',
-      expirationDateTime: '2026-06-16T00:00:00.000Z',
+      subscription: {
+        id: 'sub-1',
+        expirationDateTime: '2026-06-16T00:00:00.000Z',
+      },
+      resolvedAppKey: 'm365',
     }),
   });
 

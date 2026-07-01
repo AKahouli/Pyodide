@@ -16,6 +16,26 @@ export interface IConnectorDynamicHeader {
   enabled: boolean;
 }
 
+/** One action of a connector, in the gRPC `ConnectorAction` wire shape (snake_case). */
+export interface IGrpcConnectorAction {
+  action_key: string;
+  label: string;
+  description: string;
+  /** JSON Schema of the action params, serialized as a string (proto carries it as a string). */
+  parameter_schema_json: string;
+}
+
+/** A connector binding in the gRPC `ConnectorBinding` wire shape, with per-user auth resolved. */
+export interface IGrpcConnector {
+  connector_id: string;
+  connector_name: string;
+  mcp_transport_type: string;
+  mcp_server_url: string;
+  auth_headers: Record<string, string>;
+  auth_env: Record<string, string>;
+  actions: IGrpcConnectorAction[];
+}
+
 export interface IConnectorResponse {
   id: string;
   slug: string;
