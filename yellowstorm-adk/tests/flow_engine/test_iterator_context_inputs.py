@@ -1,4 +1,4 @@
-from src.flow_engine.builder.iterator import _resolve_iterator_inputs
+from src.flow_engine.bindings.resolver import resolve_node_inputs
 
 
 def test_resolve_iterator_inputs_keeps_items_and_context_ports() -> None:
@@ -32,7 +32,7 @@ def test_resolve_iterator_inputs_keeps_items_and_context_ports() -> None:
         },
     ]
 
-    resolved = _resolve_iterator_inputs("iterator", bindings, state)
+    resolved = resolve_node_inputs("iterator", bindings, state)
 
     assert resolved["items"] == ["cv-a", "cv-b"]
     assert resolved["template"] == "template-docx"
