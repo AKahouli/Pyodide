@@ -405,6 +405,40 @@ export class WorkspaceService implements OnModuleInit {
   }
 
   /**
+   * Toggle a workspace's public visibility. Owner-only (the controller's
+   * WorkspaceOwnerGuard enforces this; we re-check defensively). System
+   * workspaces cannot be made public. Shares are left untouched — while public
+   * they are dormant (see WorkspaceAccessGuard), and reactivate when private.
+   */
+  async setVisibility(
+    workspaceId: string,
+    ownerId: string,
+    isPublic: boolean,
+  ): Promise<WorkspaceResponse> {
+    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    if (!workspace) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    }
+    if (workspace.createdBy.toString() !== ownerId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have access to this workspace',
+      );
+    }
+    if (isPublic && workspace.isSystem) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM,
+        'System workspaces cannot be made public',
+      );
+    }
+
+    workspace.isPublic = isPublic;
+    await workspace.save();
+    this.logger.log('Workspace visibility updated', { workspaceId, ownerId, isPublic });
+    return this.mapToResponse(workspace);
+  }
+
+  /**
    * Delete a workspace
    */
   async delete(workspaceId: string, userId: string): Promise<void> {

@@ -7,6 +7,7 @@ import { WorkspaceShare } from './schemas/workspace-share.schema';
 import { LoggerService } from '../logger';
 import { UserService } from '../user';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ForbiddenException } from '../exceptions';
 
 const USER = new Types.ObjectId().toString();
 const WS = new Types.ObjectId().toString();
@@ -58,5 +59,16 @@ describe('WorkspaceShareService — public access', () => {
       // public
       .mockReturnValueOnce({ select: () => ({ lean: () => ({ exec: () => Promise.resolve([{ _id: new Types.ObjectId(WS) }]) }) }) });
     await expect(svc.assertUserHasAccess(USER, [WS])).resolves.toBeUndefined();
+  });
+
+  it('share() rejects a public workspace', async () => {
+    const { svc } = build({
+      workspaceModel: {
+        findById: () => ({ exec: () => Promise.resolve({ _id: new Types.ObjectId(WS), createdBy: new Types.ObjectId(USER), isSystem: false, isPublic: true }) }),
+      },
+    });
+    await expect(
+      svc.share(WS, USER, { shares: [{ email: 'a@x.io', permission: 'read' }] }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

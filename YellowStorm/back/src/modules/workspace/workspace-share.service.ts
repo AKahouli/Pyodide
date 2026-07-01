@@ -148,6 +148,13 @@ export class WorkspaceShareService {
       );
     }
 
+    if (workspace.isPublic) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_PUBLIC_NO_SHARE,
+        'This workspace is public and cannot be shared',
+      );
+    }
+
     const owner = await this.userService.findById(ownerId);
     if (!owner) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'Workspace owner not found');
