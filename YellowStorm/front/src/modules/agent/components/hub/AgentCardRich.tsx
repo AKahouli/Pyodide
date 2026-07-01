@@ -256,7 +256,12 @@ export function AgentCardRich({
   );
 
   const memoriesModal = (
-    <AgentMemoriesModal agent={agent} open={memoriesOpen} onOpenChange={setMemoriesOpen} />
+    <AgentMemoriesModal
+      agent={agent}
+      open={memoriesOpen}
+      onOpenChange={setMemoriesOpen}
+      canDelete={!isReadOnly}
+    />
   );
 
   if (layout === 'list') {

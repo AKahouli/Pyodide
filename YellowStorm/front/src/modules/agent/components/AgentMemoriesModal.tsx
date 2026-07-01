@@ -27,6 +27,8 @@ interface AgentMemoriesModalProps {
   agent: Agent;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When false (e.g. read-only shared agent), memories are view-only. */
+  canDelete?: boolean;
 }
 
 function formatDate(iso: string | null): string {
@@ -36,7 +38,12 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<AgentMemoriesModalProps>) {
+export function AgentMemoriesModal({
+  agent,
+  open,
+  onOpenChange,
+  canDelete = true,
+}: Readonly<AgentMemoriesModalProps>) {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [rows, setRows] = useState<MemoryCard[]>([]);
@@ -129,34 +136,38 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
                 {rows.length} mémoire{rows.length === 1 ? '' : 's'}
                 {selectedCount > 0 ? ` · ${selectedCount} sélectionnée${selectedCount === 1 ? '' : 's'}` : ''}
               </span>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={selectedCount === 0 || deleting}
-                onClick={deleteSelected}
-                className="gap-1.5"
-              >
-                {deleting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3.5 w-3.5" />
-                )}
-                Supprimer la sélection
-              </Button>
+              {canDelete && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={selectedCount === 0 || deleting}
+                  onClick={deleteSelected}
+                  className="gap-1.5"
+                >
+                  {deleting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Supprimer la sélection
+                </Button>
+              )}
             </div>
 
             <div className="max-h-[60vh] overflow-x-auto overflow-y-auto rounded-md border">
               <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={(c) => toggleAll(c === true)}
-                        aria-label="Tout sélectionner"
-                        disabled={!hasRows}
-                      />
-                    </TableHead>
+                    {canDelete && (
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={allSelected}
+                          onCheckedChange={(c) => toggleAll(c === true)}
+                          aria-label="Tout sélectionner"
+                          disabled={!hasRows}
+                        />
+                      </TableHead>
+                    )}
                     <TableHead>id</TableHead>
                     <TableHead>title</TableHead>
                     <TableHead>summary</TableHead>
@@ -172,7 +183,7 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
                 <TableBody>
                   {!hasRows ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
+                      <TableCell colSpan={canDelete ? 11 : 10} className="h-24 text-center text-muted-foreground">
                         Aucune mémoire.
                       </TableCell>
                     </TableRow>
@@ -181,13 +192,15 @@ export function AgentMemoriesModal({ agent, open, onOpenChange }: Readonly<Agent
                       const isChecked = selected.has(row.id);
                       return (
                         <TableRow key={row.id} data-state={isChecked ? 'selected' : undefined}>
-                          <TableCell>
-                            <Checkbox
-                              checked={isChecked}
-                              onCheckedChange={(c) => toggleOne(row.id, c === true)}
-                              aria-label={`Sélectionner ${row.title}`}
-                            />
-                          </TableCell>
+                          {canDelete && (
+                            <TableCell>
+                              <Checkbox
+                                checked={isChecked}
+                                onCheckedChange={(c) => toggleOne(row.id, c === true)}
+                                aria-label={`Sélectionner ${row.title}`}
+                              />
+                            </TableCell>
+                          )}
                           <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                             {row.id}
                           </TableCell>
