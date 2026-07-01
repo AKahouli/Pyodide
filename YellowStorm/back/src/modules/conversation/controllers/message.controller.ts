@@ -62,6 +62,15 @@ export class MessageController {
     return merged.size > 0 ? [...merged] : undefined;
   }
 
+  /**
+   * Human-readable display name for logs/observability: "First Last" when a
+   * profile name is set, otherwise falls back to the user's email.
+   */
+  private resolveDisplayName(user: UserDocument): string {
+    const fullName = `${user.profile?.firstName ?? ''} ${user.profile?.lastName ?? ''}`.trim();
+    return fullName || user.email;
+  }
+
   @Post()
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
@@ -86,6 +95,7 @@ export class MessageController {
       hasFiles: !!dto.attachedFileIds?.length,
       fileCount: dto.attachedFileIds?.length || 0,
       webSearchEnabled: dto.webSearchEnabled,
+      deepSearchEnabled: dto.deepSearchEnabled,
       modelId: dto.modelId,
       agentIds: dto.agentIds,
     });
@@ -205,24 +215,24 @@ export class MessageController {
       });
 
       // Start streaming (non-blocking)
-       this.streamService
-         .startStream(user._id.toString(), conversationId, aiMessage.id, {
-           content: dto.content,
-           attachedFileIds: dto.attachedFileIds,
-           webSearchEnabled: dto.webSearchEnabled,
-           modelId: dto.modelId,
-           agentIds: resolvedAgentIds,
-           connectorRepo: dto.connectorRepo,
-           skillIds: dto.skillIds,
-         }, requestId, undefined, user.email)
-         .catch((err) => {
+      this.streamService
+        .startStream(user._id.toString(), conversationId, aiMessage.id, {
+          content: dto.content,
+          attachedFileIds: dto.attachedFileIds,
+          webSearchEnabled: dto.webSearchEnabled,
+          deepSearchEnabled: dto.deepSearchEnabled,
+          modelId: dto.modelId,
+          agentIds: resolvedAgentIds,
+          connectorRepo: dto.connectorRepo,
+          skillIds: dto.skillIds,
+        }, requestId, undefined, this.resolveDisplayName(user))
+        .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,
             aiMessageId: aiMessage.id,
             error: (err as Error).message,
           });
           this.messageService.markStreamFailed(aiMessage.id);
-          // Error event will be sent via SSE by the stream service
         });
     } else {
       this.logger.log('Skipping AI response due to member tags', {
@@ -343,8 +353,9 @@ export class MessageController {
         content: userMessage.content || '',
         attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()),
         webSearchEnabled: userMessage.webSearchEnabled,
+        deepSearchEnabled: (userMessage as any).deepSearchEnabled,
         agentIds: userMessage.agentIds?.map((id) => id.toString()),
-      }, requestId, undefined, user.email)
+      }, requestId, undefined, this.resolveDisplayName(user))
       .catch((err) => {
         this.logger.error('Regenerate stream failed', {
           conversationId,

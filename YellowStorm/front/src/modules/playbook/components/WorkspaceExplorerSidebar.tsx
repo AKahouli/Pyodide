@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import {
   Search, PanelLeftClose, FolderOpen, FileText, ChevronRight, ChevronDown,
   Loader2, Upload, Plus, Trash2, RefreshCw, Clock, Check, AlertTriangle,
-  FileX,
+  FileX, Network,
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
@@ -676,6 +676,22 @@ export function WorkspaceExplorerSidebar() {
               <TooltipContent side="bottom">
                 {isReadOnlySharedWorkspace ? t('workspaceExplorer.readOnlySharedWorkspace') : t('workspaceExplorer.folderTooltip')}
               </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs gap-1"
+                  onClick={() => usePlaybookStore.getState().setGraphPanelOpen(true)}
+                >
+                  <Network className="h-3.5 w-3.5" />
+                  {t('workspaceExplorer.graph')}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t('workspaceExplorer.graphTooltip')}</TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>

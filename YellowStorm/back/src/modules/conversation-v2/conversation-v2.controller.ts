@@ -141,6 +141,8 @@ export class ConversationV2Controller {
     status: string;
     isShared: boolean;
     workspaceIds: string[];
+    selectedSkillIds: string[];
+    selectedConnectorIds: string[];
     lastEventAt: Date;
     eventCount: number;
     systemWorkspaceId: string | null;
@@ -153,6 +155,8 @@ export class ConversationV2Controller {
       status: pointer.status,
       isShared: pointer.isShared,
       workspaceIds: pointer.workspaceIds ?? [],
+      selectedSkillIds: pointer.selectedSkillIds ?? [],
+      selectedConnectorIds: pointer.selectedConnectorIds ?? [],
       lastEventAt: pointer.lastEventAt,
       eventCount: (pointer as unknown as { eventCount?: number }).eventCount ?? 0,
       systemWorkspaceId:

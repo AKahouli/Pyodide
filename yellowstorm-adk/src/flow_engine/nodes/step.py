@@ -254,6 +254,7 @@ async def run_step(
     if not isinstance(metadata, dict):
         metadata = {}
 
+    deep_search = bool(metadata.get("deep_search", False))
     agent_name = str(metadata.get("agent_name") or "")
     agent_description = str(metadata.get("agent_description") or "")
     agent_model = metadata.get("agent_model") or node_config.get("model_id")
@@ -275,6 +276,24 @@ async def run_step(
     if agent_description:
         fallback_system_prompt = f"{agent_description}\n\n{fallback_system_prompt}"
     system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or fallback_system_prompt)
+    if deep_search:
+        system_prompt += (
+            "\n\n<deep_search_mode>\n"
+            "You are in DEEP SEARCH mode. You MUST follow this two-phase search strategy:\n\n"
+            "Phase 1 — Find relevant documents:\n"
+            "- Call search_relevant_documents(query=\"your search query\", workspace_id=\"...\") FIRST\n"
+            "- This returns top candidate documents with: document_id, file_name, hybrid_score, matched concepts\n"
+            "- Use the results to identify the most relevant documents for the user's question\n\n"
+            "Phase 2 — Extract detailed information:\n"
+            "- Using the file_name from Phase 1 results, call search_sections() or read_section()\n"
+            "  to get detailed content from those specific documents\n"
+            "- Cross-reference information across multiple documents when relevant\n"
+            "- Use matched_hl_concepts and matched_ll_concepts to guide follow-up searches\n\n"
+            "IMPORTANT: Always start with search_relevant_documents before using other search tools.\n"
+            "This ensures you find the most semantically relevant documents across the entire workspace first,\n"
+            "then dive deep into those specific documents for detailed answers.\n"
+            "</deep_search_mode>"
+        )
     system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
     has_agent = bool(agent_name)
 
@@ -287,6 +306,7 @@ async def run_step(
         agent_name=agent_name,
         agent_model=agent_model,
         node_model_id=node_config.get("model_id"),
+        deep_search=deep_search,
     )
 
     try:
@@ -397,6 +417,7 @@ async def run_step(
                     structured_output, agent_config, connector_bindings,
                     iteration, label, writer, hitl_policy, hitl_blockers,
                     _merge_human_context(state, new_human_context),
+                    deep_search=deep_search,
                 )
         except GraphInterrupt:
             raise
@@ -503,6 +524,7 @@ async def _execute_step(
     hitl_policy: dict[str, Any],
     hitl_blockers: list[dict[str, Any]],
     human_context: list[dict[str, Any]],
+    deep_search: bool = False,
 ) -> str:
     trigger_context = state.get("inputs", {})
     prompt_input_context = build_prompt_input_context(
@@ -580,6 +602,7 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
+        deep_search=deep_search,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
     )
     components: list[dict[str, Any]] = []

@@ -158,6 +158,7 @@ function syncUiStoreForRun(taskId?: string | null) {
     connectorSidebarOpen: false,
     skillSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
     ...(taskId !== undefined ? { selectedStepId: taskId } : {}),
   }));
@@ -175,6 +176,7 @@ function syncUiStoreForInterrupt(taskId: string) {
     connectorSidebarOpen: false,
     skillSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
   }));
   persistPanelOpen(true);
@@ -283,6 +285,7 @@ const initialState: PlaybookState = {
   connectorSidebarOpen: false,
   skillSidebarOpen: false,
   nodeEditorOpen: false,
+  graphPanelOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -700,6 +703,7 @@ function getChangedDefinitionFields(previous: UpdateFlowData, current: UpdateFlo
     'advisorAutopilotEnabled',
     'advisorAutopilotTargetScore',
     'advisorAutopilotMaxTurns',
+    'deepSearch',
     'nodes',
     'controlEdges',
     'dataBindings',
@@ -4865,6 +4869,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
+      setGraphPanelOpen: (open) => {
+        usePlaybookUiStore.getState().setGraphPanelOpen(open);
+        set({ graphPanelOpen: open });
+      },
+
       // ===== Undo/Redo =====
 
       captureSnapshot: () => {
@@ -5545,6 +5554,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           connectorSidebarOpen: false,
           skillSidebarOpen: false,
           nodeEditorOpen: false,
+          graphPanelOpen: false,
           selectedStepId: inspection.nodeId,
           pageMode: 'run',
         });

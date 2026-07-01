@@ -26,6 +26,7 @@ import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
 import { WorkspaceIngestController } from './workspace-ingest.controller';
 import { WorkspaceInternalController } from './workspace-internal.controller';
+import { WorkspaceAccessCheckController } from './workspace-access-check.controller';
 import { WorkspaceShareController } from './workspace-share.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
@@ -74,6 +75,7 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceDocumentController,
     WorkspaceIngestController,
     WorkspaceInternalController,
+    WorkspaceAccessCheckController,
     WorkspaceShareController,
   ],
   providers: [

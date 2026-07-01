@@ -118,10 +118,15 @@ interface Model {
   chef: string;       // Provider display name (e.g., "OpenAI")
   chefSlug: string;   // Provider slug (e.g., "openai")
   providers: string[]; // List of provider slugs
+  type: string;       // Classification ("chat", "embedding", ...)
   isActive: boolean;  // Whether model is available
   isDefault: boolean; // Whether this is the default model
 }
 ```
+
+> The public `/models` API only returns `type === "chat"` models, so this
+> frontend list is chat-only by design. Other types (embeddings, image
+> generation, …) are managed in the admin panel.
 
 ### ModelsListResponse
 

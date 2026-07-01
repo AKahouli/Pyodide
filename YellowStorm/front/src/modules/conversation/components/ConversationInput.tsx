@@ -1,10 +1,12 @@
 import { useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { X, Reply } from 'lucide-react';
+import { X, Reply, Search } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -33,6 +35,8 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
+  const deepSearchEnabled = useDeepSearchEnabled();
+  const setDeepSearchEnabled = useSetDeepSearchEnabled();
 
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
@@ -102,6 +106,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         content: message.text || '',
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
+        deepSearchEnabled: deepSearchEnabled || undefined,
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
@@ -195,6 +200,16 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={false}
+        extraTools={
+          <PromptInputButton
+            type="button"
+            onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
+            className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
+            title={t('input.deepSearch')}
+          >
+            <Search className="h-4 w-4" />
+          </PromptInputButton>
+        }
         belowTextarea={
           <ComposerSuggestionChips
             fetchDisabled={

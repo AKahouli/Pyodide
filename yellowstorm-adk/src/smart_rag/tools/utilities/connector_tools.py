@@ -33,6 +33,7 @@ class ConnectorToolContext:
     workspace_names: Optional[List[str]] = None
     brain_documents: Optional[List[Dict[str, Any]]] = None
     session_id: Optional[str] = None
+    agent_id: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -798,22 +799,27 @@ def _collect_connector_context(
 ) -> Dict[str, List[str]]:
     file_names: List[Any] = []
     workspace_ids: List[Any] = []
+    header_workspace_ids: List[Any] = []
     workspace_paths: List[Any] = []
 
     for doc in brain_documents or []:
         if not isinstance(doc, dict):
             continue
         file_names.append(doc.get("file_name") or doc.get("filename"))
-        workspace_ids.append(doc.get("workspace_id"))
+        doc_workspace_id = doc.get("workspace_id")
+        workspace_ids.append(doc_workspace_id)
+        header_workspace_ids.append(doc_workspace_id)
         workspace_paths.append(doc.get("workspace_name") or doc.get("workspace_id"))
 
     workspace_ids.append(workspace_id)
+    header_workspace_ids.append(workspace_id)
     workspace_ids.extend(workspace_names or [])
     workspace_paths.extend(workspace_names or [])
 
     return {
         "file_names": _unique_strings(file_names),
         "workspace_ids": _unique_strings(workspace_ids),
+        "header_workspace_ids": _unique_strings(header_workspace_ids),
         "workspace_paths": _unique_strings(workspace_paths),
     }
 
@@ -822,10 +828,15 @@ def _apply_streamable_http_context_headers(
     auth_headers: Dict[str, str],
     context: Dict[str, List[str]],
     session_id: Optional[str],
+    agent_id: Optional[str] = None,
 ) -> Dict[str, str]:
     headers = dict(auth_headers)
+
+    if agent_id:
+        headers["X-Agent-Id"] = agent_id
     file_names = context.get("file_names") or []
     workspace_ids = context.get("workspace_ids") or []
+    header_workspace_ids = context.get("header_workspace_ids") or workspace_ids
     workspace_paths = context.get("workspace_paths") or []
 
     if len(file_names) == 1:
@@ -836,6 +847,9 @@ def _apply_streamable_http_context_headers(
     if workspace_ids:
         headers["workspace_id"] = json.dumps(workspace_ids) if len(workspace_ids) > 1 else workspace_ids[0]
         headers.pop("workspace_name", None)
+
+    if header_workspace_ids:
+        headers["Workspace-Id"] = ",".join(header_workspace_ids)
 
     if session_id:
         headers["x-conversation-id"] = session_id
@@ -1060,6 +1074,7 @@ def create_connector_tools(
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
                 _session_id: Optional[str] = context.session_id,
+                _agent_id: Optional[str] = context.agent_id,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -1089,6 +1104,7 @@ def create_connector_tools(
                         _auth_headers,
                         _connector_context,
                         _session_id,
+                        _agent_id,
                     )
                     if _transport_type == "streamable_http"
                     else dict(_auth_headers)

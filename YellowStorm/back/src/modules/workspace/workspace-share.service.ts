@@ -87,6 +87,32 @@ export class WorkspaceShareService {
   }
 
   /**
+   * Return whether a user has any kind of access (owner OR active share,
+   * read or readwrite) to a single workspace. Used by external services
+   * (indexing) that need a simple yes/no access check. Returns false for
+   * malformed ids rather than throwing.
+   */
+  async hasAccess(userId: string, workspaceId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(workspaceId)) {
+      return false;
+    }
+
+    const workspaceObjectId = new Types.ObjectId(workspaceId);
+    const userObjectId = new Types.ObjectId(userId);
+
+    const [owned, shared] = await Promise.all([
+      this.workspaceModel
+        .exists({ _id: workspaceObjectId, createdBy: userObjectId })
+        .exec(),
+      this.shareModel
+        .exists({ workspaceId: workspaceObjectId, sharedWithUserId: userObjectId })
+        .exec(),
+    ]);
+
+    return Boolean(owned || shared);
+  }
+
+  /**
    * Share workspace with one or more users by email
    */
   async share(

@@ -52,6 +52,18 @@ export class ConversationV2Session extends Document {
   @Prop({ type: [String], default: [] })
   workspaceIds!: string[];
 
+  // Skill ObjectIds the user selected for this session, refreshed on every message
+  // send. Persisted so the UI can re-display the selection on session reload —
+  // mirrors v1's conversation-level `selectedSkills`.
+  @Prop({ type: [String], default: [] })
+  selectedSkillIds!: string[];
+
+  // Connector ObjectIds selected for this session, refreshed on every message
+  // send and persisted so the UI can re-display the selection on reload (mirrors
+  // selectedSkillIds).
+  @Prop({ type: [String], default: [] })
+  selectedConnectorIds!: string[];
+
   // Per-session monotonic counter assigned to every persisted event. Bumped
   // atomically via $inc inside ConversationV2EventStoreService.append.
   @Prop({ type: Number, default: 0, min: 0 })

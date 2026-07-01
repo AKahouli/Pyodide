@@ -34,6 +34,8 @@ interface Props {
   onAdvisorAutopilotChange?: (enabled: boolean) => void;
   advisorScoringMode?: import('../types').AdvisorScoringMode;
   onAdvisorScoringModeChange?: (mode: import('../types').AdvisorScoringMode) => void;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
   triggersOpen?: boolean;
@@ -66,6 +68,8 @@ export function PlaybookToolbar({
   onAdvisorAutopilotChange,
   advisorScoringMode = 'llm',
   onAdvisorScoringModeChange,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
   onTriggers,
   triggersOpen = false,
   designSettings,

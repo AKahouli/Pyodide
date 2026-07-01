@@ -5,6 +5,10 @@ import * as protoLoader from '@grpc/proto-loader';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoggerService } from '@modules/logger';
+import {
+  buildGrpcChannelCredentials,
+  createGrpcMetadata,
+} from '../../../common/grpc/grpc-security.util';
 
 @Injectable()
 export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDestroy {
@@ -42,10 +46,14 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
 
   generatePlaybook(request: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      this.chatbotClient.GeneratePlaybook(request, (err: any, response: any) => {
-        if (err) return reject(err);
-        resolve(response);
-      });
+      this.chatbotClient.GeneratePlaybook(
+        request,
+        createGrpcMetadata(this.configService),
+        (err: any, response: any) => {
+          if (err) return reject(err);
+          resolve(response);
+        },
+      );
     });
   }
 
@@ -59,7 +67,7 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
         suggestionTypeCount: request.suggestion_types?.length ?? 0,
       });
 
-      this.chatbotClient.AdvisePlaybookNode(request, { deadline }, (err: Error | null, response: any) => {
+      this.chatbotClient.AdvisePlaybookNode(request, createGrpcMetadata(this.configService), { deadline }, (err: Error | null, response: any) => {
         if (err) {
           this.logger.error('gRPC AdvisePlaybookNode call error', {
             playbookId: request.playbook_id,
@@ -78,7 +86,7 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
     return new Promise((resolve, reject) => {
       const deadline = new Date(Date.now() + this.grpcTimeoutMs);
 
-      this.chatbotClient.EvaluateTask(request, { deadline }, (err: Error | null, response: any) => {
+      this.chatbotClient.EvaluateTask(request, createGrpcMetadata(this.configService), { deadline }, (err: Error | null, response: any) => {
         if (err) {
           this.logger.error('gRPC EvaluateTask call error', {
             executionId: request.execution_id,
@@ -108,9 +116,14 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
       const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
       const chatbotPackage = protoDescriptor.chatbot as any;
 
+      const { credentials, options } = buildGrpcChannelCredentials(
+        this.configService,
+        (msg) => this.logger.warn(msg),
+      );
       this.chatbotClient = new chatbotPackage.ChatbotService(
         this.grpcUrl,
-        grpc.credentials.createInsecure(),
+        credentials,
+        options,
       );
 
       const deadline = new Date();

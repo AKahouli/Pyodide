@@ -909,6 +909,7 @@ export interface AdminModelResponse {
   chefSlug: string;
   litellmModel: string;
   providers: string[];
+  type: string;
   isActive: boolean;
   isDefault: boolean;
 }
@@ -918,11 +919,25 @@ export interface AdminModelsListResponse {
   total: number;
 }
 
+export const MODEL_TYPES = [
+  'chat',
+  'completion',
+  'embedding',
+  'image_generation',
+  'audio_transcription',
+  'audio_speech',
+  'moderation',
+  'search',
+] as const;
+
+export type ModelType = (typeof MODEL_TYPES)[number];
+
 export interface UpdateModelRequest {
   name?: string;
   chef?: string;
   chefSlug?: string;
   providers?: string[];
+  type?: string;
   isActive?: boolean;
 }
 

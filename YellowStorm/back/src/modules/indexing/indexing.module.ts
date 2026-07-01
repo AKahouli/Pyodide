@@ -7,6 +7,7 @@ import { WorkspaceSetting, WorkspaceSettingSchema } from '../workspace/schemas/w
 import { IndexingService } from './indexing.service';
 import { IndexingController } from './indexing.controller';
 import { IndexingWebhookController } from './indexing-webhook.controller';
+import { CommunityGraphController } from './community-graph.controller';
 import { IndexingClientService } from './indexing-client.service';
 import { WorkspaceOwnerGuard } from '../workspace/guards/workspace-owner.guard';
 import { AuthModule } from '../auth/auth.module';
@@ -26,7 +27,7 @@ import indexingConfig from '../../config/indexing.config';
     forwardRef(() => NotificationsModule),
     LoggerModule,
   ],
-  controllers: [IndexingController, IndexingWebhookController],
+  controllers: [IndexingController, IndexingWebhookController, CommunityGraphController],
   providers: [IndexingService, IndexingClientService, WorkspaceOwnerGuard],
   exports: [IndexingService],
 })

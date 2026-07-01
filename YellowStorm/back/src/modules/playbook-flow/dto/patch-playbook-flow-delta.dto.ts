@@ -64,6 +64,11 @@ class PatchPlaybookFlowDeltaFieldsDto {
   @ArrayMaxSize(1)
   @IsString({ each: true })
   workspaces?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
 }
 
 class PatchPlaybookFlowNodePositionUpdateDto {

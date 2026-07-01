@@ -9,7 +9,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+# Holds the display user (username/email) — used for the [%(user)s] log column.
 user_ctx: ContextVar[str | None] = ContextVar("user", default=None)
+# Holds the stable user identifier (user_id) — used for logs/metadata (e.g. LiteLLM).
+user_id_ctx: ContextVar[str | None] = ContextVar("user_id", default=None)
 
 
 class UserContext:
@@ -37,11 +40,30 @@ class UserContext:
         return user_ctx.get() or 'unknown'
 
     @classmethod
+    def set_user_id(cls, user_id: str) -> None:
+        """
+        Set the current stable user identifier (user_id) in the context.
+        Args:
+            user_id (str): The stable user identifier.
+        """
+        user_id_ctx.set(user_id)
+
+    @classmethod
+    def get_user_id(cls) -> str:
+        """
+        Get the current stable user identifier (user_id) from the context.
+        Returns:
+            str: The user_id, or 'unknown' if not set.
+        """
+        return user_id_ctx.get() or 'unknown'
+
+    @classmethod
     def clear(cls) -> None:
         """
         Clear the user context (called at the end of request processing).
         """
-        token = user_ctx.set(None)
+        user_ctx.set(None)
+        user_id_ctx.set(None)
 
 
 
@@ -73,6 +95,49 @@ def get_user() -> str:
         str: The user ID, or 'unknown' if not set.
     """
     return UserContext.get_user()
+
+def get_user_id() -> str:
+    """ Retrieve the stable user identifier (user_id) for the current request.
+    Returns:
+        str: The user_id, or 'unknown' if not set.
+    """
+    return UserContext.get_user_id()
+
+def get_user_label() -> str:
+    """Build a combined "username (user_id)" label for external systems.
+
+    Used as the LiteLLM ``user`` (end_user) field so its logs show both the
+    human-readable name and the stable user_id in a single column. Falls back
+    gracefully when either part is missing.
+
+    Returns:
+        str: ``"username (user_id)"``, or whichever part is available, or 'unknown'.
+    """
+    username = get_user()
+    user_id = get_user_id()
+    if username == 'unknown' and user_id == 'unknown':
+        return 'unknown'
+    if username == 'unknown':
+        return user_id
+    if user_id == 'unknown':
+        return username
+    return f"{username} ({user_id})"
+
+def set_user_context(user_id: str | None, username: str | None):
+    """Bind both the user_id and the display username to the request context.
+
+    Sets the stable user_id (used for logs/metadata) and returns the token for the
+    display username contextvar so callers can reset it exactly like before.
+
+    Args:
+        user_id (str | None): The stable user identifier.
+        username (str | None): The display username (or email).
+
+    Returns:
+        Token for the username contextvar (pass to ``user_ctx.reset``).
+    """
+    user_id_ctx.set(user_id or None)
+    return user_ctx.set(username or None)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Handle HTTP requests and set correlation ID + user context."""

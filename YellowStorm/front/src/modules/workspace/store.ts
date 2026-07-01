@@ -213,7 +213,7 @@ interface WorkspaceActions {
   bulkDeleteDocuments: (workspaceId: string, docIds: string[]) => Promise<BulkDeleteResult>;
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
-  reindexDocument: (workspaceId: string, docId: string) => Promise<void>;
+  reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
   updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
@@ -241,7 +241,7 @@ interface WorkspaceActions {
   addFilesToQueue: (files: File[], workspaceId: string, folderId?: string) => void;
   removeFromQueue: (fileId: string) => void;
   clearQueue: () => void;
-  startUpload: () => Promise<void>;
+  startUpload: (deepSearch?: boolean, autoIndex?: boolean) => Promise<void>;
   cancelUpload: (fileId: string) => void;
   updateUploadProgress: (fileId: string, progress: number) => void;
   updateUploadStatus: (fileId: string, status: UploadFileStatus, error?: string) => void;
@@ -280,7 +280,7 @@ interface WorkspaceActions {
   deletePageFolder: (id: string) => Promise<void>;
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
-  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean }) => Promise<void>;
+  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -865,9 +865,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         return response.url;
       },
 
-      reindexDocument: async (workspaceId, docId) => {
+      reindexDocument: async (workspaceId, docId, deepSearch) => {
         try {
-          const result = await workspaceApi.reindexDocument(workspaceId, docId);
+          const result = await workspaceApi.reindexDocument(workspaceId, docId, deepSearch);
 
           // Merge only returned fields into existing document
           const state = get();
@@ -1132,7 +1132,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ uploadQueue: [], uploadSessionId: null });
       },
 
-      startUpload: async () => {
+      startUpload: async (deepSearch?: boolean, autoIndex?: boolean) => {
         const state = get();
         const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
 
@@ -1162,6 +1162,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                   get().updateUploadProgress(item.id, progress);
                 },
                 item.folderId,
+                deepSearch,
+                autoIndex,
               );
               get().updateUploadStatus(item.id, 'completed');
 
@@ -1223,7 +1225,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
             // Always complete bulk session so backend can finalize
             try {
-              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId);
+              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch, autoIndex);
 
               if (failCount === 0) {
                 toast.success(tToast('upload.successTitle', 'Upload complete'), {
@@ -1816,7 +1818,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         get().addFilesToQueue(validFiles, workspaceId);
         try {
-          await get().startUpload();
+          await get().startUpload(options?.deepSearch, options?.autoIndex);
           toast.success(
             validFiles.length === 1
               ? 'Fichier ajouté'
@@ -1844,26 +1846,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             }
             // Refresh again so pageFiles reflects new folder assignments
             await get().refreshPageData();
-          }
-
-          if (options?.autoIndex) {
-            if (newFileIds.length > 0) {
-              const results = await Promise.allSettled(
-                newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId)),
-              );
-              const failed = results.filter((r) => r.status === 'rejected').length;
-              if (failed === 0) {
-                toast.success(
-                  newFileIds.length === 1
-                    ? 'Indexation lancée'
-                    : `Indexation lancée pour ${newFileIds.length} fichiers`,
-                );
-              } else if (failed === newFileIds.length) {
-                toast.error("Échec du lancement de l'indexation");
-              } else {
-                toast.warning(`Indexation partielle : ${failed} échec(s)`);
-              }
-            }
           }
         } catch (err) {
           toast.error(getApiErrorMessage(err, "Échec de l'upload"));

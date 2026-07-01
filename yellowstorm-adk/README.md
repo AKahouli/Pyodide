@@ -188,6 +188,7 @@ Key configuration groups:
 | Auth | `AUTH_USERNAME`, `AUTH_PASSWORD`, `SECRET_KEY`, `ALGORITHM` |
 | Observability | `LANGFUSE_HOST`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY` |
 | gRPC | `GRPC_ENABLED` (default: `true`), `GRPC_PORT` (default: `50051`) |
+| gRPC security (secure by default) | `GRPC_API_KEY` (caller auth via `x-api-key` metadata — **required**), `GRPC_TLS_CERT_PATH`, `GRPC_TLS_KEY_PATH` (**required**), `GRPC_ALLOW_INSECURE` (default `false`; explicit local-dev opt-out — runs plaintext + no auth) |
 
 ### Running
 

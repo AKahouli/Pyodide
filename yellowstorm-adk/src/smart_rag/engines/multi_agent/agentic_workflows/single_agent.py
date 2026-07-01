@@ -65,6 +65,13 @@ async def handle_single_agent_workflow(
         # Give the agent access to the conversation's documents (search needs them).
         agents = DocumentHelpers.merge_user_request_brain_documents_into_agents(agents, user_request)
 
+        if getattr(user_request, "deep_search_enabled", False):
+            agent = agents[0]
+            existing_tools = getattr(agent, "tools", None) or []
+            if not any(isinstance(t, dict) and t.get("name") == "deep_search" for t in existing_tools):
+                agent.tools = [*existing_tools, {"name": "deep_search"}]
+                logger.info("[MONO WORKFLOW] deep_search_enabled=True — added deep_search tool to agent")
+
         agent_data = team.agent_helper._prepare_agent_data(agents[0], user_request, team)
         team.agent_repository.add_agent(agent_data)
         single_agent_span.event(
