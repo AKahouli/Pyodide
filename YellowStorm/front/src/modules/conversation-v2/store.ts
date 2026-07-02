@@ -14,7 +14,11 @@ interface State {
   events: AgentEvent[];
   streaming: boolean;
   streamError: string | null;
-  rightPanelMode: 'closed' | 'tool';
+  rightPanelMode: 'closed' | 'tool' | 'app';
+  /** Latest agent-pushed application component (embeddable web app / preview)
+   *  for the current session, shown in the right panel when rightPanelMode is
+   *  'app'. Null until an `application_component` event lands. */
+  applicationComponent: { url: string; title: string } | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -152,6 +156,7 @@ const initial: State = {
   streaming: false,
   streamError: null,
   rightPanelMode: 'closed',
+  applicationComponent: null,
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -297,6 +302,7 @@ function freshViewState(): Partial<State> {
     liveAssistantIds: new Set<string>(),
     selectedToolCallId: null,
     rightPanelMode: 'closed',
+    applicationComponent: null,
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
@@ -332,6 +338,7 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
+          const applicationComponent = deriveApplicationComponent(cached.events);
           set(
             {
               ...freshViewState(),
@@ -343,6 +350,8 @@ export const useConversationV2Store = create<State & Actions>()(
               title: cached.title,
               streaming: cached.streaming,
               streamError: cached.streamError,
+              applicationComponent,
+              ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
               streamingStateCache: newCache,
             },
             false,
@@ -547,13 +556,17 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
-      replayEvents: (events) =>
+      replayEvents: (events) => {
+        const applicationComponent = deriveApplicationComponent(events);
         set(
           {
             events: dedupeReplayEvents(events),
             title: deriveTitle(events) ?? null,
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
+            applicationComponent,
+            // Re-surface the app viewer on reload when the session has one.
+            ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
             lastSequence: events.reduce(
               (max, e) =>
                 typeof (e as { sequence?: number }).sequence === 'number'
@@ -564,7 +577,8 @@ export const useConversationV2Store = create<State & Actions>()(
           },
           false,
           'replayEvents',
-        ),
+        );
+      },
       stop: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -702,6 +716,15 @@ export const useConversationV2Store = create<State & Actions>()(
               case 'wait':
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
+              case 'application_component':
+                // Agent pushed an embeddable app/preview: surface it in the side
+                // panel immediately (switching the panel away from any tool view).
+                return withSeq({
+                  events: [...state.events, event],
+                  applicationComponent: { url: event.url, title: event.title ?? '' },
+                  rightPanelMode: 'app',
+                  selectedToolCallId: null,
+                });
               case 'message': {
                 const nextLiveAssistantIds =
                   event.role === 'assistant'
@@ -739,6 +762,23 @@ export const useConversationV2Store = create<State & Actions>()(
 function deriveTitle(events: AgentEvent[]): string | undefined {
   const last = [...events].reverse().find((e) => e.type === 'title');
   return last?.type === 'title' ? last.title : undefined;
+}
+
+/**
+ * The application component to show in the side panel is whatever the agent
+ * pushed last. Used on replay/session-switch to restore the app viewer from
+ * persisted history (the live path sets it directly in handleEvent).
+ */
+function deriveApplicationComponent(
+  events: AgentEvent[],
+): { url: string; title: string } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'application_component') {
+      return { url: ev.url, title: ev.title ?? '' };
+    }
+  }
+  return null;
 }
 
 /**

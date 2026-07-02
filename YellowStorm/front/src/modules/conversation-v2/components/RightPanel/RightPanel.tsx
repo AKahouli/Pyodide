@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
+import { ApplicationComponentView } from './ApplicationComponentView';
 import { DeployControls } from './DeployControls';
 
 export function RightPanel() {
   const { t } = useConversationV2Translation();
-  const { mode, close, selectedToolCallId, liveToolCallId, jumpToLive, streaming } =
+  const { mode, close, selectedToolCallId, liveToolCallId, jumpToLive, streaming, applicationComponent } =
     useConversationV2Store(
       useShallow((s) => ({
         mode: s.rightPanelMode,
@@ -17,10 +18,36 @@ export function RightPanel() {
         liveToolCallId: s.liveToolCallId,
         jumpToLive: s.jumpToLive,
         streaming: s.streaming,
+        applicationComponent: s.applicationComponent,
       })),
     );
 
   if (mode === 'closed') return null;
+
+  // App-viewer mode: an agent-pushed embeddable web app / preview. Rendered
+  // full-height with its own header title; no tool "jump to live" affordance.
+  if (mode === 'app') {
+    if (!applicationComponent) return null;
+    return (
+      <aside className='flex h-full w-[44%] min-w-[28rem] max-w-[44rem] shrink-0 flex-col border-l bg-card/40'>
+        <header className='flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3'>
+          <span className='truncate text-sm font-semibold'>
+            {applicationComponent.title || t('rightPanel.title')}
+          </span>
+          <div className='flex shrink-0 items-center gap-1'>
+            <DeployControls />
+            <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
+              <XIcon className='size-4' />
+            </Button>
+          </div>
+        </header>
+        <div className='flex min-h-0 flex-1 flex-col'>
+          <ApplicationComponentView url={applicationComponent.url} title={applicationComponent.title} />
+        </div>
+      </aside>
+    );
+  }
+
   if (!selectedToolCallId) return null;
 
   const realTime = selectedToolCallId === liveToolCallId;

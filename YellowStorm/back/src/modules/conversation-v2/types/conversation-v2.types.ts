@@ -6,7 +6,8 @@ export type ConversationV2EventType =
   | 'title'
   | 'done'
   | 'wait'
-  | 'error';
+  | 'error'
+  | 'application_component';
 
 export interface ConversationV2BaseEvent {
   event_id: string;
@@ -46,6 +47,12 @@ export interface ErrorEventPayload extends ConversationV2BaseEvent {
   error: string;
 }
 
+// Agent-pushed embeddable web app / preview, rendered in the side panel.
+export interface ApplicationComponentEventPayload extends ConversationV2BaseEvent {
+  url: string;
+  title?: string;
+}
+
 export type DoneEventPayload = ConversationV2BaseEvent;
 export type WaitEventPayload = ConversationV2BaseEvent;
 
@@ -78,7 +85,8 @@ export interface ConversationV2Event {
     | TitleEventPayload
     | ErrorEventPayload
     | DoneEventPayload
-    | WaitEventPayload;
+    | WaitEventPayload
+    | ApplicationComponentEventPayload;
 }
 
 export interface SessionWithEvents {

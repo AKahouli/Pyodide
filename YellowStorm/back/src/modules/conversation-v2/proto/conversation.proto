@@ -127,6 +127,7 @@ message Event {
     DoneEvent    done    = 15;
     WaitEvent    wait    = 16;
     ErrorEvent   error   = 17;
+    ApplicationComponentEvent application_component = 18;
   }
 }
 
@@ -159,6 +160,15 @@ message TitleEvent { string title = 1; }
 message DoneEvent  {}
 message WaitEvent  {}
 message ErrorEvent { string error = 1; }
+
+// Pushes a UI "application component" (an embeddable web app / preview) for the
+// frontend to render in the conversation's side panel. Unlike a tool result,
+// this is not tied to a tool_call — the agent asks the app to display `url`
+// (shown in an <iframe>) directly. `title` labels the panel.
+message ApplicationComponentEvent {
+  string url = 1;
+  string title = 2;
+}
 
 message ToolContent {
   oneof variant {

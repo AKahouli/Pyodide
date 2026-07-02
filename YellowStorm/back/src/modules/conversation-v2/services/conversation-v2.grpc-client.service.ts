@@ -74,6 +74,7 @@ interface RawProtoEvent {
   done?: Record<string, never>;
   wait?: Record<string, never>;
   error?: { error: string };
+  application_component?: { url: string; title?: string };
 }
 
 @Injectable()
@@ -474,6 +475,15 @@ export class ConversationV2GrpcClientService
         return { type: 'wait', payload: base };
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
+      case 'application_component':
+        return {
+          type: 'application_component',
+          payload: {
+            ...base,
+            url: raw.application_component!.url,
+            title: raw.application_component!.title,
+          },
+        };
       default:
         throw new Error(`Unknown event payload: ${raw.payload}`);
     }

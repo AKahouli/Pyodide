@@ -14,7 +14,7 @@ export interface PipeEvent {
 type Listener = (event: PipeEvent) => void;
 
 const EVENT_TYPES: AgentEvent['type'][] = [
-  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error',
+  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component',
 ];
 
 /**

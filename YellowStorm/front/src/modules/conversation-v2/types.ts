@@ -1,5 +1,5 @@
 export type ConversationV2EventType =
-  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error';
+  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error' | 'application_component';
 
 export interface BaseEvent {
   event_id: string;
@@ -20,7 +20,8 @@ export type AgentEvent =
   | ({ type: 'title' } & BaseEvent & { title: string })
   | ({ type: 'done' } & BaseEvent)
   | ({ type: 'wait' } & BaseEvent)
-  | ({ type: 'error' } & BaseEvent & { error: string });
+  | ({ type: 'error' } & BaseEvent & { error: string })
+  | ({ type: 'application_component' } & BaseEvent & { url: string; title?: string });
 
 export type ToolContent =
   | { kind: 'browser'; screenshot_url: string; url?: string; title?: string }
