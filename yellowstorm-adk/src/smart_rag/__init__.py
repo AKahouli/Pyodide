@@ -14,7 +14,7 @@ service = ChatRAGService()
 await service.process_chat_request(request, queue)
 ```
 
-For multi-agent team functionality:  
+For multi-agent team functionality:
 ```python
 from src.smart_rag.core import AgentTeamService
 
@@ -25,7 +25,7 @@ await service.process_team_request(request, queue)
 ## Architecture
 
 - `core/`: Main service entry points for both endpoints
-- `engines/`: Processing engines (traditional & multi_agent)  
+- `engines/`: Processing engines (traditional & multi_agent)
 - `agents/`: Agent management (factories, core, generators, tools)
 - `tools/`: Tool implementations (search, utilities, infrastructure)
 - `messaging/`: Message processing and formatting
@@ -34,33 +34,32 @@ await service.process_team_request(request, queue)
 
 ## Endpoints Mapping
 
-- `/chatbots/chatWithADK` � `core.ChatRAGService` � `engines.traditional`
-- `/agentic/run_agent_team` � `core.AgentTeamService` � `engines.multi_agent`
+- `/chatbots/chatWithADK` -> `core.ChatRAGService` -> `engines.traditional`
+- `/agentic/run_agent_team` -> `core.AgentTeamService` -> `engines.multi_agent`
 """
 
-def __getattr__(name):
-    if name == "ChatRAGService":
-        from .core.chat_rag_service import ChatRAGService
-        return ChatRAGService
-    if name == "AgentTeamService":
-        from .core.agent_team_service import AgentTeamService
-        return AgentTeamService
-    raise AttributeError(f"module {__name__} has no attribute {name}")
+import importlib
+
+__version__ = "1.0.0"
+__author__ = "SmartRAG Team"
 
 __all__ = [
-    'ChatRAGService',
-    'AgentTeamService',
+    "ChatRAGService",
+    "AgentTeamService",
 ]
 
 
 def __getattr__(name: str):
-    if name == 'ChatRAGService':
+    """Lazy-load public exports without breaking submodule attribute access."""
+    if name == "ChatRAGService":
         from .core.chat_rag_service import ChatRAGService
-        return ChatRAGService
-    if name == 'AgentTeamService':
-        from .core.agent_team_service import AgentTeamService
-        return AgentTeamService
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-__version__ = "1.0.0"
-__author__ = "SmartRAG Team"
+        return ChatRAGService
+    if name == "AgentTeamService":
+        from .core.agent_team_service import AgentTeamService
+
+        return AgentTeamService
+    try:
+        return importlib.import_module(f".{name}", __name__)
+    except ModuleNotFoundError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc

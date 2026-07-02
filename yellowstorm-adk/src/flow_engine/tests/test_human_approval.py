@@ -27,8 +27,21 @@ class TestHumanApproval:
         assert graph is not None
 
     def test_human_approval_sets_pending_state(self):
+        import asyncio
         import json
+
         snapshot = load_fixture("human_approval.json")
         ha_node = next(n for n in snapshot["nodes"] if n.get("kind") == "human_approval")
-        result = {}  # Would be state dict in real execution
-        assert ha_node.get("human_approval_config", {}).get("prompt_template") == "Approve the result?"
+        state = {
+            "iterations": {ha_node["id"]: 0},
+            "task_outputs": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        }
+        result = asyncio.run(
+            run_human_approval(ha_node["id"], ha_node, state),
+        )
+        assert result["pending_approval"]["node_id"] == ha_node["id"]
+        assert result["pending_approval"]["prompt"] == "Approve the result?"
