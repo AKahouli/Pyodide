@@ -268,6 +268,9 @@ export const API_ENDPOINTS = {
   agentTypes: {
     active: '/agent-types/active',
   },
+  memoryCards: {
+    base: '/memory-cards',
+  },
   agents: {
     list: '/agents',
     all: '/agents/all',

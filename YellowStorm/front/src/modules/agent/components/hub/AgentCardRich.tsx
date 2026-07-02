@@ -1,10 +1,13 @@
+import { useState } from 'react';
 import { Ban, Copy, Eye, Globe, Loader2, Lock, LogOut, Pencil, Share2, Trash2 } from 'lucide-react';
+import { MdMemory } from 'react-icons/md';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Agent } from '../../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '@/modules/admin';
+import { AgentMemoriesModal } from '../AgentMemoriesModal';
 
 type Layout = 'grid' | 'list';
 
@@ -78,6 +81,7 @@ export function AgentCardRich({
 }: AgentCardRichProps) {
   const { t, language } = useModuleTranslation('agent');
   const { hasPermission } = usePermissions();
+  const [memoriesOpen, setMemoriesOpen] = useState(false);
 
   const isDefault = agent.isDefault;
   const isShared = !!agent.shareInfo;
@@ -112,6 +116,20 @@ export function AgentCardRich({
       )}
       onClick={(e) => e.stopPropagation()}
     >
+      {agent.hasSmartMemory && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMemoriesOpen(true);
+          }}
+          title="Mémoires"
+        >
+          <MdMemory className="h-4 w-4" />
+        </Button>
+      )}
       {canEdit && onEdit && (
         <Button
           variant="ghost"
@@ -237,8 +255,18 @@ export function AgentCardRich({
     </div>
   );
 
+  const memoriesModal = (
+    <AgentMemoriesModal
+      agent={agent}
+      open={memoriesOpen}
+      onOpenChange={setMemoriesOpen}
+      canDelete={!isReadOnly}
+    />
+  );
+
   if (layout === 'list') {
     return (
+      <>
       <div className="group relative flex items-center gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 transition hover:border-border hover:bg-accent/30">
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -277,10 +305,13 @@ export function AgentCardRich({
         </div>
         {actions}
       </div>
+      {memoriesModal}
+      </>
     );
   }
 
   return (
+    <>
     <div className="group relative flex h-full flex-col rounded-xl border border-border/60 bg-card p-5 transition hover:border-border hover:shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 text-[11px]">
@@ -345,5 +376,7 @@ export function AgentCardRich({
         {actions}
       </div>
     </div>
+    {memoriesModal}
+    </>
   );
 }
