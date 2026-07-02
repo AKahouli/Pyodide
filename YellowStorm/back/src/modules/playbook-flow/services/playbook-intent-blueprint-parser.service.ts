@@ -7,15 +7,14 @@ import {
   PlaybookIntentBlueprintIteratorStep,
   PlaybookIntentBlueprintLink,
   PlaybookIntentBlueprintNode,
-  PlaybookIntentBlueprintNodeKind,
   PlaybookIntentBlueprintParseResult,
   PlaybookIntentBlueprintPort,
+  PlaybookIntentBlueprintPrimitiveConfig,
+  PlaybookIntentBlueprintRouterCondition,
+  PlaybookIntentBlueprintRouterConfig,
   PlaybookIntentBlueprintSkillRef,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
-
-const SUPPORTED_NODE_KINDS: PlaybookIntentBlueprintNodeKind[] = [
-  'agent', 'action', 'evaluation', 'iterator', 'router', 'human_approval',
-];
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 
 const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = [
   'text', 'document', 'code', 'image', 'data', 'dashboard',
@@ -23,6 +22,8 @@ const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = 
 
 const ANCHOR_MODES = ['append', 'before', 'after', 'as_input'] as const;
 type AnchorMode = typeof ANCHOR_MODES[number];
+const EDGE_KINDS = ['sequential', 'conditional'] as const;
+const ROUTER_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] as const;
 
 @Injectable()
 export class PlaybookIntentBlueprintParserService {
@@ -38,28 +39,55 @@ export class PlaybookIntentBlueprintParserService {
       : null;
     if (!blueprintNode) return null;
 
-    const dropped: Array<{ rule: string; itemId: string }> = [];
-    const nodes = this.parseNodes(blueprintNode.nodes, dropped);
-    const links = this.parseLinks(blueprintNode.links, nodes.map((n) => n.ref), dropped);
-    const bindings = this.parseBindings(blueprintNode.bindings, nodes, dropped);
+    const diagnostics: PlaybookIntentDiagnostic[] = [];
+    const nodes = this.parseNodes(blueprintNode.nodes, diagnostics);
+    const misplacedLinks: unknown[] = [];
+    const misplacedBindings: unknown[] = [];
+    for (const node of Array.isArray(blueprintNode.nodes) ? blueprintNode.nodes : []) {
+      if (!node || typeof node !== 'object') continue;
+      const rawNode = node as Record<string, unknown>;
+      const iteratorRef = this.asString(rawNode.ref);
+      const iteratorBody = rawNode.iteratorBody;
+      if (!iteratorBody || typeof iteratorBody !== 'object') continue;
+      const rawBody = iteratorBody as Record<string, unknown>;
+      const stepRefs = new Set(
+        (nodes.find((parsedNode) => parsedNode.ref === iteratorRef)?.iteratorBody?.steps || [])
+          .map((step) => step.ref),
+      );
+      if (Array.isArray(rawBody.links)) {
+        misplacedLinks.push(...rawBody.links.map((link) => this.inferIteratorScopedEntry(link, iteratorRef, stepRefs)));
+      }
+      if (Array.isArray(rawBody.bindings)) {
+        misplacedBindings.push(...rawBody.bindings.map((binding) => this.inferIteratorScopedEntry(binding, iteratorRef, stepRefs)));
+      }
+    }
+    const links = this.parseLinks([...(Array.isArray(blueprintNode.links) ? blueprintNode.links : []), ...misplacedLinks], nodes, diagnostics);
+    const bindings = this.parseBindings([...(Array.isArray(blueprintNode.bindings) ? blueprintNode.bindings : []), ...misplacedBindings], nodes, diagnostics);
     const summary = this.asString(blueprintNode.summary) || this.asString(root.summary);
     const title = this.asString(blueprintNode.title) || this.asString(root.title) || summary || nodes[0]?.label;
     if (!title) {
-      this.warnDrop('blueprint_missing_title', 'blueprint.title');
+      this.warnDiagnostic({ severity: 'warning', stage: 'parser', code: 'blueprint_missing_title', itemId: 'blueprint.title', message: 'blueprint_missing_title' });
       return null;
     }
 
     return {
       blueprint: {
+        version: blueprintNode.version === 2 ? 2 : 1,
         title,
         summary,
         nodes,
         links,
         bindings,
-        assumptions: this.asStringArray(blueprintNode.assumptions),
-        riskFlags: this.asStringArray(blueprintNode.riskFlags),
+        assumptions: [
+          ...this.asStringArray(root.assumptions),
+          ...this.asStringArray(blueprintNode.assumptions),
+        ],
+        riskFlags: [
+          ...this.asStringArray(root.riskFlags),
+          ...this.asStringArray(blueprintNode.riskFlags),
+        ],
       },
-      dropped,
+      diagnostics,
     };
   }
 
@@ -100,7 +128,7 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseNodes(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentBlueprintNode[] {
     if (!Array.isArray(value)) return [];
 
@@ -109,41 +137,44 @@ export class PlaybookIntentBlueprintParserService {
 
     for (const item of value) {
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_node_invalid', 'unknown');
+        this.recordDiagnostic(diagnostics, 'blueprint_node_invalid', 'unknown');
         continue;
       }
       const raw = item as Record<string, unknown>;
       const ref = this.asString(raw.ref);
       const label = this.asString(raw.label) || this.asString(raw.title);
       const purpose = this.asString(raw.purpose) || this.asString(raw.description);
+      const nodeTemplateKey = this.parseNodeTemplateKey(raw, ref || label || 'unknown');
 
-      if (!ref || !label) {
-        this.recordDrop(dropped, 'blueprint_node_missing_fields', ref || label || 'unknown');
+      if (!ref || !label || !nodeTemplateKey) {
+        this.recordDiagnostic(diagnostics, 'blueprint_node_missing_fields', ref || label || 'unknown');
         continue;
       }
       if (seenRefs.has(ref)) {
-        this.recordDrop(dropped, 'blueprint_node_duplicate_ref', ref);
+        this.recordDiagnostic(diagnostics, 'blueprint_node_duplicate_ref', ref);
         continue;
       }
-      const nodeType = this.parseNodeKind(raw.nodeType, dropped, ref);
-      const templateType = this.asString(raw.templateType) || null;
-      const inputPorts = this.parsePorts(raw.inputPorts, dropped, `${ref}.inputs`);
-      const outputPorts = this.parsePorts(raw.outputPorts, dropped, `${ref}.outputs`);
+      const inputPorts = this.parsePorts(raw.inputPorts, diagnostics, `${ref}.inputs`);
+      const outputPorts = this.parsePorts(raw.outputPorts, diagnostics, `${ref}.outputs`);
       const anchor = this.parseAnchor(raw.anchor);
+      const primitive = this.parsePrimitive(raw.primitive, diagnostics, ref);
+      const routerConfig = primitive?.router || this.parseRouterConfig(raw.routerConfig ?? raw.router_config, diagnostics, ref);
 
       accepted.push({
         ref,
         label,
         purpose,
-        templateType,
-        nodeType,
+        nodeTemplateKey,
         agentHint: this.asString(raw.agentHint) || null,
+        ...(primitive ? { primitive: routerConfig ? { ...primitive, router: routerConfig } : primitive } : routerConfig ? { primitive: { kind: 'router', router: routerConfig } } : {}),
+        ...(routerConfig ? { routerConfig } : {}),
+        ...(this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) ? { humanApprovalConfig: this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) as Record<string, unknown> } : {}),
         inputPorts,
         outputPorts,
-        connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, dropped, ref),
-        skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, dropped, ref),
+        connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, diagnostics, ref),
+        skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, diagnostics, ref),
         anchor,
-        ...(nodeType === 'iterator' ? { iteratorBody: this.parseIteratorBody(raw.iteratorBody, dropped, ref) } : {}),
+        ...(raw.iteratorBody ? { iteratorBody: this.parseIteratorBody(raw.iteratorBody, diagnostics, ref) } : {}),
       });
       seenRefs.add(ref);
     }
@@ -153,7 +184,7 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseConnectorRefs(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintConnectorRef[] {
     if (!Array.isArray(value)) return [];
@@ -161,19 +192,19 @@ export class PlaybookIntentBlueprintParserService {
     const seen = new Set<string>();
     for (const item of value) {
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_connector_ref_invalid', ownerRef);
+        this.recordDiagnostic(diagnostics, 'blueprint_connector_ref_invalid', ownerRef);
         continue;
       }
       const raw = item as Record<string, unknown>;
       const connectorSlug = this.asString(raw.connector_slug ?? raw.connectorSlug);
       const actionKey = this.asString(raw.action_key ?? raw.actionKey);
       if (!connectorSlug || !actionKey) {
-        this.recordDrop(dropped, 'blueprint_connector_ref_missing_fields', `${ownerRef}:${connectorSlug || '?'}.${actionKey || '?'}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_connector_ref_missing_fields', `${ownerRef}:${connectorSlug || '?'}.${actionKey || '?'}`);
         continue;
       }
       const key = `${connectorSlug}:${actionKey}`;
       if (seen.has(key)) {
-        this.recordDrop(dropped, 'blueprint_connector_ref_duplicate', `${ownerRef}:${key}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_connector_ref_duplicate', `${ownerRef}:${key}`);
         continue;
       }
       seen.add(key);
@@ -184,25 +215,35 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseSkillRefs(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintSkillRef[] {
     if (!Array.isArray(value)) return [];
     const accepted: PlaybookIntentBlueprintSkillRef[] = [];
     const seen = new Set<string>();
     for (const item of value) {
+      if (typeof item === 'string') {
+        const skillSlug = this.asString(item);
+        if (!skillSlug || seen.has(skillSlug)) {
+          this.recordDiagnostic(diagnostics, skillSlug ? 'blueprint_skill_ref_duplicate' : 'blueprint_skill_ref_missing_fields', `${ownerRef}:${skillSlug || '?'}`);
+          continue;
+        }
+        seen.add(skillSlug);
+        accepted.push({ skillSlug, reason: null });
+        continue;
+      }
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_skill_ref_invalid', ownerRef);
+        this.recordDiagnostic(diagnostics, 'blueprint_skill_ref_invalid', ownerRef);
         continue;
       }
       const raw = item as Record<string, unknown>;
       const skillSlug = this.asString(raw.skill_slug ?? raw.skillSlug);
       if (!skillSlug) {
-        this.recordDrop(dropped, 'blueprint_skill_ref_missing_fields', `${ownerRef}:?`);
+        this.recordDiagnostic(diagnostics, 'blueprint_skill_ref_missing_fields', `${ownerRef}:?`);
         continue;
       }
       if (seen.has(skillSlug)) {
-        this.recordDrop(dropped, 'blueprint_skill_ref_duplicate', `${ownerRef}:${skillSlug}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_skill_ref_duplicate', `${ownerRef}:${skillSlug}`);
         continue;
       }
       seen.add(skillSlug);
@@ -211,23 +252,13 @@ export class PlaybookIntentBlueprintParserService {
     return accepted;
   }
 
-  private parseNodeKind(
-    value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
-    ownerRef: string,
-  ): PlaybookIntentBlueprintNodeKind | undefined {
-    const kind = this.asString(value) as PlaybookIntentBlueprintNodeKind | '';
-    if (!kind) return undefined;
-    if (!SUPPORTED_NODE_KINDS.includes(kind)) {
-      this.recordDrop(dropped, 'blueprint_node_unsupported_kind', `${ownerRef}:${kind}`);
-      return undefined;
-    }
-    return kind;
+  private parseNodeTemplateKey(raw: Record<string, unknown>, _ownerRef: string): string {
+    return this.asString(raw.nodeTemplateKey ?? raw.node_template_key);
   }
 
   private parsePorts(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintPort[] {
     if (!Array.isArray(value)) return [];
@@ -235,18 +266,18 @@ export class PlaybookIntentBlueprintParserService {
     const seenIds = new Set<string>();
     for (const item of value) {
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_port_invalid', ownerRef);
+        this.recordDiagnostic(diagnostics, 'blueprint_port_invalid', ownerRef);
         continue;
       }
       const raw = item as Record<string, unknown>;
       const id = this.asString(raw.id);
       const artifactKind = this.asString(raw.artifactKind) as PlaybookIntentBlueprintPort['artifactKind'] | '';
       if (!id || !artifactKind || seenIds.has(id)) {
-        this.recordDrop(dropped, 'blueprint_port_missing_or_duplicate', `${ownerRef}.${id || '?'}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_port_missing_or_duplicate', `${ownerRef}.${id || '?'}`);
         continue;
       }
       if (!SUPPORTED_ARTIFACT_KINDS.includes(artifactKind)) {
-        this.recordDrop(dropped, 'blueprint_port_unsupported_kind', `${ownerRef}.${id}:${artifactKind}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_port_unsupported_kind', `${ownerRef}.${id}:${artifactKind}`);
         continue;
       }
       seenIds.add(id);
@@ -274,20 +305,20 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseIteratorBody(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintIteratorBody {
     if (!value || typeof value !== 'object') return { steps: [], edges: [] };
     const raw = value as Record<string, unknown>;
     const steps = Array.isArray(raw.steps)
       ? raw.steps
-        .map((step) => this.parseIteratorStep(step, dropped, ownerRef))
+        .map((step) => this.parseIteratorStep(step, diagnostics, ownerRef))
         .filter((step): step is PlaybookIntentBlueprintIteratorStep => step !== null)
       : [];
     const validStepRefs = new Set(steps.map((s) => s.ref));
     const edges = Array.isArray(raw.edges)
       ? raw.edges
-        .map((edge) => this.parseIteratorEdge(edge, validStepRefs, dropped, ownerRef))
+        .map((edge) => this.parseIteratorEdge(edge, validStepRefs, diagnostics, ownerRef))
         .filter((edge): edge is NonNullable<typeof edge> => edge !== null)
       : [];
 
@@ -296,32 +327,37 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseIteratorStep(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintIteratorStep | null {
     if (!value || typeof value !== 'object') return null;
     const raw = value as Record<string, unknown>;
     const ref = this.asString(raw.ref);
     const title = this.asString(raw.title) || this.asString(raw.label);
-    if (!ref || !title) {
-      this.recordDrop(dropped, 'blueprint_iterator_step_missing_fields', `${ownerRef}.step.${ref || '?'}`);
+    const nodeTemplateKey = this.parseNodeTemplateKey(raw, `${ownerRef}.step.${ref || '?'}`);
+    if (!ref || !title || !nodeTemplateKey) {
+      this.recordDiagnostic(diagnostics, 'blueprint_iterator_step_missing_fields', `${ownerRef}.step.${ref || '?'}`);
       return null;
     }
+    const primitive = this.parsePrimitive(raw.primitive, diagnostics, `${ownerRef}.${ref}`);
     return {
       ref,
       title,
       description: this.asString(raw.description),
-      templateType: this.asString(raw.templateType) || null,
-      nodeType: this.parseNodeKind(raw.nodeType, dropped, `${ownerRef}.${ref}`),
-      inputPorts: this.parsePorts(raw.inputPorts, dropped, `${ownerRef}.${ref}.inputs`),
-      outputPorts: this.parsePorts(raw.outputPorts, dropped, `${ownerRef}.${ref}.outputs`),
+      nodeTemplateKey,
+      agentHint: this.asString(raw.agentHint) || null,
+      connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, diagnostics, `${ownerRef}.${ref}`),
+      skillRefs: this.parseSkillRefs(raw.skill_refs ?? raw.skillRefs, diagnostics, `${ownerRef}.${ref}`),
+      ...(primitive ? { primitive } : {}),
+      inputPorts: this.parsePorts(raw.inputPorts, diagnostics, `${ownerRef}.${ref}.inputs`),
+      outputPorts: this.parsePorts(raw.outputPorts, diagnostics, `${ownerRef}.${ref}.outputs`),
     };
   }
 
   private parseIteratorEdge(
     value: unknown,
     validRefs: Set<string>,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     ownerRef: string,
   ): PlaybookIntentBlueprintIteratorBody['edges'][number] | null {
     if (!value || typeof value !== 'object') return null;
@@ -329,57 +365,76 @@ export class PlaybookIntentBlueprintParserService {
     const sourceRef = this.asString(raw.sourceRef);
     const targetRef = this.asString(raw.targetRef);
     if (!sourceRef || !targetRef) {
-      this.recordDrop(dropped, 'blueprint_iterator_edge_missing_refs', ownerRef);
+      this.recordDiagnostic(diagnostics, 'blueprint_iterator_edge_missing_refs', ownerRef);
       return null;
     }
     if (!validRefs.has(sourceRef) || !validRefs.has(targetRef)) {
-      this.recordDrop(dropped, 'blueprint_iterator_edge_unknown_ref', `${sourceRef}->${targetRef}`);
+      this.recordDiagnostic(diagnostics, 'blueprint_iterator_edge_unknown_ref', `${sourceRef}->${targetRef}`);
       return null;
     }
     return {
       sourceRef,
       targetRef,
-      ...(this.asString(raw.sourceOutputPortId) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId) } : {}),
-      ...(this.asString(raw.targetInputPortId) ? { targetInputPortId: this.asString(raw.targetInputPortId) } : {}),
+      ...this.parseEdgeMetadata(raw, diagnostics, `${ownerRef}.${sourceRef}->${targetRef}`),
+      ...(this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id) } : {}),
+      ...(this.asString(raw.targetInputPortId ?? raw.target_input_port_id) ? { targetInputPortId: this.asString(raw.targetInputPortId ?? raw.target_input_port_id) } : {}),
     };
   }
 
   private parseLinks(
     value: unknown,
-    validRefs: string[],
-    dropped: Array<{ rule: string; itemId: string }>,
+    nodes: PlaybookIntentBlueprintNode[],
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentBlueprintLink[] {
     if (!Array.isArray(value)) return [];
-    const refSet = new Set(validRefs);
+    const refSet = new Set(nodes.map((n) => n.ref));
+    const iteratorStepsByRef = this.buildIteratorStepRefSet(nodes);
     const accepted: PlaybookIntentBlueprintLink[] = [];
     const seenKeys = new Set<string>();
     for (const item of value) {
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_link_invalid', 'unknown');
+        this.recordDiagnostic(diagnostics, 'blueprint_link_invalid', 'unknown');
         continue;
       }
       const raw = item as Record<string, unknown>;
-      const sourceRef = this.asString(raw.sourceRef);
-      const targetRef = this.asString(raw.targetRef);
+      const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+      const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref);
+      const edgeMetadata = this.parseEdgeMetadata(raw, diagnostics, `${sourceRef || '?'}->${targetRef || '?'}`);
+      if (edgeMetadata.kind === 'conditional' && !edgeMetadata.routerLabel) {
+        this.recordDiagnostic(diagnostics, 'blueprint_link_conditional_missing_label', `${sourceRef || '?'}->${targetRef || '?'}`);
+        continue;
+      }
       if (!sourceRef || !targetRef) {
-        this.recordDrop(dropped, 'blueprint_link_missing_refs', `${sourceRef || '?'}->${targetRef || '?'}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_link_missing_refs', `${sourceRef || '?'}->${targetRef || '?'}`);
         continue;
       }
-      if (!refSet.has(sourceRef) || !refSet.has(targetRef)) {
-        this.recordDrop(dropped, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
+        this.recordDiagnostic(diagnostics, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
         continue;
       }
-      const key = `${sourceRef}::${targetRef}::${raw.sourceOutputPortId || ''}::${raw.targetInputPortId || ''}`;
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
+        this.recordDiagnostic(diagnostics, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
+        continue;
+      }
+      const sourceOutputPortId = this.asString(raw.sourceOutputPortId ?? raw.source_output_port_id);
+      const targetInputPortId = this.asString(raw.targetInputPortId ?? raw.target_input_port_id);
+      const key = `${sourceIteratorRef}.${sourceRef}::${targetIteratorRef}.${targetRef}::${sourceOutputPortId}::${targetInputPortId}::${edgeMetadata.routerLabel || ''}`;
       if (seenKeys.has(key)) {
-        this.recordDrop(dropped, 'blueprint_link_duplicate', key);
+        this.recordDiagnostic(diagnostics, 'blueprint_link_duplicate', key);
         continue;
       }
       seenKeys.add(key);
       accepted.push({
         sourceRef,
         targetRef,
-        ...(this.asString(raw.sourceOutputPortId) ? { sourceOutputPortId: this.asString(raw.sourceOutputPortId) } : {}),
-        ...(this.asString(raw.targetInputPortId) ? { targetInputPortId: this.asString(raw.targetInputPortId) } : {}),
+        ...(sourceIteratorRef ? { sourceIteratorRef } : {}),
+        ...(targetIteratorRef ? { targetIteratorRef } : {}),
+        ...edgeMetadata,
+        ...(sourceOutputPortId ? { sourceOutputPortId } : {}),
+        ...(targetInputPortId ? { targetInputPortId } : {}),
+        ...(typeof raw.priority === 'number' ? { priority: raw.priority } : {}),
       });
     }
     return accepted;
@@ -388,59 +443,68 @@ export class PlaybookIntentBlueprintParserService {
   private parseBindings(
     value: unknown,
     nodes: PlaybookIntentBlueprintNode[],
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentBlueprintBinding[] {
     if (!Array.isArray(value)) return [];
     const refSet = new Set(nodes.map((n) => n.ref));
     const inputsByRef = new Map<string, Map<string, PlaybookIntentBlueprintPort>>();
     const outputsByRef = new Map<string, Map<string, PlaybookIntentBlueprintPort>>();
+    const iteratorStepsByRef = this.buildIteratorStepRefSet(nodes);
     for (const node of nodes) {
       inputsByRef.set(node.ref, new Map((node.inputPorts || []).map((p) => [p.id, p])));
       outputsByRef.set(node.ref, new Map((node.outputPorts || []).map((p) => [p.id, p])));
+      for (const step of node.iteratorBody?.steps || []) {
+        const scopedRef = this.scopedRef(node.ref, step.ref);
+        inputsByRef.set(scopedRef, new Map((step.inputPorts || []).map((p) => [p.id, p])));
+        outputsByRef.set(scopedRef, new Map((step.outputPorts || []).map((p) => [p.id, p])));
+      }
     }
 
     const accepted: PlaybookIntentBlueprintBinding[] = [];
     const seenKeys = new Set<string>();
     for (const item of value) {
       if (!item || typeof item !== 'object') {
-        this.recordDrop(dropped, 'blueprint_binding_invalid', 'unknown');
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid', 'unknown');
         continue;
       }
       const raw = item as Record<string, unknown>;
-      const targetRef = this.asString(raw.targetRef);
-      const targetPort = this.asString(raw.targetPort);
+      const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+      const targetIteratorRef = this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref);
+      const targetPort = this.asString(raw.targetPort ?? raw.target_port);
       if (!targetRef || !targetPort) {
-        this.recordDrop(dropped, 'blueprint_binding_missing_target', `${targetRef || '?'}.${targetPort || '?'}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_target', `${targetRef || '?'}.${targetPort || '?'}`);
         continue;
       }
-      if (!refSet.has(targetRef)) {
-        this.recordDrop(dropped, 'blueprint_binding_unknown_target_ref', targetRef);
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_target_ref', targetRef);
         continue;
       }
       const sourceKind = this.asString(raw.sourceKind) as 'node-output' | 'constant' | '';
       if (sourceKind !== 'node-output' && sourceKind !== 'constant') {
-        this.recordDrop(dropped, 'blueprint_binding_invalid_source_kind', `${targetRef}.${targetPort}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_source_kind', `${targetRef}.${targetPort}`);
         continue;
       }
 
-      const key = `${targetRef}.${targetPort}`;
+      const targetCatalogRef = targetIteratorRef ? this.scopedRef(targetIteratorRef, targetRef) : targetRef;
+      const key = `${targetCatalogRef}.${targetPort}`;
       if (seenKeys.has(key)) {
-        this.recordDrop(dropped, 'blueprint_binding_duplicate_target', key);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_duplicate_target', key);
         continue;
       }
 
-      const targetPorts = inputsByRef.get(targetRef);
+      const targetPorts = inputsByRef.get(targetCatalogRef);
       if (!targetPorts?.has(targetPort)) {
-        this.recordDrop(dropped, 'blueprint_binding_unknown_target_port', key);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_target_port', key);
         continue;
       }
       seenKeys.add(key);
 
       if (sourceKind === 'constant') {
-        const constantValue = this.parseConstantValue(raw.constantValue, dropped, key);
+        const constantValue = this.parseConstantValue(raw.constantValue, diagnostics, key);
         if (!constantValue) continue;
         accepted.push({
           targetRef,
+          ...(targetIteratorRef ? { targetIteratorRef } : {}),
           targetPort,
           sourceKind: 'constant',
           constantValue,
@@ -448,32 +512,36 @@ export class PlaybookIntentBlueprintParserService {
         continue;
       }
 
-      const sourceRef = this.asString(raw.sourceRef);
-      const sourcePort = this.asString(raw.sourcePort);
+      const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+      const sourceIteratorRef = this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref);
+      const sourcePort = this.asString(raw.sourcePort ?? raw.source_port);
       if (!sourceRef || !sourcePort) {
-        this.recordDrop(dropped, 'blueprint_binding_missing_source', key);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_source', key);
         continue;
       }
-      if (!refSet.has(sourceRef)) {
-        this.recordDrop(dropped, 'blueprint_binding_unknown_source_ref', `${sourceRef}->${key}`);
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_source_ref', `${sourceRef}->${key}`);
         continue;
       }
-      const sourcePorts = outputsByRef.get(sourceRef);
+      const sourceCatalogRef = sourceIteratorRef ? this.scopedRef(sourceIteratorRef, sourceRef) : sourceRef;
+      const sourcePorts = outputsByRef.get(sourceCatalogRef);
       if (!sourcePorts?.has(sourcePort)) {
-        this.recordDrop(dropped, 'blueprint_binding_unknown_source_port', `${sourceRef}.${sourcePort}->${key}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_source_port', `${sourceRef}.${sourcePort}->${key}`);
         continue;
       }
       const targetKind = targetPorts.get(targetPort)?.artifactKind;
       const sourceKindPort = sourcePorts.get(sourcePort)?.artifactKind;
       if (targetKind && sourceKindPort && targetKind !== sourceKindPort) {
-        this.recordDrop(dropped, 'blueprint_binding_artifact_mismatch', `${sourceRef}.${sourcePort}->${key}`);
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_artifact_mismatch', `${sourceRef}.${sourcePort}->${key}`);
         continue;
       }
       accepted.push({
         targetRef,
+        ...(targetIteratorRef ? { targetIteratorRef } : {}),
         targetPort,
         sourceKind: 'node-output',
         sourceRef,
+        ...(sourceIteratorRef ? { sourceIteratorRef } : {}),
         sourcePort,
         ...(raw.iteration === 'previous' ? { iteration: 'previous' as const } : {}),
       });
@@ -481,13 +549,49 @@ export class PlaybookIntentBlueprintParserService {
     return accepted;
   }
 
+  private buildIteratorStepRefSet(nodes: PlaybookIntentBlueprintNode[]): Map<string, Set<string>> {
+    return new Map(nodes.map((node) => [
+      node.ref,
+      new Set((node.iteratorBody?.steps || []).map((step) => step.ref)),
+    ]));
+  }
+
+  private inferIteratorScopedEntry(value: unknown, iteratorRef: string, stepRefs: Set<string>): unknown {
+    const raw = this.asRecord(value);
+    if (!raw || !iteratorRef || stepRefs.size === 0) return value;
+    const scoped = { ...raw };
+    const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref);
+    const targetRef = this.asString(raw.targetRef ?? raw.target_ref);
+    if (sourceRef && stepRefs.has(sourceRef) && !this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref)) {
+      scoped.sourceIteratorRef = iteratorRef;
+    }
+    if (targetRef && stepRefs.has(targetRef) && !this.asString(raw.targetIteratorRef ?? raw.target_iterator_ref)) {
+      scoped.targetIteratorRef = iteratorRef;
+    }
+    return scoped;
+  }
+
+  private hasEndpointRef(
+    topLevelRefs: Set<string>,
+    iteratorStepsByRef: Map<string, Set<string>>,
+    ref: string,
+    iteratorRef: string,
+  ): boolean {
+    if (!iteratorRef || ref === iteratorRef) return topLevelRefs.has(ref);
+    return iteratorStepsByRef.get(iteratorRef)?.has(ref) === true;
+  }
+
+  private scopedRef(iteratorRef: string, stepRef: string): string {
+    return `${iteratorRef}.${stepRef}`;
+  }
+
   private parseConstantValue(
     value: unknown,
-    dropped: Array<{ rule: string; itemId: string }>,
+    diagnostics: PlaybookIntentDiagnostic[],
     key: string,
   ): PlaybookIntentBlueprintBinding['constantValue'] | null {
     if (!value || typeof value !== 'object') {
-      this.recordDrop(dropped, 'blueprint_binding_invalid_constant', key);
+      this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
       return null;
     }
     const raw = value as Record<string, unknown>;
@@ -495,7 +599,7 @@ export class PlaybookIntentBlueprintParserService {
     const id = this.asString(raw.id);
     const workspaceId = this.asString(raw.workspaceId) || (kind === 'workspace' ? id : '');
     if ((kind !== 'workspace' && kind !== 'document') || !id || !workspaceId) {
-      this.recordDrop(dropped, 'blueprint_binding_invalid_constant', key);
+      this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
       return null;
     }
     return {
@@ -510,6 +614,108 @@ export class PlaybookIntentBlueprintParserService {
     };
   }
 
+  private parsePrimitive(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): PlaybookIntentBlueprintPrimitiveConfig | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const kind = this.asString(raw.kind);
+    if (!kind) {
+      this.recordDiagnostic(diagnostics, 'blueprint_primitive_invalid', ownerRef);
+      return null;
+    }
+    const router = this.parseRouterConfig(raw.router ?? raw.routerConfig ?? raw.router_config, diagnostics, ownerRef);
+    return {
+      kind,
+      ...(router ? { router } : {}),
+      ...(this.asRecord(raw.iterator) ? { iterator: this.asRecord(raw.iterator) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.humanApproval ?? raw.human_approval) ? { humanApproval: this.asRecord(raw.humanApproval ?? raw.human_approval) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.evaluation) ? { evaluation: this.asRecord(raw.evaluation) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.action) ? { action: this.asRecord(raw.action) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.metadata) ? { metadata: this.asRecord(raw.metadata) as Record<string, unknown> } : {}),
+    };
+  }
+
+  private parseRouterConfig(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): PlaybookIntentBlueprintRouterConfig | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const outputLabels = this.asStringArray(raw.outputLabels ?? raw.output_labels);
+    if (outputLabels.length === 0) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_config_invalid', ownerRef);
+      return null;
+    }
+    const uniqueLabels = [...new Set(outputLabels)];
+    const conditions = Array.isArray(raw.conditions)
+      ? raw.conditions
+        .map((condition) => this.parseRouterCondition(condition, diagnostics, ownerRef, uniqueLabels))
+        .filter((condition): condition is NonNullable<typeof condition> => condition !== null)
+      : [];
+    const defaultLabel = this.asString(raw.defaultLabel ?? raw.default_label) || null;
+    if (defaultLabel && !uniqueLabels.includes(defaultLabel)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_config_invalid', `${ownerRef}.defaultLabel`);
+    }
+    return {
+      outputLabels: uniqueLabels,
+      ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : typeof raw.max_iterations === 'number' ? { maxIterations: raw.max_iterations } : {}),
+      ...(conditions.length ? { conditions } : {}),
+      ...(defaultLabel ? { defaultLabel } : {}),
+    };
+  }
+
+  private parseRouterCondition(
+    value: unknown,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+    outputLabels: string[],
+  ): PlaybookIntentBlueprintRouterCondition | null {
+    const raw = this.asRecord(value);
+    if (!raw) return null;
+    const label = this.asString(raw.label);
+    const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref ?? raw.sourceNode ?? raw.source_node);
+    const sourcePort = this.asString(raw.sourcePort ?? raw.source_port);
+    const operator = this.asString(raw.operator) as PlaybookIntentBlueprintRouterCondition['operator'];
+    if (!label || !sourceRef || !sourcePort || !(ROUTER_OPERATORS as readonly string[]).includes(operator) || !outputLabels.includes(label)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_router_condition_invalid', ownerRef);
+      return null;
+    }
+    return {
+      label,
+      sourceRef,
+      sourcePort,
+      ...(this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref) ? { sourceIteratorRef: this.asString(raw.sourceIteratorRef ?? raw.source_iterator_ref) } : {}),
+      ...(this.asString(raw.path) ? { path: this.asString(raw.path) } : {}),
+      operator,
+      ...(Object.prototype.hasOwnProperty.call(raw, 'value') ? { value: raw.value } : {}),
+    };
+  }
+
+  private parseEdgeMetadata(
+    raw: Record<string, unknown>,
+    diagnostics: PlaybookIntentDiagnostic[],
+    ownerRef: string,
+  ): Pick<PlaybookIntentBlueprintLink, 'kind' | 'routerLabel'> {
+    const kind = this.asString(raw.kind) || this.asString(raw.edgeKind ?? raw.edge_kind);
+    const routerLabel = this.asString(raw.routerLabel ?? raw.router_label) || null;
+    if (kind && !(EDGE_KINDS as readonly string[]).includes(kind)) {
+      this.recordDiagnostic(diagnostics, 'blueprint_link_invalid_kind', ownerRef);
+      return routerLabel ? { routerLabel } : {};
+    }
+    return {
+      ...(kind ? { kind: kind as PlaybookIntentBlueprintLink['kind'] } : {}),
+      ...(routerLabel ? { routerLabel } : {}),
+    };
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  }
+
   private asString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
   }
@@ -520,12 +726,19 @@ export class PlaybookIntentBlueprintParserService {
       : [];
   }
 
-  private recordDrop(dropped: Array<{ rule: string; itemId: string }>, rule: string, itemId: string): void {
-    dropped.push({ rule, itemId });
-    this.warnDrop(rule, itemId);
+  private recordDiagnostic(diagnostics: PlaybookIntentDiagnostic[], code: string, itemId: string): void {
+    const diagnostic: PlaybookIntentDiagnostic = {
+      severity: 'warning',
+      stage: 'parser',
+      code,
+      itemId,
+      message: code,
+    };
+    diagnostics.push(diagnostic);
+    this.warnDiagnostic(diagnostic);
   }
 
-  private warnDrop(rule: string, itemId: string): void {
-    this.logger.warn(`playbook_intent_blueprint_drop rule=${rule} item=${itemId}`);
+  private warnDiagnostic(diagnostic: PlaybookIntentDiagnostic): void {
+    this.logger.warn(`playbook_intent_blueprint_drop rule=${diagnostic.code} item=${diagnostic.itemId || ''}`);
   }
 }

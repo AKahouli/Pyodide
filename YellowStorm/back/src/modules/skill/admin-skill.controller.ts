@@ -10,6 +10,7 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -23,7 +24,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -123,6 +124,38 @@ export class AdminSkillController {
       userAgent: req.headers['user-agent'],
     });
     return skill;
+  }
+
+  @Get(':id/export')
+  @RequirePermissions(Permissions.SKILLS_READ)
+  @ApiOperation({ summary: 'Export a skill as a zipped skill package' })
+  @ApiParam({ name: 'id', description: 'Skill ID' })
+  async exportSkill(
+    @Param('id') id: string,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.skillService.exportPackage(id);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'skills.export',
+      targetId: result.skill.id,
+      targetType: 'Skill',
+      metadata: { skillName: result.skill.name, filename: result.filename },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    const safeAsciiFilename = result.filename.replace(/[^\x20-\x7e]/g, '_');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeAsciiFilename}"; filename*=UTF-8''${encodeURIComponent(result.filename)}`,
+    );
+    res.setHeader('Content-Length', result.buffer.length.toString());
+    res.end(result.buffer);
   }
 
   @Patch(':id')

@@ -85,6 +85,9 @@ export class FlowReplayLLMPromptTraceItem {
 
   @Prop({ required: true, type: String })
   prompt!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  generatedOutput?: string | null;
 }
 
 @Schema({ _id: false })

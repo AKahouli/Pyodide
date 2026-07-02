@@ -1000,6 +1000,12 @@ export interface PlaybookPromptListResponse {
   items: PlaybookPromptResponse[];
 }
 
+export interface PlaybookPromptImportPayload {
+  version: 1;
+  type: 'playbook-prompts';
+  items: Array<Omit<PlaybookPromptResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
+}
+
 export interface UpsertPlaybookPromptRequest {
   title: string;
   category: string;
@@ -1022,7 +1028,6 @@ export interface PlaybookNodeTemplatePort {
 export interface PlaybookNodeTemplateResponse {
   id: string;
   key: string;
-  type: string;
   nodeType: PlaybookNodeType;
   title: string;
   description?: string;
@@ -1034,7 +1039,6 @@ export interface PlaybookNodeTemplateResponse {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode: string;
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
@@ -1050,9 +1054,14 @@ export interface PlaybookNodeTemplateListResponse {
   items: PlaybookNodeTemplateResponse[];
 }
 
+export interface PlaybookNodeTemplateImportPayload {
+  version: 1;
+  type: 'playbook-node-templates';
+  items: Array<Omit<PlaybookNodeTemplateResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
+}
+
 export interface CreatePlaybookNodeTemplateRequest {
   key: string;
-  type: string;
   nodeType: PlaybookNodeType;
   title: string;
   description?: string;
@@ -1064,7 +1073,6 @@ export interface CreatePlaybookNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
@@ -1074,7 +1082,6 @@ export interface CreatePlaybookNodeTemplateRequest {
 
 export interface UpdatePlaybookNodeTemplateRequest {
   key?: string;
-  type?: string;
   nodeType?: PlaybookNodeType;
   title?: string;
   description?: string;
@@ -1086,7 +1093,6 @@ export interface UpdatePlaybookNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;

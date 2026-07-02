@@ -12,6 +12,7 @@ import { ModelsModule } from '@modules/models/models.module';
 import { UsageModule } from '@modules/usage/usage.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
+import { UserModule } from '@modules/user';
 import { WorkspaceSchema, Workspace } from '@modules/workspace/schemas/workspace.schema';
 import {
   WorkspaceSetting,
@@ -21,6 +22,7 @@ import {
 import playbookFlowConfig from '@config/playbook-flow.config';
 
 import { Flow, FlowSchema } from './schemas/playbook-flow.schema';
+import { SharedPlaybook, SharedPlaybookSchema } from './schemas/shared-playbook.schema';
 import { FlowExecution, FlowExecutionSchema } from './schemas/playbook-flow-execution.schema';
 import { FlowTaskResult, FlowTaskResultSchema } from './schemas/playbook-flow-task-result.schema';
 import { FlowRouterDecision, FlowRouterDecisionSchema } from './schemas/playbook-flow-router-decision.schema';
@@ -52,8 +54,10 @@ import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream
 import { PlaybookFlowPromptTemplateController } from './controllers/playbook-flow-prompt-template.controller';
 import { PlaybookFlowSettingsController } from './controllers/playbook-flow-settings.controller';
 import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
+import { PlaybookShareController } from './controllers/playbook-share.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
+import { PlaybookShareService } from './services/playbook-share.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
 import { PlaybookFlowEvaluationService } from './services/playbook-flow-evaluation.service';
 import { PlaybookFlowRepeatabilityService } from './services/playbook-flow-repeatability.service';
@@ -94,10 +98,14 @@ import { PlaybookFlowExecutionLeaseService } from './services/playbook-flow-exec
 import { PlaybookFlowTokenBufferService } from './services/playbook-flow-token-buffer.service';
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowIntentConstructionService } from './services/playbook-flow-intent-construction.service';
+import { PlaybookFlowIntentTraceService } from './services/playbook-flow-intent-trace.service';
 import { PlaybookIntentGraphBindingResolverService } from './services/playbook-intent-graph-binding-resolver.service';
 import { PlaybookIntentBlueprintParserService } from './services/playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './services/playbook-intent-graph-builder.service';
-import { PlaybookIntentNodeBuildRegistryService } from './services/playbook-intent-node-build-registry.service';
+import { PlaybookIntentSuggestionDiagnosticsService } from './services/playbook-intent-suggestion-diagnostics.service';
+import { PlaybookFlowPrimitiveRegistryService } from './services/playbook-flow-primitive-registry.service';
+import { PlaybookIntentBlueprintRepairService } from './services/playbook-intent-blueprint-repair.service';
+import { PlaybookIntentBlueprintCompilerService } from './services/playbook-intent-blueprint-compiler.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -138,6 +146,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     ConfigModule.forFeature(playbookFlowConfig),
     MongooseModule.forFeature([
       { name: Flow.name, schema: FlowSchema },
+      { name: SharedPlaybook.name, schema: SharedPlaybookSchema },
       { name: FlowExecution.name, schema: FlowExecutionSchema },
       { name: FlowTaskResult.name, schema: FlowTaskResultSchema },
       { name: FlowRouterDecision.name, schema: FlowRouterDecisionSchema },
@@ -168,6 +177,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     UsageModule,
     WorkspaceModule,
     ConnectedAppModule,
+    UserModule,
   ],
   controllers: [
     PlaybookFlowMailWebhookController,
@@ -184,9 +194,11 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowPromptTemplateController,
     PlaybookFlowSettingsController,
     PlaybookFlowHitlController,
+    PlaybookShareController,
   ],
   providers: [
     PlaybookFlowService,
+    PlaybookShareService,
     FlowAccessService,
     FlowResponseAssemblerService,
     FlowWorkspacePolicyService,
@@ -241,10 +253,14 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowTokenBufferService,
     PlaybookFlowIntentService,
     PlaybookFlowIntentConstructionService,
+    PlaybookFlowIntentTraceService,
     PlaybookIntentGraphBindingResolverService,
     PlaybookIntentBlueprintParserService,
     PlaybookIntentGraphBuilderService,
-    PlaybookIntentNodeBuildRegistryService,
+    PlaybookIntentSuggestionDiagnosticsService,
+    PlaybookIntentBlueprintRepairService,
+    PlaybookIntentBlueprintCompilerService,
+    PlaybookFlowPrimitiveRegistryService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
     PlaybookFlowPublicReasoningParserService,
@@ -268,6 +284,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
   ],
   exports: [
     PlaybookFlowService,
+    PlaybookShareService,
     FlowAccessService,
     FlowResponseAssemblerService,
     FlowWorkspacePolicyService,

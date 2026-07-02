@@ -1,243 +1,83 @@
-"""Tests for AgentToolsManager."""
+"""Unit tests for AgentToolsManager and AgentRepository."""
+
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock, patch
-import re
 
+from src.smart_rag.agents.core.repository import AgentRepository
 from src.smart_rag.agents.tools.tools_manager import AgentToolsManager
 
 
+class TestAgentRepository:
+    def test_add_get_and_set_agents(self):
+        helper = MagicMock()
+        helper.normalize_agent_name.side_effect = lambda n: n.lower()
+        repo = AgentRepository(helper)
+        repo.add_agent({"name": "Search Agent", "tools": ["search"]})
+        assert repo.get_agent_by_name("search agent")["name"] == "Search Agent"
+        repo.set_agents([{"name": "Writer", "tools": []}])
+        assert len(repo.get_all_agents()) == 1
+
+    def test_has_search_agents_and_code_interpreter(self):
+        helper = MagicMock()
+        helper.normalize_agent_name.side_effect = lambda n: n
+        repo = AgentRepository(helper)
+        repo.set_agents([
+            {"name": "search", "tools": ["search"]},
+            {"name": "ops", "tools": ["code interpreter"]},
+        ])
+        assert repo.has_search_agents() is True
+        assert repo.has_code_interpreter() is True
+
+    def test_get_agent_id_by_name(self):
+        helper = MagicMock()
+        helper.normalize_agent_name.side_effect = lambda n: n
+        repo = AgentRepository(helper)
+        repo.set_agents([{"id": "a1", "name": "search"}])
+        assert repo.get_agent_id_by_name("search") == "a1"
+
+
 class TestAgentToolsManager:
-    """Test cases for AgentToolsManager."""
+    def test_extract_agent_tools_from_mentions(self):
+        repo = MagicMock()
+        repo.get_agent_by_name.return_value = {"name": "search"}
+        factory = MagicMock()
+        delegate = MagicMock()
+        factory.make_delegate_function.return_value = delegate
+        helper = MagicMock()
+        helper.sanitize_function_name.return_value = "search"
+        manager = AgentToolsManager(repo, factory, helper)
+        tools = manager.extract_agent_tools_from_mentions("Ask @search_agent to find docs")
+        assert len(tools) == 1
+        assert tools[0].__name__ == "delegate_to_search"
 
-    def test_init(self):
-        """Test manager initialization."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
+    def test_create_tools_from_all_agents(self):
+        repo = MagicMock()
+        repo.get_all_agents.return_value = [{"name": "Search Agent"}, {"name": "Writer"}]
+        factory = MagicMock()
+        factory.make_delegate_function.return_value = MagicMock()
+        helper = MagicMock()
+        helper.sanitize_function_name.side_effect = lambda n: n
+        manager = AgentToolsManager(repo, factory, helper)
+        tools = manager.create_tools_from_all_agents()
+        assert len(tools) == 2
 
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
+    def test_get_agent_tools_falls_back_to_all_agents(self):
+        repo = MagicMock()
+        repo.get_agent_by_name.return_value = None
+        repo.get_all_agents.return_value = [{"name": "search"}]
+        factory = MagicMock()
+        factory.make_delegate_function.return_value = MagicMock()
+        helper = MagicMock()
+        helper.sanitize_function_name.return_value = "search"
+        manager = AgentToolsManager(repo, factory, helper)
+        tools = manager.get_agent_tools("no mentions here")
+        assert len(tools) == 1
 
-        assert manager.agent_repository == mock_repository
-        assert manager.delegation_factory == mock_factory
-        assert manager._helper == mock_helper
-
-    def test_extract_agent_mentions_from_prompt(self):
-        """Test extracting agent mentions from user prompt."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        prompt = "Please use @SearchAgent to find data and @CalculatorAgent to process numbers"
-
-        # Assuming this method exists
-        try:
-            mentions = manager.extract_agent_mentions(prompt)
-            assert isinstance(mentions, list)
-            assert len(mentions) >= 2
-            assert any("SearchAgent" in mention for mention in mentions)
-            assert any("CalculatorAgent" in mention for mention in mentions)
-        except AttributeError:
-            # Method might not exist, test manual regex extraction
-            mentions = re.findall(r'@(\w+)', prompt)
-            assert "SearchAgent" in mentions
-            assert "CalculatorAgent" in mentions
-
-    def test_create_delegation_tools(self):
-        """Test creating delegation tools for agents."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        # Setup repository to return agents
-        mock_agent1 = {"name": "SearchAgent", "description": "Searches documents"}
-        mock_agent2 = {"name": "CalcAgent", "description": "Performs calculations"}
-        mock_repository.get_agent_by_name.side_effect = lambda name: {
-            "SearchAgent": mock_agent1,
-            "CalcAgent": mock_agent2
-        }.get(name)
-
-        # Setup factory to return delegation tools
-        mock_tool1 = MagicMock()
-        mock_tool2 = MagicMock()
-        mock_factory.create_delegation_tool.side_effect = [mock_tool1, mock_tool2]
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        agent_names = ["SearchAgent", "CalcAgent"]
-
-        # Assuming this method exists
-        try:
-            tools = manager.create_delegation_tools(agent_names)
-            assert len(tools) == 2
-            assert mock_tool1 in tools
-            assert mock_tool2 in tools
-            assert mock_factory.create_delegation_tool.call_count == 2
-        except AttributeError:
-            # Method might not exist, test manual creation
-            tools = []
-            for name in agent_names:
-                agent = mock_repository.get_agent_by_name(name)
-                if agent:
-                    tool = mock_factory.create_delegation_tool(agent)
-                    tools.append(tool)
-            assert len(tools) == 2
-
-    def test_sanitize_agent_names(self):
-        """Test agent name sanitization."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-        mock_helper.sanitize_agent_name.side_effect = lambda name: name.replace("@", "").replace(" ", "_")
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        raw_names = ["@Search Agent", "@Calculator-Agent", "WebAgent"]
-
-        # Assuming this method exists
-        try:
-            sanitized = manager.sanitize_agent_names(raw_names)
-            mock_helper.sanitize_agent_name.assert_called()
-            assert len(sanitized) == 3
-        except AttributeError:
-            # Method might not exist, test direct helper usage
-            sanitized = [mock_helper.sanitize_agent_name(name) for name in raw_names]
-            assert len(sanitized) == 3
-            assert sanitized[0] == "Search_Agent"
-
-    def test_validate_agent_availability(self):
-        """Test validating agent availability in repository."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        # Setup repository responses
-        mock_repository.get_agent_by_name.side_effect = lambda name: {
-            "ExistingAgent": {"name": "ExistingAgent"},
-            "AnotherAgent": {"name": "AnotherAgent"}
-        }.get(name)
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        agent_names = ["ExistingAgent", "NonExistentAgent", "AnotherAgent"]
-
-        # Assuming this method exists
-        try:
-            available = manager.validate_agent_availability(agent_names)
-            assert len(available) == 2
-            assert "ExistingAgent" in available
-            assert "AnotherAgent" in available
-            assert "NonExistentAgent" not in available
-        except AttributeError:
-            # Method might not exist, test manual validation
-            available = []
-            for name in agent_names:
-                if mock_repository.get_agent_by_name(name):
-                    available.append(name)
-            assert len(available) == 2
-
-    def test_process_user_prompt_for_tools(self):
-        """Test complete processing of user prompt to create tools."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        # Setup mocks
-        mock_helper.sanitize_agent_name.side_effect = lambda name: name.replace("@", "")
-        mock_repository.get_agent_by_name.side_effect = lambda name: {
-            "SearchAgent": {"name": "SearchAgent", "description": "Search tool"}
-        }.get(name)
-        mock_factory.create_delegation_tool.return_value = MagicMock()
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        prompt = "Use @SearchAgent to find information about AI"
-
-        # Assuming this method exists
-        try:
-            tools = manager.process_prompt_for_tools(prompt)
-            assert isinstance(tools, list)
-            assert len(tools) >= 0
-        except AttributeError:
-            # Method might not exist, test manual processing
-            # Extract mentions
-            mentions = re.findall(r'@(\w+)', prompt)
-            # Sanitize names
-            sanitized = [mock_helper.sanitize_agent_name(name) for name in mentions]
-            # Create tools
-            tools = []
-            for name in sanitized:
-                agent = mock_repository.get_agent_by_name(name)
-                if agent:
-                    tool = mock_factory.create_delegation_tool(agent)
-                    tools.append(tool)
-            assert len(tools) == 1
-
-    def test_get_available_agent_names(self):
-        """Test getting list of available agent names."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        mock_repository.get_all_agents.return_value = [
-            {"name": "Agent1", "description": "First agent"},
-            {"name": "Agent2", "description": "Second agent"},
-            {"name": "Agent3", "description": "Third agent"}
-        ]
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        # Assuming this method exists
-        try:
-            names = manager.get_available_agent_names()
-            assert len(names) == 3
-            assert "Agent1" in names
-            assert "Agent2" in names
-            assert "Agent3" in names
-        except AttributeError:
-            # Method might not exist, test manual extraction
-            agents = mock_repository.get_all_agents()
-            names = [agent["name"] for agent in agents]
-            assert len(names) == 3
-
-    def test_create_tool_with_invalid_agent(self):
-        """Test creating tool with invalid agent configuration."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        mock_factory.create_delegation_tool.side_effect = ValueError("Invalid agent config")
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        invalid_agent = {"name": "", "description": ""}  # Invalid config
-
-        # Assuming this method exists and handles errors
-        try:
-            tool = manager.create_tool_for_agent(invalid_agent)
-            assert tool is None  # Should handle error gracefully
-        except (AttributeError, ValueError):
-            # Method might not exist or might raise exception
-            pass
-
-    @patch('src.smart_rag.agents.tools.tools_manager.logger')
-    def test_logging_integration(self, mock_logger):
-        """Test that logging is properly integrated."""
-        mock_repository = MagicMock()
-        mock_factory = MagicMock()
-        mock_helper = MagicMock()
-
-        manager = AgentToolsManager(mock_repository, mock_factory, mock_helper)
-
-        # Any method call should potentially use logger
-        prompt = "Test prompt with @TestAgent"
-
-        try:
-            manager.extract_agent_mentions(prompt)
-        except AttributeError:
-            pass
-
-        # Logger should be available
-        assert mock_logger is not None
+    def test_get_agent_tools_raises_when_empty(self):
+        repo = MagicMock()
+        repo.get_agent_by_name.return_value = None
+        repo.get_all_agents.return_value = []
+        manager = AgentToolsManager(repo, MagicMock(), MagicMock())
+        with pytest.raises(ValueError, match="No agents available"):
+            manager.get_agent_tools("hello")

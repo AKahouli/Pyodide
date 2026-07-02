@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { FlowPromptTemplate, FlowPromptTemplateDocument } from '../schemas/playbook-flow-prompt-template.schema';
 import {
   FlowPromptTemplateListResponse,
+  FlowPromptTemplateImportPayload,
   FlowPromptTemplateResponse,
   UpsertFlowPromptTemplateRequest,
 } from '../interfaces/playbook-flow-prompt-template.interface';
@@ -39,9 +40,10 @@ export class PlaybookFlowPromptTemplateService {
   private async seedDefaultsIfNeeded(): Promise<void> {
     const keys = DEFAULT_FLOW_PROMPTS.map((item) => item.key);
     const existing = await this.promptModel.find({ key: { $in: keys } }).select('key version isBuiltIn').lean().exec();
+    const totalCount = await this.promptModel.estimatedDocumentCount().exec();
     const existingByKey = new Map(existing.map((item) => [item.key, item]));
     const existingKeys = new Set(existing.map((item) => item.key));
-    const missing = DEFAULT_FLOW_PROMPTS.filter((item) => !existingKeys.has(item.key));
+    const missing = totalCount === 0 ? DEFAULT_FLOW_PROMPTS.filter((item) => !existingKeys.has(item.key)) : [];
 
     if (missing.length) {
       await this.promptModel.insertMany(
@@ -133,6 +135,41 @@ export class PlaybookFlowPromptTemplateService {
     await this.promptModel.deleteOne({ key }).exec();
     this.invalidateCache();
     return true;
+  }
+
+  async replaceAll(payload: FlowPromptTemplateImportPayload, userId: string): Promise<FlowPromptTemplateListResponse> {
+    const keys = payload.items.map((item) => item.key.trim());
+    if (keys.some((key) => !key)) throw new BadRequestException('Import contains an empty prompt key');
+    if (new Set(keys).size !== keys.length) throw new BadRequestException('Import contains duplicate prompt keys');
+
+    const userObjectId = new Types.ObjectId(userId);
+    const docs = payload.items.map((item) => ({
+      key: item.key.trim(),
+      title: item.title.trim(),
+      category: item.category.trim(),
+      description: item.description?.trim() || '',
+      systemTemplate: item.systemTemplate ?? '',
+      userTemplate: item.userTemplate ?? '',
+      enabled: item.enabled ?? true,
+      version: 1,
+      isBuiltIn: item.isBuiltIn ?? false,
+      createdBy: userObjectId,
+      updatedBy: userObjectId,
+    }));
+
+    if (docs.length) {
+      await this.promptModel.bulkWrite(docs.map((doc) => ({
+        updateOne: {
+          filter: { key: doc.key },
+          update: { $set: doc },
+          upsert: true,
+        },
+      })), { ordered: true });
+    }
+    await this.promptModel.deleteMany({ key: { $nin: keys } }).exec();
+    this.invalidateCache();
+    const importedDocs = await this.promptModel.find({}).sort({ category: 1, title: 1 }).exec();
+    return { items: importedDocs.map((doc) => this.toResponse(doc)) };
   }
 
   async resetCache(): Promise<void> { this.invalidateCache(); }

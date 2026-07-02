@@ -14,6 +14,13 @@ import { normalizePlaybookComponents } from './playbook-flow-citation.mapper';
 import { PlaybookFlowPublicReasoningParserService } from './playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './playbook-flow-trace-redaction.service';
 
+export interface FlowTraceUpdatePayload {
+  toolTrace?: FlowCompletedResultPayload['toolTrace'];
+  llmPromptTrace?: FlowCompletedResultPayload['llmPromptTrace'];
+  usage?: FlowCompletedResultPayload['usage'];
+  traceMetadata?: FlowCompletedResultPayload['traceMetadata'];
+}
+
 @Injectable()
 export class PlaybookFlowObservabilityService {
   private readonly logger = new Logger(PlaybookFlowObservabilityService.name);
@@ -99,6 +106,7 @@ export class PlaybookFlowObservabilityService {
           itemCount: publicReasoning.reasoningChain.length,
         },
       },
+      iteratorIterations: this.normalizeIteratorIterations(payload),
     };
   }
 
@@ -110,7 +118,33 @@ export class PlaybookFlowObservabilityService {
       llmPromptTrace: payload.llmPromptTrace,
       semanticMatch: payload.semanticMatch ?? null,
       traceMetadata: payload.traceMetadata ?? {},
+      iteratorIterations: payload.iteratorIterations,
     };
+  }
+
+  extractTraceUpdatePayload(
+    payload: Record<string, unknown>,
+    context: { executionId: string; taskId: string },
+  ): FlowTraceUpdatePayload {
+    const toolTrace = this.traceRedactionService.redactToolTrace(mapToolTrace(payload.tool_trace ?? payload.toolTrace));
+    const llmPromptTrace = this.traceRedactionService.redactPromptTrace(mapPromptTrace(payload.llm_prompt_trace ?? payload.llmPromptTrace));
+    const usage = mapUsage(payload.usage);
+    const traceMetadata = this.traceRedactionService.redactRecord(mapTraceMetadata(payload.trace_metadata ?? payload.traceMetadata));
+
+    this.warnOnInvalidObservabilityPayload(payload, context, toolTrace.length, llmPromptTrace.length);
+
+    return {
+      toolTrace,
+      llmPromptTrace,
+      usage,
+      traceMetadata,
+    };
+  }
+
+  private normalizeIteratorIterations(payload: Record<string, unknown>): Array<Record<string, unknown>> | undefined {
+    const raw = payload.iterator_iterations ?? payload.iteratorIterations;
+    if (!Array.isArray(raw)) return undefined;
+    return raw.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));
   }
 
   private warnOnInvalidObservabilityPayload(

@@ -71,6 +71,14 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminWorkyWhatsAppSystemBot: {
+    base: '/admin/worky/whatsapp-system-bot',
+    expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',
+    connect: '/admin/worky/whatsapp-system-bot/connect',
+    pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
+    reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,
+    session: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}`,
+  },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
   },
@@ -215,6 +223,7 @@ export const API_ENDPOINTS = {
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,
+    export: (id: string) => `/admin/skills/${id}/export`,
     import: '/admin/skills/import',
   },
   adminSkillCategories: {
@@ -246,10 +255,12 @@ export const API_ENDPOINTS = {
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
+    import: '/admin/playbook-prompts/import',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
   },
   adminPlaybookNodeTemplates: {
     list: '/playbook-flow-templates',
+    import: '/playbook-flow-templates/import',
     byId: (id: string) => `/playbook-flow-templates/${id}`,
   },
   playbookNodeTemplates: {
@@ -356,6 +367,7 @@ export const API_ENDPOINTS = {
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
     intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
+    intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,
@@ -375,6 +387,8 @@ export const API_ENDPOINTS = {
     designMessages: (id: string) => `/playbooks/${id}/design-messages`,
     clearDesignMessages: (id: string) => `/playbooks/${id}/design-messages`,
     revertDesign: (id: string, msgId: string) => `/playbooks/${id}/design-messages/${msgId}/revert`,
+    shares: (id: string) => `/playbooks/${id}/shares`,
+    share: (id: string, shareId: string) => `/playbooks/${id}/shares/${shareId}`,
     cloneShare: (id: string) => `/playbooks/${id}/clone-share`,
     clone: (id: string) => `/playbooks/${id}/clone`,
     schedule: (id: string) => `/playbooks/${id}/schedule`,
@@ -537,5 +551,16 @@ export const API_ENDPOINTS = {
     memoryProposalConfirm: (id: string) => `/worky/memory/proposals/${id}/confirm`,
     memoryProposalReject: (id: string) => `/worky/memory/proposals/${id}/reject`,
     governancePolicy: '/worky/admin/governance-policy',
+    sttTranscribe: '/worky/stt/transcribe',
+    ttsSpeak: '/worky/tts/speak',
+    whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
+    whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
+    whatsappPairing: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/pairing`,
+    whatsappReconnect: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/reconnect`,
+    whatsappSession: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}`,
+    whatsappSystemBotStatus: '/worky/whatsapp-system-bot/status',
   },
 } as const;

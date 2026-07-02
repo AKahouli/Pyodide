@@ -35,5 +35,5 @@ export const DEFAULT_ADMIN_PLAYBOOK_SETTINGS: AdminPlaybookSettings = {
   approvalSuggestionMode: 'auto',
   intentNormalizationLimits: DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
   replayEligibilityConfidenceThreshold: 70,
-  useDeterministicBlueprintBuilder: false,
+  useDeterministicBlueprintBuilder: true,
 };

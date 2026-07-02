@@ -39,7 +39,6 @@ import {
   useCurrentPlaybookLoading,
   useCurrentExecution,
   useLatestExecutionForPlaybook,
-  useExecutionHistoryForPlaybook,
   useIsDirty,
   useIsSaving,
   useIsGenerating,
@@ -61,6 +60,7 @@ import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { CommunityGraphPanel } from './CommunityGraphPanel';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
+import { isIntentIteratorTask } from '../utils/intent-task-template';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { usePlaybookCanvasNodeHandlers, type PlaybookBindingModalState } from '../hooks/usePlaybookCanvasNodeHandlers';
 import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHandlers';
@@ -82,14 +82,13 @@ import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNod
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
-import { PlaybookIntentBar } from './PlaybookIntentBar';
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
-import { CloneShareDialog } from './CloneShareDialog';
+import { SharePlaybookDialog } from './SharePlaybookDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { SkillSidebar } from './SkillSidebar';
@@ -101,7 +100,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { cancelPlaybookIntentConstruction, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
@@ -110,8 +109,10 @@ import type {
   PlaybookNodeData,
   PlaybookExecution,
   PlaybookIntentSuggestion,
+  PlaybookIntentImageInput,
   PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
+  PlaybookIntentTraceResponse,
   PlaybookTrigger,
   InterruptType,
   PlaybookIntentTaskDraft,
@@ -120,6 +121,7 @@ import type {
   PlaybookDefinitionExport,
   TaskInputPort,
   TaskOutputPort,
+  PlaybookNodeType,
 } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, playbookEdgesToFlowEdges, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
@@ -158,7 +160,61 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 type CanvasViewMode = 'expanded' | 'compact';
-type IntentRequestOrigin = 'intent-bar' | 'designer-sidebar';
+
+export function shouldAutoLayoutAfterConstruction(
+  previousStatus: PlaybookIntentConstructionStatus,
+  currentStatus: PlaybookIntentConstructionStatus,
+): boolean {
+  return previousStatus !== 'completed' && currentStatus === 'completed';
+}
+
+export function buildIntentEdgeOptions(
+  edgeKind?: 'sequential' | 'conditional',
+  routerLabel?: string | null,
+  priority?: number | null,
+) {
+  const isConditional = edgeKind === 'conditional' || Boolean(routerLabel);
+  return {
+    kind: isConditional ? 'conditional' as const : 'sequential' as const,
+    routerLabel,
+    priority,
+    autoBind: !isConditional,
+  };
+}
+
+export function remapRouterConditionSourceNodes(task: PlaybookTask, childRefs: Map<string, string>): PlaybookTask {
+  const conditions = task.routerConfig?.conditions;
+  if (!conditions?.length) return task;
+  let changed = false;
+  const nextConditions = conditions.map((condition) => {
+    const sourceNode = condition.sourceNode ? childRefs.get(condition.sourceNode) : null;
+    if (!sourceNode) return condition;
+    changed = true;
+    return { ...condition, sourceNode };
+  });
+  return changed ? { ...task, routerConfig: { ...task.routerConfig!, conditions: nextConditions } } : task;
+}
+
+export function resolveIntentNodeSemantics(
+  explicitNodeType: PlaybookNodeType | null | undefined,
+  explicitTaskType: string | null | undefined,
+  templateNodeType: PlaybookNodeType | null | undefined,
+  isIterator: boolean,
+  hasRouterConfig = false,
+  hasHumanApprovalConfig = false,
+) {
+  const nodeType = explicitNodeType
+    ?? (hasRouterConfig ? 'router' : hasHumanApprovalConfig ? 'human_approval' : undefined)
+    ?? (isIterator ? 'iterator' : templateNodeType ?? 'agent');
+  const taskType = explicitTaskType ?? (nodeType === 'router'
+    ? 'router'
+    : nodeType === 'iterator'
+      ? 'iterator'
+      : nodeType === 'evaluation'
+        ? 'evaluation'
+        : 'generic');
+  return { nodeType, taskType };
+}
 
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
@@ -216,7 +272,6 @@ function PlaybookCanvasInner() {
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const pendingRerunTaskId = usePlaybookStore((s) => s.pendingRerunTaskId);
   const setPendingRerunTaskId = usePlaybookStore((s) => s.setPendingRerunTaskId);
-  const executionHistory = useExecutionHistoryForPlaybook(id);
   const repeatability = usePlaybookStore((s) => s.repeatability);
   const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
   const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
@@ -228,11 +283,16 @@ function PlaybookCanvasInner() {
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
-  const intentBarRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
+  const canvasViewModeRef = useRef<HTMLDivElement | null>(null);
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
+  const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
+
+  useEffect(() => {
+    globalSidebarOpenRef.current = setGlobalSidebarOpen;
+  }, [setGlobalSidebarOpen]);
 
   const handleToggleTriggerEnabled = useCallback(
     async (playbookId: string, currentlyEnabled: boolean) => {
@@ -340,7 +400,6 @@ function PlaybookCanvasInner() {
   const [pendingImport, setPendingImport] = useState<PlaybookDefinitionExport | null>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
-  const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
@@ -356,12 +415,17 @@ function PlaybookCanvasInner() {
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
-  const [intentRequestOrigin, setIntentRequestOrigin] = useState<IntentRequestOrigin>('intent-bar');
+  const [intentTraces, setIntentTraces] = useState<PlaybookIntentTraceResponse | null>(null);
+  const [intentTracesLoading, setIntentTracesLoading] = useState(false);
   const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
   const [constructionProgress, setConstructionProgress] = useState('');
   const [constructionId, setConstructionId] = useState<string | null>(null);
   const constructionAbortRef = useRef<AbortController | null>(null);
   const designerIntentRef = useRef('');
+  const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
+  const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
+  const autoLayoutAfterGenerationRef = useRef<(() => void) | null>(null);
+  const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
   const autoIntentRef = useRef<string | null>(null);
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
@@ -370,7 +434,15 @@ function PlaybookCanvasInner() {
   const highlightTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
+    // Ensure agents are loaded so nodes can display agent names
+    void useAgentStore.getState().fetchAgents();
+
     if (id && !isGeneratingRoute) {
+      let cancelled = false;
+      const hasExecutionParam = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('execution') !== null
+        : false;
+
       // Reset execution state when switching playbooks, but preserve panel preference
       const panelPref = (() => { try { return localStorage.getItem('ys_playbook_exec_panel') === '1'; } catch { return false; } })();
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
@@ -381,6 +453,8 @@ function PlaybookCanvasInner() {
         workspaceExplorerOpen: workspaceExplorerPref,
         connectorSidebarOpen: false,
         nodeEditorOpen: false,
+        designerOpen: true,
+        copilotMode: 'design',
         pageMode: 'design',
       });
       usePlaybookStore.setState({
@@ -389,21 +463,76 @@ function PlaybookCanvasInner() {
         executionPanelOpen: panelPref,
         workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
+        designerOpen: true,
+        copilotMode: 'design',
         pageMode: 'design',
       });
       setExecutionPanelCollapsed(!panelPref);
-      setIntentBarCollapsed(false);
       setToolbarCollapsed(true);
       setDataBindingsVisible(false);
       setIntentSuggestions([]);
       setLastIntentSuggestions([]);
-      setGlobalSidebarOpen(false);
-      void usePlaybookStore.getState().fetchPlaybook(id);
-      void usePlaybookStore.getState().fetchExecutions(id);
+      globalSidebarOpenRef.current(false);
+
+      void (async () => {
+        await Promise.all([
+          usePlaybookStore.getState().fetchPlaybook(id),
+          usePlaybookStore.getState().fetchExecutions(id),
+        ]);
+        if (cancelled || hasExecutionParam) {
+          return;
+        }
+
+        const latestExecutionSummary = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        if (latestExecutionSummary) {
+          setDesignerOpen(false);
+          setPageMode('run');
+          setExecutionPanelOpen(true);
+          setExecutionPanelCollapsed(false);
+          await fetchExecution(id, latestExecutionSummary.id);
+          if (cancelled) {
+            return;
+          }
+          viewExecutionInPanel(latestExecutionSummary.id);
+          return;
+        }
+
+        setPageMode('design');
+        setDesignerOpen(true);
+        setCopilotMode('design');
+        setExecutionPanelOpen(false);
+        setExecutionPanelCollapsed(true);
+        selectStep(null);
+      })();
+
+      return () => {
+        cancelled = true;
+      };
     }
-    // Ensure agents are loaded so nodes can display agent names
-    void useAgentStore.getState().fetchAgents();
-  }, [id, isGeneratingRoute]);
+  }, [fetchExecution, id, isGeneratingRoute, selectStep, setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode, viewExecutionInPanel]);
+
+  const refreshIntentTraces = useCallback(async () => {
+    if (!id) return;
+    setIntentTracesLoading(true);
+    try {
+      const traces = await fetchPlaybookIntentTraces(id);
+      setIntentTraces(traces);
+    } catch (error) {
+      console.error('Failed to load intent traces', error);
+    } finally {
+      setIntentTracesLoading(false);
+    }
+  }, [id]);
+
+  const handleOpenIntentTraces = useCallback(() => {
+    void refreshIntentTraces();
+  }, [refreshIntentTraces]);
+
+  useEffect(() => {
+    if (id) {
+      void refreshIntentTraces();
+    }
+  }, [id, refreshIntentTraces]);
 
   useEffect(() => {
     if (searchParams.get('triggers') === '1' || searchParams.get('schedule') === '1') {
@@ -1261,14 +1390,18 @@ function PlaybookCanvasInner() {
     [repackIteratorChildren],
   );
 
-  const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default'): Edge => ({
-    id: `e-${sourceId}-${sourceOutputPortId}-${targetId}-${targetInputPortId}`,
+  const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default', options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null }): Edge => ({
+    id: `e-${sourceId}-${sourceOutputPortId}-${targetId}-${targetInputPortId}${options?.routerLabel ? `-${options.routerLabel}` : ''}`,
     source: sourceId,
     target: targetId,
     sourceHandle: sourceOutputPortId,
     targetHandle: targetInputPortId,
-    type: 'animated',
+    type: options?.kind === 'conditional' || options?.routerLabel ? 'conditional' : 'animated',
+    animated: !(options?.kind === 'conditional' || options?.routerLabel),
     data: {
+      kind: options?.kind ?? 'sequential',
+      routerLabel: options?.routerLabel ?? null,
+      priority: options?.priority ?? null,
       sourceOutputPortId,
       targetInputPortId,
       isTypeMatch: undefined,
@@ -1330,19 +1463,18 @@ function PlaybookCanvasInner() {
     const task = layoutedTasks.find((candidate) => candidate.id === nodeId);
     if (!task) return;
 
-    void reactFlow.setCenter(task.positionX + 140, task.positionY + 90, {
+    void reactFlow.setCenter(task.positionX + 140 + (designerSidebarWidth / 2), task.positionY + 90, {
       zoom: 1.08,
       duration: 650,
     });
     scheduleChangeFeedbackCleanup();
-  }, [reactFlow, scheduleChangeFeedbackCleanup]);
+  }, [designerSidebarWidth, reactFlow, scheduleChangeFeedbackCleanup]);
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
     options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean },
   ) => {
     if (!playbook) return;
-
     const shouldSave = options?.save ?? true;
     const shouldClearSuggestions = options?.clearSuggestions ?? true;
     const shouldFocus = options?.focus ?? true;
@@ -1444,12 +1576,13 @@ function PlaybookCanvasInner() {
       return updatedTask;
     };
 
-    const findMatchingTemplate = (_title: string, _description: string, templateType?: string | null) => {
-      if (templateType) {
-        const exactTemplate = nodeTemplates.find((template) => template.type === templateType);
+    const findMatchingTemplate = (_title: string, _description: string, nodeTemplateKey?: string | null) => {
+      if (nodeTemplateKey) {
+        const exactTemplate = nodeTemplates.find((template) => template.key === nodeTemplateKey);
         if (exactTemplate) {
           return exactTemplate;
         }
+        console.warn(`playbook_intent_template_key_unresolved key=${nodeTemplateKey}`);
       }
 
       return null;
@@ -1461,29 +1594,45 @@ function PlaybookCanvasInner() {
       title: string,
       description: string,
       agentSlug: string | null | undefined,
-      templateType: string | null | undefined,
+      nodeTemplateKey: string | null | undefined,
+      explicitNodeType: PlaybookIntentTaskDraft['nodeType'] | undefined,
+      explicitTaskType: PlaybookIntentTaskDraft['taskType'] | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
+      iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
+      routerConfig: PlaybookIntentTaskDraft['routerConfig'] | undefined,
+      humanApprovalConfig: PlaybookIntentTaskDraft['humanApprovalConfig'] | undefined,
+      retryPolicy: PlaybookIntentTaskDraft['retryPolicy'] | undefined,
+      modelId: string | null | undefined,
       anchorTask: PlaybookTask | null,
       order: number,
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ): PlaybookTask => {
-      const matchedTemplate = findMatchingTemplate(title, description, templateType);
-      const matchedNodeType = matchedTemplate?.nodeType
-        ?? (templateType === 'iterator' ? 'iterator' as const : templateType === 'evaluation' ? 'evaluation' as const : 'agent');
+      const matchedTemplate = findMatchingTemplate(title, description, nodeTemplateKey);
+      const matchedNodeType = matchedTemplate?.nodeType ?? null;
       const genericInputPorts = normalizeIntentInputPorts(inputPorts);
       const genericOutputPorts = normalizeIntentOutputPorts(outputPorts);
 
-      const isIterator = matchedNodeType === 'iterator';
+      const isIterator = isIntentIteratorTask(matchedTemplate, iteratorBody);
+      const semantics = resolveIntentNodeSemantics(
+        explicitNodeType,
+        explicitTaskType,
+        matchedNodeType,
+        isIterator,
+        Boolean(routerConfig),
+        Boolean(humanApprovalConfig),
+      );
 
       return {
         id: taskId,
         title,
         description,
-        assignedAgentId: matchedTemplate?.executionMode === 'agent'
+        assignedAgentId: matchedTemplate?.nodeType === 'agent'
           ? (matchedTemplate.assignedAgentId ?? resolveAssignedAgentId(agentSlug))
           : resolveAssignedAgentId(agentSlug),
-        executionMode: (matchedTemplate?.executionMode as PlaybookTask['executionMode']) ?? 'agent',
-        selectedAction: matchedTemplate?.executionMode === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
+        executionMode: matchedTemplate?.nodeType === 'action' ? 'action' : 'agent',
+        selectedAction: matchedTemplate?.nodeType === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
         executionOrder: order,
         positionX: (anchorTask?.positionX || 0) + DEFAULT_NODE_SPACING_X,
         positionY: anchorTask?.positionY || 0,
@@ -1498,41 +1647,41 @@ function PlaybookCanvasInner() {
         notifyOnComplete: false,
         notifyEmails: [],
         inputFiles: [],
-        taskType: isIterator
-          ? 'iterator'
-          : matchedNodeType === 'evaluation'
-            ? 'evaluation'
-            : 'generic',
-        nodeType: matchedNodeType,
-        templateType: matchedTemplate?.type ?? templateType ?? null,
-        iteratorConfig: isIterator
-          ? {
-              source: '{{items}}',
-              mode: 'item',
-              batchSize: 10,
-              itemVariable: 'item',
-              outputVariable: 'processed_items',
-              errorStrategy: 'stop',
-            }
+        taskType: semantics.taskType,
+        nodeType: semantics.nodeType,
+        nodeTemplateKey: nodeTemplateKey ?? matchedTemplate?.key ?? null,
+        routerConfig: routerConfig ?? matchedTemplate?.routerConfig ?? null,
+        humanApprovalConfig: humanApprovalConfig ?? matchedTemplate?.humanApprovalConfig ?? null,
+        iteratorConfig: semantics.nodeType === 'iterator'
+          ? matchedTemplate?.iteratorConfig
+            ? { ...matchedTemplate.iteratorConfig }
+            : {
+                source: '{{items}}',
+                mode: 'item',
+                batchSize: 10,
+                itemVariable: 'item',
+                outputVariable: 'processed_items',
+                errorStrategy: 'stop',
+              }
           : undefined,
         inputPorts: genericInputPorts.length > 0
           ? genericInputPorts
           : matchedTemplate
             ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
-            : isIterator
+            : semantics.nodeType === 'iterator'
             ? getDefaultIteratorInputPorts()
             : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
         outputPorts: genericOutputPorts.length > 0
           ? genericOutputPorts
           : matchedTemplate
             ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
-            : isIterator
+            : semantics.nodeType === 'iterator'
             ? getDefaultIteratorOutputPorts()
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
-        retryPolicy: matchedTemplate?.retryPolicy
-          ? { ...matchedTemplate.retryPolicy }
-          : null,
-        modelId: matchedTemplate?.modelId ?? null,
+        retryPolicy: retryPolicy ?? (matchedTemplate?.retryPolicy ? { ...matchedTemplate.retryPolicy } : null),
+        modelId: modelId ?? matchedTemplate?.modelId ?? null,
+        toolBindings,
+        skillBindings,
       };
     };
 
@@ -1613,6 +1762,12 @@ function PlaybookCanvasInner() {
       return null;
     };
 
+    const resolveScopedTaskReference = (taskId: string | null | undefined, nodeRef: string | null | undefined, iteratorNodeRef?: string | null) => {
+      if (taskId) return resolveTaskReference(taskId);
+      if (iteratorNodeRef && nodeRef) return resolveTaskReference(`${iteratorNodeRef}.${nodeRef}`);
+      return resolveTaskReference(nodeRef);
+    };
+
     const resolveAnchorTask = (targetTaskId: string | null, nodeRef: string | null) => {
       const resolvedId = resolveTaskReference(targetTaskId) || resolveTaskReference(nodeRef);
       return resolvedId ? nextTasks.find((task) => task.id === resolvedId) || null : null;
@@ -1634,10 +1789,16 @@ function PlaybookCanvasInner() {
       taskTitle: string,
       taskDescription: string,
       agentSlug: string | null | undefined,
-      templateType: string | null | undefined,
+      nodeTemplateKey: string | null | undefined,
       inputPorts: PlaybookIntentTaskDraft['inputPorts'] | undefined,
       outputPorts: PlaybookIntentTaskDraft['outputPorts'] | undefined,
+      nodeType: PlaybookIntentTaskDraft['nodeType'] | undefined,
+      taskType: PlaybookIntentTaskDraft['taskType'] | undefined,
       iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
+      routerConfig: PlaybookIntentTaskDraft['routerConfig'] | undefined,
+      humanApprovalConfig: PlaybookIntentTaskDraft['humanApprovalConfig'] | undefined,
+      retryPolicy: PlaybookIntentTaskDraft['retryPolicy'] | undefined,
+      modelId: string | null | undefined,
       mode: 'append' | 'before' | 'after' | 'as_input',
       targetTaskId: string | null,
       nodeRef: string | null,
@@ -1646,6 +1807,8 @@ function PlaybookCanvasInner() {
       nodeRefs?: string[],
       anchorSourceOutputPortId?: string | null,
       anchorTargetInputPortId?: string | null,
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'],
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'],
     ) => {
       const hasExplicitAnchors = Boolean(targetTaskId || nodeRef || (targetTaskIds || []).length || (nodeRefs || []).length);
       const anchorTaskIds = resolveAnchorTaskIds(targetTaskId, nodeRef, targetTaskIds, nodeRefs);
@@ -1667,7 +1830,26 @@ function PlaybookCanvasInner() {
         return false;
       }
 
-      const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, anchorTask, nextTasks.length);
+      const newTask = createIntentTask(
+        deterministicNodeId,
+        taskTitle,
+        taskDescription,
+        agentSlug,
+        nodeTemplateKey,
+        nodeType,
+        taskType,
+        inputPorts,
+        outputPorts,
+        iteratorBody,
+        routerConfig,
+        humanApprovalConfig,
+        retryPolicy,
+        modelId,
+        anchorTask,
+        nextTasks.length,
+        toolBindings,
+        skillBindings,
+      );
       nextTasks = [...nextTasks, newTask];
       changedNodeIds.add(newTask.id);
       newlyCreatedNodeIds.push(newTask.id);
@@ -1684,11 +1866,20 @@ function PlaybookCanvasInner() {
             step.title,
             step.description,
             step.agentSlug,
-            step.templateType,
+            step.nodeTemplateKey,
+            step.nodeType,
+            step.taskType,
             step.inputPorts,
             step.outputPorts,
+            undefined,
+            step.routerConfig,
+            step.humanApprovalConfig,
+            step.retryPolicy,
+            step.modelId,
             newTask,
             nextTasks.length + index + 1,
+            step.toolBindings,
+            step.skillBindings,
           );
           const childPosition = getIteratorBodyChildPosition(newTask.positionX, newTask.positionY, index, iteratorBody.steps.length);
           childTask.positionX = childPosition.x;
@@ -1699,8 +1890,15 @@ function PlaybookCanvasInner() {
             changedNodeIds.add(childTask.id);
             newlyCreatedNodeIds.push(childTask.id);
           }
+          if (newNodeRef) {
+            createdNodeRefs.set(`${newNodeRef}.${step.nodeRef}`, childTask.id);
+          }
           iteratorChildRefs.set(step.nodeRef, childTask.id);
         });
+
+        nextTasks = nextTasks.map((task) => task.containerConfig?.parentIteratorId === newTask.id
+          ? remapRouterConditionSourceNodes(task, iteratorChildRefs)
+          : task);
 
         const seenChildEdgePairs = new Set<string>();
 
@@ -1730,7 +1928,7 @@ function PlaybookCanvasInner() {
           const resolvedPorts = resolveIntentEdgePorts(
             sourceTask,
             targetTask,
-            edge.sourceOutputPortId,
+            edge.sourceOutputPortId || edge.routerLabel,
             edge.targetInputPortId,
           );
           if (!resolvedPorts) {
@@ -1742,6 +1940,7 @@ function PlaybookCanvasInner() {
             targetId,
             resolvedPorts.sourceOutputPortId,
             resolvedPorts.targetInputPortId,
+            buildIntentEdgeOptions(edge.edgeKind, edge.routerLabel, edge.priority),
           );
         });
       }
@@ -2013,10 +2212,12 @@ function PlaybookCanvasInner() {
       targetId: string,
       sourceOutputPortId: string,
       targetInputPortId: string,
+      options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null; autoBind?: boolean },
     ) => {
+      const isConditional = options?.kind === 'conditional' || Boolean(options?.routerLabel);
       const targetTask = nextTasks.find((task) => task.id === targetId);
       const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetInputPortId);
-      if (targetInputPort?.required) {
+      if (targetInputPort?.required && !isConditional) {
         nextEdges = nextEdges.filter((edge) => {
           const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
           const matchesTargetPort = edge.target === targetId
@@ -2033,21 +2234,26 @@ function PlaybookCanvasInner() {
       }
 
       if (nextEdges.some((edge) => {
-        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
         return edge.source === sourceId
           && edge.target === targetId
           && (edgeData.sourceOutputPortId || edge.sourceHandle || 'default') === sourceOutputPortId
-          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId;
+          && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId
+          && (edgeData.routerLabel ?? null) === (options?.routerLabel ?? null);
       })) {
         return;
       }
 
       nextEdges = [
         ...nextEdges,
-        markEdgeChanged(createProgrammaticEdge(sourceId, targetId, sourceOutputPortId, targetInputPortId)),
+        markEdgeChanged(createProgrammaticEdge(sourceId, targetId, sourceOutputPortId, targetInputPortId, {
+          kind: isConditional ? 'conditional' : options?.kind,
+          routerLabel: options?.routerLabel,
+          priority: options?.priority,
+        })),
       ];
 
-      if (targetInputPort?.required) {
+      if (targetInputPort?.required && !isConditional && options?.autoBind !== false) {
         upsertNodeOutputBinding(targetId, targetInputPortId, sourceId, sourceOutputPortId);
       }
     };
@@ -2121,18 +2327,20 @@ function PlaybookCanvasInner() {
       targetTaskId: string | null,
       targetNodeRef: string | null,
       targetPort: string,
+      targetIteratorNodeRef?: string | null,
       sourceKind?: 'node-output' | 'constant',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
+      sourceIteratorNodeRef?: string | null,
       iteration?: 'current' | 'previous',
       constantValue?: unknown,
     ) => {
-      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+      const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
       if (!resolvedTargetId || !targetPort) return;
 
       if (type === 'delete_data_binding') {
-        const resolvedSourceId = resolveTaskReference(sourceTaskId ?? null) || resolveTaskReference(sourceNodeRef ?? null);
+        const resolvedSourceId = resolveScopedTaskReference(sourceTaskId ?? null, sourceNodeRef ?? null, sourceIteratorNodeRef);
         if (resolvedSourceId && sourcePort) {
           nextDataBindings = nextDataBindings.filter(
             (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort && b.sourceKind === 'node-output' && b.sourceNode === resolvedSourceId && b.sourcePort === sourcePort),
@@ -2150,7 +2358,7 @@ function PlaybookCanvasInner() {
         return;
       }
 
-      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
+      const resolvedSourceId = resolveScopedTaskReference(sourceTaskId, sourceNodeRef, sourceIteratorNodeRef);
       if (!resolvedSourceId || !sourcePort) return;
 
       upsertNodeOutputBinding(
@@ -2169,11 +2377,16 @@ function PlaybookCanvasInner() {
       sourceNodeRef: string | null,
       targetTaskId: string | null,
       targetNodeRef: string | null,
+      targetIteratorNodeRef?: string | null,
       sourceOutputPortId?: string | null,
       targetInputPortId?: string | null,
+      sourceIteratorNodeRef?: string | null,
+      edgeKind?: 'sequential' | 'conditional',
+      routerLabel?: string | null,
+      priority?: number | null,
     ) => {
-      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
-      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+      const resolvedSourceId = resolveScopedTaskReference(sourceTaskId, sourceNodeRef, sourceIteratorNodeRef);
+      const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
 
       if (!resolvedSourceId || !resolvedTargetId || resolvedSourceId === resolvedTargetId) {
         return;
@@ -2187,18 +2400,20 @@ function PlaybookCanvasInner() {
 
       if (type === 'delete_edge') {
         const deletedEdges = nextEdges.filter((edge) => {
-          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
           return edgeMatchesIntentPortPair(
             {
               sourceId: edge.source,
               targetId: edge.target,
               sourceOutputPortId: edgeData.sourceOutputPortId || edge.sourceHandle || undefined,
               targetInputPortId: edgeData.targetInputPortId || edge.targetHandle || undefined,
+              routerLabel: edgeData.routerLabel ?? null,
             },
             resolvedSourceId,
             resolvedTargetId,
             sourceOutputPortId,
             targetInputPortId,
+            routerLabel,
           );
         });
         deletedEdges.forEach((edge) => changedEdgeIds.add(edge.id));
@@ -2212,24 +2427,32 @@ function PlaybookCanvasInner() {
         return;
       }
 
-      const resolvedPorts = resolveIntentEdgePorts(sourceTask, targetTask, sourceOutputPortId, targetInputPortId);
+      const resolvedPorts = resolveIntentEdgePorts(sourceTask, targetTask, sourceOutputPortId || routerLabel, targetInputPortId);
       if (!resolvedPorts) {
+        console.warn('[IntentApply] Dropped edge with unresolved ports:', {
+          sourceNode: resolvedSourceId,
+          targetNode: resolvedTargetId,
+          sourceOutputPortId: sourceOutputPortId || routerLabel,
+          targetInputPortId,
+        });
         return;
       }
 
       if (nextEdges.some((edge) => {
-        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+        const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string; routerLabel?: string | null };
         return edgeMatchesIntentPortPair(
           {
             sourceId: edge.source,
             targetId: edge.target,
             sourceOutputPortId: edgeData.sourceOutputPortId || edge.sourceHandle || undefined,
             targetInputPortId: edgeData.targetInputPortId || edge.targetHandle || undefined,
+            routerLabel: edgeData.routerLabel ?? null,
           },
           resolvedSourceId,
           resolvedTargetId,
           resolvedPorts.sourceOutputPortId,
           resolvedPorts.targetInputPortId,
+          routerLabel,
         );
       })) {
         return;
@@ -2252,6 +2475,7 @@ function PlaybookCanvasInner() {
         resolvedTargetId,
         resolvedPorts.sourceOutputPortId,
         resolvedPorts.targetInputPortId,
+        buildIntentEdgeOptions(edgeKind, routerLabel, priority),
       );
     };
 
@@ -2298,14 +2522,26 @@ function PlaybookCanvasInner() {
         change.task.title || '',
         change.task.description || '',
         change.task.agentSlug,
-        change.task.templateType,
+        change.task.nodeTemplateKey,
         change.task.inputPorts,
         change.task.outputPorts,
+        change.task.nodeType,
+        change.task.taskType,
         change.task.iteratorBody,
+        change.task.routerConfig,
+        change.task.humanApprovalConfig,
+        change.task.retryPolicy,
+        change.task.modelId,
         change.anchorMode,
         change.targetTaskId,
         null,
         null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        change.task.toolBindings,
+        change.task.skillBindings,
       );
       reconcileRequiredNodeOutputBindings();
       reconcileUnboundRequiredInputsByPort();
@@ -2335,10 +2571,16 @@ function PlaybookCanvasInner() {
           change.task.title,
           change.task.description,
           change.task.agentSlug,
-          change.task.templateType,
+          change.task.nodeTemplateKey,
           change.task.inputPorts,
           change.task.outputPorts,
+          change.task.nodeType,
+          change.task.taskType,
           change.task.iteratorBody,
+          change.task.routerConfig,
+          change.task.humanApprovalConfig,
+          change.task.retryPolicy,
+          change.task.modelId,
           change.anchor.mode,
           change.anchor.targetTaskId,
           change.anchor.nodeRef,
@@ -2347,6 +2589,8 @@ function PlaybookCanvasInner() {
           change.anchor.nodeRefs,
           change.anchor.sourceOutputPortId,
           change.anchor.targetInputPortId,
+          change.task.toolBindings,
+          change.task.skillBindings,
         );
         continue;
       }
@@ -2358,8 +2602,13 @@ function PlaybookCanvasInner() {
           change.sourceNodeRef,
           change.targetTaskId,
           change.targetNodeRef,
+          change.targetIteratorNodeRef,
           change.sourceOutputPortId,
           change.targetInputPortId,
+          change.sourceIteratorNodeRef,
+          change.edgeKind,
+          change.routerLabel,
+          change.priority,
         );
         continue;
       }
@@ -2371,7 +2620,9 @@ function PlaybookCanvasInner() {
             change.targetTaskId,
             change.targetNodeRef,
             change.targetPort,
+            change.targetIteratorNodeRef,
             change.sourceKind,
+            null,
             null,
             null,
             null,
@@ -2384,10 +2635,12 @@ function PlaybookCanvasInner() {
             change.targetTaskId,
             change.targetNodeRef,
             change.targetPort,
+            change.targetIteratorNodeRef,
             change.sourceKind,
             change.sourceTaskId,
             change.sourceNodeRef,
             change.sourcePort,
+            change.sourceIteratorNodeRef,
             change.iteration,
           );
         }
@@ -2400,10 +2653,12 @@ function PlaybookCanvasInner() {
           change.targetTaskId,
           change.targetNodeRef,
           change.targetPort,
+          change.targetIteratorNodeRef,
           undefined,
           change.sourceTaskId ?? undefined,
           change.sourceNodeRef ?? undefined,
           change.sourcePort ?? undefined,
+          change.sourceIteratorNodeRef ?? undefined,
         );
         continue;
       }
@@ -2472,7 +2727,7 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntent, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
@@ -2504,21 +2759,48 @@ function PlaybookCanvasInner() {
     constructionAbortRef,
   });
 
-  const handleSubmitIntentFromBar = useCallback(async () => {
-    setIntentRequestOrigin('intent-bar');
-    await handleSubmitIntent();
-  }, [handleSubmitIntent]);
-
-  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string) => {
-    setIntentRequestOrigin('designer-sidebar');
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
     designerIntentRef.current = intentText;
-    await handleSubmitIntentText(intentText);
-  }, [handleSubmitIntentText]);
+    designerIntentImagesRef.current = images ?? [];
+    const result = await handleSubmitIntentText(intentText, images);
+    if (!id || result.status === 'skipped') return;
+    try {
+      await appendDesignMessage(id, {
+        userQuery: visibleUserQuery,
+        aiSummary: result.status === 'needs_clarification'
+          ? t('designer.intentClarificationSummary')
+          : result.status === 'failed'
+            ? (result.error || t('designer.intentFailedSummary'))
+            : t('designer.intentSavedSummary'),
+        status: result.status === 'failed' ? 'failed' : 'completed',
+        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      });
+      await refreshIntentTraces();
+    } catch (error) {
+      console.error('Failed to save Designer Assistant chat history', error);
+      showWarning(t('designer.intentSaveFailed'));
+    }
+  }, [handleSubmitIntentText, id, refreshIntentTraces, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
-    setIntentRequestOrigin('designer-sidebar');
-    await handleForceGenerateIntentText(designerIntentRef.current, answerText);
-  }, [handleForceGenerateIntentText]);
+    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
+    if (!id || !answerText || result.status === 'skipped') return;
+    try {
+      await appendDesignMessage(id, {
+        userQuery: answerText,
+        aiSummary: result.status === 'failed'
+          ? (result.error || t('designer.intentFailedSummary'))
+          : t('designer.intentSavedSummary'),
+        status: result.status === 'failed' ? 'failed' : 'completed',
+        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      });
+      await usePlaybookStore.getState().fetchDesignMessages(id);
+      await refreshIntentTraces();
+    } catch (error) {
+      console.error('Failed to save Designer Assistant clarification history', error);
+      showWarning(t('designer.intentSaveFailed'));
+    }
+  }, [handleForceGenerateIntentText, id, t]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -2532,7 +2814,6 @@ function PlaybookCanvasInner() {
     execution,
     setPageMode,
     setExecutionPanelCollapsed,
-    setIntentBarCollapsed,
     setDesignerOpen,
     setWorkspaceExplorerOpen,
     setConnectorSidebarOpen,
@@ -2582,7 +2863,6 @@ function PlaybookCanvasInner() {
     nodeReflectionEnabled,
     advisorScoringMode,
     advisorAutopilotEnabled,
-    waitingForHumanInput,
     pageMode,
     designerOpen,
     confirmRemoveAllMessage: `${t('toolbar.confirmRemoveAllTitle')}\n${t('toolbar.confirmRemoveAllDescription')}`,
@@ -2599,7 +2879,6 @@ function PlaybookCanvasInner() {
     setImportWarningOpen,
     setExecutionPanelOpen,
     setExecutionPanelCollapsed,
-    setIntentBarCollapsed,
     setDesignerOpen,
     setEditorOpen,
     setPageMode,
@@ -2617,10 +2896,39 @@ function PlaybookCanvasInner() {
   });
 
   useEffect(() => {
+    autoLayoutAfterGenerationRef.current = handleAutoLayout;
+  }, [handleAutoLayout]);
+
+  useEffect(() => {
+    const previousStatus = previousConstructionStatusRef.current;
+    previousConstructionStatusRef.current = constructionStatus;
+    if (!shouldAutoLayoutAfterConstruction(previousStatus, constructionStatus)) {
+      return;
+    }
+    autoLayoutAfterGenerationRef.current?.();
+    // Re-fit the viewport once the new layout commits so the user sees the
+    // whole generated graph, not the last streamed node they were watching.
+    let frameOne = 0;
+    let frameTwo = 0;
+    frameOne = window.requestAnimationFrame(() => {
+      frameTwo = window.requestAnimationFrame(() => {
+        void reactFlow.fitView({
+          padding: isCompactCanvas ? 0.18 : 0.12,
+          duration: 350,
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frameOne);
+      window.cancelAnimationFrame(frameTwo);
+    };
+  }, [constructionStatus, reactFlow, isCompactCanvas]);
+
+  useEffect(() => {
     if (!autoIntentRef.current) return;
     if (!playbook || !id || isGeneratingRoute || playbookLoading || playbook.id !== id) return;
     autoIntentRef.current = null;
-    handleSubmitIntent();
+    void handleSubmitIntent();
   }, [playbook, playbookLoading, id, isGeneratingRoute, handleSubmitIntent]);
 
   useEffect(() => () => {
@@ -2665,26 +2973,6 @@ function PlaybookCanvasInner() {
       }
     });
   }, [executionForCanvas, fetchExecution, id]);
-
-  const handleIntentBarClick = useCallback(() => {
-    setWorkspaceExplorerOpen(false);
-    setConnectorSidebarOpen(false);
-    setExecutionPanelOpen(false);
-    setExecutionPanelCollapsed(true);
-    if (intentSuggestions.length === 0 && lastIntentSuggestions.length > 0) {
-      setIntentSuggestions(lastIntentSuggestions);
-    }
-  }, [
-    intentSuggestions.length,
-    lastIntentSuggestions,
-    setConnectorSidebarOpen,
-    setExecutionPanelOpen,
-    setWorkspaceExplorerOpen,
-  ]);
-
-  const handleIntentBarPositionChange = useCallback(() => {
-    floatingToolbarRef.current?.reclampPosition();
-  }, []);
 
   useEffect(() => {
     const previousHumanInputKey = previousHumanInputKeyRef.current;
@@ -2764,11 +3052,9 @@ function PlaybookCanvasInner() {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
     if (nextOpen) {
-      setIntentBarCollapsed(true);
       setExecutionPanelCollapsed(false);
       setPageMode('run');
     } else if (pageMode !== 'design') {
-      setIntentBarCollapsed(false);
       setPageMode('design');
     }
   }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
@@ -2866,14 +3152,16 @@ function PlaybookCanvasInner() {
           >
             <Copy className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShareDialogOpen(true)}
-            title={t('share.share')}
-          >
-            <Share2 className="h-4 w-4" />
-          </Button>
+          {playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShareDialogOpen(true)}
+              title={t('share.share')}
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          )}
           <div className="w-40 sm:w-64">
             <PlaybookWorkspaceSelect
               value={playbook.workspaces || []}
@@ -2922,7 +3210,7 @@ function PlaybookCanvasInner() {
         </div>
       </div>
 
-      {id && (
+      {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
           <PlaybookTriggersSheet
             open={triggersSheetOpen}
             onOpenChange={setTriggersSheetOpen}
@@ -3037,7 +3325,8 @@ function PlaybookCanvasInner() {
                   <Controls position="bottom-left" />
                 </Canvas>
                 <div
-                  className="absolute right-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
+                  ref={canvasViewModeRef}
+                  className="absolute left-4 top-4 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur"
                   role="group"
                   aria-label={t('canvas.view.groupLabel')}
                 >
@@ -3063,39 +3352,10 @@ function PlaybookCanvasInner() {
                   </Button>
                 </div>
                 {intentLoading ? <PlaybookIntentGhostNode progress={constructionProgress} /> : null}
-                <PlaybookIntentBar
-                  ref={intentBarRef}
-                  selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
-                  loading={intentLoading}
-                  value={intentValue}
-                  suggestions={intentSuggestions}
-                  design={intentRequestOrigin === 'intent-bar' ? intentDesign : null}
-                  error={intentError}
-                  history={intentHistory}
-                  collapsed={intentBarCollapsed}
-                  autoApply={intentAutoApply}
-                  onCollapsedChange={setIntentBarCollapsed}
-                  onPositionChange={handleIntentBarPositionChange}
-                  onValueChange={setIntentValue}
-                  onAutoApplyChange={setIntentAutoApply}
-                  onSubmit={() => void handleSubmitIntentFromBar()}
-                  onForceGenerate={(answerText) => void handleForceGenerateIntent(answerText)}
-                  onApplySuggestion={handleApplyIntentSuggestion}
-                  onRecordHistory={(suggestion, intent) => {
-                    if (playbook) {
-                      addIntentSuggestionHistoryEntry(playbook.id, playbook.name, suggestion, intent);
-                    }
-                  }}
-                  onBarClick={handleIntentBarClick}
-                  onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
-                  constructionStatus={constructionStatus}
-                  constructionProgress={constructionProgress}
-                  onCancelConstruction={handleCancelIntentConstruction}
-                />
                 <PlaybookCanvasFloatingToolbar
                   ref={floatingToolbarRef}
                   containerRef={canvasChromeRef}
-                  avoidRectRef={intentBarRef}
+                  avoidRectRef={canvasViewModeRef}
                   onAddStep={handleAddStep}
                   onAddRouterNode={handleAddRouterNode}
                   onAddHumanApprovalNode={handleAddHumanApprovalNode}
@@ -3143,10 +3403,20 @@ function PlaybookCanvasInner() {
             )}
             <PlaybookDesignerPanel
               playbookId={id}
-              intentDesign={intentRequestOrigin === 'designer-sidebar' ? intentDesign : null}
-              intentLoading={intentLoading && intentRequestOrigin === 'designer-sidebar'}
+              intentDesign={intentDesign}
+              intentLoading={intentLoading}
+              autoApply={intentAutoApply}
+              history={intentHistory}
+              constructionStatus={constructionStatus}
+              intentTraces={intentTraces}
+              intentTracesLoading={intentTracesLoading}
               onSubmitDesignIntent={handleSubmitIntentFromDesigner}
               onAnswerDesignIntent={handleAnswerIntentFromDesigner}
+              onAutoApplyChange={setIntentAutoApply}
+              onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
+              onCancelConstruction={handleCancelIntentConstruction}
+              onWidthChange={setDesignerSidebarWidth}
+              onOpenIntentTraces={handleOpenIntentTraces}
             />
           </div>
 
@@ -3206,10 +3476,11 @@ function PlaybookCanvasInner() {
 
       {/* Share Dialog */}
       {id && (
-        <CloneShareDialog
+        <SharePlaybookDialog
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}
           playbookId={id}
+          playbookName={playbook?.name ?? ''}
         />
       )}
 

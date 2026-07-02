@@ -6,7 +6,7 @@ describe('PlaybookFlowTriggerController', () => {
   const flowId = String(new Types.ObjectId());
 
   const makeFlowService = (flow: Record<string, unknown>, updateResult: Record<string, unknown>) => ({
-    findOne: jest.fn().mockResolvedValue(flow),
+    findOneForWrite: jest.fn().mockResolvedValue(flow),
     update: jest.fn().mockResolvedValue(updateResult),
   });
 

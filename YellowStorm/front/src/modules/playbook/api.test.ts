@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildPlaybookDeltaPatch,
   buildPlaybookUpdateRequestBody,
+  appendDesignMessage,
   clonePlaybook,
   executePlaybook,
   getFlowNodeTemplates,
@@ -390,7 +391,6 @@ describe('flow node template routes', () => {
           items: [
             {
               id: 'router-default',
-              type: 'router-default',
               nodeType: 'router',
               title: 'Router',
               description: 'Route work',
@@ -1180,6 +1180,39 @@ describe('executePlaybook', () => {
       executionMode: 'live',
       stepExecutionModes: { 'task-7': 'replay_strict' },
     });
+  });
+});
+
+describe('design message API', () => {
+  it('appends a designer sidebar interaction', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'message-1',
+          playbookId: 'playbook-1',
+          userQuery: 'Add scoring',
+          aiSummary: 'Assistant processed the request.',
+          snapshotBefore: { tasks: [], edges: [] },
+          status: 'completed',
+          revertedFromMessageId: null,
+          error: null,
+          createdAt: '2026-06-22T08:00:00Z',
+          updatedAt: '2026-06-22T08:00:00Z',
+        },
+      },
+    });
+
+    const result = await appendDesignMessage('playbook-1', {
+      userQuery: 'Add scoring',
+      aiSummary: 'Assistant processed the request.',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/design-messages', {
+      userQuery: 'Add scoring',
+      aiSummary: 'Assistant processed the request.',
+    });
+    expect(result.userQuery).toBe('Add scoring');
   });
 });
 

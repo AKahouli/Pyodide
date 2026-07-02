@@ -50,6 +50,47 @@ describe('PlaybookFlowExecutionService event handling', () => {
     expect(taskResultModel.updateOne).toHaveBeenCalled();
   });
 
+  it('streams trace updates while a node is running', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeTraceUpdate',
+      node_id: 'step-1',
+      iteration: 1,
+      payload: {
+        tool_trace: [{ call_index: 0, tool_name: 'search', args: { q: 'hello' }, status: 'completed' }],
+        llm_prompt_trace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generated_output: 'answer' }],
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3, model: 'gpt-5.4-mini' },
+      },
+    });
+
+    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 1 },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          toolTrace: [expect.objectContaining({ callIndex: 0, toolName: 'search', args: { q: 'hello' }, status: 'completed' })],
+          llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+          usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-5.4-mini' },
+        }),
+      }),
+      { upsert: true },
+    );
+    expect(streamEvents.emitStepUpdate).toHaveBeenCalledWith(
+      'exec-1',
+      'step-1',
+      undefined,
+      expect.objectContaining({
+        toolTrace: [expect.objectContaining({ toolName: 'search' })],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        modelName: 'gpt-5.4-mini',
+      }),
+    );
+  });
+
   it('flushes buffered execution tokens before marking execution failed', async () => {
     const tokenBufferService = {
       isEnabled: jest.fn(),

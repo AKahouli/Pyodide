@@ -50,6 +50,11 @@ const makeService = (options: MakeOptions = {}) => {
         }),
       }),
     }),
+    findOne: jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      }),
+    }),
   };
   const interactionDoc = options.interaction
     ? {
@@ -65,6 +70,11 @@ const makeService = (options: MakeOptions = {}) => {
     findById: jest.fn().mockReturnValue({
       lean: jest.fn().mockReturnValue({
         exec: jest.fn().mockResolvedValue(interactionDoc),
+      }),
+    }),
+    findOne: jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
       }),
     }),
   };
@@ -103,6 +113,7 @@ const makeService = (options: MakeOptions = {}) => {
     error: jest.fn(),
     debug: jest.fn(),
   } as any;
+  const whatsappConnection = { forwardManagerMessage: jest.fn().mockResolvedValue(undefined) } as any;
   const service = new WorkyPlanningService(
     streamModel as any,
     messageModel as any,
@@ -113,6 +124,7 @@ const makeService = (options: MakeOptions = {}) => {
     models,
     config,
     logger,
+    whatsappConnection,
   );
   return { service, streamModel, messageModel, interactionModel, taskService, events, models, ownerId, streamObjectId };
 };

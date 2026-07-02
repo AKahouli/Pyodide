@@ -1,0 +1,14 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Human approval before external action",
+    "summary": "Pause for approval before invoking an external action.",
+    "nodes": [
+      { "ref": "review", "label": "Review", "purpose": "Human approval gate", "nodeTemplateKey": "human.approval", "primitive": { "kind": "human_approval", "humanApproval": { "required": true, "mode": "approve_reject" } }, "inputPorts": [{ "id": "context", "artifactKind": "data" }], "outputPorts": [{ "id": "decision", "artifactKind": "data" }] },
+      { "ref": "send", "label": "Send", "purpose": "Send externally", "nodeTemplateKey": "action.github", "primitive": { "kind": "action" }, "connector_refs": [{ "connector_slug": "github", "action_key": "create_issue" }], "inputPorts": [{ "id": "payload", "artifactKind": "data" }] }
+    ],
+    "links": [{ "sourceRef": "review", "targetRef": "send", "sourceOutputPortId": "decision", "targetInputPortId": "payload" }],
+    "bindings": [{ "sourceKind": "node-output", "sourceRef": "review", "sourcePort": "decision", "targetRef": "send", "targetPort": "payload" }]
+  },
+  "expected": { "minNodes": 2, "minEdges": 1, "minBindings": 1, "humanApprovalNodeRef": "review", "toolNodeRef": "send" }
+}

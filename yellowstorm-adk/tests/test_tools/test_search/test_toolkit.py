@@ -150,6 +150,45 @@ class TestSearchToolkit:
         toolkit = SearchToolkit(task_order="test", search_web=search_web)
         assert toolkit.search_web == search_web
 
+    def test_set_in_memory_documents_success(self):
+        """Test setting in-memory documents successfully."""
+        toolkit = SearchToolkit(task_order="test")
+
+        doc_tree = [
+            {"filepath": "/path/file1.pdf", "nom": "Document 1"},
+            {"filepath": "/path/file2.pdf", "filename": "Document 2"},
+            {"nom": "Document 3"},  # No filepath
+            {"filepath": "/path/file4.pdf", "nom": "Document 4"}
+        ]
+
+        toolkit.set_in_memory_documents(doc_tree)
+
+        assert len(toolkit.in_memory_documents) == 3
+        assert toolkit.in_memory_documents["Document 1"] == "/path/file1.pdf"
+        assert toolkit.in_memory_documents["Document 2"] == "/path/file2.pdf"
+        assert toolkit.in_memory_documents["Document 4"] == "/path/file4.pdf"
+
+    def test_set_in_memory_documents_error(self):
+        """Test setting in-memory documents with error."""
+        toolkit = SearchToolkit(task_order="test")
+
+        # Invalid doc_tree that will cause an error
+        doc_tree = None
+
+        # Should not raise exception, but handle gracefully
+        toolkit.set_in_memory_documents(doc_tree)
+
+        assert toolkit.in_memory_documents == {}
+
+    def test_to_valid_identifier(self):
+        """Test conversion to valid identifier."""
+        toolkit = SearchToolkit(task_order="test")
+
+        assert toolkit.to_valid_identifier("Test Name") == "test_name"
+        assert toolkit.to_valid_identifier("test-name-here") == "test_name_here"
+        assert toolkit.to_valid_identifier("  Mixed Case  ") == "mixed_case"
+        assert toolkit.to_valid_identifier("already_valid") == "already_valid"
+
 
 @pytest.mark.asyncio
 class TestSearchToolkitAsync:
@@ -360,42 +399,3 @@ class TestSearchToolkitAsync:
         # perform_web_search now returns a dict with 'text' and 'sources'
         assert result["text"] == "Web search error: Search API error"
         assert result["sources"] == []
-
-    def test_set_in_memory_documents_success(self):
-        """Test setting in-memory documents successfully."""
-        toolkit = SearchToolkit(task_order="test")
-
-        doc_tree = [
-            {"filepath": "/path/file1.pdf", "nom": "Document 1"},
-            {"filepath": "/path/file2.pdf", "filename": "Document 2"},
-            {"nom": "Document 3"},  # No filepath
-            {"filepath": "/path/file4.pdf", "nom": "Document 4"}
-        ]
-
-        toolkit.set_in_memory_documents(doc_tree)
-
-        assert len(toolkit.in_memory_documents) == 3
-        assert toolkit.in_memory_documents["Document 1"] == "/path/file1.pdf"
-        assert toolkit.in_memory_documents["Document 2"] == "/path/file2.pdf"
-        assert toolkit.in_memory_documents["Document 4"] == "/path/file4.pdf"
-
-    def test_set_in_memory_documents_error(self):
-        """Test setting in-memory documents with error."""
-        toolkit = SearchToolkit(task_order="test")
-
-        # Invalid doc_tree that will cause an error
-        doc_tree = None
-
-        # Should not raise exception, but handle gracefully
-        toolkit.set_in_memory_documents(doc_tree)
-
-        assert toolkit.in_memory_documents == {}
-
-    def test_to_valid_identifier(self):
-        """Test conversion to valid identifier."""
-        toolkit = SearchToolkit(task_order="test")
-
-        assert toolkit.to_valid_identifier("Test Name") == "test_name"
-        assert toolkit.to_valid_identifier("test-name-here") == "test_name_here"
-        assert toolkit.to_valid_identifier("  Mixed Case  ") == "mixed_case"
-        assert toolkit.to_valid_identifier("already_valid") == "already_valid"

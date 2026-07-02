@@ -12,6 +12,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 import { LoggerService } from '@modules/logger';
+import { WorkyWhatsAppIntegrationService } from '@modules/worky/services/worky-whatsapp-integration.service';
+import { WorkyWhatsAppSystemBotService } from '@modules/worky/services/worky-whatsapp-system-bot.service';
 import { WhatsAppIntegrationService } from '../services/whatsapp-integration.service';
 import { WhatsAppPairingCacheService } from '../services/whatsapp-pairing-cache.service';
 
@@ -36,7 +38,9 @@ export class WhatsAppGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly integrationService: WhatsAppIntegrationService,
+    private readonly agentIntegrationService: WhatsAppIntegrationService,
+    private readonly workyIntegrationService: WorkyWhatsAppIntegrationService,
+    private readonly systemBotService: WorkyWhatsAppSystemBotService,
     private readonly pairingCache: WhatsAppPairingCacheService,
     private readonly logger: LoggerService,
   ) {
@@ -69,31 +73,51 @@ export class WhatsAppGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('join')
   async handleJoin(
     @ConnectedSocket() client: AuthenticatedSocket,
-    @MessageBody() body: { agentId?: string; sessionId?: string },
+    @MessageBody()
+    body: { agentId?: string; streamId?: string; sessionId?: string; systemBot?: boolean },
   ): Promise<{ ok: boolean }> {
     const userId = client.data.userId;
-    if (!userId || !body?.agentId) {
+    if (!userId || !body?.sessionId) {
       return { ok: false };
     }
+
     try {
-      const integration = await this.integrationService.getDocumentByAgentForUser(
+      if (body.systemBot) {
+        const integration = await this.systemBotService.getDocumentBySession(body.sessionId);
+        const room = this.roomForSystemBot(userId);
+        await client.join(room);
+        if (integration.sessionId === body.sessionId) {
+          this.replayCachedQrSystemBot(body.sessionId, room);
+        }
+        return { ok: true };
+      }
+
+      if (body.streamId) {
+        const integration = await this.workyIntegrationService.getDocumentByStreamForUser(
+          userId,
+          body.streamId,
+        );
+        const room = this.roomForWorky(userId, body.streamId);
+        await client.join(room);
+        if (integration.sessionId === body.sessionId) {
+          this.replayCachedQr(body.streamId, body.sessionId, room, 'streamId');
+        }
+        return { ok: true };
+      }
+
+      if (!body.agentId) {
+        return { ok: false };
+      }
+
+      const integration = await this.agentIntegrationService.getDocumentByAgentForUser(
         userId,
         body.agentId,
       );
-      const room = this.roomFor(userId, body.agentId);
+      const room = this.roomForAgent(userId, body.agentId);
       await client.join(room);
-
-      if (body.sessionId && integration.sessionId === body.sessionId) {
-        const snapshot = this.pairingCache.get(body.sessionId);
-        if (snapshot?.qrCode) {
-          this.emitToAgent(userId, body.agentId, 'whatsapp.qr.generated', {
-            agentId: body.agentId,
-            sessionId: body.sessionId,
-            qrCode: snapshot.qrCode,
-          });
-        }
+      if (integration.sessionId === body.sessionId) {
+        this.replayCachedQr(body.agentId, body.sessionId, room, 'agentId');
       }
-
       return { ok: true };
     } catch {
       return { ok: false };
@@ -107,11 +131,59 @@ export class WhatsAppGateway implements OnGatewayConnection, OnGatewayDisconnect
     payload: Record<string, unknown>,
   ): void {
     if (!this.server) return;
-    this.server.to(this.roomFor(userId, agentId)).emit(event, payload);
+    this.server.to(this.roomForAgent(userId, agentId)).emit(event, payload);
   }
 
-  private roomFor(userId: string, agentId: string): string {
+  emitToWorkyStream(
+    userId: string,
+    streamId: string,
+    event: string,
+    payload: Record<string, unknown>,
+  ): void {
+    if (!this.server) return;
+    this.server.to(this.roomForWorky(userId, streamId)).emit(event, payload);
+  }
+
+  emitToSystemBot(userId: string, event: string, payload: Record<string, unknown>): void {
+    if (!this.server) return;
+    this.server.to(this.roomForSystemBot(userId)).emit(event, payload);
+  }
+
+  private replayCachedQrSystemBot(sessionId: string, room: string): void {
+    const snapshot = this.pairingCache.get(sessionId);
+    if (!snapshot?.qrCode || !this.server) return;
+    this.server.to(room).emit('whatsapp.qr.generated', {
+      systemBot: true,
+      sessionId,
+      qrCode: snapshot.qrCode,
+    });
+  }
+
+  private replayCachedQr(
+    targetId: string,
+    sessionId: string,
+    room: string,
+    idField: 'agentId' | 'streamId',
+  ): void {
+    const snapshot = this.pairingCache.get(sessionId);
+    if (!snapshot?.qrCode || !this.server) return;
+    this.server.to(room).emit('whatsapp.qr.generated', {
+      [idField]: targetId,
+      sessionId,
+      qrCode: snapshot.qrCode,
+    });
+  }
+
+  private roomForAgent(userId: string, agentId: string): string {
     return `user:${userId}:agent:${agentId}`;
+  }
+
+  private roomForWorky(userId: string, streamId: string): string {
+    return `user:${userId}:worky:${streamId}`;
+  }
+
+  private roomForSystemBot(userId: string): string {
+    return `user:${userId}:worky:system-bot`;
   }
 
   private extractToken(client: Socket): string | undefined {

@@ -1,4 +1,6 @@
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { ForbiddenException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
@@ -54,6 +56,7 @@ async function createE2EService(
     configService?: Record<string, any>;
     idempotencyService?: Record<string, any>;
     builderService?: Record<string, any>;
+    accessService?: Record<string, any>;
   },
 ): Promise<E2EContext> {
   const settleAsyncHandlers = async (cycles: number = 4) => {
@@ -195,6 +198,12 @@ async function createE2EService(
     new PlaybookFlowReplayPlanService(),
     { setContext: jest.fn(), warn: jest.fn(), log: jest.fn(), error: jest.fn() } as any,
   );
+  const accessService = {
+    assertExecutionAccess: jest.fn().mockRejectedValue(
+      new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow'),
+    ),
+    ...overrides?.accessService,
+  };
 
   const service = new PlaybookFlowExecutionService(
     ExecutionModel,
@@ -225,6 +234,8 @@ async function createE2EService(
       new PlaybookFlowReplayPlanService() as any,
       replayDriftService as any,
     );
+
+  (service as any).accessService = accessService;
 
   (service as any).isGrpcAvailable = true;
   (service as any).playbookFlowClient = { Run: mockRun };
@@ -799,7 +810,7 @@ describe('E2E: Cancel', () => {
     };
     const ctx = await createE2EService(undefined, { executionModel });
 
-    await expect(ctx.service.cancel('exec-other', 'owner-1')).rejects.toThrow('not found');
+    await expect(ctx.service.cancel('exec-other', 'owner-1')).rejects.toThrow('do not have access');
   });
 });
 

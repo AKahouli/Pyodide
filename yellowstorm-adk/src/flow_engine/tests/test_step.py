@@ -109,6 +109,13 @@ def anyio_backend():
     return "asyncio"
 
 
+def _assert_step_events_without_tokens(events: list[dict]) -> None:
+    assert events[0]["type"] == "NodeStarted"
+    assert events[-1]["type"] == "NodeCompleted"
+    assert all(event["type"] in {"NodeStarted", "NodeTraceUpdate", "NodeCompleted"} for event in events)
+    assert "NodeToken" not in {event["type"] for event in events}
+
+
 class TestStepPrompt:
     def test_build_prompt_includes_prompt_contract_sections(self):
         prompt = build_step_prompt(
@@ -144,6 +151,66 @@ class TestStepPrompt:
         )
 
         assert "Trigger Context:" not in prompt
+
+    def test_build_prompt_moves_default_workspace_out_of_trigger_context(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={"brief": "Quarterly results"},
+            trigger_context={
+                "email": {"subject": "Q2 review"},
+                "__playbook_workspace_paths": {
+                    "69e9d92e6f3d08e123c1fed7": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+                },
+                "__playbook_default_workspace_path": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+                "__playbook_default_workspace_id": "69e9d92e6f3d08e123c1fed7",
+            },
+        )
+
+        assert "6984baadd6b2ec4585e8c707" not in prompt
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "69e9d92e6f3d08e123c1fed7"' in prompt
+        assert '"workspace_path": "mon-workspace-personnel"' in prompt
+        assert "Trigger Context:" in prompt
+        assert '"email": {' in prompt
+        assert "__playbook_default_workspace_path" not in prompt
+        assert "__playbook_default_workspace_id" not in prompt
+
+    def test_build_prompt_moves_default_workspace_out_of_resolved_inputs(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={
+                "brief": "Quarterly results",
+                "__playbook_default_workspace_id": "workspace-1",
+                "__playbook_default_workspace_path": "user-1/default-workspace",
+            },
+        )
+
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "workspace-1"' in prompt
+        assert '"workspace_path": "user-1/default-workspace"' in prompt
+        assert '"brief": "Quarterly results"' in prompt
+        assert "__playbook_default_workspace_id" not in prompt
+        assert "__playbook_default_workspace_path" not in prompt
+
+    def test_build_prompt_derives_default_workspace_path_from_workspace_map(self):
+        prompt = build_step_prompt(
+            label="Draft summary",
+            node_id="step-1",
+            input_context={
+                "__playbook_workspace_paths": {
+                    "workspace-1": "6984baadd6b2ec4585e8c707/default-workspace",
+                },
+                "__playbook_default_workspace_id": "workspace-1",
+            },
+        )
+
+        assert "Playbook Default Workspace:" in prompt
+        assert '"workspace_id": "workspace-1"' in prompt
+        assert '"workspace_path": "default-workspace"' in prompt
+        assert "6984baadd6b2ec4585e8c707" not in prompt
+        assert "__playbook_workspace_paths" not in prompt
 
     def test_build_prompt_includes_structured_response_schema_when_required(self):
         prompt = build_step_prompt(
@@ -1286,7 +1353,7 @@ async def test_run_step_emits_structured_result_payload(monkeypatch):
     assert payload["outputs"]["summary"]["content"] == "Executive summary"
     assert payload["outputs"]["report"]["ref"] == "https://example.com/report.pdf"
     assert payload["artifacts"][1]["filename"] == "report.pdf"
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1346,7 +1413,7 @@ async def test_run_step_suppresses_token_stream_for_data_visualizer(monkeypatch)
     )
 
     assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1405,7 +1472,7 @@ async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
 
     assert result["task_outputs"][("step-1", 0)]["output"] == "<html><body><h1>Chart</h1></body></html>"
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)
 
 
 @pytest.mark.anyio
@@ -1468,4 +1535,4 @@ async def test_run_step_preserves_opaque_structured_refs(monkeypatch):
 
     payload = result["task_outputs"][("step-1", 0)]
     assert payload["outputs"]["report"]["ref"] == {"document_id": "doc-1"}
-    assert [event["type"] for event in events] == ["NodeStarted", "NodeCompleted"]
+    _assert_step_events_without_tokens(events)

@@ -129,7 +129,7 @@ export class PlaybookFlowReplayBaselineService {
     const parts = [
       this.cleanText(params.taskTitle),
       this.cleanText(nodeMetadata?.['taskType']),
-      this.cleanText(nodeMetadata?.['templateType']),
+      this.cleanText(nodeMetadata?.['nodeTemplateKey']) || this.cleanText(nodeMetadata?.['templateType']),
       this.cleanText(nodeMetadata?.['selectedAction']),
       this.cleanText(nodeMetadata?.['executionMode']),
     ].filter((value): value is string => Boolean(value));

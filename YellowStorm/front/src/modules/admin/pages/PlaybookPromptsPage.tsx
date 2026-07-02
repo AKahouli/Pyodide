@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, Save, FileText, BadgeInfo, ChevronDown, Plus, Trash2, LayoutGrid, X, Check, Palette, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, RefreshCw, Save, FileText, BadgeInfo, ChevronDown, Plus, Trash2, LayoutGrid, X, Check, Palette, Sparkles, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,12 +33,14 @@ import {
   getPlaybookPrompts,
   updatePlaybookPrompt,
   deletePlaybookPrompt,
+  importPlaybookPrompts,
   getPlaybookNodeTemplates,
   createPlaybookNodeTemplate,
   updatePlaybookNodeTemplate,
   deletePlaybookNodeTemplate,
+  importPlaybookNodeTemplates,
 } from '../api';
-import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
+import type { PlaybookPromptImportPayload, PlaybookPromptResponse, PlaybookNodeTemplateImportPayload, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -60,7 +62,6 @@ const EMPTY_PROMPT: PlaybookPromptResponse = {
 const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   id: '',
   key: '',
-  type: '',
   nodeType: 'agent',
   title: '',
   description: '',
@@ -72,7 +73,6 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   promptTemplate: '',
   recommendedAgentTypeSlug: null,
   requiredToolNames: [],
-  executionMode: 'agent',
   assignedAgentId: null,
   selectedAction: null,
   enabled: true,
@@ -94,7 +94,6 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
 
 // Constants for selects
 const CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'];
-const EXECUTION_MODES = ['agent', 'action'];
 const ACTIONS = ['index', 'delete', 'read'];
 const ARTIFACT_KINDS = ['text', 'document', 'code', 'data', 'image', 'dashboard'];
 const COLORS = ['blue', 'indigo', 'green', 'orange', 'purple', 'red', 'pink', 'slate', 'cyan', 'teal'] as const;
@@ -136,7 +135,6 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
   if (template.nodeType === 'iterator') {
     return {
       ...template,
-      executionMode: 'agent',
       assignedAgentId: null,
       selectedAction: null,
       inputPorts: getDefaultIteratorInputPorts(),
@@ -150,7 +148,6 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
     const routerConfig = cloneRouterConfig(template.routerConfig);
     return {
       ...template,
-      executionMode: 'agent',
       assignedAgentId: null,
       selectedAction: null,
       outputPorts: buildRouterOutputPorts(routerConfig),
@@ -166,6 +163,31 @@ function normalizeNodeTemplate(template: PlaybookNodeTemplateResponse): Playbook
   };
 }
 
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function readJsonFile<T>(file: File): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        resolve(JSON.parse(String(reader.result)) as T);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error('Invalid JSON'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
 export function PlaybookPromptsPage() {
   const { t } = useModuleTranslation('admin');
   const invalidateNodeTemplates = usePlaybookStore((s) => s.invalidateNodeTemplates);
@@ -179,6 +201,7 @@ export function PlaybookPromptsPage() {
   const [promptDraft, setPromptDraft] = useState<PlaybookPromptResponse>(EMPTY_PROMPT);
   const [isCreatingPrompt, setIsCreatingPrompt] = useState(false);
   const [promptDeleteDialogOpen, setPromptDeleteDialogOpen] = useState(false);
+  const promptImportInputRef = useRef<HTMLInputElement | null>(null);
 
   // ===== Node Templates State =====
   const [templateLoading, setTemplateLoading] = useState(true);
@@ -188,6 +211,7 @@ export function PlaybookPromptsPage() {
   const [templateDraft, setTemplateDraft] = useState<PlaybookNodeTemplateResponse>(EMPTY_NODE_TEMPLATE);
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const templateImportInputRef = useRef<HTMLInputElement | null>(null);
   
   // Data for selects
   const [connectors, setConnectors] = useState<Array<{ id: string; slug: string; name: string }>>([]);
@@ -350,13 +374,43 @@ export function PlaybookPromptsPage() {
     }
   };
 
+  const handleExportPrompts = () => {
+    downloadJson('playbook-prompts.json', {
+      version: 1,
+      type: 'playbook-prompts',
+      items: promptItems.map(({ id, createdAt, updatedAt, version, ...item }) => item),
+    } satisfies PlaybookPromptImportPayload);
+  };
+
+  const handleImportPrompts = async (file: File | undefined) => {
+    if (!file) return;
+    if (!window.confirm(t('playbook.prompts.import.confirm'))) return;
+    setPromptLoading(true);
+    try {
+      const data = await importPlaybookPrompts(await readJsonFile<PlaybookPromptImportPayload>(file));
+      const nextItems = data.items || [];
+      const first = nextItems[0] || null;
+      setPromptItems(nextItems);
+      setIsCreatingPrompt(false);
+      setSelectedPromptKey(first?.key || '');
+      syncPromptDraft(first);
+      toast.success(t('playbook.prompts.toasts.imported'));
+    } catch (err) {
+      toast.error(t('playbook.prompts.toasts.importFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setPromptLoading(false);
+      if (promptImportInputRef.current) promptImportInputRef.current.value = '';
+    }
+  };
+
   const handleSaveTemplate = async () => {
     if (!templateDraft.key || !templateDraft.title) {
       toast.error(t('playbook.templates.toasts.validationError'));
       return;
     }
-    const type = templateDraft.type || templateDraft.key;
-    const draftToSave = normalizeNodeTemplate({ ...templateDraft, type });
+    const draftToSave = normalizeNodeTemplate(templateDraft);
     const routerValidationError = validateRouterTemplate(draftToSave);
     if (routerValidationError) {
       toast.error(routerValidationError);
@@ -367,7 +421,6 @@ export function PlaybookPromptsPage() {
       if (isCreatingTemplate) {
         const created = await createPlaybookNodeTemplate({
           key: draftToSave.key,
-          type,
           nodeType: draftToSave.nodeType,
           title: draftToSave.title,
           description: draftToSave.description,
@@ -378,7 +431,6 @@ export function PlaybookPromptsPage() {
           outputPorts: stripPortIds(draftToSave.outputPorts),
           promptTemplate: draftToSave.promptTemplate,
           requiredToolNames: draftToSave.requiredToolNames,
-          executionMode: draftToSave.executionMode,
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
@@ -393,7 +445,6 @@ export function PlaybookPromptsPage() {
       } else if (templateDraft.id) {
         const updated = await updatePlaybookNodeTemplate(templateDraft.id, {
           key: draftToSave.key,
-          type,
           nodeType: draftToSave.nodeType,
           title: draftToSave.title,
           description: draftToSave.description,
@@ -404,7 +455,6 @@ export function PlaybookPromptsPage() {
           outputPorts: stripPortIds(draftToSave.outputPorts),
           promptTemplate: draftToSave.promptTemplate,
           requiredToolNames: draftToSave.requiredToolNames,
-          executionMode: draftToSave.executionMode,
           assignedAgentId: draftToSave.assignedAgentId,
           selectedAction: draftToSave.selectedAction,
           iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
@@ -442,10 +492,42 @@ export function PlaybookPromptsPage() {
     }
   };
 
+  const handleExportTemplates = () => {
+    downloadJson('playbook-node-templates.json', {
+      version: 1,
+      type: 'playbook-node-templates',
+      items: templateItems.map(({ id, createdAt, updatedAt, version, ...item }) => item),
+    } satisfies PlaybookNodeTemplateImportPayload);
+  };
+
+  const handleImportTemplates = async (file: File | undefined) => {
+    if (!file) return;
+    if (!window.confirm(t('playbook.templates.import.confirm'))) return;
+    setTemplateLoading(true);
+    try {
+      const data = await importPlaybookNodeTemplates(await readJsonFile<PlaybookNodeTemplateImportPayload>(file));
+      const nextItems = data.items || [];
+      const first = nextItems[0] || null;
+      setTemplateItems(nextItems);
+      setIsCreatingTemplate(false);
+      setSelectedTemplateId(first?.id || '');
+      syncTemplateDraft(first);
+      invalidateNodeTemplates();
+      toast.success(t('playbook.templates.toasts.imported'));
+    } catch (err) {
+      toast.error(t('playbook.templates.toasts.importFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setTemplateLoading(false);
+      if (templateImportInputRef.current) templateImportInputRef.current.value = '';
+    }
+  };
+
   const startCreateTemplate = () => {
     setIsCreatingTemplate(true);
     setSelectedTemplateId('');
-    setTemplateDraft(normalizeNodeTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
+    setTemplateDraft(normalizeNodeTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', title: '' }));
   };
 
   const cancelCreateTemplate = () => {
@@ -461,7 +543,6 @@ export function PlaybookPromptsPage() {
       ...current,
       title,
       key: isCreatingTemplate ? slugify(title) : current.key,
-      type: isCreatingTemplate ? slugify(title) : current.type,
     }));
   };
 
@@ -580,7 +661,6 @@ export function PlaybookPromptsPage() {
         return {
           ...current,
           nodeType: 'action',
-          executionMode: 'action',
           assignedAgentId: null,
           selectedAction: current.selectedAction ?? 'index',
           iteratorConfig: null,
@@ -591,7 +671,6 @@ export function PlaybookPromptsPage() {
       return {
         ...current,
         nodeType: 'agent',
-        executionMode: 'agent',
         selectedAction: null,
         iteratorConfig: null,
         routerConfig: null,
@@ -600,7 +679,7 @@ export function PlaybookPromptsPage() {
   };
 
   const templateNodeType: PlaybookNodeType = templateDraft.nodeType
-    ?? (templateDraft.type === 'iterator' ? 'iterator' : templateDraft.executionMode === 'action' ? 'action' : 'agent');
+    ?? 'agent';
 
   const isLoading = promptLoading || templateLoading;
 
@@ -650,10 +729,27 @@ export function PlaybookPromptsPage() {
                   <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
-                    <Button variant="outline" size="sm" onClick={startCreatePrompt}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      {t('playbook.prompts.actions.create')}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleExportPrompts} disabled={promptItems.length === 0}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.export')}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => promptImportInputRef.current?.click()}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.import')}
+                      </Button>
+                      <input
+                        ref={promptImportInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(event) => { void handleImportPrompts(event.target.files?.[0]); }}
+                      />
+                      <Button variant="outline" size="sm" onClick={startCreatePrompt}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('playbook.prompts.actions.create')}
+                      </Button>
+                    </div>
                   </div>
                   <CardDescription>{t('playbook.prompts.slots', { count: promptItems.length })}</CardDescription>
                 </CardHeader>
@@ -823,10 +919,27 @@ export function PlaybookPromptsPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2"><LayoutGrid className="h-5 w-5" /> {t('playbook.templates.registry')}</CardTitle>
-                    <Button variant="outline" size="sm" onClick={startCreateTemplate}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      {t('playbook.templates.actions.create')}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleExportTemplates} disabled={templateItems.length === 0}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.export')}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => templateImportInputRef.current?.click()}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.import')}
+                      </Button>
+                      <input
+                        ref={templateImportInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(event) => { void handleImportTemplates(event.target.files?.[0]); }}
+                      />
+                      <Button variant="outline" size="sm" onClick={startCreateTemplate}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('playbook.templates.actions.create')}
+                      </Button>
+                    </div>
                   </div>
                   <CardDescription>{t('playbook.templates.slots', { count: templateItems.length })}</CardDescription>
                 </CardHeader>
@@ -850,7 +963,7 @@ export function PlaybookPromptsPage() {
                               <div className="font-medium">{item.title}</div>
                               <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
                             </div>
-                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
                             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                               <BadgeInfo className="h-3.5 w-3.5" />
                               v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
@@ -882,7 +995,7 @@ export function PlaybookPromptsPage() {
                     <div>
                       <CardTitle>{isCreatingTemplate ? t('playbook.templates.actions.createTemplate') : (templateDraft.title || t('playbook.templates.selectTemplate'))}</CardTitle>
                       <CardDescription className="break-all">
-                        {isCreatingTemplate ? t('playbook.templates.createDescription') : (templateDraft.type || t('playbook.templates.selectTemplate'))}
+                        {isCreatingTemplate ? t('playbook.templates.createDescription') : (templateDraft.key || t('playbook.templates.selectTemplate'))}
                       </CardDescription>
                     </div>
                     {!isCreatingTemplate && templateDraft.id && (
@@ -1053,7 +1166,7 @@ export function PlaybookPromptsPage() {
                         }))}
                       />
                     </div>
-                  ) : templateDraft.executionMode === 'agent' ? (
+                  ) : templateNodeType !== 'action' ? (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.agent')}</label>
                       <SearchableSelect

@@ -181,6 +181,7 @@ export {
   createSkill,
   updateSkill,
   deleteSkill,
+  exportSkill,
   importSkill,
   getConnectors,
   getConnectorById,

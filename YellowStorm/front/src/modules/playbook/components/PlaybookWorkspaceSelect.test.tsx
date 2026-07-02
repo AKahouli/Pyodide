@@ -6,9 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 
 const getWorkspacesMock = vi.hoisted(() => vi.fn());
+const getSharedWorkspacesMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/workspace', () => ({
   getWorkspaces: getWorkspacesMock,
+  getSharedWorkspaces: getSharedWorkspacesMock,
 }));
 
 vi.mock('@/components/ui/popover', () => {
@@ -83,6 +85,11 @@ describe('PlaybookWorkspaceSelect', () => {
         { id: 'w2', name: 'Workspace 2', description: '', documentCount: 1 },
       ],
     });
+    getSharedWorkspacesMock.mockResolvedValue({
+      workspaces: [
+        { id: 'sw1', name: 'Shared Workspace', description: 'Shared', documentCount: 4, shareId: 'share-1' },
+      ],
+    });
   });
 
   it('loads workspaces and selects the clicked workspace', async () => {
@@ -93,6 +100,17 @@ describe('PlaybookWorkspaceSelect', () => {
     await openWorkspaceSelect();
     fireEvent.click(await screen.findByText('Workspace 1'));
     expect(onChange).toHaveBeenCalledWith(['w1']);
+  });
+
+  it('includes shared workspaces in the list', async () => {
+    const onChange = vi.fn();
+    render(<PlaybookWorkspaceSelect value={[]} onChange={onChange} />);
+
+    await waitFor(() => expect(getSharedWorkspacesMock).toHaveBeenCalled());
+    await openWorkspaceSelect();
+    fireEvent.click(await screen.findByText('Shared Workspace'));
+
+    expect(onChange).toHaveBeenCalledWith(['sw1']);
   });
 
   it('shows selected workspace name in trigger', async () => {

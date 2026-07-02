@@ -215,6 +215,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
   // ===================== internals =====================
 
+
   private runGrpc(
     userId: string,
     sessionId: string,
@@ -226,7 +227,6 @@ export class ConversationV2StreamService implements OnModuleDestroy {
   ): void {
     const key = `${userId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
-
     // Serialize per-event work so SSE frames are written in emission order and
     // the terminal handlers wait for in-flight appends to drain.
     let pending: Promise<void> = Promise.resolve();

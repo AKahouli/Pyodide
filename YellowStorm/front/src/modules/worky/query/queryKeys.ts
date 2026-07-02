@@ -14,4 +14,5 @@ export const workyKeys = {
   memoryEntries: () => [...workyKeys.all, 'memory', 'entries'] as const,
   governancePolicy: (workspaceId: string) =>
     [...workyKeys.all, 'governance-policy', workspaceId] as const,
+  whatsappIntegration: (id: string) => [...workyKeys.detail(id), 'whatsapp'] as const,
 };

@@ -8,8 +8,9 @@ import {
   isWhatsAppNotConnected,
   isWhatsAppPairing,
   normalizeQrDataUrl,
+  resolveWhatsAppApiError,
   resolveWhatsAppErrorMessage,
-} from './whatsapp-integration-utils';
+} from '@/lib/whatsapp-integration-utils';
 
 describe('whatsapp-integration-utils', () => {
   it('prefixes raw base64 QR payloads', () => {
@@ -42,5 +43,22 @@ describe('whatsapp-integration-utils', () => {
       resolveWhatsAppErrorMessage('ERR_3219', 'Network unreachable'),
     ).toBe('Network unreachable');
     expect(resolveWhatsAppErrorMessage('Other error', 'Network unreachable')).toBe('Other error');
+  });
+
+  it('resolves API rejection objects to user-facing messages', () => {
+    expect(
+      resolveWhatsAppApiError(
+        {
+          code: 'ERR_3219',
+          message: 'Cannot reach web.whatsapp.com',
+          statusCode: 400,
+          method: 'POST',
+          path: '/connect',
+          requestId: 'r1',
+          timestamp: '',
+        },
+        'Network unreachable',
+      ),
+    ).toBe('Network unreachable');
   });
 });

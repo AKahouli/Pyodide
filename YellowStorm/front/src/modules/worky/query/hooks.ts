@@ -31,6 +31,17 @@ export function useStream(streamId: string | null | undefined) {
   });
 }
 
+export function useWorkyWhatsAppIntegration(streamId: string | null | undefined) {
+  return useQuery({
+    queryKey: streamId ? workyKeys.whatsappIntegration(streamId) : ['worky', 'whatsapp', 'noop'],
+    queryFn: () => {
+      if (!streamId) throw new Error('streamId is required');
+      return api.getWorkyWhatsAppIntegration(streamId);
+    },
+    enabled: Boolean(streamId),
+  });
+}
+
 export function useCreateStream() {
   const qc = useQueryClient();
   return useMutation<WorkyStream, Error, CreateWorkyStreamData>({
@@ -371,5 +382,15 @@ export function useRejectMemoryProposal() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['worky', 'memory'] });
     },
+  });
+}
+
+export function useTranscribeAudio() {
+  return useMutation<
+    Awaited<ReturnType<typeof api.transcribeAudio>>,
+    Error,
+    { blob: Blob; filename?: string }
+  >({
+    mutationFn: ({ blob, filename }) => api.transcribeAudio(blob, filename),
   });
 }

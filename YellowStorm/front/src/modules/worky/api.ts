@@ -27,6 +27,9 @@ import type {
   WorkyStreamQueryParams,
   WorkyTask,
   WorkyTaskResult,
+  WorkyWhatsAppConnectResponse,
+  WorkyWhatsAppIntegration,
+  WorkyWhatsAppPairingResponse,
 } from './types';
 
 function unwrap<T>(response: { data: ApiResponse<T> }): T {
@@ -317,6 +320,104 @@ export async function rejectMemoryProposal(
   const response = await apiClient.post<ApiResponse<WorkyMemoryProposal>>(
     API_ENDPOINTS.worky.memoryProposalReject(proposalId),
     { reason },
+  );
+  return unwrap(response);
+}
+
+// =================================================================
+// Speech-to-text — voice composer
+// =================================================================
+
+/**
+ * Upload a recorded audio clip and get back its transcript. The backend
+ * proxies it to OpenRouter's Whisper transcription (auto-detects EN/FR). The
+ * clip is sent as multipart/form-data under the `file` field.
+ */
+export async function transcribeAudio(
+  blob: Blob,
+  filename = 'speech.webm',
+): Promise<{ text: string; language?: string }> {
+  const form = new FormData();
+  form.append('file', blob, filename);
+  const response = await apiClient.post<ApiResponse<{ text: string; language?: string }>>(
+    API_ENDPOINTS.worky.sttTranscribe,
+    form,
+    // The shared client defaults to application/json; clearing it lets the
+    // browser set multipart/form-data with the correct boundary.
+    { headers: { 'Content-Type': undefined } },
+  );
+  return unwrap(response);
+}
+
+/**
+ * Synthesize spoken audio for an agent answer via OpenRouter TTS (proxied by
+ * the backend). Returns the audio as a Blob for playback.
+ */
+export async function synthesizeSpeech(text: string, voice?: string): Promise<Blob> {
+  const response = await apiClient.post(
+    API_ENDPOINTS.worky.ttsSpeak,
+    { text, voice },
+    { responseType: 'blob' },
+  );
+  return response.data as Blob;
+}
+
+// =================================================================
+// WhatsApp integration (per stream)
+// =================================================================
+
+export async function getWorkyWhatsAppIntegration(
+  streamId: string,
+): Promise<WorkyWhatsAppIntegration | null> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppIntegration | null>>(
+    API_ENDPOINTS.worky.whatsappIntegration(streamId),
+  );
+  return unwrap(response);
+}
+
+export async function connectWorkyWhatsApp(
+  streamId: string,
+): Promise<WorkyWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
+    API_ENDPOINTS.worky.whatsappConnect(streamId),
+  );
+  return unwrap(response);
+}
+
+export async function getWorkyWhatsAppPairing(
+  streamId: string,
+  sessionId: string,
+): Promise<WorkyWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppPairingResponse>>(
+    API_ENDPOINTS.worky.whatsappPairing(streamId, sessionId),
+  );
+  return unwrap(response);
+}
+
+export async function reconnectWorkyWhatsApp(
+  streamId: string,
+  sessionId: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.worky.whatsappReconnect(streamId, sessionId),
+  );
+  return unwrap(response);
+}
+
+export async function disconnectWorkyWhatsAppSession(
+  streamId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.worky.whatsappSession(streamId, sessionId));
+}
+
+export async function deleteWorkyWhatsAppIntegration(streamId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.worky.whatsappIntegration(streamId));
+}
+
+export async function getWorkyWhatsAppSystemBotStatus(): Promise<{ connected: boolean }> {
+  const response = await apiClient.get<ApiResponse<{ connected: boolean }>>(
+    API_ENDPOINTS.worky.whatsappSystemBotStatus,
   );
   return unwrap(response);
 }

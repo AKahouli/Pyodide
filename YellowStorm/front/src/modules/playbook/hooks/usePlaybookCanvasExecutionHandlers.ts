@@ -19,7 +19,6 @@ interface UsePlaybookCanvasExecutionHandlersParams {
   execution: PlaybookExecution | null;
   setPageMode: (mode: PlaybookPageMode) => void;
   setExecutionPanelCollapsed: (isCollapsed: boolean) => void;
-  setIntentBarCollapsed: (isCollapsed: boolean) => void;
   setDesignerOpen: (isOpen: boolean) => void;
   setWorkspaceExplorerOpen: (isOpen: boolean) => void;
   setConnectorSidebarOpen: (isOpen: boolean) => void;
@@ -49,7 +48,6 @@ export const usePlaybookCanvasExecutionHandlers = ({
   execution,
   setPageMode,
   setExecutionPanelCollapsed,
-  setIntentBarCollapsed,
   setDesignerOpen,
   setWorkspaceExplorerOpen,
   setConnectorSidebarOpen,
@@ -71,7 +69,6 @@ export const usePlaybookCanvasExecutionHandlers = ({
 
     setPageMode('run');
     setExecutionPanelCollapsed(false);
-    setIntentBarCollapsed(true);
     setDesignerOpen(false);
     setWorkspaceExplorerOpen(false);
     setConnectorSidebarOpen(false);
@@ -104,7 +101,6 @@ export const usePlaybookCanvasExecutionHandlers = ({
     setDesignerOpen,
     setExecutionPanelCollapsed,
     setGlobalSidebarOpen,
-    setIntentBarCollapsed,
     setPageMode,
     setSkillSidebarOpen,
     setWorkspaceExplorerOpen,

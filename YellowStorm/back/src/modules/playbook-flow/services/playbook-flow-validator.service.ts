@@ -11,20 +11,33 @@ import {
   isNodeInCycle,
 } from '../utils/playbook-flow-validation-graph.util';
 
-interface ValidationError {
+export interface PlaybookFlowValidationError {
   rule: number;
   message: string;
 }
 
+type ValidationError = PlaybookFlowValidationError;
+
 interface ValidateOptions {
   allowDraftRouters?: boolean;
+  allowUnboundRequiredPorts?: boolean;
+  allowIncompleteNodeOutputBindings?: boolean;
 }
 
 @Injectable()
 export class PlaybookFlowValidatorService {
   validate(nodes: FlowNode[], controlEdges: ControlEdge[], dataBindings: DataBinding[], options: ValidateOptions = {}): void {
-    const errors: ValidationError[] = [];
+    const errors = this.collectValidationErrors(nodes, controlEdges, dataBindings, options);
+    if (errors.length > 0) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        errors.map((e) => e.message).join('; '),
+      );
+    }
+  }
 
+  collectValidationErrors(nodes: FlowNode[], controlEdges: ControlEdge[], dataBindings: DataBinding[], options: ValidateOptions = {}): PlaybookFlowValidationError[] {
+    const errors: PlaybookFlowValidationError[] = [];
     errors.push(...this.checkUniqueNodeIds(nodes));
     errors.push(...this.checkDuplicateControlEdges(controlEdges));
     errors.push(...this.checkEdgeEndpoints(controlEdges, nodes));
@@ -34,20 +47,16 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkRouterTerminalRoute(nodes, controlEdges));
     errors.push(...this.checkCycleRouterPresence(nodes, controlEdges));
     errors.push(...this.checkIteratorContainerDag(nodes, controlEdges));
-    errors.push(...this.checkBindingEndpoints(nodes, dataBindings));
-    errors.push(...this.checkRequiredDataBindings(nodes, dataBindings));
+    errors.push(...this.checkBindingEndpoints(nodes, dataBindings, options));
+    if (!options.allowUnboundRequiredPorts) {
+      errors.push(...this.checkRequiredDataBindings(nodes, dataBindings));
+    }
     errors.push(...this.checkDuplicateDataBindings(dataBindings));
     errors.push(...this.checkBindingSourceReachable(nodes, controlEdges, dataBindings));
     errors.push(...this.checkPreviousIterationOnCycle(nodes, controlEdges, dataBindings));
     errors.push(...this.checkBindingTypeMatch(nodes, dataBindings));
     errors.push(...this.checkErrorRoutingCoverage(nodes, controlEdges));
-
-    if (errors.length > 0) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        errors.map((e) => e.message).join('; '),
-      );
-    }
+    return errors;
   }
 
   private checkUniqueNodeIds(nodes: FlowNode[]): ValidationError[] {
@@ -304,7 +313,10 @@ export class PlaybookFlowValidatorService {
           return;
         }
 
-        const sourcePort = sourceNode.output?.ports?.find((port) => port.id === condition.sourcePort);
+        const isSelfInputCondition = condition.sourceNode === node.id;
+        const sourcePort = isSelfInputCondition
+          ? sourceNode.input?.ports?.find((port) => port.id === condition.sourcePort)
+          : sourceNode.output?.ports?.find((port) => port.id === condition.sourcePort);
         if (!sourcePort) {
           errors.push({
             rule: 5,
@@ -312,6 +324,8 @@ export class PlaybookFlowValidatorService {
           });
           return;
         }
+
+        if (isSelfInputCondition) return;
 
         if (!canReachTarget(adjacency, condition.sourceNode, node.id)) {
           errors.push({
@@ -333,7 +347,7 @@ export class PlaybookFlowValidatorService {
     return errors;
   }
 
-  private checkBindingEndpoints(nodes: FlowNode[], bindings: DataBinding[]): ValidationError[] {
+  private checkBindingEndpoints(nodes: FlowNode[], bindings: DataBinding[], options: ValidateOptions): ValidationError[] {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const errors: ValidationError[] = [];
 
@@ -354,6 +368,9 @@ export class PlaybookFlowValidatorService {
       }
 
       if (!binding.sourceNode || !binding.sourcePort) {
+        if (options.allowIncompleteNodeOutputBindings) {
+          continue;
+        }
         errors.push({ rule: 7, message: `Data binding ${binding.id} source node-output bindings require sourceNode and sourcePort` });
         continue;
       }

@@ -42,6 +42,7 @@ interface Props {
   canEditOutputPortNames?: boolean;
   canEditOutputPortKinds?: boolean;
   canModifyOutputPorts?: boolean;
+  inputPortBehavior?: 'default' | 'iterator';
 }
 
 const ARTIFACT_KINDS: ArtifactKind[] = ['text', 'document', 'code', 'image', 'data', 'dashboard'];
@@ -197,6 +198,7 @@ export function PlaybookDataFlowSection({
   canEditOutputPortNames = true,
   canEditOutputPortKinds = true,
   canModifyOutputPorts = true,
+  inputPortBehavior = 'default',
 }: Props) {
   const { t: rawT } = useModuleTranslation('playbook');
   const t = rawT as TFunction;
@@ -210,6 +212,10 @@ export function PlaybookDataFlowSection({
     : undefined;
   const inputPorts = inputPortsOverride ?? targetNode?.inputPorts ?? [];
   const outputPorts = outputPortsOverride ?? targetNode?.outputPorts ?? [];
+  const canEditInputPort = useCallback(
+    (port: TaskInputPort) => inputPortBehavior !== 'iterator' || (port.id !== 'items' && port.role !== 'collection'),
+    [inputPortBehavior],
+  );
 
   const nodeBindings = targetNodeId
     ? allBindings.filter((b) => b.targetNode === targetNodeId)
@@ -351,9 +357,15 @@ export function PlaybookDataFlowSection({
     const id = `in-${crypto.randomUUID().slice(0, 8)}`;
     onInputPortsChange([
       ...inputPorts,
-      { id, name: t('dataFlow.defaultInput'), artifactKind: 'text', required: false },
+      {
+        id,
+        name: t('dataFlow.defaultInput'),
+        artifactKind: 'text',
+        required: false,
+        ...(inputPortBehavior === 'iterator' ? { role: 'context' as const } : {}),
+      },
     ]);
-  }, [inputPorts, onInputPortsChange, t]);
+  }, [inputPortBehavior, inputPorts, onInputPortsChange, t]);
 
   const removeInputPort = useCallback(
     (portId: string) => {
@@ -475,7 +487,7 @@ export function PlaybookDataFlowSection({
                   {inputPort && (
                     <InputPortCell
                       port={inputPort}
-                      canEdit={canEditPorts}
+                      canEdit={canEditPorts && canEditInputPort(inputPort)}
                       isMissingRequired={isMissingRequired}
                       onUpdate={updateInputPort}
                       onRemove={removeInputPort}

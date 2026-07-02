@@ -25,7 +25,7 @@ import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import * as workspaceApi from '@/modules/workspace/api';
 import { validateFiles, SMALL_FILE_THRESHOLD } from '@/modules/workspace/utils';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
-import type { Workspace, WorkspaceDocument, IndexingStatus } from '@/modules/workspace/types';
+import { isSharedWorkspace, type SharedWorkspaceResponse, type Workspace, type WorkspaceDocument, type IndexingStatus } from '@/modules/workspace/types';
 import type { InputFile, PlaybookResourceKind } from '../types';
 import type { ArtifactKind } from '../types';
 import { cn } from '@/lib/utils';
@@ -155,7 +155,7 @@ export function WorkspaceExplorerSidebar() {
   const { accept } = useAllowedUploadExtensions();
 
   // Workspace state
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaces, setWorkspaces] = useState<Array<Workspace | SharedWorkspaceResponse>>([]);
   const [loading, setLoading] = useState(true);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
@@ -199,8 +199,14 @@ export function WorkspaceExplorerSidebar() {
     async function fetch() {
       setLoading(true);
       try {
-        const result = await workspaceApi.getWorkspaces({ limit: 100 });
-        const workspacesList = result.workspaces;
+        const [ownedResult, sharedResult] = await Promise.allSettled([
+          workspaceApi.getWorkspaces({ limit: 100 }),
+          workspaceApi.getSharedWorkspaces({ limit: 100 }),
+        ]);
+        const workspacesList = [
+          ...(ownedResult.status === 'fulfilled' ? ownedResult.value.workspaces : []),
+          ...(sharedResult.status === 'fulfilled' ? sharedResult.value.workspaces : []),
+        ];
         setWorkspaces(workspacesList);
         // Auto-select first workspace if none selected or saved selection no longer valid
         setActiveWorkspaceId((prev) => {
@@ -422,7 +428,7 @@ export function WorkspaceExplorerSidebar() {
   );
 
   const handleWorkspaceDragStart = useCallback(
-    (e: React.DragEvent, workspace: Workspace) => {
+    (e: React.DragEvent, workspace: Pick<Workspace, 'id' | 'name'>) => {
       const payload: DragPayload = {
         type: 'workspace',
         kind: 'workspace',
@@ -456,6 +462,9 @@ export function WorkspaceExplorerSidebar() {
   if (!isOpen) return null;
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const isReadOnlySharedWorkspace = activeWorkspace
+    ? isSharedWorkspace(activeWorkspace) && activeWorkspace.permission === 'read'
+    : false;
   const isRootExpanded = expandedFolderIds.has('root');
   const visibleDocumentCount = filteredDocuments?.length ?? documents.length;
 
@@ -610,7 +619,7 @@ export function WorkspaceExplorerSidebar() {
           ) : (
             workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>
-                {ws.name} ({ws.documentCount})
+                {ws.name}{isSharedWorkspace(ws) ? ` (${t('workspace.sharedBadge')})` : ''} ({ws.documentCount})
               </option>
             ))
           )}
@@ -636,13 +645,15 @@ export function WorkspaceExplorerSidebar() {
                   size="sm"
                   className="h-7 px-2 text-xs gap-1"
                   onClick={handleUploadClick}
-                  disabled={isUploading}
+                  disabled={isUploading || isReadOnlySharedWorkspace}
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {t('workspaceExplorer.upload')}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">{t('workspaceExplorer.uploadTooltip')}</TooltipContent>
+              <TooltipContent side="bottom">
+                {isReadOnlySharedWorkspace ? t('workspaceExplorer.readOnlySharedWorkspace') : t('workspaceExplorer.uploadTooltip')}
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
           <TooltipProvider>
@@ -656,12 +667,15 @@ export function WorkspaceExplorerSidebar() {
                     setCreateFolderName('');
                     setIsCreateFolderOpen(true);
                   }}
+                  disabled={isReadOnlySharedWorkspace}
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {t('workspaceExplorer.folder')}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">{t('workspaceExplorer.folderTooltip')}</TooltipContent>
+              <TooltipContent side="bottom">
+                {isReadOnlySharedWorkspace ? t('workspaceExplorer.readOnlySharedWorkspace') : t('workspaceExplorer.folderTooltip')}
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
           <TooltipProvider>

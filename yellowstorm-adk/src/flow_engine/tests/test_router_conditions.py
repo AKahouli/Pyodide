@@ -174,6 +174,87 @@ def test_choose_deterministic_label_matches_numeric_equals_values():
     assert decision["label"] == "done"
 
 
+def test_choose_deterministic_label_reads_router_input_with_json_path():
+    decision = choose_deterministic_label(
+        {
+            "router_config": {
+                "output_labels": ["pdf", "other"],
+                "default_label": "other",
+                "conditions": [{
+                    "label": "pdf",
+                    "source_node": "router-1",
+                    "source_port": "file_data",
+                    "path": "$.path",
+                    "operator": "contains",
+                    "value": ".pdf",
+                }],
+            },
+        },
+        make_state({}),
+        node_id="router-1",
+        node_inputs={"file_data": {"path": "folder/report.pdf"}},
+    )
+
+    assert decision is not None
+    assert decision["label"] == "pdf"
+
+
+def test_choose_deterministic_label_reads_iterator_item_for_self_input():
+    state = make_state({})
+    state["inputs"] = {"_item": {"path": "folder/report.xlsx"}}
+
+    decision = choose_deterministic_label(
+        {
+            "router_config": {
+                "output_labels": ["xlsx", "other"],
+                "default_label": "other",
+                "conditions": [{
+                    "label": "xlsx",
+                    "source_node": "router-1",
+                    "source_port": "file_data",
+                    "path": "$.path",
+                    "operator": "contains",
+                    "value": ".xlsx",
+                }],
+            },
+        },
+        state,
+        node_id="router-1",
+        node_inputs={},
+    )
+
+    assert decision is not None
+    assert decision["label"] == "xlsx"
+
+
+def test_choose_deterministic_label_does_not_mask_bound_none_self_input():
+    state = make_state({})
+    state["inputs"] = {"_item": {"path": "folder/report.xlsx"}}
+
+    decision = choose_deterministic_label(
+        {
+            "router_config": {
+                "output_labels": ["xlsx", "other"],
+                "default_label": "other",
+                "conditions": [{
+                    "label": "xlsx",
+                    "source_node": "router-1",
+                    "source_port": "file_data",
+                    "path": "$.path",
+                    "operator": "contains",
+                    "value": ".xlsx",
+                }],
+            },
+        },
+        state,
+        node_id="router-1",
+        node_inputs={"file_data": None},
+    )
+
+    assert decision is not None
+    assert decision["label"] == "other"
+
+
 @pytest.mark.asyncio
 async def test_run_router_skips_llm_when_deterministic_conditions_exist(monkeypatch):
     emitted = []

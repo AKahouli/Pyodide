@@ -258,6 +258,10 @@ class TestCoerceToList:
         result = _coerce_to_list('{"key": "value"}')
         assert result == [{"key": "value"}]
 
+    def test_json_string_object_extracts_nested_list(self):
+        result = _coerce_to_list('{"folder":"CVs","files":[{"name":"a.pdf"},{"name":"b.pdf"}]}')
+        assert result == [{"name": "a.pdf"}, {"name": "b.pdf"}]
+
     def test_plain_string_returns_empty(self):
         assert _coerce_to_list("not-a-list") == []
 
@@ -501,6 +505,8 @@ async def test_invoke_iterator_graph_with_items():
     assert iterations[0]["status"] == "completed"
     assert iterations[1]["index"] == 1
     assert iterations[1]["status"] == "completed"
+    assert iterations[0]["childResults"][0]["taskId"] == "child-step"
+    assert iterations[0]["childResults"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -577,6 +583,48 @@ async def test_invoke_multi_child_iterator():
     iter_output = result.get("task_outputs", {}).get(("iter-node", 0), {})
     iterations = iter_output.get("iterator_iterations", [])
     assert len(iterations) == 2
+
+
+@pytest.mark.asyncio
+async def test_iterator_child_inherits_current_item_in_inputs():
+    snapshot = load_fixture("iterator.json")
+    seen_inputs = []
+
+    async def mock_step_fn(node_id, node_config, state, node_inputs=None):
+        seen_inputs.append(node_inputs)
+        return {
+            "task_outputs": {(node_id, 0): {"output": "ok", "display_text": "ok"}},
+            "iterations": {node_id: 1},
+        }
+
+    with patch.dict("src.flow_engine.builder.iterator.NODE_KIND_DISPATCH", {"step": mock_step_fn}):
+        graph = compose(snapshot)
+        result = await graph.ainvoke({
+            "execution_id": "test-iter-inputs",
+            "flow_id": "iter-flow",
+            "inputs": {"items": ["alpha", "beta"], "context": "shared"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        })
+
+    assert [entry["_item"] for entry in seen_inputs] == ["alpha", "beta"]
+    assert [entry["_index"] for entry in seen_inputs] == [0, 1]
+    assert all(entry["context"] == "shared" for entry in seen_inputs)
+
+    iterations = result.get("task_outputs", {}).get(("iter-node", 0), {}).get("iterator_iterations", [])
+    assert iterations[0]["childResults"] == [{
+        "taskId": "child-step",
+        "taskTitle": "Process Item",
+        "status": "completed",
+        "output": "ok",
+        "components": [],
+        "reasoningChain": [],
+        "artifacts": [],
+    }]
 
 
 @pytest.mark.asyncio

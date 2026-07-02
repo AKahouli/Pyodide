@@ -184,6 +184,7 @@ export interface WorkyPendingClarification {
   options: string[];
   taskId: string | null;
   blocksTaskIds: string[];
+  createdAt?: string;
 }
 
 export interface WorkyStartValidationIssue {
@@ -331,4 +332,33 @@ export interface WorkyMemoryEntry {
   sourceStreamId: string | null;
   sourceProposalId: string | null;
   createdAt: string;
+}
+
+export type WorkyWhatsAppIntegrationStatus =
+  | 'PAIRING'
+  | 'CONNECTED'
+  | 'DISCONNECTED'
+  | 'FAILED';
+
+export interface WorkyWhatsAppIntegration {
+  status: WorkyWhatsAppIntegrationStatus;
+  sessionId?: string;
+  phoneNumber?: string;
+  expectedPairingPhone?: string;
+  displayName?: string;
+  lastActivityAt?: string;
+  errorMessage?: string;
+  updatedAt?: string;
+}
+
+export interface WorkyWhatsAppConnectResponse {
+  sessionId: string;
+  status: 'PAIRING';
+  qrCode?: string;
+  pairingCode?: string;
+}
+
+export interface WorkyWhatsAppPairingResponse {
+  qrCode?: string;
+  pairingCode?: string;
 }

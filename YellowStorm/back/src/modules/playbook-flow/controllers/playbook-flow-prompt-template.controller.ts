@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Delete, Param, Body, UseGuards, NotFoundException, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Patch, Delete, Param, Body, UseGuards, NotFoundException, HttpCode, HttpStatus, Put } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
@@ -6,6 +6,7 @@ import { Permissions } from '@modules/authorization/constants/permissions';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { PlaybookFlowPromptTemplateService } from '../services/playbook-flow-prompt-template.service';
 import { UpsertFlowPromptTemplateDto } from '../dto/upsert-flow-prompt-template.dto';
+import { ImportFlowPromptTemplatesDto } from '../dto/import-flow-prompt-templates.dto';
 
 @ApiTags('Admin Playbook Prompts')
 @ApiBearerAuth()
@@ -21,6 +22,16 @@ export class PlaybookFlowPromptTemplateController {
   @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findAll() {
     return this.promptService.findAll();
+  }
+
+  @Put('import')
+  @ApiOperation({ summary: 'Replace all playbook prompt templates from an import payload' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async replaceAll(
+    @CurrentUser() user: { _id: string },
+    @Body() body: ImportFlowPromptTemplatesDto,
+  ) {
+    return this.promptService.replaceAll(body, user._id);
   }
 
   @Get(':key')

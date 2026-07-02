@@ -60,3 +60,5 @@ __pycache__/
 .qa-screenshots/
 qa-screenshots/
 qa_screenshots/
+qa-artifacts/
+$/

@@ -1,0 +1,14 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Linear agent workflow",
+    "summary": "Collect data then draft a report.",
+    "nodes": [
+      { "ref": "collect", "label": "Collect", "purpose": "Collect source data", "nodeTemplateKey": "generic.agent_step", "outputPorts": [{ "id": "data", "artifactKind": "data" }] },
+      { "ref": "draft", "label": "Draft", "purpose": "Draft report", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "data", "artifactKind": "data", "required": true }], "outputPorts": [{ "id": "report", "artifactKind": "document" }] }
+    ],
+    "links": [{ "sourceRef": "collect", "targetRef": "draft", "sourceOutputPortId": "data", "targetInputPortId": "data" }],
+    "bindings": [{ "sourceKind": "node-output", "sourceRef": "collect", "sourcePort": "data", "targetRef": "draft", "targetPort": "data" }]
+  },
+  "expected": { "minNodes": 2, "minEdges": 1, "minBindings": 1, "forbiddenDiagnosticCodes": ["blueprint_skill_ref_invalid", "builder_edge_unknown_ref"] }
+}

@@ -96,7 +96,7 @@ export function useAutosave() {
   }, [autosaveActor, clearTimer, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
 
   useEffect(() => {
-    if (!isDirty || dirtyVersion === 0 || hasUnboundRequiredPorts || hasIncompleteBindings) return;
+    if (!isDirty || dirtyVersion === 0) return;
 
     const now = Date.now();
     const previousDirtyAt = lastDirtyAtRef.current;
@@ -124,8 +124,6 @@ export function useAutosave() {
     clearTimer,
     dirtyVersion,
     doSave,
-    hasIncompleteBindings,
-    hasUnboundRequiredPorts,
     isDirty,
     isSaving,
     lastAutosaveDurationMs,

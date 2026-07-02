@@ -1,15 +1,18 @@
-import { Send, Square } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Loader2, MessageCircle, Mic, Send, Square } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import { useSendMessage } from '../query/hooks';
+import { useSendMessage, useTranscribeAudio } from '../query/hooks';
 import { useWorkyStore, useWorkyStreaming } from '../store';
 import { useWorkyUiStore } from '../uiStore';
+import { useAudioRecorder, type RecordingResult } from '../useAudioRecorder';
 import type { WorkyStreamStatus } from '../types';
 
 interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
 }
 
 /**
@@ -19,7 +22,12 @@ interface PromptBarProps {
  * Keeping a single source of truth avoids two model-selection UIs
  * drifting out of sync and removes the per-turn override payload.
  */
-export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
+export function PromptBar({
+  streamId,
+  status,
+  onWhatsAppClick,
+  whatsappConnected,
+}: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
   const send = useSendMessage(streamId);
@@ -29,14 +37,67 @@ export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
   const clearSendError = useWorkyUiStore((s) => s.clearSendError);
   const sendError = useWorkyUiStore((s) => s.sendError);
+  const transcribe = useTranscribeAudio();
+
+  // Shared finalizer for both manual stop and silence auto-stop: skip silent
+  // clips (Whisper hallucinates on them) and otherwise append the transcript
+  // to the current draft so the owner can edit before sending.
+  const transcribeResult = useCallback(
+    async ({ blob, hadSpeech }: RecordingResult) => {
+      if (!blob) return;
+      if (!hadSpeech) {
+        notifySendError(t('promptBar.voice.empty'));
+        return;
+      }
+      try {
+        const { text } = await transcribe.mutateAsync({ blob });
+        const trimmed = text.trim();
+        if (trimmed) {
+          setValue((prev) => (prev ? `${prev.trim()} ${trimmed}` : trimmed));
+        } else {
+          notifySendError(t('promptBar.voice.empty'));
+        }
+      } catch {
+        notifySendError(t('promptBar.voice.failed'));
+      }
+    },
+    [transcribe, notifySendError, t],
+  );
+
+  // Hands-free dictation: the recorder auto-stops ~2.5s after the speaker goes
+  // quiet — but only once they've actually started, so long lead-ins and
+  // mid-sentence breaths/pauses are preserved. Manual tap ends the take early.
+  const recorder = useAudioRecorder({ onAutoStop: transcribeResult, silenceTimeoutMs: 1500 });
   const isDisabled = send.isPending || status === 'archived';
+  const isTranscribing = transcribe.isPending;
 
   // Reset the draft and any in-flight error on stream switch so the
   // composer never carries text or stale failure toasts across streams.
   useEffect(() => {
     setValue('');
     clearSendError();
-  }, [streamId, clearSendError]);
+    if (recorder.isRecording) recorder.cancel();
+  }, [streamId, clearSendError]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tap to start dictating; tap again to cut the take short (auto-stop on
+  // silence handles the common case via `transcribeResult`).
+  const toggleMic = async () => {
+    clearSendError();
+    if (recorder.isRecording) {
+      const result = await recorder.stop();
+      await transcribeResult(result);
+      return;
+    }
+    await recorder.start();
+  };
+
+  // `start()` sets `error` asynchronously, so surface mic failures here rather
+  // than inline after the call (where the value would still be stale).
+  useEffect(() => {
+    if (recorder.error === 'permission') notifySendError(t('promptBar.voice.denied'));
+    else if (recorder.error === 'unsupported')
+      notifySendError(t('promptBar.voice.unsupported'));
+  }, [recorder.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +159,50 @@ export function PromptBar({ streamId, status }: PromptBarProps): JSX.Element {
             }
           }}
         />
+        {onWhatsAppClick ? (
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            onClick={onWhatsAppClick}
+            disabled={isDisabled}
+            aria-label={t('whatsapp.openModal')}
+            data-testid='worky-prompt-whatsapp'
+            className='relative'
+          >
+            <MessageCircle className='h-4 w-4' />
+            {whatsappConnected ? (
+              <span
+                className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
+                data-testid='worky-prompt-whatsapp-connected'
+              />
+            ) : null}
+          </Button>
+        ) : null}
+        {recorder.isSupported ? (
+          <Button
+            type='button'
+            size='icon'
+            variant={recorder.isRecording ? 'destructive' : 'ghost'}
+            onClick={toggleMic}
+            disabled={isDisabled || isTranscribing}
+            aria-pressed={recorder.isRecording}
+            aria-label={
+              isTranscribing
+                ? t('promptBar.voice.transcribing')
+                : recorder.isRecording
+                  ? t('promptBar.voice.stop')
+                  : t('promptBar.voice.start')
+            }
+            data-testid='worky-prompt-mic'
+          >
+            {isTranscribing ? (
+              <Loader2 className='h-4 w-4 animate-spin' />
+            ) : (
+              <Mic className={recorder.isRecording ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+            )}
+          </Button>
+        ) : null}
         <Button
           type='submit'
           size='icon'

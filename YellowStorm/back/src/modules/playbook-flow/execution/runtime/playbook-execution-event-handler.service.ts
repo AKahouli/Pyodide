@@ -56,6 +56,8 @@ export class PlaybookExecutionEventHandlerService {
       await this.getNodeHandler().handleStarted(executionId, taskNodeId, iteration);
     } else if (eventType === 'NodeToken') {
       await this.getNodeHandler().handleToken(executionId, taskNodeId, iteration, payload);
+    } else if (eventType === 'NodeTraceUpdate') {
+      await this.getNodeHandler().handleTraceUpdate(executionId, taskNodeId, iteration, payload);
     } else if (eventType === 'NodeCompleted') {
       await this.getNodeHandler().handleCompleted(executionId, taskNodeId, iteration, payload);
     } else if (eventType === 'NodeFailed') {

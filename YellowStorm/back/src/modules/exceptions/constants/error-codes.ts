@@ -282,6 +282,9 @@ export enum ErrorCode {
   WHATSAPP_AUTH_INVALID = 'ERR_3217',
   WHATSAPP_USER_INACTIVE = 'ERR_3218',
   WHATSAPP_NETWORK_UNREACHABLE = 'ERR_3219',
+  WHATSAPP_SYSTEM_BOT_NOT_CONNECTED = 'ERR_3220',
+  WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH = 'ERR_3221',
+  WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED = 'ERR_3222',
 
   // Team errors (3300-3399)
   TEAM_NOT_FOUND = 'ERR_3300',
@@ -664,6 +667,12 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WHATSAPP_USER_INACTIVE]: 'The linked platform user is inactive.',
   [ErrorCode.WHATSAPP_NETWORK_UNREACHABLE]:
     'Cannot reach web.whatsapp.com from this server. Check firewall, VPN, or network policy.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_NOT_CONNECTED]:
+    'Worky WhatsApp system bot is not connected. An administrator must pair the system number first.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH]:
+    'Paired WhatsApp number does not match the configured system bot phone.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED]:
+    'System bot phone is not configured. Set it in the Worky WhatsApp admin page before pairing.',
 
   [ErrorCode.TEAM_NOT_FOUND]: 'Team not found.',
   [ErrorCode.TEAM_ALREADY_EXISTS]: 'A team with this name already exists.',

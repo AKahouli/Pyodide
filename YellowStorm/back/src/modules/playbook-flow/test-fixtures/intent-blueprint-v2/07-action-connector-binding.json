@@ -1,0 +1,11 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Action connector binding",
+    "summary": "Bind an action node to a connector action.",
+    "nodes": [
+      { "ref": "create_issue", "label": "Create issue", "purpose": "Create a GitHub issue", "nodeTemplateKey": "action.github", "primitive": { "kind": "action" }, "connector_refs": [{ "connector_slug": "github", "action_key": "create_issue", "reason": "Create issue" }], "inputPorts": [{ "id": "payload", "artifactKind": "data" }], "outputPorts": [{ "id": "result", "artifactKind": "data" }] }
+    ]
+  },
+  "expected": { "minNodes": 1, "toolNodeRef": "create_issue" }
+}

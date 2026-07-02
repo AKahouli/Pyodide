@@ -41,6 +41,9 @@ export class FlowTaskLlmPromptTraceItem {
 
   @Prop({ required: true, type: String })
   prompt!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  generatedOutput?: string | null;
 }
 
 @Schema({ _id: false })
@@ -338,6 +341,9 @@ export class FlowTaskResult {
 
   @Prop({ required: false, type: [Object], default: undefined })
   components?: Array<Record<string, unknown>>;
+
+  @Prop({ required: false, type: [Object], default: undefined })
+  iteratorIterations?: Array<Record<string, unknown>>;
 
   @Prop({ required: false, type: String })
   error?: string;

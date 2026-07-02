@@ -8,6 +8,7 @@ import { WhatsAppConnectResponseDto } from '../dto/whatsapp-connect-response.dto
 import { WhatsAppIntegrationResponseDto } from '../dto/whatsapp-integration-response.dto';
 import { WhatsAppPairingResponseDto } from '../dto/whatsapp-pairing-response.dto';
 import { WhatsAppIntegrationStatus } from '../schemas/agent-whatsapp-integration.schema';
+import { toAgentIntegrationRef } from '../interfaces/whatsapp-integration-ref.interface';
 import { WhatsAppConnectivityService } from './whatsapp-connectivity.service';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
 import { WhatsAppSessionManager } from './whatsapp-session.manager';
@@ -50,7 +51,7 @@ export class WhatsAppConnectionService {
       sessionId,
     );
     await this.authStore.deleteAuthState(integration._id);
-    await this.sessionManager.startPairing(integration, sessionId);
+    await this.sessionManager.startPairing(toAgentIntegrationRef(integration), sessionId);
     const pairing = this.sessionManager.getPairingSnapshot(sessionId);
     return {
       sessionId,
@@ -92,7 +93,7 @@ export class WhatsAppConnectionService {
       agentId,
       sessionId,
     );
-    await this.sessionManager.reconnect(integration, sessionId);
+    await this.sessionManager.reconnect(toAgentIntegrationRef(integration), sessionId);
     const refreshed = await this.integrationService.getDocumentByAgentForUser(userId, agentId);
     return this.integrationService.toResponse(refreshed);
   }

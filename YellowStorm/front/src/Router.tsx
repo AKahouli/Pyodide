@@ -45,6 +45,11 @@ const WorkyGovernanceAdminPage = React.lazy(() =>
     default: m.WorkyGovernancePage,
   }))
 );
+const WorkyWhatsAppSystemBotPage = React.lazy(() =>
+  import("./modules/admin/pages/WorkyWhatsAppSystemBotPage").then((m) => ({
+    default: m.WorkyWhatsAppSystemBotPage,
+  }))
+);
 const AgentHubPage = React.lazy(() =>
   import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
 );
@@ -314,7 +319,19 @@ export const router = createHashRouter([
             path: 'worky-governance',
             element: (
               <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
-                <WorkyGovernanceAdminPage />
+                <Suspense fallback={null}>
+                  <WorkyGovernanceAdminPage />
+                </Suspense>
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'worky-whatsapp-system',
+            element: (
+              <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
+                <Suspense fallback={null}>
+                  <WorkyWhatsAppSystemBotPage />
+                </Suspense>
               </PermissionGuard>
             ),
           },

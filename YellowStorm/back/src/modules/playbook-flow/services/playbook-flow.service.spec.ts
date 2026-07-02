@@ -14,12 +14,18 @@ import { FlowWorkspacePolicyService } from '../domain/flow-workspace-policy.serv
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
+import { PlaybookShareService } from './playbook-share.service';
 
 describe('PlaybookFlowService', () => {
   const idempotencyService = {
     reserveSave: jest.fn().mockResolvedValue({ type: 'reserved' }),
     confirmSaveResult: jest.fn().mockResolvedValue(undefined),
     release: jest.fn().mockResolvedValue(undefined),
+  };
+  const playbookShareService = {
+    getSharePermission: jest.fn().mockResolvedValue(null),
+    getSharedPlaybookIdsForUser: jest.fn().mockResolvedValue([]),
+    getShareInfoMapForUser: jest.fn().mockResolvedValue(new Map()),
   };
 
   beforeEach(() => {
@@ -54,6 +60,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -110,6 +117,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -182,6 +190,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -244,6 +253,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: executionModel },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -325,6 +335,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: validatorService },
@@ -389,7 +400,11 @@ describe('PlaybookFlowService', () => {
         sourceNode: 'task-1',
         sourcePort: 'output',
       }],
-      { allowDraftRouters: true },
+      {
+        allowDraftRouters: true,
+        allowUnboundRequiredPorts: true,
+        allowIncompleteNodeOutputBindings: true,
+      },
     );
     expect(flowDocument.nodes).toEqual([
       expect.objectContaining({ id: 'task-1', label: 'Draft revised' }),
@@ -470,6 +485,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -543,6 +559,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: validatorService },
@@ -606,6 +623,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -647,6 +665,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -696,6 +715,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -756,6 +776,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -803,6 +824,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -856,6 +878,7 @@ describe('PlaybookFlowService', () => {
         FlowGraphSanitizerService,
         FlowDeltaPatchService,
         { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
         { provide: getModelToken(Flow.name), useValue: flowModel },
         { provide: getModelToken(FlowExecution.name), useValue: {} },
         { provide: PlaybookFlowValidatorService, useValue: { validate: jest.fn() } },
@@ -903,6 +926,7 @@ describe('PlaybookFlowService', () => {
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
+      { getSharedPlaybookIdsForUser: jest.fn(), getShareInfoMapForUser: jest.fn(), getSharePermission: jest.fn(), removeAllSharesForPlaybook: jest.fn() } as any,
     );
 
     await service.createWithNodesAndEdges('user-1', 'Base', '', [], [], [], []);
@@ -968,6 +992,7 @@ describe('PlaybookFlowService', () => {
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
       { get: jest.fn().mockReturnValue(true) } as any,
+      { getSharedPlaybookIdsForUser: jest.fn(), getShareInfoMapForUser: jest.fn(), getSharePermission: jest.fn(), removeAllSharesForPlaybook: jest.fn() } as any,
     );
 
     await service.clone('flow-1', 'user-1');

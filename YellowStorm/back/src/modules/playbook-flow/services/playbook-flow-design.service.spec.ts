@@ -318,6 +318,56 @@ describe('PlaybookFlowDesignService', () => {
     expect(filter.createdBy.toString()).toBe(USER_ID);
   });
 
+  it('appends a designer sidebar interaction with a current flow snapshot', async () => {
+    const create = jest.fn().mockImplementation((payload) => Promise.resolve({
+      id: MESSAGE_ID,
+      ...payload,
+      revertedFromMessageId: null,
+      createdAt: new Date('2026-06-22T08:00:00Z'),
+      updatedAt: new Date('2026-06-22T08:00:00Z'),
+    }));
+    const service = buildService(
+      { create },
+      { findById: jest.fn().mockResolvedValue({
+        id: FLOW_ID,
+        ownerId: USER_ID,
+        nodes: [{ id: 'node-1' }],
+        controlEdges: [{ id: 'edge-1' }],
+        dataBindings: [{ id: 'binding-1' }],
+      }) },
+    );
+
+    const result = await service.appendDesignMessage(FLOW_ID, USER_ID, {
+      userQuery: 'Add scoring',
+      aiSummary: 'Assistant processed the request.',
+    });
+
+    expect(result).toEqual(expect.objectContaining({ userQuery: 'Add scoring', aiSummary: 'Assistant processed the request.' }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      userQuery: 'Add scoring',
+      aiSummary: 'Assistant processed the request.',
+      status: 'completed',
+      error: null,
+      snapshotBefore: {
+        nodes: [{ id: 'node-1' }],
+        controlEdges: [{ id: 'edge-1' }],
+        dataBindings: [{ id: 'binding-1' }],
+      },
+    }));
+  });
+
+  it('rejects invalid append message statuses', async () => {
+    const create = jest.fn();
+    const service = buildService({ create });
+
+    await expect(service.appendDesignMessage(FLOW_ID, USER_ID, {
+      userQuery: 'Add scoring',
+      aiSummary: 'Assistant processed the request.',
+      status: 'reverted' as any,
+    })).rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('clears only the current user design messages for the playbook', async () => {
     const deleteMany = jest.fn().mockResolvedValue({ deletedCount: 2 });
     const service = buildService({ deleteMany });

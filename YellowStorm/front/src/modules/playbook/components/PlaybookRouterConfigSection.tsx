@@ -16,7 +16,7 @@ interface Props {
   targetTaskId?: string;
 }
 
-const CONDITION_OPERATORS: RouterConditionOperator[] = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'];
+const CONDITION_OPERATORS: RouterConditionOperator[] = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'];
 
 function stringifyConditionValue(value: unknown): string {
   if (value === null || value === undefined) return '';

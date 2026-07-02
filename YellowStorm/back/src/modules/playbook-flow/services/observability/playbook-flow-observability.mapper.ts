@@ -72,10 +72,11 @@ export function mapPromptTrace(value: unknown): FlowLlmPromptTraceItem[] {
     const stage = toStringValue(record.stage);
     const model = toStringValue(record.model);
     const prompt = toStringValue(record.prompt);
+    const generatedOutput = toStringValue(record.generated_output ?? record.generatedOutput) ?? null;
     if (!stage || !model || !prompt) {
       return items;
     }
-    items.push({ stage, model, prompt });
+    items.push({ stage, model, prompt, generatedOutput });
     return items;
   }, []);
 }

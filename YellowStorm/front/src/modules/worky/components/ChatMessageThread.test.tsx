@@ -6,10 +6,25 @@ import { LocalizationProvider } from '@/modules/localization';
 import { ChatMessageThread } from './ChatMessageThread';
 import { useWorkyMessages, useWorkyAssistantText, useWorkyStore } from '../store';
 
+vi.mock('./ChatClarificationCard', () => ({
+  ChatClarificationCard: ({
+    clarification,
+  }: {
+    clarification: { id: string; question: string };
+  }) => <li data-testid='worky-chat-clarification'>{clarification.question}</li>,
+}));
+
 vi.mock('../store', () => ({
   useWorkyMessages: vi.fn(),
   useWorkyAssistantText: vi.fn(),
   useWorkyStore: vi.fn(),
+}));
+
+vi.mock('../query/hooks', () => ({
+  useRespondInteraction: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 function TestProviders({ children }: { children: ReactNode }): JSX.Element {
@@ -30,8 +45,9 @@ const mockedUseStore = useWorkyStore as unknown as ReturnType<typeof vi.fn>;
 describe('ChatMessageThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedUseStore.mockImplementation((selector: (s: { streaming: boolean }) => unknown) =>
-      selector({ streaming: false }),
+    mockedUseStore.mockImplementation(
+      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
+        selector({ streaming: false, pendingClarifications: [] }),
     );
   });
 
@@ -102,8 +118,9 @@ describe('ChatMessageThread', () => {
       },
     ]);
     mockedUseAssistantText.mockReturnValue('Drafting the next step…');
-    mockedUseStore.mockImplementation((selector: (s: { streaming: boolean }) => unknown) =>
-      selector({ streaming: true }),
+    mockedUseStore.mockImplementation(
+      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
+        selector({ streaming: true, pendingClarifications: [] }),
     );
 
     render(
@@ -114,5 +131,70 @@ describe('ChatMessageThread', () => {
 
     expect(screen.getByTestId('worky-message-streaming')).toBeInTheDocument();
     expect(screen.getByText('Drafting the next step…')).toBeInTheDocument();
+  });
+
+  it('renders clarifications inline after the owner message that triggered them', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm1',
+        role: 'owner',
+        content: 'hello',
+        planDeltaRef: null,
+        createdAt: '2026-06-21T10:00:00.000Z',
+      },
+      {
+        id: 'm2',
+        role: 'owner',
+        content: 'second question',
+        planDeltaRef: null,
+        createdAt: '2026-06-21T10:05:00.000Z',
+      },
+    ]);
+    mockedUseAssistantText.mockReturnValue('');
+    const pendingClarifications = [
+      {
+        id: 'c1',
+        type: 'clarification',
+        question: 'First clarification',
+        options: [],
+        taskId: null,
+        blocksTaskIds: [],
+        createdAt: '2026-06-21T10:01:00.000Z',
+      },
+      {
+        id: 'c2',
+        type: 'clarification',
+        question: 'Second clarification',
+        options: [],
+        taskId: null,
+        blocksTaskIds: [],
+        createdAt: '2026-06-21T10:06:00.000Z',
+      },
+    ];
+    mockedUseStore.mockImplementation(
+      (
+        selector: (s: {
+          streaming: boolean;
+          pendingClarifications: typeof pendingClarifications;
+        }) => unknown,
+      ) =>
+        selector({
+          streaming: false,
+          pendingClarifications,
+        }),
+    );
+
+    render(
+      <TestProviders>
+        <ChatMessageThread streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    const list = screen.getByTestId('worky-message-list');
+    const items = Array.from(list.children).map((node) => node.textContent ?? '');
+    expect(items[0]).toContain('hello');
+    expect(items[1]).toContain('First clarification');
+    expect(items[2]).toContain('second question');
+    expect(items[3]).toContain('Second clarification');
   });
 });

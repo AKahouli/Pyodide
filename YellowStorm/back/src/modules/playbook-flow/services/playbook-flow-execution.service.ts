@@ -76,6 +76,7 @@ import { PlaybookExecutionEventHandlerService } from '../execution/runtime/playb
 import { PlaybookExecutionReplayRuntimeService } from '../execution/runtime/playbook-execution-replay-runtime.service';
 import { PlaybookExecutionStreamFinalizerService } from '../execution/runtime/playbook-execution-stream-finalizer.service';
 import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
+import { FlowAccessService } from '../domain/flow-access.service';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
@@ -254,7 +255,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional()
     @InjectModel(FlowHitlMemory.name)
     private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
+    @Optional() private readonly accessService?: FlowAccessService,
   ) {}
+
+  private requireAccessService(): FlowAccessService {
+    if (!this.accessService) {
+      throw new Error('FlowAccessService is required for playbook execution authorization');
+    }
+    return this.accessService;
+  }
 
   private getReplayRuntime(): PlaybookExecutionReplayRuntimeService {
     if (this.replayRuntimeService) {
@@ -1751,7 +1760,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     page: number = 1,
     limit: number = 10,
   ): Promise<IFlowExecutionListResponse> {
-    const filter: Record<string, unknown> = { flowId, ownerId };
+    await this.requireAccessService().assertExecutionAccess(flowId, ownerId, 'read');
+    const filter: Record<string, unknown> = { flowId };
     const total = await this.executionModel.countDocuments(filter);
     const items = await this.executionModel
       .find(filter)
@@ -1778,10 +1788,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
     if (String(execution.ownerId) !== String(ownerId)) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
+      await this.requireAccessService().assertExecutionAccess(String(execution.flowId), ownerId, 'read');
     }
 
     const taskResults = await this.taskResultModel
@@ -1811,6 +1818,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           outputs: (r as any).outputs,
           artifacts: r.artifacts,
           components: r.components,
+          iteratorIterations: (r as any).iteratorIterations,
           error: r.error,
           startedAt: r.startedAt,
           endedAt: r.endedAt,
@@ -1966,10 +1974,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
     if (String(execution.ownerId) !== String(ownerId)) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
+      await this.requireAccessService().assertExecutionAccess(String(execution.flowId), ownerId, 'write');
     }
 
     if (execution.status === 'completed' || execution.status === 'failed' || execution.status === 'cancelled') {
@@ -2007,7 +2012,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   async delete(executionId: string, ownerId: string): Promise<void> {
     const execution = await this.executionModel.findById(executionId);
-    if (!execution || String(execution.ownerId) !== String(ownerId)) {
+    if (!execution) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
+    }
+    if (String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
         'Execution not found',
@@ -2027,7 +2038,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   async deleteAll(flowId: string, ownerId: string): Promise<{ deleted: number }> {
-    const flow = await this.flowService.findOne(flowId, ownerId);
+    const flow = await this.flowService.findById(flowId);
+    if (String(flow.ownerId) !== String(ownerId)) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
+    }
 
     const executions = await this.executionModel.find({ flowId, ownerId }, { _id: 1 }).lean();
     const executionIds = executions.map((e: Record<string, unknown>) => String(e._id));
@@ -2054,10 +2071,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
     if (String(execution.ownerId) !== String(ownerId)) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
+      await this.requireAccessService().assertExecutionAccess(String(execution.flowId), ownerId, 'write');
     }
     if (execution.status !== 'pending_approval') {
       throw new BadRequestException(

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkyStreamService } from './services/worky-stream.service';
@@ -27,6 +27,10 @@ import { WorkyStreamController } from './controllers/worky-stream.controller';
 import { WorkyEventsController } from './controllers/worky-events.controller';
 import { WorkyInternalController } from './controllers/worky-internal.controller';
 import { WorkyMessageController } from './controllers/worky-message.controller';
+import { WorkySttController } from './controllers/worky-stt.controller';
+import { WorkySttService } from './services/worky-stt.service';
+import { WorkyTtsController } from './controllers/worky-tts.controller';
+import { WorkyTtsService } from './services/worky-tts.service';
 import { WorkyBoardController } from './controllers/worky-board.controller';
 import { WorkyInteractionController } from './controllers/worky-interaction.controller';
 import { WorkyTaskController } from './controllers/worky-task.controller';
@@ -122,6 +126,21 @@ import { EmailModule } from '../email/email.module';
 import { UserModule } from '../user/user.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { ModelsModule } from '../models/models.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
+import { WorkyWhatsAppIntegrationController } from './controllers/worky-whatsapp-integration.controller';
+import {
+  WorkyWhatsAppIntegration,
+  WorkyWhatsAppIntegrationSchema,
+} from './schemas/worky-whatsapp-integration.schema';
+import {
+  WorkyWhatsAppSystemBot,
+  WorkyWhatsAppSystemBotSchema,
+} from './schemas/worky-whatsapp-system-bot.schema';
+import { WorkyWhatsAppIngressService } from './services/worky-whatsapp-ingress.service';
+import { WorkyWhatsAppIntegrationService } from './services/worky-whatsapp-integration.service';
+import { WorkyWhatsAppSystemBotService } from './services/worky-whatsapp-system-bot.service';
+import { WorkyWhatsAppSystemBotAdminController } from './controllers/admin/worky-whatsapp-system-bot.controller';
+import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-whatsapp-system-bot-status.controller';
 
 @Module({
   imports: [
@@ -133,6 +152,7 @@ import { ModelsModule } from '../models/models.module';
     UserModule,
     WorkspaceModule,
     ModelsModule,
+    forwardRef(() => WhatsAppModule),
     MongooseModule.forFeature([
       { name: WorkyStream.name, schema: WorkyStreamSchema },
       { name: WorkyTask.name, schema: WorkyTaskSchema },
@@ -159,6 +179,8 @@ import { ModelsModule } from '../models/models.module';
       // dependency graph. Nest reuses the same Mongoose model instance via DI.
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: Agent.name, schema: AgentSchema },
+      { name: WorkyWhatsAppIntegration.name, schema: WorkyWhatsAppIntegrationSchema },
+      { name: WorkyWhatsAppSystemBot.name, schema: WorkyWhatsAppSystemBotSchema },
     ]),
   ],
   controllers: [
@@ -166,12 +188,17 @@ import { ModelsModule } from '../models/models.module';
     WorkyEventsController,
     WorkyInternalController,
     WorkyMessageController,
+    WorkySttController,
+    WorkyTtsController,
     WorkyBoardController,
     WorkyInteractionController,
     WorkyTaskController,
     WorkyGovernanceAdminController,
+    WorkyWhatsAppSystemBotAdminController,
+    WorkyWhatsAppSystemBotStatusController,
     WorkyMemoryController,
     WorkyTraceController,
+    WorkyWhatsAppIntegrationController,
   ],
   providers: [
     WorkyStreamService,
@@ -194,6 +221,11 @@ import { ModelsModule } from '../models/models.module';
     WorkyMemoryService,
     WorkyTraceService,
     WorkyTaskResultService,
+    WorkySttService,
+    WorkyTtsService,
+    WorkyWhatsAppIngressService,
+    WorkyWhatsAppIntegrationService,
+    WorkyWhatsAppSystemBotService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
     WorkyServiceAuthGuard,
@@ -219,6 +251,9 @@ import { ModelsModule } from '../models/models.module';
     WorkyMemoryService,
     WorkyTraceService,
     WorkyTaskResultService,
+    WorkyWhatsAppIngressService,
+    WorkyWhatsAppIntegrationService,
+    WorkyWhatsAppSystemBotService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
     WorkyServiceAuthGuard,

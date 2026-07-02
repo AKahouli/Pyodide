@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards, Body, Post, Delete, Patch } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Body, Post, Delete, Patch, Put } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
@@ -7,6 +7,7 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { PlaybookFlowNodeTemplateService } from '../services/playbook-flow-node-template.service';
 import { CreateFlowNodeTemplateDto } from '../dto/create-flow-node-template.dto';
 import { UpdateFlowNodeTemplateDto } from '../dto/update-flow-node-template.dto';
+import { ImportFlowNodeTemplatesDto } from '../dto/import-flow-node-templates.dto';
 
 @ApiTags('Playbook Flow Templates')
 @ApiBearerAuth()
@@ -43,6 +44,13 @@ export class PlaybookFlowTemplateController {
   @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findEnabled() {
     return this.nodeTemplateService.findEnabled();
+  }
+
+  @Put('import')
+  @ApiOperation({ summary: 'Replace all node templates from an import payload' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async replaceAll(@CurrentUser() user: { _id: string }, @Body() body: ImportFlowNodeTemplatesDto) {
+    return this.nodeTemplateService.replaceAll(body, user._id);
   }
 
   @Get(':id')

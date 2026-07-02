@@ -24,6 +24,7 @@ import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.servic
 import { FlowDeltaPatchService } from '../domain/flow-delta-patch.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
+import { PlaybookShareService } from './playbook-share.service';
 
 @Injectable()
 export class PlaybookFlowService {
@@ -203,6 +204,7 @@ export class PlaybookFlowService {
     private readonly deltaPatchService: FlowDeltaPatchService,
     private readonly idempotencyService: PlaybookFlowIdempotencyService,
     private readonly configService: ConfigService,
+    private readonly playbookShareService: PlaybookShareService,
   ) {}
 
   private buildDefaultHitlPolicy(): Record<string, unknown> {
@@ -267,7 +269,11 @@ export class PlaybookFlowService {
   async findAll(ownerId: string, query: PlaybookFlowQueryDto): Promise<IFlowListResponse> {
     const { page = 1, limit = 10, sortBy = 'updatedAt', sortOrder = 'desc', search } = query;
 
-    const filter: Record<string, unknown> = { ownerId };
+    const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
+    const accessFilter = sharedFlowIds.length > 0
+      ? { $or: [{ ownerId }, { _id: { $in: sharedFlowIds.map((id) => new Types.ObjectId(id)) } }] }
+      : { ownerId };
+    const filter: Record<string, unknown> = { ...accessFilter };
     if (search) {
       filter.name = { $regex: search, $options: 'i' };
     }
@@ -291,7 +297,7 @@ export class PlaybookFlowService {
         startedAt?: Date;
         endedAt?: Date;
       }>([
-        { $match: { ownerId, flowId: { $in: flowIds } } },
+        { $match: { flowId: { $in: flowIds } } },
         { $sort: { createdAt: -1 } },
         {
           $group: {
@@ -318,10 +324,16 @@ export class PlaybookFlowService {
       latestExecutions.map((execution) => [execution.flowId, execution]),
     );
 
+    const shareInfoByFlowId = await this.playbookShareService.getShareInfoMapForUser(ownerId);
+
     return {
       items: items.map((item) => ({
         ...item,
         id: (item as unknown as Record<string, unknown>)._id as string,
+        accessLevel: String((item as unknown as Record<string, unknown>).ownerId) === String(ownerId)
+          ? 'owner'
+          : shareInfoByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.permission ?? 'read',
+        shareInfo: shareInfoByFlowId.get(String((item as unknown as Record<string, unknown>)._id)) ?? null,
         definitionRevision: (item as { definitionRevision?: number }).definitionRevision ?? 0,
         executionStatus: latestExecutionByFlowId.get(String((item as unknown as Record<string, unknown>)._id))?.status ?? null,
         lastExecutionAt:
@@ -342,8 +354,9 @@ export class PlaybookFlowService {
 
   async findOneBase(flowId: string, ownerId: string): Promise<IFlowResponse> {
     const startedAt = Date.now();
-    const flow = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'read');
     const raw = this.responseAssembler.toBaseFlowResponse(flow);
+    (raw as IFlowResponse & { accessLevel?: string }).accessLevel = String(flow.ownerId) === String(ownerId) ? 'owner' : await this.playbookShareService.getSharePermission(ownerId, flowId) ?? 'read';
     const durationMs = Date.now() - startedAt;
     this.logger.log(`playbook_find_one_duration_ms view=base flowId=${flowId} durationMs=${durationMs}`);
     return raw;
@@ -351,8 +364,9 @@ export class PlaybookFlowService {
 
   async findOneEnriched(flowId: string, ownerId: string): Promise<IFlowResponse> {
     const startedAt = Date.now();
-    const flow = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'read');
     const raw = await this.responseAssembler.toEnrichedFlowResponse(flowId, flow);
+    (raw as IFlowResponse & { accessLevel?: string }).accessLevel = String(flow.ownerId) === String(ownerId) ? 'owner' : await this.playbookShareService.getSharePermission(ownerId, flowId) ?? 'read';
 
     const durationMs = Date.now() - startedAt;
     this.logger.log(`playbook_find_one_duration_ms view=enriched flowId=${flowId} durationMs=${durationMs}`);
@@ -364,8 +378,14 @@ export class PlaybookFlowService {
     return this.findOneEnriched(flowId, ownerId);
   }
 
+  async findOneForWrite(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
+    return this.responseAssembler.toEnrichedFlowResponse(flowId, flow);
+  }
+
   async findOneForExecutionStart(flowId: string, ownerId: string): Promise<IFlowResponse> {
-    return this.findOneBase(flowId, ownerId);
+    const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
+    return this.responseAssembler.toBaseFlowResponse(flow);
   }
 
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
@@ -381,7 +401,7 @@ export class PlaybookFlowService {
         return reservation.responseBody;
       }
       if (reservation.type === 'duplicate-pending') {
-        const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+        const existing = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
         if (reservation.expectedDefinitionRevision !== undefined
           && reservation.expectedStateHash
           && (existing.definitionRevision ?? 0) === reservation.expectedDefinitionRevision
@@ -399,7 +419,7 @@ export class PlaybookFlowService {
     }
 
     try {
-    const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const existing = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
 
     if (dto.expectedDefinitionRevision !== undefined) {
       this.accessService.ensureExpectedDefinitionRevision(
@@ -473,7 +493,7 @@ export class PlaybookFlowService {
 
     const saved = await this.persistEditorWrite(
       flowId,
-      ownerId,
+      String(existing.ownerId),
       dto.expectedDefinitionRevision,
       dto.expectedUpdatedAt,
       'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
@@ -542,7 +562,7 @@ export class PlaybookFlowService {
         return reservation.responseBody;
       }
       if (reservation.type === 'duplicate-pending') {
-        const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+        const existing = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
         if (reservation.expectedDefinitionRevision !== undefined
           && reservation.expectedStateHash
           && (existing.definitionRevision ?? 0) === reservation.expectedDefinitionRevision
@@ -567,7 +587,7 @@ export class PlaybookFlowService {
     }
 
     try {
-    const existing = await this.accessService.findOwnedFlow(flowId, ownerId);
+    const existing = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
 
     this.accessService.ensureExpectedDefinitionRevision(
       existing.definitionRevision,
@@ -585,7 +605,11 @@ export class PlaybookFlowService {
       patchedGraph.nodes as any,
       patchedGraph.controlEdges as any,
       patchedGraph.dataBindings as any,
-      { allowDraftRouters: true },
+      {
+        allowDraftRouters: true,
+        allowUnboundRequiredPorts: true,
+        allowIncompleteNodeOutputBindings: true,
+      },
     );
 
     const fields = dto.patch.fields;
@@ -626,7 +650,7 @@ export class PlaybookFlowService {
 
     const saved = await this.persistEditorWrite(
       flowId,
-      ownerId,
+      String(existing.ownerId),
       dto.expectedDefinitionRevision,
       dto.expectedUpdatedAt,
       'Playbook changed since this autosave started.',
@@ -757,6 +781,7 @@ export class PlaybookFlowService {
   async remove(flowId: string, ownerId: string): Promise<void> {
     await this.accessService.findOwnedFlow(flowId, ownerId);
     await this.flowModel.findByIdAndDelete(flowId);
+    await this.playbookShareService.removeAllSharesForPlaybook(flowId);
   }
 
   async clone(flowId: string, ownerId: string, nameSuffix?: string): Promise<IFlowResponse> {
@@ -817,9 +842,7 @@ export class PlaybookFlowService {
   }
 
   async toggleFavorite(flowId: string, ownerId: string): Promise<{ isFavorite: boolean }> {
-    const flow = await this.flowModel.findById(flowId);
-    if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND);
-    if (String(flow.ownerId) !== String(ownerId)) throw new ForbiddenException(ErrorCode.FORBIDDEN);
+    const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
     const current = flow.get('isFavorite') === true;
     flow.set('isFavorite', !current);
     await flow.save();
@@ -834,16 +857,32 @@ export class PlaybookFlowService {
     if (validIds.length === 0) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'No valid IDs provided');
     }
+    const objectIds = validIds.map((id) => new Types.ObjectId(id));
+    const ownedFlows = await this.flowModel
+      .find({ _id: { $in: objectIds }, ownerId })
+      .select('_id')
+      .lean()
+      .exec();
+    const ownedFlowIds = ownedFlows.map((flow) => String((flow as unknown as Record<string, unknown>)._id));
+
     const result = await this.flowModel.deleteMany({
-      _id: { $in: validIds.map((id) => new Types.ObjectId(id)) },
+      _id: { $in: objectIds },
       ownerId,
     });
+    await Promise.all(ownedFlowIds.map((id) => this.playbookShareService.removeAllSharesForPlaybook(id)));
     return { deleted: result.deletedCount ?? 0 };
   }
 
   async getActiveExecutions(ownerId: string): Promise<any[]> {
+    const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
+    const filter = sharedFlowIds.length > 0
+      ? {
+        status: { $in: ['queued', 'running', 'pending_approval'] },
+        $or: [{ ownerId }, { flowId: { $in: sharedFlowIds } }],
+      }
+      : { ownerId, status: { $in: ['queued', 'running', 'pending_approval'] } };
     return this.executionModel
-      .find({ ownerId, status: { $in: ['queued', 'running', 'pending_approval'] } })
+      .find(filter)
       .sort({ createdAt: -1 })
       .lean();
   }

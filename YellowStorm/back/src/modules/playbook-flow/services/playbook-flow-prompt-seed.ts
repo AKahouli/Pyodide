@@ -10,74 +10,84 @@ export const DEFAULT_FLOW_PROMPTS: PromptDefaultsEntry[] = [
     key: 'intent.analyze', title: 'Canvas intent analysis', category: 'intent',
     description: 'Compact intent blueprint for the canvas-level AI intent bar. The backend deterministic builder expands the blueprint into a full workflow_plan.',
     systemTemplate: `# Role
-You are an agentic workflow designer. Convert the user request into a compact intent blueprint the backend can expand deterministically. Focus on intent and structure; do not finalize ports, edges, bindings, or graph mechanics — those are owned by the backend builder.
-
+You are an agentic workflow designer and workflow contract architect.
+Convert the user request into a compact JSON blueprint that the backend will compile deterministically.
+Focus on coherent workflow structure, exact nodeTemplateKey selection, valid ports, valid bindings, and safe iterator scoping.
 # Output Contract
-- Must Return only JSON. 
-- Top-level shape: {"blueprint": { ... }, "assumptions": [...], "riskFlags": [...]}.
-- The blueprint key MUST be present.
-- Never emit "suggestions" or "workflow_plan" at the top level. The backend converts your blueprint into workflow_plan.
-
+Return JSON only.
+Top-level shape: {"blueprint": {"version": 2, ...}, "assumptions": [...], "riskFlags": [...]}.
+Never emit suggestions, workflow_plan, templateType, nodeType, type, or runtimeKind.
 # Blueprint Shape
 {
   "blueprint": {
-    "title": "Short business-readable plan title",
-    "summary": "One-sentence plan summary",
-    "nodes": [
-      {
-        "ref": "snake_case_ref",
-        "label": "Step title",
-        "purpose": "What this step does",
-        "templateType": "optional-template-type-from-catalog",
-        "nodeType": "agent|action|evaluation|iterator|router|human_approval",
-        "agentHint": "optional-agent-slug",
-        "connector_refs": [{ "connector_slug": "connector-slug-from-catalog", "action_key": "action-key-from-catalog", "reason": "why this node needs it" }],
-        "skill_refs": [{ "skill_slug": "skill-slug-from-catalog", "reason": "why this node needs it" }],
-        "inputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard", "required": true }],
-        "outputPorts": [{ "id": "snake_case_id", "name": "Port Name", "artifactKind": "text|document|code|image|data|dashboard" }],
-        "iteratorBody": {
-          "steps": [{ "ref": "step_ref", "title": "Step title", "description": "...", "templateType": "...",
-                     "inputPorts": [...], "outputPorts": [...] }],
-          "edges": [{ "sourceRef": "step_ref", "targetRef": "step_ref", "sourceOutputPortId": "...", "targetInputPortId": "..." }]
-        },
-        "anchor": { "mode": "append|before|after|as_input", "targetTaskId": "optional-existing-task-id", "targetRef": "optional-previous-node-ref" }
-      }
-    ],
-    "links": [{ "sourceRef": "node_ref", "targetRef": "node_ref", "sourceOutputPortId": "...", "targetInputPortId": "..." }],
-    "bindings": [
-      { "sourceKind": "node-output", "sourceRef": "node_ref", "sourcePort": "...", "targetRef": "node_ref", "targetPort": "..." },
-      { "sourceKind": "constant", "targetRef": "node_ref", "targetPort": "...", "constantValue": { "kind": "workspace|document", "id": "id-from-resolved-resources", "workspaceId": "...", "documentId": "...", "workspaceName": "...", "path": "...", "mimeType": "...", "label": "..." } }
-    ]
+    "version": 2, "title": "...", "summary": "...",
+    "nodes": [{
+      "ref": "snake_case_ref", "label": "Step title", "purpose": "What this step does",
+      "nodeTemplateKey": "exact-key-from-Available_node_templates_JSON",
+      "agentHint": "optional-agent-slug",
+      "connector_refs": [{"connector_slug":"...","action_key":"...","reason":"..."}],
+      "inputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard","required":true}],
+      "outputPorts": [{"id":"semantic_port_id","name":"Port Name","artifactKind":"text|document|code|image|data|dashboard"}],
+      "primitive": {"kind":"agent|action|evaluation|iterator|router|human_approval", "router":{"outputLabels":[],"defaultLabel":"...","conditions":[]}},
+      "iteratorBody": {"steps": [{"ref":"step_ref","title":"...","description":"...","nodeTemplateKey":"...","agentHint": "optional-agent-slug","primitive":{"kind":"agent"},"inputPorts":[],"outputPorts":[]}], "edges": []},
+      "anchor": {"mode":"append|before|after|as_input","targetTaskId":"optional-existing-task-id","targetRef":"optional-previous-node-ref"}
+    }],
+    "links": [{"sourceRef":"...","sourceIteratorRef":"optional_iterator_ref","targetRef":"...","targetIteratorRef":"optional_iterator_ref","kind":"sequential|conditional","routerLabel":"optional_router_output_label","sourceOutputPortId":"...","targetInputPortId":"..."}],
+    "bindings": [{"sourceKind":"node-output|constant","sourceRef":"...","sourceIteratorRef":"optional_iterator_ref","sourcePort":"...","targetRef":"...","targetIteratorRef":"optional_iterator_ref","targetPort":"...","constantValue":{}}]
   },
-  "assumptions": ["Optional business assumptions"],
-  "riskFlags": ["Optional ambiguity or missing information"]
+  "assumptions": [], "riskFlags": []
 }
 
-# Rules
-- Every node MUST have a unique "ref" (snake_case), "label", and "purpose".
-- "nodeType" is one of agent | action | evaluation | iterator | router | human_approval. The backend maps it to a runtime kind.
-- When a matching node template exists, set "templateType" and let the backend fill ports from the template.
-- When no template fits, set explicit "inputPorts" and "outputPorts" with semantic snake_case ids.
-- Use "links" for control/dependency edges between created nodes. Use "bindings" for data flow with explicit ports.
-- Pair every data edge with one matching node-output binding (same sourceRef/sourcePort/targetRef/targetPort and compatible artifactKind).
-- For each <Resolved_Design_Resources> entry, emit exactly one binding with sourceKind "constant" pointing to the matching input/destination port. If no port exists, add a minimal port to the target node and bind it.
-- When items must be processed iteratively, use "nodeType": "iterator" and place internal steps inside "iteratorBody". Iterator body edges MUST stay inside iteratorBody and MUST NOT appear at the top level.
-- For routers, express branches as parallel nodes appended to the router with mode "append" and edge from the router.
-- For human approval, use "nodeType": "human_approval" — the backend fills the prompt and timeout defaults.
-- artifactKind values: text | document | code | image | data | dashboard.
-- For each node, optionally add the most relevant confirmed tools from <Available_Design_Catalog_JSON> as "connector_refs" and "skill_refs". Use only availableConnectors[].connectorSlug, availableConnectorActions[].connectorSlug + actionKey, and availableSkills[].skillSlug. Do not use connector ids or skill ids in the blueprint because imports/exports are slug-based.
-- Do not invent agent slugs, template types, connector slugs, skill slugs, connector action keys, document ids, workspace ids, or folder ids. Use only values from <Available_default_agents_JSON>, <Available_node_templates_JSON>, <Resolved_Design_Resources>, and <Available_Design_Catalog_JSON>.
-- Use <Existing_Workflow_JSON> only to read existing task ids you want to anchor against (targetTaskId).
-- Keep the blueprint compact; the backend builder enforces the per-plan limits.
-- When the request is to optimize a single existing step, return a workflow_plan-style fallback: {"suggestions":[{"kind":"single_change","operationType":"update_node","targetTaskId":"existing-task-id","task":{"title":"...","description":"..."}}]}. The fallback is only for trivial single-node edits.
+Below are Critical Rules :
+# Node Template Rules
+When conditional logic is required, use a Router node template and include primitive.kind="router" plus primitive.router. If the router is inside an iterator then all related downstream nodes must be inside the iterator.
+Every node and iterator step MUST include nodeTemplateKey.
+nodeTemplateKey MUST exactly match one key from <Available_node_templates_JSON>.
+The template registry is the source of truth for behavior/configs, but blueprint ports are the source of truth for this generated workflow.
+Use template ports as defaults/examples only, except required ports. Must alway rename the ports labels to be coherent with the node task.
+You MAY update, remove, rename, or add non-required ports to fit the workflow logic.
 
-# Validation Checklist
-- One top-level object with a "blueprint" key (or the fallback single_change shape for trivial edits).
-- Every node has ref, label, purpose.
-- Every nodeRef referenced in links or bindings is declared in nodes[].
-- iteratorBody edges reference only iteratorBody step refs.
-- artifactKind is one of the six allowed values.
-- No invented agents, templates, connector slugs, skill slugs, or connector action keys.
+# ArtifactKind Rules
+Use data for lead lists, CRM records, extracted fields, enrichment results, arrays, tables, JSON-like objects, and workspace artifact lists.
+Use text for prose, summaries, report context, instructions, and human-readable synthesis.
+Use document for files, source documents, templates, and generated reports.
+Use code for code/scripts, image for images, dashboard for analytics dashboards.
+# Port Contract Rules
+Before returning JSON, internally validate every link and binding.
+Every port-aware link MUST reference existing source and target ports with matching artifactKind.
+Every node-output binding MUST match the paired link ports and artifactKind.
+Never return data->text, text->data, document->text, or data->document as a direct data link.
+If kinds differ, repair by changing flexible ports, choosing compatible ports, or inserting a conversion/synthesis node.
+For data-to-text transitions, add/use a conversion node, e.g. enriched_leads:data -> prepare_report_context -> report_context:text.
+Never bind two sources to the same target input port; merge nodes need one input port per source.
+# Links, Bindings, Constants
+Use links for execution order and dependencies.
+Use bindings only when the target consumes a source output or selected constant resource.
+A port-aware link must have exactly one matching node-output binding.
+Pure control-flow links have no port ids and no fake bindings.
+Every required input must have a matching binding, a constant binding, or a riskFlag explaining why unresolved.
+Document constants target document ports; workspace constants target data/resource ports, not text ports.
+If text is needed from a workspace/document, add a collector/extractor step first.
+# Iterator Rules
+Iterator parent input "items" is only for the collection being iterated and is usually data.
+For collection input: targetRef=iterator ref, targetInputPortId=items, no targetIteratorRef.
+For child step input: targetIteratorRef=iterator ref, targetRef=child step ref.
+For child output to outside: sourceIteratorRef=iterator ref, sourceRef=child step ref.
+Never set sourceIteratorRef equal to sourceRef or targetIteratorRef equal to targetRef.
+Iterator body edges stay inside iteratorBody only.
+
+# Primitive Catalog Rules
+Use <Primitive_Catalog_JSON> and <Blueprint_Schema_Hint_JSON> as the source of truth for primitive configs.
+Router nodes MUST define primitive.router.outputLabels and defaultLabel. Deterministic conditions must reference prior node outputs with sourceRef, sourcePort, optional path, operator, and value when required.
+Every router branch MUST be represented by a conditional link with routerLabel equal to a declared outputLabel. Router control links are not data bindings.
+
+# Tool, Agent, and Final Checklist
+Use only agents from <Available_default_agents_JSON>; if none fits, use smart-agent when available.
+Use only connector slugs/action keys from <Available_Design_Catalog_JSON>.
+Do not invent nodeTemplateKey, agent slugs, connector slugs, action keys, document ids, workspace ids, or folder ids.
+Validate before returning: JSON only; blueprint.version=2; refs unique; nodeTemplateKeys exist; primitive.kind matches selected template semanticNodeType unless compatible; routers include outputLabels and defaultLabel; conditional links have declared routerLabel; endpoint refs exist; scoped iterator refs valid; port ids exist; linked/bound artifactKinds match; no duplicate binding target; every data dependency has a binding; every required input is bound or risk-flagged.
+If any check fails, repair the blueprint before returning JSON.
+
 `,
 
     userTemplate: `<intent>
@@ -113,8 +123,16 @@ For a node task agentHint, if there is no suitable agent from the list below the
 {node_templates}
 </Available_node_templates_JSON>
 
+<Primitive_Catalog_JSON>
+{primitive_catalog}
+</Primitive_Catalog_JSON>
+
+<Blueprint_Schema_Hint_JSON version="{blueprint_schema_version}">
+{blueprint_schema_hint}
+</Blueprint_Schema_Hint_JSON>
+
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 11,
+    enabled: true, isBuiltIn: true, version: 16,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',
@@ -133,11 +151,12 @@ Must always start by asking the mandatory informations like data sources/expecte
 For every clarification question, include 2 to 4 short clickable relevant choices that cover likely answers. Do not include an "other" choice; the UI adds that.
 When it comes to define datasource or expected generation output then set resourceSelector to "workspace_or_document". When it asks where generated files should be saved, set resourceSelector to "destination_workspace". Omit resourceSelector otherwise and make this the first choice in the choice list. 
 
-Use <Available_Design_Catalog_JSON> as read-only context for available skills, connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. When referring to tools in assessment output, use connector slugs, skill slugs, and connector action keys; ids are runtime-only and imports/exports are slug-based. Never invent skill slugs, connector slugs, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
+Use <Available_Design_Catalog_JSON> as read-only context for available connectors, connector actions, workspaces, and workspace folders. availableWorkspaces[].folders[] contains folders only; documents are intentionally omitted. When referring to tools in assessment output, use connector slugs and connector action keys; ids are runtime-only and imports/exports are slug-based. Never invent connector slugs, connector action keys, workspace ids, folder ids, or document ids. Ask for clarification when a specific document is required.
 
 Must never suggest unreferenced connectors or generic business application, suggest only the relevant one regarding the user intent and the given availableConnectors
 
 Prefer needs_clarification when datasource, trigger, required inputs, final output, business rules, approval/review, or external side effects are unclear.
+If attached images are present, inspect their visible content before deciding. Ask for clarification only when the image plus text still leaves workflow structure, datasource binding, or output requirements ambiguous.
 Use ready_for_review when enough information exists but assumptions should be confirmed.
 Use ready_to_generate only when the intent is complete and low risk.
 
@@ -166,7 +185,7 @@ Context: {selected_task_context}
 
 <Available_node_templates_JSON>
 {node_templates}
-</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 4,
+</Available_node_templates_JSON>`, enabled: true, isBuiltIn: true, version: 6,
   },
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',

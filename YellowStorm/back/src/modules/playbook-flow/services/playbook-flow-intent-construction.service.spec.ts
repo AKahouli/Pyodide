@@ -4,37 +4,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
   function createService(): PlaybookFlowIntentConstructionService {
     return new PlaybookFlowIntentConstructionService({
       normalizeConstructionSuggestions: jest.fn().mockReturnValue([]),
-      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
     } as any);
   }
-
-  it('uses the default large workflow limit during realtime construction normalization', () => {
-    const normalizeConstructionSuggestions = jest.fn().mockReturnValue([]);
-    const service = new PlaybookFlowIntentConstructionService({
-      normalizeConstructionSuggestions,
-      buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
-    } as any);
-
-    (service as any).normalizeRawSuggestions(
-      '{"suggestions":[]}',
-      { intent: 'build a large workflow' },
-      {
-        selectedNodeId: null,
-        limits: {
-          maxWorkflowPlanChanges: 50,
-          maxInputPorts: 4,
-          maxOutputPorts: 4,
-          maxIteratorBodySteps: 12,
-          maxIteratorBodyEdges: 50,
-        },
-        validationContext: {},
-      },
-    );
-
-    expect(normalizeConstructionSuggestions).toHaveBeenCalledWith(expect.objectContaining({
-      limits: expect.objectContaining({ maxWorkflowPlanChanges: 500 }),
-    }));
-  });
 
   it('reads a final chat completion stream line without a trailing newline', async () => {
     const service = createService();
@@ -65,12 +36,16 @@ describe('PlaybookFlowIntentConstructionService', () => {
         limits: { maxWorkflowPlanChanges: 500, maxInputPorts: 4, maxOutputPorts: 4, maxIteratorBodySteps: 12, maxIteratorBodyEdges: 50 },
         validationContext,
         availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
-        nodeTemplates: [],
+        nodeTemplates: [{
+          id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+        }],
         httpClient: { post: jest.fn() },
         flow: {},
         model: 'm',
         systemPrompt: '',
         userPrompt: '',
+        userMessageContent: '',
         promptVariables: {},
       };
     }
@@ -79,7 +54,6 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const normalizeConstructionSuggestions = jest.fn();
       const service = new PlaybookFlowIntentConstructionService({
         normalizeConstructionSuggestions,
-        buildGraphBuilderDesignCatalog: jest.fn().mockReturnValue({ connectors: [], connectorActions: [], skills: [] }),
       } as any);
 
       const raw = JSON.stringify({
@@ -87,19 +61,59 @@ describe('PlaybookFlowIntentConstructionService', () => {
           title: 'Linear',
           summary: 'Two steps',
           nodes: [
-            { ref: 'collect', label: 'Collect', purpose: 'Gather', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
-            { ref: 'draft', label: 'Draft', purpose: 'Write', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
           ],
           links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
         },
       });
 
-      const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(true), { intent: 'test' });
+      const suggestions = (service as any).buildBlueprintSuggestions(raw, makeContext(true));
       expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
       expect(suggestions).toHaveLength(1);
       expect(suggestions[0].kind).toBe('workflow_plan');
       expect(suggestions[0].changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
       expect(suggestions[0].changes.some((c: any) => c.type === 'create_node' && c.task.title === 'test')).toBe(false);
+    });
+
+    it('attaches diagnostics and lowers confidence for invalid compiled blueprint drafts', () => {
+      const service = new PlaybookFlowIntentConstructionService({
+        normalizeConstructionSuggestions: jest.fn(),
+      } as any);
+      const context = makeContext(true);
+      context.nodeTemplates = [
+        ...context.nodeTemplates,
+        { id: 'tpl-router', key: 'router.template', nodeType: 'router', title: 'Router', category: 'control', inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true },
+      ];
+      const raw = JSON.stringify({
+        blueprint: {
+          version: 2,
+          title: 'Route one branch',
+          summary: 'Router missing one label edge',
+          nodes: [
+            { ref: 'classify', label: 'Classify', purpose: '', nodeTemplateKey: 'router.template', primitive: { kind: 'router', router: { outputLabels: ['yes', 'no'], defaultLabel: 'no' } } },
+            { ref: 'yes_step', label: 'Yes', purpose: '', nodeTemplateKey: 'generic.agent_step' },
+          ],
+          links: [{ sourceRef: 'classify', targetRef: 'yes_step', kind: 'conditional', routerLabel: 'yes' }],
+        },
+      });
+
+      const suggestions = (service as any).buildBlueprintSuggestions(raw, context);
+
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].confidence).toBeLessThan(0.85);
+      expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: 'invariant_validator', code: 'validator_rule_4' }),
+      ]));
+      expect(suggestions[0].validationDiagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ message: 'Router classify label "no" has no outgoing edge' }),
+      ]));
+      expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: 'repair', code: 'repair_router_link_source_port_set' }),
+      ]));
+      expect(suggestions[0].validationStatus).toBe('valid_with_warnings');
+      expect(suggestions[0].blockingReasons).toBeUndefined();
+      expect(suggestions[0].repairSummary).toContain('Set router link source port to yes.');
     });
 
     it('emits blueprint workflow plans as progressive cumulative deltas', async () => {
@@ -143,28 +157,15 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(deltaEvents.some((event: any) => event.suggestion.id === 'intent-fallback' || event.suggestion.isDirectIntentFallback)).toBe(false);
     });
 
-    it('normalizes raw suggestions through the legacy path used when the blueprint flag is disabled', () => {
-      const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
-      const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);
-      const suggestions = (service as any).normalizeRawSuggestions(
-        JSON.stringify({ blueprint: { title: 'x', summary: '', nodes: [], links: [] } }),
-        { intent: 'test' },
-        makeContext(false),
-      );
-      expect(normalizeConstructionSuggestions).toHaveBeenCalled();
-      expect(suggestions[0]).toEqual({ id: 'legacy', kind: 'single_change' });
-    });
-
-    it('falls back to legacy normalization when the raw payload has no blueprint shape', () => {
+    it('returns no suggestions when the raw payload has no blueprint shape', () => {
       const normalizeConstructionSuggestions = jest.fn().mockReturnValue([{ id: 'legacy', kind: 'single_change' }]);
       const service = new PlaybookFlowIntentConstructionService({ normalizeConstructionSuggestions } as any);
       const suggestions = (service as any).buildBlueprintSuggestions(
         JSON.stringify({ suggestions: [] }),
         makeContext(true),
-        { intent: 'test' },
       );
-      expect(normalizeConstructionSuggestions).toHaveBeenCalled();
-      expect(suggestions[0]).toEqual({ id: 'legacy', kind: 'single_change' });
+      expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
+      expect(suggestions).toEqual([]);
     });
   });
 });

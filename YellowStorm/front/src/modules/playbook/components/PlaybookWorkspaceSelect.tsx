@@ -12,7 +12,13 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { getWorkspaces, type Workspace } from '@/modules/workspace';
+import {
+  getSharedWorkspaces,
+  getWorkspaces,
+  isSharedWorkspace,
+  type SharedWorkspaceResponse,
+  type Workspace,
+} from '@/modules/workspace';
 import { useModuleTranslation } from '@/modules/localization';
 
 interface Props {
@@ -23,18 +29,19 @@ interface Props {
 export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
   const { t } = useModuleTranslation('playbook');
   const [open, setOpen] = useState(false);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaces, setWorkspaces] = useState<Array<Workspace | SharedWorkspaceResponse>>([]);
   const [fetchError, setFetchError] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [triggerWidth, setTriggerWidth] = useState(0);
 
   const fetchWorkspaces = useCallback(() => {
-    getWorkspaces({ limit: 100 })
-      .then((res) => {
-        setWorkspaces(res.workspaces);
-        setFetchError(false);
-      })
-      .catch(() => setFetchError(true));
+    Promise.allSettled([getWorkspaces({ limit: 100 }), getSharedWorkspaces({ limit: 100 })])
+      .then(([ownedResult, sharedResult]) => {
+        const owned = ownedResult.status === 'fulfilled' ? ownedResult.value.workspaces : [];
+        const shared = sharedResult.status === 'fulfilled' ? sharedResult.value.workspaces : [];
+        setWorkspaces([...owned, ...shared]);
+        setFetchError(owned.length === 0 && shared.length === 0);
+      });
   }, []);
 
   // Fetch workspaces every time the popover opens (catches newly created ones)
@@ -137,11 +144,16 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
                         {ws.description}
                       </span>
                     )}
-                  </div>
-                   {selectedWorkspaceId === ws.id && (
-                     <Badge variant="secondary" className="ml-auto text-[10px] shrink-0">
-                       {ws.documentCount}
-                     </Badge>
+                    </div>
+                    {isSharedWorkspace(ws) && (
+                      <Badge variant="outline" className="ml-2 text-[10px] shrink-0">
+                        {t('workspace.sharedBadge')}
+                      </Badge>
+                    )}
+                    {selectedWorkspaceId === ws.id && (
+                      <Badge variant="secondary" className="ml-auto text-[10px] shrink-0">
+                        {ws.documentCount}
+                      </Badge>
                   )}
                 </CommandItem>
               ))}

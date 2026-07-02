@@ -167,6 +167,7 @@ async def run_step_with_tools(
     user_msg: str,
     tools: list[Any],
     on_progress: Any = None,
+    on_trace_update: Any = None,
     trace_collector: Any = None,
     hitl_approval: ToolHitlApprovalContext | None = None,
 ) -> str:
@@ -184,6 +185,8 @@ async def run_step_with_tools(
                 model=model_id,
                 prompt=_messages_to_trace_prompt(messages),
             )
+            if on_trace_update is not None:
+                on_trace_update()
         response = await litellm.acompletion(
             model=model_id,
             messages=messages,
@@ -198,6 +201,10 @@ async def run_step_with_tools(
 
             trace_collector.record_usage(extract_usage(response, model_id))
         message = _message_to_dict(response.choices[0].message)
+        if trace_collector is not None:
+            trace_collector.record_prompt_output(str(message.get("content") or ""))
+            if on_trace_update is not None:
+                on_trace_update()
         tool_calls = message.get("tool_calls") or []
         messages.append({
             "role": "assistant",
@@ -246,6 +253,8 @@ async def run_step_with_tools(
                         status="completed",
                         duration_ms=duration_ms,
                     )
+                    if on_trace_update is not None:
+                        on_trace_update()
             except Exception as exc:
                 duration_ms = int((time.perf_counter() - started_at) * 1000)
                 actual_args_err = _last_mcp_actual_args.get() or (tool_arguments if isinstance(tool_arguments, dict) else {})
@@ -259,6 +268,8 @@ async def run_step_with_tools(
                         duration_ms=duration_ms,
                         error=str(exc),
                     )
+                    if on_trace_update is not None:
+                        on_trace_update()
                 raise
             if on_progress is not None:
                 on_progress(f"[tool-result] {tool_name}\n")

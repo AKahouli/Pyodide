@@ -1,0 +1,17 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Router basic policy decision",
+    "summary": "Classify a policy decision and route branches.",
+    "nodes": [
+      { "ref": "classify", "label": "Classify", "purpose": "Choose branch", "nodeTemplateKey": "router.basic", "primitive": { "kind": "router", "router": { "outputLabels": ["approved", "rejected"], "defaultLabel": "rejected" } }, "inputPorts": [{ "id": "decision", "artifactKind": "data", "required": true }] },
+      { "ref": "approve", "label": "Approve", "purpose": "Approved path", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+      { "ref": "reject", "label": "Reject", "purpose": "Rejected path", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] }
+    ],
+    "links": [
+      { "sourceRef": "classify", "targetRef": "approve", "routerLabel": "approved", "targetInputPortId": "input" },
+      { "sourceRef": "classify", "targetRef": "reject", "routerLabel": "rejected", "targetInputPortId": "input" }
+    ]
+  },
+  "expected": { "minNodes": 3, "minEdges": 2, "routerNodeRef": "classify", "routerLabels": ["approved", "rejected"], "repairCodes": ["repair_router_output_port_added", "repair_router_link_source_port_set"] }
+}

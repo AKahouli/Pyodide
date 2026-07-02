@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from google.protobuf.json_format import MessageToDict
 
 from src.flow_engine.observability.trace_collector import TraceCollector
 
@@ -9,6 +10,7 @@ def test_trace_collector_redacts_and_accumulates_usage() -> None:
     collector = TraceCollector()
 
     collector.record_prompt("initial_request", "gpt-4o-mini", "Bearer secret")
+    collector.record_prompt_output("generated Bearer secret")
     collector.record_tool_call(
         tool_name="search",
         args={"authorization": "Bearer abc", "query": "hello"},
@@ -24,7 +26,12 @@ def test_trace_collector_redacts_and_accumulates_usage() -> None:
 
     payload = collector.build_payload()
 
-    assert payload["llm_prompt_trace"] == [{"stage": "initial_request", "model": "gpt-4o-mini", "prompt": "Bearer [REDACTED]"}]
+    assert payload["llm_prompt_trace"] == [{
+        "stage": "initial_request",
+        "model": "gpt-4o-mini",
+        "prompt": "Bearer [REDACTED]",
+        "generated_output": "generated Bearer [REDACTED]",
+    }]
     assert payload["tool_trace"] == [{
         "call_index": 0,
         "tool_name": "search",
@@ -101,3 +108,36 @@ def test_trace_collector_omits_observed_intent_key_when_set_to_none() -> None:
     payload = collector.build_payload()
 
     assert "observed_intent_key" not in payload["trace_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_emit_events_forwards_node_trace_update_payload() -> None:
+    from src.flow_engine.runtime.events import emit_events
+
+    async def stream():
+        yield {
+            "_mode": "custom",
+            "_data": {
+                "type": "NodeTraceUpdate",
+                "node_id": "step-1",
+                "iteration": 1,
+                "payload": {
+                    "llm_prompt_trace": [{
+                        "stage": "initial_request",
+                        "model": "gpt-5.4-mini",
+                        "prompt": "prompt",
+                        "generated_output": "answer",
+                    }],
+                    "tool_trace": [],
+                },
+            },
+        }
+
+    events = [event async for event in emit_events("exec-1", stream())]
+
+    assert len(events) == 1
+    assert events[0].event_type == "NodeTraceUpdate"
+    assert events[0].node_id == "step-1"
+    assert events[0].iteration == 1
+    payload = MessageToDict(events[0].payload, preserving_proto_field_name=True)
+    assert payload["llm_prompt_trace"][0]["generated_output"] == "answer"

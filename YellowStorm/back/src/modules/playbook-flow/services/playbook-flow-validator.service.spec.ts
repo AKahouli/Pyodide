@@ -78,6 +78,22 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Data binding binding-1 source port source-node.missing does not exist');
   });
 
+  it('collects validation errors without throwing', () => {
+    const errors = service.collectValidationErrors(buildNodes(), [], [{
+      id: 'binding-1',
+      targetNode: 'target-node',
+      targetPort: 'prompt',
+      sourceKind: 'node-output',
+      sourceNode: 'source-node',
+      sourcePort: 'missing',
+      iteration: 'current',
+    }] as any);
+
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 7, message: 'Data binding binding-1 source port source-node.missing does not exist' }),
+    ]));
+  });
+
   it('rejects bindings whose target port does not exist', () => {
     expect(() => {
       service.validate(buildNodes(), [], [{
@@ -350,6 +366,69 @@ describe('PlaybookFlowValidatorService', () => {
           }),
         },
       ] as any, [] as any, [] as any, { allowDraftRouters: true });
+    }).not.toThrow();
+  });
+
+  it('rejects unbound required ports by default', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any);
+    }).toThrow('Required port target-node.prompt has no data binding');
+  });
+
+  it('accepts unbound required ports when draft autosave validation allows them', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any, { allowUnboundRequiredPorts: true });
+    }).not.toThrow();
+  });
+
+  it('rejects incomplete node-output bindings by default', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [{
+        id: 'binding-1',
+        targetNode: 'target-node',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+      }] as any);
+    }).toThrow('Data binding binding-1 source node-output bindings require sourceNode and sourcePort');
+  });
+
+  it('accepts incomplete node-output bindings when draft autosave validation allows them', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [{
+        id: 'binding-1',
+        targetNode: 'target-node',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+      }] as any, { allowIncompleteNodeOutputBindings: true });
+    }).not.toThrow();
+  });
+
+  it('accepts router conditions that read the router input port', () => {
+    expect(() => {
+      service.validate([
+        ...buildNodes(),
+        buildRouterNode({
+          input: { ports: [{ id: 'file_data', type: 'data', required: true }] },
+          output: { ports: [{ id: 'pdf', type: 'data' }, { id: 'other', type: 'data' }] },
+          routerConfig: {
+            outputLabels: ['pdf', 'other'],
+            maxIterations: 1,
+            defaultLabel: 'other',
+            conditions: [{
+              label: 'pdf',
+              sourceNode: 'router-1',
+              sourcePort: 'file_data',
+              path: '$.path',
+              operator: 'contains',
+              value: '.pdf',
+            }],
+          },
+        }),
+      ] as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-1' },
+        { id: 'edge-2', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'pdf' },
+        { id: 'edge-3', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'other' },
+      ] as any, [] as any, { allowUnboundRequiredPorts: true });
     }).not.toThrow();
   });
 

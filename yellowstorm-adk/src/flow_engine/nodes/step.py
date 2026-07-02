@@ -568,6 +568,16 @@ async def _execute_step(
     trace_collector = TraceCollector()
     trace_collector.record_prompt("initial_request", model_id, f"[system] {system_prompt}\n\n[user] {user_msg}")
 
+    def emit_trace_update() -> None:
+        writer({
+            "type": "NodeTraceUpdate",
+            "node_id": node_id,
+            "iteration": iteration,
+            "payload": trace_collector.build_payload(log_empty=False),
+        })
+
+    emit_trace_update()
+
     litellm.api_base = settings.LITELLM_API_BASE_URL
     litellm.api_key = settings.LITELLM_API_SECRET_KEY
     litellm.drop_params = True
@@ -622,6 +632,7 @@ async def _execute_step(
             user_msg=user_msg,
             tools=tools,
             on_progress=on_progress,
+            on_trace_update=emit_trace_update,
             trace_collector=trace_collector,
             hitl_approval=ToolHitlApprovalContext(
                 hitl_policy=hitl_policy,
@@ -681,6 +692,8 @@ async def _execute_step(
                 })
 
         trace_collector.record_usage(extract_usage(response, model_id))
+        trace_collector.record_prompt_output(full_output)
+        emit_trace_update()
 
     logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
     return full_output, components, trace_collector

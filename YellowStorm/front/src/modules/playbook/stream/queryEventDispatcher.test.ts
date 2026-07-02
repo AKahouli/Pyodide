@@ -74,6 +74,30 @@ describe('query-backed playbook stream dispatcher', () => {
       data: { executionId: 'exec-1', taskId: 'task-1', status: 'running', output: 'partial' },
     }, { queryClient });
     dispatchPlaybookStreamEvent({
+      type: 'playbook_step_update',
+      data: {
+        executionId: 'exec-1',
+        taskId: 'task-1',
+        status: 'running',
+        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+        totalTokens: 3,
+        modelName: 'gpt-5.4-mini',
+      },
+    }, { queryClient });
+
+    expect(queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution('exec-1'))?.taskResults[0]).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        output: 'partial',
+        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+        totalTokens: 3,
+        modelName: 'gpt-5.4-mini',
+      }),
+    );
+
+    dispatchPlaybookStreamEvent({
       type: 'playbook_step_complete',
       data: { executionId: 'exec-1', taskId: 'task-1', status: 'completed', output: 'final' },
     }, { queryClient });
