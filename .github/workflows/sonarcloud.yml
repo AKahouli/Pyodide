@@ -62,6 +62,10 @@ jobs:
 
       - name: Install backend dependencies and run tests
         working-directory: YellowStorm/back
+        env:
+          # ts-jest + v8 coverage over a large NestJS suite exceeds Node's
+          # default ~2GB heap during the coverage merge; raise the ceiling.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           npm ci
           npm test -- --ci --forceExit --detectOpenHandles --coverage --coverageProvider=v8
