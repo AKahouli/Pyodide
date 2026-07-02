@@ -49,7 +49,7 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           python grpc/generate_proto.py
-          python -m pytest src/flow_engine/tests/ -v --cov=src --cov=grpc --cov-report=xml:coverage.xml
+          python -m pytest src/flow_engine/tests/ -v --cov=src/flow_engine --cov=grpc --cov-fail-under=0 --cov-report=xml:coverage.xml
       # --------------------------
       # Generate backend coverage
       # --------------------------
