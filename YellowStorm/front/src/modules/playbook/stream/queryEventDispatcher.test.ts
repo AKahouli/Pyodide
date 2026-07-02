@@ -79,7 +79,7 @@ describe('query-backed playbook stream dispatcher', () => {
         executionId: 'exec-1',
         taskId: 'task-1',
         status: 'running',
-        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, status: 'completed' }],
+        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
         totalTokens: 3,
         modelName: 'gpt-5.4-mini',
@@ -90,7 +90,7 @@ describe('query-backed playbook stream dispatcher', () => {
       expect.objectContaining({
         status: 'running',
         output: 'partial',
-        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, status: 'completed' }],
+        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
         totalTokens: 3,
         modelName: 'gpt-5.4-mini',

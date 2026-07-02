@@ -1760,7 +1760,7 @@ describe('playbook store', () => {
       executionId: 'e1',
       taskId: 'task-1',
       status: 'running',
-      toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, status: 'completed' }],
+      toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
       llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
       totalTokens: 3,
       modelName: 'gpt-5.4-mini',
@@ -1768,7 +1768,7 @@ describe('playbook store', () => {
 
     const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
     expect(updated.status).toBe('running');
-    expect(updated.toolTrace).toEqual([{ callIndex: 0, toolName: 'search', args: {}, status: 'completed' }]);
+    expect(updated.toolTrace).toEqual([{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }]);
     expect(updated.llmPromptTrace).toEqual([{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }]);
     expect(updated.totalTokens).toBe(3);
     expect(updated.modelName).toBe('gpt-5.4-mini');
