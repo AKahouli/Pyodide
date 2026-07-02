@@ -10,7 +10,7 @@ Classes:
 
 from typing import TYPE_CHECKING
 from src.config.settings import get_settings
-from src.middleware.correlation import get_user
+from src.middleware.correlation import get_user_label
 from src.logger.logging import get_logger
 import os
 from typing import Dict, Any
@@ -68,7 +68,7 @@ class LLMFactory:
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     max_completion_tokens=max_completion_tokens
                 )
@@ -80,7 +80,7 @@ class LLMFactory:
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     parallel_tool_calls=True,
                     stream=True,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     max_completion_tokens=max_completion_tokens
                 )
@@ -109,7 +109,7 @@ class LLMFactory:
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     max_completion_tokens=max_completion_tokens
 
@@ -122,7 +122,7 @@ class LLMFactory:
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     stream=True,
                     parallel_tool_calls=False,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     tool_choice=tool_choice,
                     max_completion_tokens=max_completion_tokens
@@ -150,7 +150,7 @@ class LLMFactory:
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     max_completion_tokens=max_completion_tokens
                 )
@@ -161,7 +161,7 @@ class LLMFactory:
                     api_base=app_settings.LITELLM_API_BASE_URL,
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     stream=True,
-                    user=get_user(),
+                    user=get_user_label(),
                     temperature=temperature if temperature is not None else 0.0,
                     max_completion_tokens=max_completion_tokens
                 )

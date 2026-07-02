@@ -58,6 +58,8 @@ message ChatRequest {
   optional int64  timestamp = 5;
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
   ConnectorRepo connector_repo = 7;
+  repeated Skill skills = 8;   // skills selected by the user, injected into the agent prompt
+  repeated ConnectorBinding connectors = 9;   // selected connectors (MCP servers); auth already resolved by YellowMind
 }
 
 // Identifies a repository scoped under a connector. When present on a
@@ -69,6 +71,48 @@ message ConnectorRepo {
   string repo_id = 3;
   string repo_name = 4;
   string repo_url = 5;
+}
+
+// --- Connectors (remote MCP servers exposed as agent tools) ---
+// One binding per selected connector. Auth is already resolved per-user by
+// YellowMind (token + identity headers), so the engine only has to connect.
+message ConnectorBinding {
+  string connector_id = 1;
+  string connector_name = 2;
+  string mcp_transport_type = 3;            // e.g. "streamable_http"
+  string mcp_server_url = 4;
+  map<string, string> auth_headers = 5;     // ready-to-use HTTP headers (Bearer token, X-User-*, ...)
+  map<string, string> auth_env = 6;         // env vars for stdio transports
+  repeated ConnectorAction actions = 7;     // enabled actions, defined at connector creation time
+}
+
+// A single callable action of a connector (one MCP tool).
+message ConnectorAction {
+  string action_key = 1;
+  string label = 2;
+  string description = 3;
+  string parameter_schema_json = 4;         // JSON Schema of the action params, serialized as a string
+}
+
+// --- Skills (pattern Agent Skills / progressive disclosure) ---
+// Same shape as v1 (chatbot.proto) so YellowMind can reuse findByIdsForGrpc().
+message Skill {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string instructions = 4;
+  string license = 5;
+  string compatibility = 6;
+  map<string, string> metadata = 7;
+  repeated string allowed_tools = 8;
+  repeated SkillFile files = 9;
+}
+
+message SkillFile {
+  string path = 1;
+  string kind = 2;
+  string mime_type = 3;
+  string content = 4;
 }
 
 message Event {

@@ -5,6 +5,39 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from src.flow_engine.nodes.step_tool_scope import sanitize_trigger_context_for_prompt
+
+
+_PLAYBOOK_WORKSPACE_METADATA_KEYS = {
+    "__playbook_workspace_ids",
+    "__playbook_workspace_paths",
+    "__playbook_default_workspace_id",
+    "__playbook_default_workspace_path",
+}
+
+
+def _without_playbook_workspace_metadata(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in context.items()
+        if key not in _PLAYBOOK_WORKSPACE_METADATA_KEYS
+    }
+
+
+def _playbook_default_workspace(context: dict[str, Any]) -> dict[str, str]:
+    workspace_id = str(context.get("__playbook_default_workspace_id") or "").strip()
+    workspace_path = str(context.get("__playbook_default_workspace_path") or "").strip()
+    workspace_paths = context.get("__playbook_workspace_paths")
+    if not workspace_path and workspace_id and isinstance(workspace_paths, dict):
+        workspace_path = str(workspace_paths.get(workspace_id) or "").strip()
+
+    workspace: dict[str, str] = {}
+    if workspace_id:
+        workspace["workspace_id"] = workspace_id
+    if workspace_path:
+        workspace["workspace_path"] = workspace_path
+    return workspace
+
 
 def _port_schema_entry(port: dict[str, Any]) -> dict[str, Any]:
     port_id = str(port.get("id") or "default")
@@ -36,6 +69,19 @@ def build_step_prompt(
     human_context: list[dict[str, Any]] | None = None,
     hitl_memory: list[dict[str, Any]] | None = None,
 ) -> str:
+    prompt_input_workspace_context = sanitize_trigger_context_for_prompt(input_context or {})
+    prompt_input_context = _without_playbook_workspace_metadata(prompt_input_workspace_context)
+    prompt_trigger_context = (
+        sanitize_trigger_context_for_prompt(trigger_context)
+        if trigger_context
+        else None
+    )
+    playbook_default_workspace = _playbook_default_workspace(prompt_input_workspace_context)
+    if not playbook_default_workspace and prompt_trigger_context:
+        playbook_default_workspace = _playbook_default_workspace(prompt_trigger_context)
+    if prompt_trigger_context:
+        prompt_trigger_context = _without_playbook_workspace_metadata(prompt_trigger_context)
+
     lines = [
 #        "Task Title:",
 #        label,
@@ -48,13 +94,19 @@ def build_step_prompt(
     lines.extend([
         "",
         "Resolved Inputs:",
-        json.dumps(input_context or {}, indent=2, default=str),
+        json.dumps(prompt_input_context, indent=2, default=str),
     ])
-    if trigger_context and trigger_context != input_context:
+    if playbook_default_workspace:
+        lines.extend([
+            "",
+            "Playbook Default Workspace:",
+            json.dumps(playbook_default_workspace, indent=2, default=str),
+        ])
+    if prompt_trigger_context and prompt_trigger_context != prompt_input_context:
         lines.extend([
             "",
             "Trigger Context:",
-            json.dumps(trigger_context, indent=2, default=str),
+            json.dumps(prompt_trigger_context, indent=2, default=str),
         ])
     if output_contract:
         lines.extend([

@@ -12,6 +12,7 @@ import type {
   PlaybookExecutionSummary,
   DesignMessage,
   DesignOperation,
+  ClearDesignMessagesResult,
   CreatePlaybookData,
   GeneratePlaybookData,
   RewritePlaybookPromptData,
@@ -45,6 +46,7 @@ import type {
   RequestPlaybookIntentData,
   PlaybookIntentDesignResponse,
   PlaybookIntentResponse,
+  PlaybookIntentTraceResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
   RequestPlaybookNodeAdvisorData,
@@ -73,6 +75,8 @@ import type {
   PlaybookDeltaPatchFields,
   PlaybookDeltaNodePatch,
   PlaybookDeltaNodePositionUpdate,
+  AssignablePlaybookPermission,
+  PlaybookShareEntry,
   HitlBlockerRule,
   HitlEventLog,
   HitlFeedbackScope,
@@ -166,7 +170,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       })),
       taskType: task.taskType,
       nodeType: task.nodeType,
-      templateType: task.templateType,
+      nodeTemplateKey: task.nodeTemplateKey,
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
@@ -234,6 +238,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       modelId: task.modelId ?? null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
+      deepSearch: task.deepSearch,
     }));
 
   const sanitizedEdges = data.edges
@@ -261,6 +266,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
+    deepSearch: data.deepSearch,
   };
 }
 
@@ -296,6 +302,7 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    deepSearch: data.deepSearch,
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
@@ -316,6 +323,7 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.deepSearch !== undefined) body.deepSearch = sanitized.deepSearch;
   if (sanitized.expectedDefinitionRevision !== undefined) body.expectedDefinitionRevision = sanitized.expectedDefinitionRevision;
   if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
   if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
@@ -380,6 +388,7 @@ function buildDeltaPatchFields(
     fields.advisorAutopilotMaxTurns = current.advisorAutopilotMaxTurns;
   }
   if (!isEqualByStableStringify(previous.workspaces, current.workspaces)) fields.workspaces = current.workspaces;
+  if (!isEqualByStableStringify(previous.deepSearch, current.deepSearch)) fields.deepSearch = current.deepSearch;
 
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
@@ -560,7 +569,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     selectedAction: (meta.selectedAction as any) ?? undefined,
     executionMode: (meta.executionMode as any) ?? undefined,
     taskType: (meta.taskType as string) ?? undefined,
-    templateType: (meta.templateType as string) ?? undefined,
+    nodeTemplateKey: (meta.nodeTemplateKey as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
     skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
@@ -1320,6 +1329,15 @@ export async function assessPlaybookIntentDesign(
   return response.data.data;
 }
 
+export async function fetchPlaybookIntentTraces(
+  playbookId: string,
+): Promise<PlaybookIntentTraceResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookIntentTraceResponse>>(
+    API_ENDPOINTS.playbooks.intentTraces(playbookId),
+  );
+  return response.data.data;
+}
+
 export async function startPlaybookIntentConstruction(
   playbookId: string,
   data: RequestPlaybookIntentData,
@@ -1858,6 +1876,24 @@ export async function getDesignMessages(id: string): Promise<DesignMessage[]> {
   return response.data.data;
 }
 
+export async function appendDesignMessage(
+  id: string,
+  data: { userQuery: string; aiSummary: string; status?: 'completed' | 'failed'; error?: string | null },
+): Promise<DesignMessage> {
+  const response = await apiClient.post<ApiResponse<DesignMessage>>(
+    API_ENDPOINTS.playbooks.designMessages(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function clearDesignMessages(id: string): Promise<ClearDesignMessagesResult> {
+  const response = await apiClient.delete<ApiResponse<ClearDesignMessagesResult>>(
+    API_ENDPOINTS.playbooks.clearDesignMessages(id),
+  );
+  return response.data.data;
+}
+
 export async function revertToSnapshot(
   id: string,
   msgId: string,
@@ -2033,6 +2069,41 @@ export async function cloneSharePlaybook(
   return response.data.data;
 }
 
+export async function sharePlaybook(
+  id: string,
+  emails: string[],
+  permission: AssignablePlaybookPermission,
+): Promise<PlaybookShareEntry[]> {
+  const response = await apiClient.post<ApiResponse<PlaybookShareEntry[]>>(
+    API_ENDPOINTS.playbooks.shares(id),
+    { emails, permission },
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookShares(id: string): Promise<PlaybookShareEntry[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookShareEntry[]>>(
+    API_ENDPOINTS.playbooks.shares(id),
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookSharePermission(
+  id: string,
+  shareId: string,
+  permission: AssignablePlaybookPermission,
+): Promise<PlaybookShareEntry> {
+  const response = await apiClient.patch<ApiResponse<PlaybookShareEntry>>(
+    API_ENDPOINTS.playbooks.share(id, shareId),
+    { permission },
+  );
+  return response.data.data;
+}
+
+export async function revokePlaybookShare(id: string, shareId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbooks.share(id, shareId));
+}
+
 export async function clonePlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.post<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.clone(id),
@@ -2043,7 +2114,6 @@ export async function clonePlaybook(id: string): Promise<Playbook> {
 export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   id: string;
   key: string;
-  type: string;
   nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
   title: string;
   description?: string;
@@ -2055,14 +2125,13 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
+  iteratorConfig?: PlaybookIteratorConfig | null;
 }> }> {
   const response = await apiClient.get<ApiResponse<{ items: Array<{
     id: string;
     key: string;
-    type: string;
     nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
     title: string;
     description?: string;
@@ -2074,9 +2143,9 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     promptTemplate: string;
     recommendedAgentTypeSlug: string | null;
     requiredToolNames: string[];
-    executionMode?: string;
     assignedAgentId?: string | null;
     selectedAction?: string | null;
+    iteratorConfig?: PlaybookIteratorConfig | null;
   }> }>>(
     API_ENDPOINTS.playbookNodeTemplates.list,
   );

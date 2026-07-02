@@ -61,6 +61,7 @@ export enum ErrorCode {
   CHAT_GRPC_UNAVAILABLE = 'ERR_1417',
   CHAT_WORKSPACE_FAILED = 'ERR_1418',
   CHAT_SHARE_REVOKED = 'ERR_1419',
+  CHAT_GRPC_UNAUTHENTICATED = 'ERR_1420',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -130,6 +131,8 @@ export enum ErrorCode {
   WORKSPACE_SHARE_SYSTEM = 'ERR_1956',
   WORKSPACE_READ_ONLY = 'ERR_1957',
   WORKSPACE_SHARE_USER_NOT_FOUND = 'ERR_1958',
+  WORKSPACE_PUBLIC_NO_SHARE = 'ERR_1959',
+  WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM = 'ERR_1960',
 
   // Auth token missing (for SSE)
   AUTH_TOKEN_MISSING = 'ERR_1120',
@@ -279,6 +282,9 @@ export enum ErrorCode {
   WHATSAPP_AUTH_INVALID = 'ERR_3217',
   WHATSAPP_USER_INACTIVE = 'ERR_3218',
   WHATSAPP_NETWORK_UNREACHABLE = 'ERR_3219',
+  WHATSAPP_SYSTEM_BOT_NOT_CONNECTED = 'ERR_3220',
+  WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH = 'ERR_3221',
+  WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED = 'ERR_3222',
 
   // Team errors (3300-3399)
   TEAM_NOT_FOUND = 'ERR_3300',
@@ -295,6 +301,10 @@ export enum ErrorCode {
   TEAM_SHARE_USER_NOT_FOUND = 'ERR_3311',
   TEAM_GENERATE_FAILED = 'ERR_3312',
   TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
+
+  // User Group errors (3350-3399)
+  USER_GROUP_NOT_FOUND = 'ERR_3350',
+  USER_GROUP_ALREADY_EXISTS = 'ERR_3351',
 
   // Widget Chat errors (3400-3499)
   WIDGET_TOKEN_INVALID = 'ERR_3400',
@@ -315,6 +325,42 @@ export enum ErrorCode {
   CONNECTED_APP_OAUTH_FAILED = 'ERR_3004',
   CONNECTED_APP_TOKEN_REFRESH_FAILED = 'ERR_3005',
   CONNECTED_APP_DISABLED = 'ERR_3007',
+
+  // Worky (Chief of Staff) errors (3500-3599) — Part 1
+  WORKY_STREAM_NOT_FOUND = 'ERR_3500',
+  WORKY_STREAM_FORBIDDEN = 'ERR_3501',
+  WORKY_STREAM_INVALID_STATE = 'ERR_3502',
+  WORKY_RUNTIME_UNAVAILABLE = 'ERR_3503',
+  WORKY_SERVICE_AUTH_FAILED = 'ERR_3504',
+  WORKY_IDEMPOTENCY_REPLAY = 'ERR_3505',
+  // Part 2
+  WORKY_INVALID_PLAN_DELTA = 'ERR_3506',
+  WORKY_STALE_PLAN_VERSION = 'ERR_3507',
+  WORKY_CYCLIC_DEPENDENCY = 'ERR_3508',
+  WORKY_STREAM_PHASE_INVALID = 'ERR_3509',
+  WORKY_INTERACTION_NOT_FOUND = 'ERR_3510',
+  WORKY_INTERACTION_FORBIDDEN = 'ERR_3511',
+  WORKY_INTERACTION_ALREADY_RESPONDED = 'ERR_3512',
+  // Part 3
+  WORKY_TASK_NOT_FOUND = 'ERR_3513',
+  WORKY_TASK_INVALID_STATE = 'ERR_3514',
+  WORKY_GOVERNANCE_LEVEL_REJECTED = 'ERR_3515',
+  WORKY_GOVERNANCE_DENIED = 'ERR_3516',
+  WORKY_WORKER_BINDING_FAILED = 'ERR_3517',
+  WORKY_SCHEDULED_EVENT_NOT_FOUND = 'ERR_3518',
+  WORKY_START_VALIDATION_FAILED = 'ERR_3519',
+  // Part 4
+  WORKY_HUMAN_ASSIGNMENT_AMBIGUOUS = 'ERR_3520',
+  WORKY_HUMAN_ASSIGNMENT_UNRESOLVED = 'ERR_3521',
+  WORKY_BUDGET_EXHAUSTED = 'ERR_3522',
+  WORKY_BUDGET_RESERVATION_CONFLICT = 'ERR_3523',
+  WORKY_BUDGET_DECISION_NOT_FOUND = 'ERR_3524',
+  WORKY_REPORT_NOT_FOUND = 'ERR_3525',
+  WORKY_REPORT_GENERATION_FAILED = 'ERR_3526',
+  WORKY_MEMORY_PROPOSAL_NOT_FOUND = 'ERR_3527',
+  WORKY_OWNER_MEMORY_FORBIDDEN = 'ERR_3528',
+  WORKY_REPLAN_REJECTED = 'ERR_3529',
+  WORKY_NO_DEFAULT_MODEL = 'ERR_3530',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -375,6 +421,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
   [ErrorCode.CHAT_WORKSPACE_FAILED]: 'Failed to create conversation workspace.',
   [ErrorCode.CHAT_SHARE_REVOKED]: 'This shared conversation has been revoked.',
+  [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
+    'AI service rejected the request (authentication failed).',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',
@@ -433,6 +481,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKSPACE_SHARE_SYSTEM]: 'System workspaces cannot be shared.',
   [ErrorCode.WORKSPACE_READ_ONLY]: 'You have read-only access to this workspace.',
   [ErrorCode.WORKSPACE_SHARE_USER_NOT_FOUND]: 'One or more users were not found.',
+  [ErrorCode.WORKSPACE_PUBLIC_NO_SHARE]:
+    'This workspace is public and cannot be shared. Make it private first.',
+  [ErrorCode.WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM]: 'System workspaces cannot be made public.',
 
   [ErrorCode.AUTH_TOKEN_MISSING]: 'Authentication token is required.',
 
@@ -555,6 +606,40 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTED_APP_OAUTH_FAILED]: 'OAuth authentication with the app failed.',
   [ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED]: 'Failed to refresh app token. Please reconnect.',
   [ErrorCode.CONNECTED_APP_DISABLED]: 'This connected app is currently disabled.',
+  [ErrorCode.WORKY_STREAM_NOT_FOUND]: 'Worky stream not found.',
+  [ErrorCode.WORKY_STREAM_FORBIDDEN]: 'You do not have access to this Worky stream.',
+  [ErrorCode.WORKY_STREAM_INVALID_STATE]: 'Worky stream is not in a state that allows this operation.',
+  [ErrorCode.WORKY_RUNTIME_UNAVAILABLE]: 'Worky runtime is currently unavailable.',
+  [ErrorCode.WORKY_SERVICE_AUTH_FAILED]: 'Worky service authentication failed.',
+  [ErrorCode.WORKY_IDEMPOTENCY_REPLAY]: 'Worky callback has already been processed.',
+  [ErrorCode.WORKY_INVALID_PLAN_DELTA]: 'The plan delta is invalid.',
+  [ErrorCode.WORKY_STALE_PLAN_VERSION]: 'The plan version is stale; refetch the latest plan and retry.',
+  [ErrorCode.WORKY_CYCLIC_DEPENDENCY]: 'The plan delta would introduce a task dependency cycle.',
+  [ErrorCode.WORKY_STREAM_PHASE_INVALID]: 'Worky stream is not in a phase that allows this operation.',
+  [ErrorCode.WORKY_INTERACTION_NOT_FOUND]: 'Worky interaction not found.',
+  [ErrorCode.WORKY_INTERACTION_FORBIDDEN]: 'You do not have access to this Worky interaction.',
+  [ErrorCode.WORKY_INTERACTION_ALREADY_RESPONDED]: 'Worky interaction has already been responded to.',
+  [ErrorCode.WORKY_TASK_NOT_FOUND]: 'Worky task not found.',
+  [ErrorCode.WORKY_TASK_INVALID_STATE]: 'Worky task is in an invalid state for this operation.',
+  [ErrorCode.WORKY_GOVERNANCE_LEVEL_REJECTED]: 'Requested governance level is invalid for this policy.',
+  [ErrorCode.WORKY_GOVERNANCE_DENIED]: 'Action denied by governance policy.',
+  [ErrorCode.WORKY_WORKER_BINDING_FAILED]: 'Ephemeral worker binding could not be created.',
+  [ErrorCode.WORKY_SCHEDULED_EVENT_NOT_FOUND]: 'Worky scheduled event not found.',
+  [ErrorCode.WORKY_START_VALIDATION_FAILED]: 'Start Stream validation failed.',
+  [ErrorCode.WORKY_HUMAN_ASSIGNMENT_AMBIGUOUS]:
+    'Multiple users match the human reference. Owner must disambiguate.',
+  [ErrorCode.WORKY_HUMAN_ASSIGNMENT_UNRESOLVED]:
+    'No user matches the human reference. Owner must invite or clarify.',
+  [ErrorCode.WORKY_BUDGET_EXHAUSTED]: 'Stream budget exhausted; owner decision required.',
+  [ErrorCode.WORKY_BUDGET_RESERVATION_CONFLICT]: 'Concurrent budget reservation conflict; retry.',
+  [ErrorCode.WORKY_BUDGET_DECISION_NOT_FOUND]: 'Budget decision interaction not found.',
+  [ErrorCode.WORKY_REPORT_NOT_FOUND]: 'Worky execution report not found.',
+  [ErrorCode.WORKY_REPORT_GENERATION_FAILED]: 'Worky execution report generation failed.',
+  [ErrorCode.WORKY_MEMORY_PROPOSAL_NOT_FOUND]: 'Worky owner memory proposal not found.',
+  [ErrorCode.WORKY_OWNER_MEMORY_FORBIDDEN]: 'You do not have access to this owner memory entry.',
+  [ErrorCode.WORKY_REPLAN_REJECTED]: 'Plan-delta replan was rejected by the auto-apply guard.',
+  [ErrorCode.WORKY_NO_DEFAULT_MODEL]:
+    'No model is configured for this Worky stream. Select a model in the prompt bar or set a default in Admin > Models.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
@@ -582,6 +667,12 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WHATSAPP_USER_INACTIVE]: 'The linked platform user is inactive.',
   [ErrorCode.WHATSAPP_NETWORK_UNREACHABLE]:
     'Cannot reach web.whatsapp.com from this server. Check firewall, VPN, or network policy.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_NOT_CONNECTED]:
+    'Worky WhatsApp system bot is not connected. An administrator must pair the system number first.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH]:
+    'Paired WhatsApp number does not match the configured system bot phone.',
+  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED]:
+    'System bot phone is not configured. Set it in the Worky WhatsApp admin page before pairing.',
 
   [ErrorCode.TEAM_NOT_FOUND]: 'Team not found.',
   [ErrorCode.TEAM_ALREADY_EXISTS]: 'A team with this name already exists.',
@@ -590,6 +681,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TEAM_SELF_REFERENCE]: 'An agent cannot be its own parent.',
   [ErrorCode.TEAM_CYCLE_DETECTED]: 'This relationship would create a cycle in the hierarchy.',
   [ErrorCode.TEAM_AGENT_NOT_FOUND]: 'One or more agents were not found or do not belong to you.',
+  [ErrorCode.USER_GROUP_NOT_FOUND]: 'User group not found.',
+  [ErrorCode.USER_GROUP_ALREADY_EXISTS]: 'A group with this name already exists.',
   [ErrorCode.TEAM_SHARE_NOT_FOUND]: 'Team share not found.',
   [ErrorCode.TEAM_SHARE_SELF]: 'Cannot share a team with yourself.',
   [ErrorCode.TEAM_SHARE_EXISTS]: 'Team is already shared with this user.',

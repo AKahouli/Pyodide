@@ -58,9 +58,11 @@ import type {
   UpdateAdminPlaybookSettingsRequest,
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
+  PlaybookPromptImportPayload,
   UpsertPlaybookPromptRequest,
   PlaybookNodeTemplateListResponse,
   PlaybookNodeTemplateResponse,
+  PlaybookNodeTemplateImportPayload,
   CreatePlaybookNodeTemplateRequest,
   UpdatePlaybookNodeTemplateRequest,
   ToolListResponse,
@@ -94,6 +96,11 @@ import type {
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
 } from './types';
+import type {
+  WorkyWhatsAppConnectResponse,
+  WorkyWhatsAppIntegration,
+  WorkyWhatsAppPairingResponse,
+} from '@/modules/worky/types';
 
 // Helper to build query string
 function buildQueryString(params: AnalyticsQueryParams): string {
@@ -577,6 +584,16 @@ export async function deletePlaybookPrompt(key: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminPlaybookPrompts.byKey(key));
 }
 
+export async function importPlaybookPrompts(
+  data: PlaybookPromptImportPayload,
+): Promise<PlaybookPromptListResponse> {
+  const response = await apiClient.put<ApiResponse<PlaybookPromptListResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.import,
+    data,
+  );
+  return response.data.data;
+}
+
 // Playbook Node Templates API
 
 export async function getPlaybookNodeTemplates(): Promise<PlaybookNodeTemplateListResponse> {
@@ -616,6 +633,16 @@ export async function updatePlaybookNodeTemplate(
 
 export async function deletePlaybookNodeTemplate(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminPlaybookNodeTemplates.byId(id));
+}
+
+export async function importPlaybookNodeTemplates(
+  data: PlaybookNodeTemplateImportPayload,
+): Promise<PlaybookNodeTemplateListResponse> {
+  const response = await apiClient.put<ApiResponse<PlaybookNodeTemplateListResponse>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.import,
+    data,
+  );
+  return response.data.data;
 }
 
 export async function getDefaultModel(): Promise<AdminModelResponse | null> {
@@ -755,6 +782,13 @@ export async function updateSkill(id: string, data: UpdateSkillRequest): Promise
 
 export async function deleteSkill(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminSkills.byId(id));
+}
+
+export async function exportSkill(id: string): Promise<Blob> {
+  const response = await apiClient.get<Blob>(API_ENDPOINTS.adminSkills.export(id), {
+    responseType: 'blob',
+  });
+  return response.data;
 }
 
 export async function importSkill(file: File): Promise<SkillResponse> {
@@ -1113,4 +1147,54 @@ export async function upsertTeamAutoBuilderConfig(
     data,
   );
   return response.data.data;
+}
+
+// =================================================================
+// Worky WhatsApp system bot (admin)
+// =================================================================
+
+export async function getAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.base,
+  );
+  return response.data.data;
+}
+
+export async function updateAdminWorkyWhatsAppSystemBotExpectedPhone(
+  phoneNumber: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.patch<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.expectedPhone,
+    { phoneNumber },
+  );
+  return response.data.data;
+}
+
+export async function connectAdminWorkyWhatsAppSystemBot(): Promise<WorkyWhatsAppConnectResponse> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.connect,
+  );
+  return response.data.data;
+}
+
+export async function getAdminWorkyWhatsAppSystemBotPairing(
+  sessionId: string,
+): Promise<WorkyWhatsAppPairingResponse> {
+  const response = await apiClient.get<ApiResponse<WorkyWhatsAppPairingResponse>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.pairing(sessionId),
+  );
+  return response.data.data;
+}
+
+export async function reconnectAdminWorkyWhatsAppSystemBot(
+  sessionId: string,
+): Promise<WorkyWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<WorkyWhatsAppIntegration>>(
+    API_ENDPOINTS.adminWorkyWhatsAppSystemBot.reconnect(sessionId),
+  );
+  return response.data.data;
+}
+
+export async function disconnectAdminWorkyWhatsAppSystemBot(sessionId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminWorkyWhatsAppSystemBot.session(sessionId));
 }

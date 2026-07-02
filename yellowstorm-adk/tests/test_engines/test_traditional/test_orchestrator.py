@@ -206,7 +206,9 @@ class TestSmartRAGOrchestrator:
 
         with patch.object(orchestrator.prompt_processor, 'extract_prompts') as mock_extract, \
              patch.object(orchestrator.prompt_processor, 'get_web_search_prompt') as mock_web_prompt, \
-             patch('src.smart_rag.engines.traditional.orchestrator.build_tree') as mock_build_tree:
+             patch('src.smart_rag.engines.traditional.orchestrator.build_tree') as mock_build_tree, \
+             patch.object(orchestrator.memory_service, 'initialize', new_callable=AsyncMock) as mock_mem_init, \
+             patch.object(orchestrator.memory_service, 'create_manager_context', new_callable=AsyncMock, return_value=""):
 
             mock_extract.return_value = ("agent", "operator", "report", "viz", "manager", "", "", "", "")
             mock_build_tree.return_value = (None, None)
@@ -217,5 +219,7 @@ class TestSmartRAGOrchestrator:
             except Exception:
                 # Expected due to missing dependencies in test
                 pass
+
+            mock_mem_init.assert_called_once()
 
             mock_extract.assert_called_once()

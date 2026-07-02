@@ -153,7 +153,7 @@ export function ConnectorsPage() {
           }))
           .filter((row) => row.headerName.length > 0),
         actions: parsedActions,
-        referencedSkillIds: data.referencedSkillIds.length > 0 ? data.referencedSkillIds : undefined,
+        referencedSkillIds: data.referencedSkillIds,
         isActive: data.isActive,
       };
       if (editingConnector) {

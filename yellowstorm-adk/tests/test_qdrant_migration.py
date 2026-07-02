@@ -114,7 +114,7 @@ def validate_settings() -> bool:
     return True
 
 
-def test_qdrant_connection() -> bool:
+def check_qdrant_connection() -> bool:
     """Test basic Qdrant connection."""
     print_header("Testing Qdrant Connection")
 
@@ -372,7 +372,7 @@ def run_all_tests():
         return
 
     # Test 2: Qdrant connection
-    test_results.append(("Qdrant Connection", test_qdrant_connection()))
+    test_results.append(("Qdrant Connection", check_qdrant_connection()))
 
     # Get collection name from settings
     settings = get_settings()

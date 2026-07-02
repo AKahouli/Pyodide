@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildIntentEdgeOptions, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -157,5 +158,88 @@ describe('resolveCanvasNodeSelection', () => {
 
     expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-1', 'task-2')).toBe(false);
     expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-2', 'task-2')).toBe(true);
+  });
+});
+
+describe('shouldAutoLayoutAfterConstruction', () => {
+  it('returns true when deterministic builder reaches completed status', () => {
+    expect(shouldAutoLayoutAfterConstruction('streaming', 'completed')).toBe(true);
+  });
+
+  it('returns false for repeated completed status updates', () => {
+    expect(shouldAutoLayoutAfterConstruction('completed', 'completed')).toBe(false);
+  });
+});
+
+describe('buildIntentEdgeOptions', () => {
+  it('preserves iterator conditional edge metadata and disables auto binding', () => {
+    expect(buildIntentEdgeOptions('conditional', 'approved', 2)).toEqual({
+      kind: 'conditional',
+      routerLabel: 'approved',
+      priority: 2,
+      autoBind: false,
+    });
+  });
+
+  it('treats router labels as conditional even when edge kind is omitted', () => {
+    expect(buildIntentEdgeOptions(undefined, 'approved', null)).toEqual({
+      kind: 'conditional',
+      routerLabel: 'approved',
+      priority: null,
+      autoBind: false,
+    });
+  });
+
+  it('auto-binds only non-conditional iterator edges', () => {
+    expect(buildIntentEdgeOptions('sequential', null, null)).toEqual({
+      kind: 'sequential',
+      routerLabel: null,
+      priority: null,
+      autoBind: true,
+    });
+  });
+});
+
+describe('resolveIntentNodeSemantics', () => {
+  it('lets primitive-derived router semantics override stale agent template metadata', () => {
+    expect(resolveIntentNodeSemantics('router', 'router', 'agent', false)).toEqual({
+      nodeType: 'router',
+      taskType: 'router',
+    });
+  });
+
+  it('treats generated tasks with router config as routers when node type is absent', () => {
+    expect(resolveIntentNodeSemantics(undefined, undefined, 'agent', false, true)).toEqual({
+      nodeType: 'router',
+      taskType: 'router',
+    });
+  });
+
+  it('treats generated tasks with human approval config as human approval when node type is absent', () => {
+    expect(resolveIntentNodeSemantics(undefined, undefined, 'agent', false, false, true)).toEqual({
+      nodeType: 'human_approval',
+      taskType: 'generic',
+    });
+  });
+});
+
+describe('remapRouterConditionSourceNodes', () => {
+  it('rewrites iterator child router condition source refs to generated node ids', () => {
+    const task = {
+      id: 'router-id',
+      routerConfig: {
+        outputLabels: ['documents', 'other'],
+        defaultLabel: 'other',
+        conditions: [
+          { label: 'documents', sourceNode: 'extract_extension', sourcePort: 'extension', operator: 'equals' as const, value: '.docx' },
+          { label: 'other', sourceNode: 'external-node', sourcePort: 'extension', operator: 'exists' as const },
+        ],
+      },
+    } as any;
+
+    const remapped = remapRouterConditionSourceNodes(task, new Map([['extract_extension', 'intent-node-extract']]));
+
+    expect(remapped.routerConfig.conditions[0].sourceNode).toBe('intent-node-extract');
+    expect(remapped.routerConfig.conditions[1].sourceNode).toBe('external-node');
   });
 });

@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { DragEvent, Dispatch, SetStateAction } from 'react';
 import type { Node } from '@xyflow/react';
 
-import { cloneRouterConfig } from './helpers/router-template';
+import { buildRouterOutputPorts, cloneRouterConfig } from './helpers/router-template';
 import type { ConnectorDropPayload } from '../components/PlaybookNode';
 import type { SkillDropPayload } from '../components/SkillSidebar';
 import type { PlaybookTask, TaskSkillBinding, TaskTemplate, ToolBinding } from '../types';
@@ -187,16 +187,16 @@ export function usePlaybookCanvasNodeHandlers({
       const isRouterTemplate = template.nodeType === 'router';
       const routerConfig = isRouterTemplate ? cloneRouterConfig(template.routerConfig) : null;
       const outputPorts = isRouterTemplate
-        ? routerConfig!.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' as const }))
+        ? buildRouterOutputPorts(routerConfig!)
         : template.outputPorts.map((p) => ({ ...p }));
 
       const newTask: PlaybookTask = {
         id: taskId,
         title: `${template.title} ${existingCount + 1}`,
         description: template.description,
-        assignedAgentId: template.executionMode === 'agent' ? (template.assignedAgentId ?? null) : null,
-        executionMode: (template.executionMode as PlaybookTask['executionMode']) ?? 'agent',
-        selectedAction: template.executionMode === 'action' ? (template.selectedAction ?? undefined) : undefined,
+        assignedAgentId: template.nodeType === 'agent' ? (template.assignedAgentId ?? null) : null,
+        executionMode: template.nodeType === 'action' ? 'action' : 'agent',
+        selectedAction: template.nodeType === 'action' ? (template.selectedAction ?? undefined) : undefined,
         executionOrder: existingCount,
         positionX: center.x,
         positionY: center.y,
@@ -213,7 +213,7 @@ export function usePlaybookCanvasNodeHandlers({
         inputFiles: [],
         taskType: template.nodeType === 'iterator' ? 'iterator' : template.nodeType === 'evaluation' ? 'evaluation' : 'generic',
         nodeType: template.nodeType,
-        templateType: template.type,
+        nodeTemplateKey: template.key,
         inputPorts: template.inputPorts.map((p) => ({ ...p })),
         outputPorts,
         iteratorConfig: template.iteratorConfig ? { ...template.iteratorConfig } : null,

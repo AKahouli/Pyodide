@@ -202,6 +202,16 @@ async def _run_team_with_suggestions(team: AutoAgentGenerationTeam,
         # This ensures each agent has access to user_request documents
         suggestions = DocumentHelpers.merge_user_request_brain_documents_into_agents(suggestions, user_request)
 
+        # STEP 1b: Inject deep_search tool when deep_search_enabled is True on the request.
+        # The factories detect deep search by tool name, so we must add the tool entry here —
+        # same bridge as single_agent.py:68-73 but applied to every suggested agent.
+        if getattr(user_request, "deep_search_enabled", False):
+            for agent in suggestions:
+                existing_tools = getattr(agent, "tools", None) or []
+                if not any(isinstance(t, dict) and t.get("name") == "deep_search" for t in existing_tools):
+                    agent.tools = [*existing_tools, {"name": "deep_search"}]
+                    logger.info(f"[AUTO WORKFLOW] deep_search_enabled=True — added deep_search tool to agent {getattr(agent, 'name', 'unnamed')}")
+
         # STEP 2: Update available_agents by mapping on agent ID
         if user_request.available_agents:
             DocumentHelpers.update_agents_in_list_by_mapping(user_request.available_agents, suggestions)

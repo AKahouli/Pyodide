@@ -10,13 +10,14 @@ export * from './types';
 export * from './api';
 
 // Utils
-export { formatFileSize, formatDate, getFileTypeLabel, validateFiles, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, SMALL_FILE_THRESHOLD, DEFAULT_PAGE_LIMIT } from './utils';
+export { formatFileSize, formatDate, getFileTypeLabel, validateFiles, ALLOWED_MIME_TYPES, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, SMALL_FILE_THRESHOLD, DEFAULT_PAGE_LIMIT } from './utils';
 
 // Store
 export { useWorkspaceStore, useWorkspaces, useDocuments, useSelectedWorkspace, useCurrentWorkspaceSettings, useSettingsTargetWorkspace, useWorkspaceModalState, useWorkspaceLoading, useWorkspacePagination, useDocumentPagination, useUploadQueue, useUploadState, useHasActiveUploads } from './store';
 
 // Page (was modules/classifier)
 export { WorkspacePage } from './components/WorkspacePage';
+export { WorkspaceHubPage } from './components/WorkspaceHubPage';
 
 // Components
 export { WorkspaceButton } from './components/WorkspaceButton';

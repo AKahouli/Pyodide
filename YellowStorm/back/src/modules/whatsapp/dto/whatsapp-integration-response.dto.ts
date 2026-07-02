@@ -10,6 +10,12 @@ export class WhatsAppIntegrationResponseDto {
   @ApiPropertyOptional({ example: '+21612345678' })
   phoneNumber?: string;
 
+  @ApiPropertyOptional({
+    description: 'Admin-configured phone that must be used when pairing the system bot',
+    example: '55555555555',
+  })
+  expectedPairingPhone?: string;
+
   @ApiPropertyOptional({ example: 'John Doe' })
   displayName?: string;
 

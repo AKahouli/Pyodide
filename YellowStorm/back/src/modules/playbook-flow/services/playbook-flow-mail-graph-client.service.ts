@@ -4,7 +4,7 @@ import { ConnectedAppTokenService } from '@modules/connected-app/services/connec
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MSG_SELECT = '$select=id,conversationId,receivedDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,hasAttachments';
-const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 45 * 60 * 1000;
+const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 4320 * 60 * 1000; // Graph max for mailFolders: 72 hours
 
 @Injectable()
 export class PlaybookFlowMailGraphClientService {
@@ -19,8 +19,10 @@ export class PlaybookFlowMailGraphClientService {
     notificationUrl: string,
     clientState: string,
     autoRenewUntil?: string | Date | null,
-  ) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+  ): Promise<{ subscription: Record<string, any>; resolvedAppKey: string }> {
+    // Use getM365ValidToken so the correct key is found even if mailboxAppKey is stale
+    const { token: accessToken, appKey: resolvedAppKey } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const expires = this.buildExpirationDateTime(autoRenewUntil);
 
     const response = await fetch(`${GRAPH_BASE}/subscriptions`, {
@@ -40,11 +42,12 @@ export class PlaybookFlowMailGraphClientService {
 
     if (!response.ok) {
       const body = await response.text();
-      this.logger.error('Graph subscription create failed', { userId, mailboxAppKey, status: response.status, body });
+      this.logger.error('Graph subscription create failed', { userId, resolvedAppKey, status: response.status, body });
       throw new Error(`Graph subscription create failed: ${response.status} ${body}`);
     }
 
-    return response.json() as Promise<Record<string, any>>;
+    const subscription = await response.json() as Record<string, any>;
+    return { subscription, resolvedAppKey };
   }
 
   async renewSubscription(
@@ -53,7 +56,8 @@ export class PlaybookFlowMailGraphClientService {
     subscriptionId: string,
     autoRenewUntil?: string | Date | null,
   ) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const expires = this.buildExpirationDateTime(autoRenewUntil);
 
     const response = await fetch(`${GRAPH_BASE}/subscriptions/${encodeURIComponent(subscriptionId)}`, {
@@ -72,7 +76,8 @@ export class PlaybookFlowMailGraphClientService {
   }
 
   async deleteSubscription(userId: string, mailboxAppKey: string, subscriptionId: string) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
 
     const response = await fetch(`${GRAPH_BASE}/subscriptions/${encodeURIComponent(subscriptionId)}`, {
       method: 'DELETE',
@@ -87,7 +92,8 @@ export class PlaybookFlowMailGraphClientService {
   }
 
   async listAttachments(userId: string, mailboxAppKey: string, messageId: string) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const url = `${GRAPH_BASE}/me/messages/${encodeURIComponent(messageId)}/attachments?$select=id,name,contentType,size,isInline`;
 
     try {
@@ -102,7 +108,8 @@ export class PlaybookFlowMailGraphClientService {
   }
 
   async downloadAttachment(userId: string, mailboxAppKey: string, messageId: string, attachmentId: string) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const url = `${GRAPH_BASE}/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/$value`;
 
     const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -114,7 +121,8 @@ export class PlaybookFlowMailGraphClientService {
   }
 
   async getMessageByResource(userId: string, mailboxAppKey: string, resource: string) {
-    const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const normalizedResource = (resource.startsWith('/') ? resource : `/${resource}`)
       .replace(/^\/Users\//, '/users/')
       .replace(/\/Messages\//, '/messages/');

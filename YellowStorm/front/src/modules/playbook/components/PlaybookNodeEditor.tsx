@@ -79,6 +79,7 @@ interface EditorDraft {
   modelId: string | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
+  deepSearch: boolean;
 }
 
 const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
@@ -171,12 +172,12 @@ function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefault
     notifyEmails: task.notifyEmails ?? [],
     inputPorts:
       nodeType === 'iterator'
-        ? getDefaultIteratorInputPorts()
+        ? getIteratorInputPorts(task.inputPorts)
         : task.inputPorts?.map((p) => ({ ...p })) ??
           [{ id: 'default', name: t('nodeEditor.portDefaultInput'), artifactKind: 'text' as ArtifactKind, required: false }],
     outputPorts:
       nodeType === 'iterator'
-        ? getDefaultIteratorOutputPorts()
+        ? getIteratorOutputPorts(task.outputPorts)
         : task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: t('nodeEditor.portDefaultOutput'), artifactKind: 'text' as ArtifactKind }],
     evaluationConfig: task.evaluationConfig
       ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
@@ -198,6 +199,7 @@ function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefault
     modelId: task.modelId ?? null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
+    deepSearch: task.deepSearch ?? false,
   };
 }
 
@@ -216,8 +218,8 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     enabled: draft.enabled,
     notifyOnComplete: draft.notifyOnComplete,
     notifyEmails: draft.notifyOnComplete ? draft.notifyEmails : [],
-    inputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorInputPorts() : [...draft.inputPorts],
-    outputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorOutputPorts() : [...draft.outputPorts],
+    inputPorts: draft.nodeType === 'iterator' ? getIteratorInputPorts(draft.inputPorts) : [...draft.inputPorts],
+    outputPorts: draft.nodeType === 'iterator' ? getIteratorOutputPorts(draft.outputPorts) : [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
     routerConfig: draft.nodeType === 'router' ? draft.routerConfig : null,
@@ -226,11 +228,31 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     modelId: isStepLikeNodeType(draft.nodeType) ? draft.modelId : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
+    deepSearch: draft.deepSearch,
   };
 }
 
 function isStepLikeNodeType(nodeType: PlaybookNodeType): boolean {
   return nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation';
+}
+
+function getIteratorInputPorts(inputPorts?: TaskInputPort[]): TaskInputPort[] {
+  const defaultCollectionPort = getDefaultIteratorInputPorts()[0];
+  const existingCollectionPort = inputPorts?.find((port) => port.id === defaultCollectionPort.id || port.role === 'collection');
+  const contextPorts = (inputPorts ?? [])
+    .filter((port) => port.id !== defaultCollectionPort.id && port.role !== 'collection')
+    .map((port) => ({ ...port, role: 'context' as const }));
+
+  return [
+    { ...defaultCollectionPort, ...existingCollectionPort, id: defaultCollectionPort.id, role: 'collection' as const },
+    ...contextPorts,
+  ];
+}
+
+function getIteratorOutputPorts(outputPorts?: TaskOutputPort[]): TaskOutputPort[] {
+  const defaultOutputPort = getDefaultIteratorOutputPorts()[0];
+  const existingOutputPort = outputPorts?.find((port) => port.id === defaultOutputPort.id);
+  return [{ ...defaultOutputPort, ...existingOutputPort, id: defaultOutputPort.id }];
 }
 
 export interface PlaybookNodeEditorHandle {
@@ -295,6 +317,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     modelId: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
+    deepSearch: false,
   });
 
   const agentOptions = useMemo<SearchableSelectOption[]>(
@@ -900,11 +923,12 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                     outputPortsOverride={draft.outputPorts}
                     onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
                     onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
-                    canEditPorts={draft.nodeType !== 'iterator'}
+                    canEditPorts
+                    inputPortBehavior={draft.nodeType === 'iterator' ? 'iterator' : 'default'}
                     showOutputPorts
-                    canEditOutputPortNames={draft.nodeType !== 'router'}
-                    canEditOutputPortKinds
-                    canModifyOutputPorts={draft.nodeType !== 'router'}
+                    canEditOutputPortNames={draft.nodeType !== 'router' && draft.nodeType !== 'iterator'}
+                    canEditOutputPortKinds={draft.nodeType !== 'iterator'}
+                    canModifyOutputPorts={draft.nodeType !== 'router' && draft.nodeType !== 'iterator'}
                   />
                 </EditorSection>
               )}
@@ -1391,6 +1415,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                   />
                 </div>
               </EditorSection>
+
             </div>
           </div>
       </DialogContent>

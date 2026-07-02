@@ -464,6 +464,8 @@ def create_search_agent_with_tools(
         if tool.get("name") == "search":
             top_k = tool.get("top_k")
             break
+    logical_search_only = "logical_search" in tools and "search" not in tools
+    deep_search = "deep_search" in tools
     agent, toolkit, _ = agent_factory.create_search_agent(
         doc_tree=doc_tree,
         brain_tree=brain_tree,
@@ -482,6 +484,9 @@ def create_search_agent_with_tools(
         top_k=top_k,
         citation_manager=citation_manager,
         user_id=config.user_id,
+        vectorstore_mcp_tool=True if "logical_search" in tools or "deep_search" in tools else False,
+        logical_search_only=logical_search_only,
+        deep_search=deep_search,
     )
 
     # Store toolkit for source handling
@@ -505,6 +510,7 @@ def create_search_agent_with_tools(
                         brain_ids=final_workspace_names,
                         brain_documents=agent_config.get("brain_documents", []),
                         session_id=config.session_id,
+                        agent_id=agent_config.get("id"),
                     ),
                 )
             )
@@ -652,6 +658,7 @@ def create_standard_agent_with_tools(
 
     agent = agent_factory.create_agent(
         name=agent_name,
+        agent_id=agent_config.get("id"),
         prompt=enhanced_prompt,
         chatbot_name=chatbot_name,
         calculator_tool=True if "calculator" in tools else False,
@@ -715,6 +722,11 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
     workspace_ids = list(getattr(config, "brain_ids", None) or []) or None
 
     try:
+        auth_headers = dict(mcp.get("auth_headers") or {})
+        agent_tools = agent_config.get("tools") or []
+        if any(isinstance(t, dict) and t.get("name") == "deep_search" or t == "deep_search" for t in agent_tools):
+            auth_headers["X-Deep-Search"] = "true"
+
         toolsets = MCPHelper.create_toolsets([{
             "type": "mcp",
             "transport_type": "streamable_http",
@@ -722,7 +734,7 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
             "user_id": config.user_id,
             "file_names": explicit_file_names,
             "workspace_ids": workspace_ids,
-            "auth_headers": mcp.get("auth_headers") or {},
+            "auth_headers": auth_headers,
         }])
         if toolsets:
             if not hasattr(agent, "tools") or agent.tools is None:

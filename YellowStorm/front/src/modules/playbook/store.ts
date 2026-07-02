@@ -158,6 +158,7 @@ function syncUiStoreForRun(taskId?: string | null) {
     connectorSidebarOpen: false,
     skillSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
     ...(taskId !== undefined ? { selectedStepId: taskId } : {}),
   }));
@@ -175,6 +176,7 @@ function syncUiStoreForInterrupt(taskId: string) {
     connectorSidebarOpen: false,
     skillSidebarOpen: false,
     nodeEditorOpen: false,
+    graphPanelOpen: false,
     pageMode: 'run',
   }));
   persistPanelOpen(true);
@@ -283,6 +285,7 @@ const initialState: PlaybookState = {
   connectorSidebarOpen: false,
   skillSidebarOpen: false,
   nodeEditorOpen: false,
+  graphPanelOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -411,13 +414,17 @@ function fetchPlaybookDetail(id: string, view: 'base' | 'enriched') {
 
 function fetchDesignMessageList(playbookId: string) {
   if (!playbookFeatures.queryEnabled) {
-    return api.getDesignMessages(playbookId);
+    return api.getDesignMessages(playbookId).then(sortDesignMessagesChronologically);
   }
 
   return playbookQueryClient.fetchQuery({
     queryKey: playbookKeys.designMessages(playbookId),
-    queryFn: () => api.getDesignMessages(playbookId),
+    queryFn: () => api.getDesignMessages(playbookId).then(sortDesignMessagesChronologically),
   });
+}
+
+function sortDesignMessagesChronologically(messages: DesignMessage[]) {
+  return [...messages].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
 }
 
 function fetchPlaybookExecutionHistory(playbookId: string) {
@@ -696,6 +703,7 @@ function getChangedDefinitionFields(previous: UpdateFlowData, current: UpdateFlo
     'advisorAutopilotEnabled',
     'advisorAutopilotTargetScore',
     'advisorAutopilotMaxTurns',
+    'deepSearch',
     'nodes',
     'controlEdges',
     'dataBindings',
@@ -3485,6 +3493,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 components: merged,
                 toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
+                inputTokens: data.inputTokens ?? tr.inputTokens ?? null,
+                outputTokens: data.outputTokens ?? tr.outputTokens ?? null,
+                totalTokens: data.totalTokens ?? tr.totalTokens ?? null,
+                modelName: data.modelName ?? tr.modelName ?? null,
+                traceMetadata: data.traceMetadata ?? tr.traceMetadata ?? null,
                 artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 startedAt: tr.startedAt || new Date().toISOString(),
                 completedAt: tr.status === 'pending' || tr.status === 'running' ? null : tr.completedAt,
@@ -3511,6 +3524,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
                 components: data.components || [],
                 toolTrace: data.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
+                inputTokens: data.inputTokens ?? null,
+                outputTokens: data.outputTokens ?? null,
+                totalTokens: data.totalTokens ?? null,
+                modelName: data.modelName ?? null,
+                traceMetadata: data.traceMetadata ?? null,
                 artifacts: api.normalizeTaskArtifacts(data.artifacts),
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
@@ -4459,6 +4477,18 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
+      clearDesignMessages: async (playbookId) => {
+        try {
+          await api.clearDesignMessages(playbookId);
+          playbookQueryClient.setQueryData(playbookKeys.designMessages(playbookId), []);
+          set({ designMessages: [] });
+          toast.success(tPlaybook('store.toasts.designMemoryCleared', 'Assistant memory cleared'));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       requestPlaybookIntent: async (playbookId: string, data: RequestPlaybookIntentData) => {
         return api.requestPlaybookIntent(playbookId, data);
       },
@@ -4571,7 +4601,16 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
             nodeEditorOpen: false,
             pageMode: 'run',
           });
-          get().fetchExecution(playbookId, executionId);
+          void get().fetchExecution(playbookId, executionId).then(() => {
+            const fetchedExecution = get().executionCache[executionId];
+            if (!fetchedExecution) {
+              return;
+            }
+            const selectedStepId = getPreferredSelectedStepId(fetchedExecution.taskResults, get().selectedStepId);
+            if (selectedStepId) {
+              get().selectStep(selectedStepId);
+            }
+          });
         }
       },
 
@@ -4830,6 +4869,11 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
+      setGraphPanelOpen: (open) => {
+        usePlaybookUiStore.getState().setGraphPanelOpen(open);
+        set({ graphPanelOpen: open });
+      },
+
       // ===== Undo/Redo =====
 
       captureSnapshot: () => {
@@ -4944,7 +4988,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           set({
             nodeTemplates: items.map((item) => ({
               id: item.id,
-              type: item.type,
+              key: item.key,
               nodeType: item.nodeType,
               title: item.title,
               description: item.description || '',
@@ -4967,9 +5011,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               promptTemplate: item.promptTemplate || '',
               recommendedAgentTypeSlug: item.recommendedAgentTypeSlug,
               requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
-              executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
+              iteratorConfig: item.iteratorConfig ?? null,
               retryPolicy: (item as Record<string, unknown>).retryPolicy as TaskTemplate['retryPolicy'] ?? null,
               modelId: (item as Record<string, unknown>).modelId as string | null ?? null,
             })),
@@ -5001,7 +5045,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           set({
             flowNodeTemplates: items.map((item) => ({
               ...item,
-              type: item.type,
+              key: item.key,
               nodeType: item.nodeType,
               description: item.description || '',
               icon: item.icon || 'FileText',
@@ -5510,6 +5554,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           connectorSidebarOpen: false,
           skillSidebarOpen: false,
           nodeEditorOpen: false,
+          graphPanelOpen: false,
           selectedStepId: inspection.nodeId,
           pageMode: 'run',
         });

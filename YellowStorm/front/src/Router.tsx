@@ -26,6 +26,30 @@ const PlaybookCanvasPage = React.lazy(() =>
 const PlaybookExecutionPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionPage").then((m) => ({ default: m.PlaybookExecutionPage }))
 );
+
+// Lazy-loaded Worky routes
+const WorkyPage = React.lazy(() =>
+  import("./modules/worky/components/WorkyPage").then((m) => ({ default: m.WorkyPage }))
+);
+const WorkyStreamPage = React.lazy(() =>
+  import("./modules/worky/components/WorkyStreamPage").then((m) => ({ default: m.WorkyStreamPage }))
+);
+const WorkyStreamReportPage = React.lazy(() =>
+  import("./modules/worky/components/StreamReportPage").then((m) => ({
+    default: m.StreamReportPage,
+  })),
+)
+
+const WorkyGovernanceAdminPage = React.lazy(() =>
+  import("./modules/worky/components/admin/WorkyGovernancePage").then((m) => ({
+    default: m.WorkyGovernancePage,
+  }))
+);
+const WorkyWhatsAppSystemBotPage = React.lazy(() =>
+  import("./modules/admin/pages/WorkyWhatsAppSystemBotPage").then((m) => ({
+    default: m.WorkyWhatsAppSystemBotPage,
+  }))
+);
 const AgentHubPage = React.lazy(() =>
   import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
 );
@@ -35,11 +59,17 @@ const TeamsPage = React.lazy(() =>
 const TeamOrgChartPage = React.lazy(() =>
   import("./modules/team").then((m) => ({ default: m.TeamOrgChartPage }))
 );
+const GroupsPage = React.lazy(() =>
+  import("./modules/groups").then((m) => ({ default: m.GroupsPage }))
+);
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
 const WorkspacePage = React.lazy(() =>
   import("./modules/workspace").then((m) => ({ default: m.WorkspacePage }))
+);
+const WorkspaceHubPage = React.lazy(() =>
+  import("./modules/workspace").then((m) => ({ default: m.WorkspaceHubPage }))
 );
 import {
   AdminGuard,
@@ -155,6 +185,30 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'worky',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'worky/:streamId',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyStreamPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'worky/:streamId/report',
+        element: (
+          <Suspense fallback={null}>
+            <WorkyStreamReportPage />
+          </Suspense>
+        ),
+      },
+      {
         path: 'agents',
         element: (
           <Suspense fallback={null}>
@@ -179,6 +233,14 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'groups',
+        element: (
+          <Suspense fallback={null}>
+            <GroupsPage />
+          </Suspense>
+        ),
+      },
+      {
         path: 'projet/:id',
         element: (
           <Suspense fallback={null}>
@@ -190,7 +252,7 @@ export const router = createHashRouter([
         path: 'workspace',
         element: (
           <Suspense fallback={null}>
-            <WorkspacePage />
+            <WorkspaceHubPage />
           </Suspense>
         ),
       },
@@ -250,6 +312,26 @@ export const router = createHashRouter([
             element: (
               <PermissionGuard permissions={['workspaces.*', '*']}>
                 <WorkspaceSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'worky-governance',
+            element: (
+              <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
+                <Suspense fallback={null}>
+                  <WorkyGovernanceAdminPage />
+                </Suspense>
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'worky-whatsapp-system',
+            element: (
+              <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
+                <Suspense fallback={null}>
+                  <WorkyWhatsAppSystemBotPage />
+                </Suspense>
               </PermissionGuard>
             ),
           },

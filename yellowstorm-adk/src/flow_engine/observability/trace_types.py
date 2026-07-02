@@ -20,6 +20,7 @@ class LLMPromptTraceItem:
     stage: str
     model: str
     prompt: str
+    generated_output: str | None = None
 
 
 @dataclass(slots=True)

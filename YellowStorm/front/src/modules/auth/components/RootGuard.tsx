@@ -12,7 +12,6 @@ import { Loader2 } from 'lucide-react';
 
 import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/modules/sidebar';
-import { ModeToggle } from '@/components/mode-toggle';
 import { useAuth } from '../useAuth';
 import { LandingPage } from './LandingPage';
 import { NewConversationPage } from '@/modules/conversation';
@@ -80,9 +79,6 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      <div className='hidden md:block fixed bottom-4 right-4 z-50'>
-        <ModeToggle />
-      </div>
     </SidebarProvider>
   );
 }

@@ -909,6 +909,7 @@ export interface AdminModelResponse {
   chefSlug: string;
   litellmModel: string;
   providers: string[];
+  type: string;
   isActive: boolean;
   isDefault: boolean;
 }
@@ -918,11 +919,25 @@ export interface AdminModelsListResponse {
   total: number;
 }
 
+export const MODEL_TYPES = [
+  'chat',
+  'completion',
+  'embedding',
+  'image_generation',
+  'audio_transcription',
+  'audio_speech',
+  'moderation',
+  'search',
+] as const;
+
+export type ModelType = (typeof MODEL_TYPES)[number];
+
 export interface UpdateModelRequest {
   name?: string;
   chef?: string;
   chefSlug?: string;
   providers?: string[];
+  type?: string;
   isActive?: boolean;
 }
 
@@ -948,6 +963,7 @@ export interface AdminPlaybookSettings {
     maxIteratorBodyEdges: number;
   };
   replayEligibilityConfidenceThreshold: number;
+  useDeterministicBlueprintBuilder: boolean;
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
@@ -958,11 +974,12 @@ export interface UpdateAdminPlaybookSettingsRequest {
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
   replayEligibilityConfidenceThreshold?: number;
+  useDeterministicBlueprintBuilder?: boolean;
 }
 
 // Playbook Prompt Types
 
-import type { PlaybookIteratorConfig } from '@/modules/playbook';
+import type { PlaybookIteratorConfig, PlaybookNodeType, RouterConfig } from '@/modules/playbook';
 
 export interface PlaybookPromptResponse {
   id: string;
@@ -981,6 +998,12 @@ export interface PlaybookPromptResponse {
 
 export interface PlaybookPromptListResponse {
   items: PlaybookPromptResponse[];
+}
+
+export interface PlaybookPromptImportPayload {
+  version: 1;
+  type: 'playbook-prompts';
+  items: Array<Omit<PlaybookPromptResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
 }
 
 export interface UpsertPlaybookPromptRequest {
@@ -1005,8 +1028,7 @@ export interface PlaybookNodeTemplatePort {
 export interface PlaybookNodeTemplateResponse {
   id: string;
   key: string;
-  type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1017,10 +1039,10 @@ export interface PlaybookNodeTemplateResponse {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
-  executionMode: string;
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -1032,10 +1054,15 @@ export interface PlaybookNodeTemplateListResponse {
   items: PlaybookNodeTemplateResponse[];
 }
 
+export interface PlaybookNodeTemplateImportPayload {
+  version: 1;
+  type: 'playbook-node-templates';
+  items: Array<Omit<PlaybookNodeTemplateResponse, 'id' | 'createdAt' | 'updatedAt' | 'version'>>;
+}
+
 export interface CreatePlaybookNodeTemplateRequest {
   key: string;
-  type: string;
-  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType: PlaybookNodeType;
   title: string;
   description?: string;
   icon?: string;
@@ -1046,17 +1073,16 @@ export interface CreatePlaybookNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 
 export interface UpdatePlaybookNodeTemplateRequest {
   key?: string;
-  type?: string;
-  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator';
+  nodeType?: PlaybookNodeType;
   title?: string;
   description?: string;
   icon?: string;
@@ -1067,10 +1093,10 @@ export interface UpdatePlaybookNodeTemplateRequest {
   promptTemplate?: string;
   recommendedAgentTypeSlug?: string | null;
   requiredToolNames?: string[];
-  executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
   enabled?: boolean;
 }
 

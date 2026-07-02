@@ -19,6 +19,8 @@ export interface Agent {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  /** True when the agent has the "smart-memory" connector. */
+  hasSmartMemory?: boolean;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;

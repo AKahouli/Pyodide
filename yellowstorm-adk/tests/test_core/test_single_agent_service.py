@@ -298,6 +298,7 @@ class TestSingleAgentService:
 
             mock_agent = MagicMock()
             mock_agent_class.return_value = mock_agent
+            mock_calculator.schema = {"name": "calculator"}
 
             service = SingleAgentService()
             service.llm_factory = mock_llm_factory

@@ -35,6 +35,7 @@ export interface Workspace {
   isSystem: boolean;
   isPersonal: boolean;
   shareCount: number;
+  isPublic: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -424,6 +425,32 @@ export interface SharedWorkspaceResponse {
 export interface PaginatedSharedWorkspaces {
   workspaces: SharedWorkspaceResponse[];
   pagination: PaginationInfo;
+}
+
+export interface PublicWorkspaceOwner {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface PublicWorkspaceResponse {
+  id: string;
+  name: string;
+  alias: string;
+  storagePrefix: string;
+  description?: string;
+  owner: PublicWorkspaceOwner;
+  documentCount: number;
+  usedStorage: number;
+  allocatedStorage: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaginatedPublicWorkspaces {
+  workspaces: PublicWorkspaceResponse[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
 }
 
 export interface UserSearchResult {

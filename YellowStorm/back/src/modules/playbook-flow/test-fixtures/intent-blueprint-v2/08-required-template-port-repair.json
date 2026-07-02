@@ -1,0 +1,11 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Required template port repair",
+    "summary": "Repair missing template required input port.",
+    "nodes": [
+      { "ref": "summarize", "label": "Summarize", "purpose": "Summarize document", "nodeTemplateKey": "requires.context", "outputPorts": [{ "id": "summary", "artifactKind": "text" }] }
+    ]
+  },
+  "expected": { "minNodes": 1, "repairCodes": ["repair_template_required_port_added"], "nodePorts": [{ "nodeRef": "summarize", "inputPort": "context" }] }
+}

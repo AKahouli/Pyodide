@@ -71,6 +71,14 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminWorkyWhatsAppSystemBot: {
+    base: '/admin/worky/whatsapp-system-bot',
+    expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',
+    connect: '/admin/worky/whatsapp-system-bot/connect',
+    pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
+    reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,
+    session: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}`,
+  },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
   },
@@ -95,6 +103,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
     sharedWithMe: '/workspaces/shared-with-me',
+    public: '/workspaces/public',
+    visibility: (id: string) => `/workspaces/${id}/visibility`,
   },
   workspaceShares: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,
@@ -109,6 +119,8 @@ export const API_ENDPOINTS = {
       `/workspaces/${workspaceId}/documents/${docId}/download-url`,
     reindex: (workspaceId: string, docId: string) =>
       `/workspaces/${workspaceId}/documents/${docId}/reindex`,
+    graphData: (workspaceId: string) =>
+      `/workspaces/${workspaceId}/graph`,
     bulkDelete: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,
     deleteAll: (workspaceId: string) => `/workspaces/${workspaceId}/documents/all`,
     // Upload endpoints
@@ -211,6 +223,7 @@ export const API_ENDPOINTS = {
   adminSkills: {
     list: '/admin/skills',
     byId: (id: string) => `/admin/skills/${id}`,
+    export: (id: string) => `/admin/skills/${id}/export`,
     import: '/admin/skills/import',
   },
   adminSkillCategories: {
@@ -242,10 +255,12 @@ export const API_ENDPOINTS = {
   },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
+    import: '/admin/playbook-prompts/import',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
   },
   adminPlaybookNodeTemplates: {
     list: '/playbook-flow-templates',
+    import: '/playbook-flow-templates/import',
     byId: (id: string) => `/playbook-flow-templates/${id}`,
   },
   playbookNodeTemplates: {
@@ -263,6 +278,9 @@ export const API_ENDPOINTS = {
   },
   agentTypes: {
     active: '/agent-types/active',
+  },
+  memoryCards: {
+    base: '/memory-cards',
   },
   agents: {
     list: '/agents',
@@ -299,6 +317,12 @@ export const API_ENDPOINTS = {
     shares: (id: string) => `/teams/${id}/shares`,
     shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
     unshare: (id: string) => `/teams/${id}/unshare`,
+  },
+  userGroups: {
+    list: '/user-groups',
+    byId: (id: string) => `/user-groups/${id}`,
+    members: (id: string) => `/user-groups/${id}/members`,
+    memberById: (id: string, userId: string) => `/user-groups/${id}/members/${userId}`,
   },
   tools: {
     active: '/tools/active',
@@ -343,6 +367,7 @@ export const API_ENDPOINTS = {
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
     intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
+    intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,
@@ -360,7 +385,10 @@ export const API_ENDPOINTS = {
     designOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}`,
     cancelDesignOperation: (id: string, operationId: string) => `/playbooks/${id}/design-operations/${operationId}/cancel`,
     designMessages: (id: string) => `/playbooks/${id}/design-messages`,
+    clearDesignMessages: (id: string) => `/playbooks/${id}/design-messages`,
     revertDesign: (id: string, msgId: string) => `/playbooks/${id}/design-messages/${msgId}/revert`,
+    shares: (id: string) => `/playbooks/${id}/shares`,
+    share: (id: string, shareId: string) => `/playbooks/${id}/shares/${shareId}`,
     cloneShare: (id: string) => `/playbooks/${id}/clone-share`,
     clone: (id: string) => `/playbooks/${id}/clone`,
     schedule: (id: string) => `/playbooks/${id}/schedule`,
@@ -494,5 +522,45 @@ export const API_ENDPOINTS = {
     enabled: '/playbook-flow-templates/enabled',
     nodeKinds: '/playbook-flow-templates/node-kinds',
     byId: (id: string) => `/playbook-flow-templates/${id}`,
+  },
+  worky: {
+    streams: '/worky/streams',
+    streamById: (id: string) => `/worky/streams/${id}`,
+    streamEvents: (id: string) => `/worky/streams/${id}/events`,
+    streamMessages: (id: string) => `/worky/streams/${id}/messages`,
+    streamBoard: (id: string) => `/worky/streams/${id}/board`,
+    streamStart: (id: string) => `/worky/streams/${id}/start`,
+    streamPause: (id: string) => `/worky/streams/${id}/pause`,
+    streamResume: (id: string) => `/worky/streams/${id}/resume`,
+    streamStop: (id: string) => `/worky/streams/${id}`,
+    streamDelete: (id: string) => `/worky/streams/${id}/delete`,
+    respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
+    taskById: (id: string) => `/worky/tasks/${id}`,
+    taskMove: (id: string) => `/worky/tasks/${id}/move`,
+    taskPause: (id: string) => `/worky/tasks/${id}/pause`,
+    taskResume: (id: string) => `/worky/tasks/${id}/resume`,
+    taskCancel: (id: string) => `/worky/tasks/${id}/cancel`,
+    taskReview: (id: string) => `/worky/tasks/${id}/review`,
+    taskResults: (id: string) => `/worky/tasks/${id}/results`,
+    taskHumanUpdate: (id: string) => `/worky/tasks/${id}/human-update`,
+    streamBudget: (id: string) => `/worky/streams/${id}/budget`,
+    executionReport: (id: string) => `/worky/streams/${id}/execution-report`,
+    streamTraces: (id: string) => `/worky/streams/${id}/traces`,
+    memoryProposals: '/worky/memory/proposals',
+    memoryEntries: '/worky/memory/entries',
+    memoryProposalConfirm: (id: string) => `/worky/memory/proposals/${id}/confirm`,
+    memoryProposalReject: (id: string) => `/worky/memory/proposals/${id}/reject`,
+    governancePolicy: '/worky/admin/governance-policy',
+    sttTranscribe: '/worky/stt/transcribe',
+    ttsSpeak: '/worky/tts/speak',
+    whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
+    whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
+    whatsappPairing: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/pairing`,
+    whatsappReconnect: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}/reconnect`,
+    whatsappSession: (id: string, sessionId: string) =>
+      `/worky/streams/${id}/whatsapp-integration/${sessionId}`,
+    whatsappSystemBotStatus: '/worky/whatsapp-system-bot/status',
   },
 } as const;

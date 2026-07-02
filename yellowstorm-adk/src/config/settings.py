@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     # Vectorstores API (document indexing)
     VECTORSTORES_API_URL: Optional[str] = None
 
+    # Community graph MCP (deep search via mcp-indexation)
+    COMMUNITY_GRAPH_MCP_URL: Optional[str] = None
+
     # Image upload limits
     MAX_IMAGES: int = 10
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB per image
@@ -157,6 +160,12 @@ class Settings(BaseSettings):
     # gRPC Configuration
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
+
+
+    GRPC_API_KEY: Optional[str] = None
+    GRPC_TLS_CERT_PATH: Optional[str] = None
+    GRPC_TLS_KEY_PATH: Optional[str] = None
+    GRPC_ALLOW_INSECURE: bool = False
 
     # A2A gateway (publish agents over the A2A protocol for Copilot Studio)
     A2A_DATABASE_URL: Optional[str] = None          # defaults to DATABASE_URL

@@ -9,7 +9,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
   const saveNow = vi.fn().mockResolvedValue(undefined);
   const setPageMode = vi.fn();
   const setExecutionPanelCollapsed = vi.fn();
-  const setIntentBarCollapsed = vi.fn();
   const setDesignerOpen = vi.fn();
   const setWorkspaceExplorerOpen = vi.fn();
   const setConnectorSidebarOpen = vi.fn();
@@ -45,7 +44,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         execution: null,
         setPageMode,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
@@ -91,7 +89,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         execution: null,
         setPageMode,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
@@ -109,7 +106,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
     expect(saveNow).toHaveBeenCalledOnce();
     expect(setPageMode).toHaveBeenCalledWith('run');
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(false);
-    expect(setIntentBarCollapsed).toHaveBeenCalledWith(true);
     expect(setDesignerOpen).toHaveBeenCalledWith(false);
     expect(setWorkspaceExplorerOpen).toHaveBeenCalledWith(false);
     expect(setConnectorSidebarOpen).toHaveBeenCalledWith(false);
@@ -153,7 +149,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         execution: otherExecution,
         setPageMode,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,
@@ -189,7 +184,6 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         execution: fallbackExecution,
         setPageMode,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setWorkspaceExplorerOpen,
         setConnectorSidebarOpen,

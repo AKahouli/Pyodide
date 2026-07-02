@@ -87,6 +87,39 @@ describe('playbook store', () => {
     expect(state.playbooksLoading).toBe(false);
   });
 
+  it('sorts fetched design messages chronologically for the sidebar thread', async () => {
+    apiMock.getDesignMessages.mockResolvedValueOnce([
+      {
+        id: 'm2',
+        playbookId: 'p1',
+        userQuery: 'second',
+        aiSummary: 'second reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:01:00.000Z',
+        updatedAt: '2026-06-21T22:01:00.000Z',
+      },
+      {
+        id: 'm1',
+        playbookId: 'p1',
+        userQuery: 'first',
+        aiSummary: 'first reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:00:00.000Z',
+        updatedAt: '2026-06-21T22:00:00.000Z',
+      },
+    ]);
+
+    await usePlaybookStore.getState().fetchDesignMessages('p1');
+
+    expect(usePlaybookStore.getState().designMessages.map((message) => message.id)).toEqual(['m1', 'm2']);
+  });
+
   it('skips no-op saves when the serialized payload hash matches the baseline', async () => {
     const playbook = makePlaybook({ id: 'p1', name: 'Stable' });
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
@@ -1710,6 +1743,37 @@ describe('playbook store', () => {
     expect(updated.artifacts).toEqual([{ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }]);
   });
 
+  it('merges realtime trace updates into the running step', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'running',
+      } as any],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepUpdate({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'running',
+      toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }],
+      llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+      totalTokens: 3,
+      modelName: 'gpt-5.4-mini',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.status).toBe('running');
+    expect(updated.toolTrace).toEqual([{ callIndex: 0, toolName: 'search', args: {}, outputSummary: null }]);
+    expect(updated.llmPromptTrace).toEqual([{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }]);
+    expect(updated.totalTokens).toBe(3);
+    expect(updated.modelName).toBe('gpt-5.4-mini');
+  });
+
   it('keeps completed step artifacts when completion SSE omits them', () => {
     const execution = makeExecution({
       id: 'e1',
@@ -2326,13 +2390,23 @@ describe('playbook store', () => {
     expect(state.selectedStepId).toBe('task-2');
   });
 
-  it('viewExecutionInPanel fetches from API when not cached', () => {
+  it('viewExecutionInPanel fetches from API when not cached and selects the first step', async () => {
     const playbook = makePlaybook({ id: 'p1' });
     apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e2' }));
-    usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false });
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      executionPanelOpen: false,
+      selectedStepId: 'missing-task',
+    });
     usePlaybookStore.getState().viewExecutionInPanel('e2');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e2');
+    expect(usePlaybookStore.getState().selectedStepId).toBe('task-1');
   });
 
   it('deleteAllExecutions calls api and clears cached state', async () => {

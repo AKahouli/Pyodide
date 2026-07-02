@@ -140,7 +140,11 @@ export function createExecutionServiceForTests(overrides?: {
       const parts = [
         typeof taskTitle === 'string' ? taskTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
         typeof metadata?.taskType === 'string' ? metadata.taskType.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
-        typeof metadata?.templateType === 'string' ? metadata.templateType.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+        typeof metadata?.nodeTemplateKey === 'string'
+          ? metadata.nodeTemplateKey.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+          : typeof metadata?.templateType === 'string'
+            ? metadata.templateType.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+            : '',
       ].filter(Boolean);
       return { intentKey: parts.join('-') || taskId, intentLabel: taskTitle || taskId };
     }),

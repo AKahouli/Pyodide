@@ -193,6 +193,8 @@ interface Agent {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];      // Workspace IDs
   tools: string[];               // Tool IDs
+  connectors?: string[];         // Connector IDs
+  hasSmartMemory?: boolean;      // true when the agent has the "smart-memory" connector
   isDefault: boolean;            // true = system default (read-only)
   isActive: boolean;
   createdBy: string;
@@ -310,6 +312,8 @@ See `AgentTelegramIntegrationSection` — bot token is never returned; `hasToken
 | `deleteAgent(id)` | DELETE | `/agents/:id` | Delete personal agent |
 | `getActiveTools()` | GET | `/tools/active` | Get available tools for assignment |
 | `createWidgetToken(agentId)` | POST | `/admin/agents/:agentId/widget-tokens` | Create widget token for embed (requires `agents.update`) |
+| `getAgentMemories(agentId, { page, pageSize, search })` | GET | `/memory-cards?agentId=` | List an agent's memory cards, paginated + searchable (`memoryCardsApi.ts`) |
+| `deleteAgentMemories(agentId, ids)` | DELETE | `/memory-cards?agentId=` | Delete selected memory cards (write access required) |
 
 ### Sharing API
 
@@ -466,6 +470,32 @@ On a card (`hub/AgentCardRich`), the available actions depend on ownership:
 | Owned personal | Edit, Duplicate, **Share**, Publish/Revoke A2A, Delete |
 | Shared with me (`shareInfo`) | "Shared by X" badge; Edit only if `write`; **Leave** (remove from my list) — no delete |
 | Default (admin) | Edit/Delete only with `agents.update` / `agents.delete` permission |
+
+A **memory** icon (`MdMemory`) also appears on the card **only when `agent.hasSmartMemory`** is true.
+
+### AgentMemoriesModal
+
+Opened from the memory icon on a card. Fetches the agent's memory cards via
+`getAgentMemories(agentId, { page, pageSize, search })` (`memoryCardsApi.ts`).
+Renders a horizontally-scrollable table (`id, title, summary, content, type,
+keywords, valid_from, valid_until, created_at, updated_at`).
+
+**Search + pagination** (server-side):
+
+- A top **search input** submits **on Enter** (not on each keystroke) and filters
+  across every field except `id`; a spinner shows at the right of the input while
+  the request is in flight (the current list stays visible instead of being
+  replaced by a loader). Changing the term resets to page 1.
+- A bottom bar holds a **page-size select** (`10 / 20 / 30 / 50`) next to the
+  **‹ ›** arrows, which are disabled when there is no previous / next page (or
+  while loading), plus a `Page X / Y` indicator.
+
+When the card is writable (owner or `write`-share) the left-hand checkboxes and a
+**"Supprimer la sélection"** button (shown in the bottom bar **only when at least
+one memory is selected**) allow deleting memories via
+`deleteAgentMemories(agentId, ids)`; the current page is refetched afterwards so
+the total/pagination stay accurate. For read-only agents the modal is view-only.
+Backed by the [Memory Cards backend module](../../../../back/src/modules/memory-cards/README.md).
 
 ### AgentList
 

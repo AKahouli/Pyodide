@@ -20,7 +20,6 @@ export interface UsePlaybookCanvasPageHandlersParams {
   nodeReflectionEnabled: boolean;
   advisorScoringMode: 'llm' | 'heuristic';
   advisorAutopilotEnabled: boolean;
-  waitingForHumanInput: boolean;
   pageMode: PlaybookPageMode;
   designerOpen: boolean;
   confirmRemoveAllMessage: string;
@@ -38,7 +37,6 @@ export interface UsePlaybookCanvasPageHandlersParams {
   setImportWarningOpen: Dispatch<SetStateAction<boolean>>;
   setExecutionPanelOpen: (open: boolean) => void;
   setExecutionPanelCollapsed: (collapsed: boolean) => void;
-  setIntentBarCollapsed: (collapsed: boolean) => void;
   setDesignerOpen: (open: boolean) => void;
   setEditorOpen: (open: boolean) => void;
   setPageMode: (mode: PlaybookPageMode) => void;
@@ -86,7 +84,6 @@ export function usePlaybookCanvasPageHandlers({
   nodeReflectionEnabled,
   advisorScoringMode,
   advisorAutopilotEnabled,
-  waitingForHumanInput,
   pageMode,
   designerOpen,
   confirmRemoveAllMessage,
@@ -103,7 +100,6 @@ export function usePlaybookCanvasPageHandlers({
   setImportWarningOpen,
   setExecutionPanelOpen,
   setExecutionPanelCollapsed,
-  setIntentBarCollapsed,
   setDesignerOpen,
   setEditorOpen,
   setPageMode,
@@ -230,31 +226,33 @@ export function usePlaybookCanvasPageHandlers({
   const handleToggleCopilot = useCallback(() => {
     const nextOpen = !designerOpen;
     if (nextOpen) {
-      setCopilotMode(pageMode === 'run' ? 'interrupt' : 'design');
+      setCopilotMode('design');
+      if (pageMode === 'run') {
+        setPageMode('design');
+      }
+      setExecutionPanelCollapsed(true);
+      setExecutionPanelOpen(false);
     }
     setDesignerOpen(nextOpen);
     if (nextOpen) {
       setEditorOpen(false);
     }
-  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen]);
+  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
 
   const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
     setPageMode(mode);
     if (mode === 'design') {
-      setIntentBarCollapsed(false);
-      if (!waitingForHumanInput) {
-        setDesignerOpen(false);
-      }
+      setCopilotMode('design');
+      setDesignerOpen(true);
       setExecutionPanelCollapsed(true);
       setExecutionPanelOpen(false);
       return;
     }
 
     setDesignerOpen(false);
-    setIntentBarCollapsed(true);
     setExecutionPanelCollapsed(false);
     setExecutionPanelOpen(true);
-  }, [setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setIntentBarCollapsed, setPageMode, waitingForHumanInput]);
+  }, [setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
 
   const handleNameBlur = useCallback(() => {
     setEditingName(false);

@@ -2488,10 +2488,22 @@ export function ExecutionStepDetail({
                           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                         </CollapsibleTrigger>
                         <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
-                          <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                            {item.prompt || '-'}
-                          </pre>
+                          <Tabs defaultValue="prompt">
+                            <TabsList className="mb-3">
+                              <TabsTrigger value="prompt">{t('detail.prompts.promptLabel')}</TabsTrigger>
+                              <TabsTrigger value="output">{t('detail.prompts.outputLabel')}</TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="prompt" className="mt-0">
+                              <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {item.prompt || '-'}
+                              </pre>
+                            </TabsContent>
+                            <TabsContent value="output" className="mt-0">
+                              <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {item.generatedOutput || t('detail.prompts.outputEmpty')}
+                              </pre>
+                            </TabsContent>
+                          </Tabs>
                         </CollapsibleContent>
                       </Collapsible>
                     ))}

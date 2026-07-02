@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
+import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -29,6 +30,7 @@ import { MoveFileDialog } from './MoveFileDialog';
 import { ClassifyDialog } from './ClassifyDialog';
 import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
+import { CommunityGraphPanel } from '@/modules/playbook/components/CommunityGraphPanel';
 
 const ITEM_MIME = 'application/x-workspace-page-item';
 
@@ -135,8 +137,10 @@ export function WorkspacePage() {
   const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
+  const { enabled: deepSearch, setEnabled: setDeepSearch } = useDeepSearchIndexation();
 
   const handleSync = useCallback(async () => {
     if (!activeWorkspaceId || isSyncing) return;
@@ -288,6 +292,22 @@ export function WorkspacePage() {
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
+                    <Label htmlFor='deep-search-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
+                      Recherche approfondie
+                    </Label>
+                    <Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label="Activer la recherche approfondie lors de l'indexation" />
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', deepSearch ? 'text-amber-600' : 'text-muted-foreground')}>{deepSearch ? 'ON' : 'OFF'}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='max-w-xs text-center'>
+                  {deepSearch ? 'Indexation avec analyse approfondie : le document est envoyé au graphe de connaissances en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour enrichir le document avec une analyse approfondie.'}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Separator orientation='vertical' className='h-6' />
             {canWrite && (
               <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
@@ -304,6 +324,10 @@ export function WorkspacePage() {
             <Button variant='outline' size='sm' onClick={handleSync} disabled={isSyncing} className='gap-1.5'>
               {isSyncing ? <Loader2 className='h-4 w-4 animate-spin' /> : <DownloadCloud className='h-4 w-4' />}
               Sync
+            </Button>
+            <Button variant='outline' size='sm' onClick={() => setGraphOpen(true)} className='gap-1.5'>
+              <Network className='h-4 w-4' />
+              Graphe
             </Button>
             {canWrite && (
               <>
@@ -381,6 +405,7 @@ export function WorkspacePage() {
       <MoveFileDialog open={!!mapFile} onOpenChange={(o) => !o && setMapFile(null)} file={mapFile} />
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
+      <CommunityGraphPanel open={graphOpen} onOpenChange={setGraphOpen} workspaceId={selectedWorkspaceId} />
     </div>
   );
 }
@@ -781,6 +806,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const getDownloadUrl = useWorkspaceStore((s) => s.getDownloadUrl);
   const reindexDocument = useWorkspaceStore((s) => s.reindexDocument);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
+  const { enabled: deepSearch } = useDeepSearchIndexation();
 
   const viewable = isViewableFile(file.mimeType);
 
@@ -813,7 +839,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const handleReindex = useCallback(async () => {
     setIsReindexing(true);
     try {
-      await reindexDocument(file.workspaceId, file.id);
+      await reindexDocument(file.workspaceId, file.id, deepSearch);
       toast.success(`${file.name} envoyé à l'indexation`);
       // Refresh so the status dot reflects the new "pending/processing" state.
       await refreshPageData();
@@ -822,7 +848,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
     } finally {
       setIsReindexing(false);
     }
-  }, [file.id, file.name, file.workspaceId, reindexDocument, refreshPageData]);
+  }, [file.id, file.name, file.workspaceId, reindexDocument, refreshPageData, deepSearch]);
 
   const handleDelete = useCallback(async () => {
     setIsDeleting(true);

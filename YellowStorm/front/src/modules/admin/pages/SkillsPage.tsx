@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Brain, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, Brain, Download, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { createSkill, deleteSkill, getSkills, getSkillCategories, importSkill, updateSkill } from '../api';
+import { useModuleTranslation } from '@/modules/localization';
+import { createSkill, deleteSkill, exportSkill, getSkills, getSkillCategories, importSkill, updateSkill } from '../api';
 import type { SkillListResponse, SkillResponse, SkillCategoryResponse } from '../types';
 import { CreateEditSkillDialog } from './skills/CreateEditSkillDialog';
 import { ManageSkillCategoriesDialog } from './skills/ManageSkillCategoriesDialog';
@@ -41,6 +42,7 @@ function parseAllowedTools(text: string): string[] {
 }
 
 export function SkillsPage() {
+  const { t } = useModuleTranslation('admin');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillResponse[]>([]);
@@ -191,6 +193,25 @@ export function SkillsPage() {
     }
   };
 
+  const handleExport = async (skill: SkillResponse) => {
+    try {
+      const blob = await exportSkill(skill.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${skill.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'skill'}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success(t('skills.toasts.exported.title'), { description: t('skills.toasts.exported.description', { name: skill.name }) });
+    } catch (err) {
+      toast.error(t('skills.toasts.errors.export'), {
+        description: err instanceof Error ? err.message : t('skills.errors.unknown'),
+      });
+    }
+  };
+
   const handleDelete = async () => {
     if (!deletingSkill) {
       return;
@@ -325,7 +346,17 @@ export function SkillsPage() {
                           <span className={`h-2.5 w-2.5 rounded-full transition-colors ${skill.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
                         </button>
 
-                        <div className='absolute top-2 right-9 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+                        <div className='absolute top-2 right-9 flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={(e) => { e.stopPropagation(); void handleExport(skill); }}
+                            aria-label={t('skills.actions.export')}
+                            title={t('skills.actions.export')}
+                          >
+                            <Download className='h-3.5 w-3.5' />
+                          </Button>
                           <Button
                             variant='ghost'
                             size='icon'

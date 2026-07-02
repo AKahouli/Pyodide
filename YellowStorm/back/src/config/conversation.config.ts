@@ -2,6 +2,8 @@ import { registerAs } from '@nestjs/config';
 
 export default registerAs('conversation', () => ({
   grpcUrl: process.env.CONVERSATION_GRPC_URL || 'localhost:50051',
+  // gRPC channel security (TLS + API key) is shared across all AI-service
+  // clients — see config/grpc-security.config.ts (`grpcSecurity` namespace).
   grpcTimeoutMs: Number.parseInt(
     process.env.CONVERSATION_GRPC_TIMEOUT_MS || '120000',
     10,

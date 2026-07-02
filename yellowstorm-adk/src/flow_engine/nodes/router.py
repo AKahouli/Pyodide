@@ -57,7 +57,12 @@ async def run_router(
     decision_payload: dict[str, Any] = {"label": chosen_label, "mode": "llm"}
 
     try:
-        deterministic_decision = choose_deterministic_label(node_config, state)
+        deterministic_decision = choose_deterministic_label(
+            node_config,
+            state,
+            node_id=node_id,
+            node_inputs=node_inputs,
+        )
     except RouterConditionSourceUnavailableError as exc:
         writer({
             "type": "NodeFailed",

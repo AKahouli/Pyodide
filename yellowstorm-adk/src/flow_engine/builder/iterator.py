@@ -158,7 +158,10 @@ def _build_body_subgraph(
             _node: dict[str, Any] = child_node,
             _fn: Callable[..., Coroutine[Any, Any, dict[str, Any]]] = fn,
         ) -> dict[str, Any]:
-            node_inputs = resolve_node_inputs(_node_id, data_bindings, state)
+            node_inputs = {
+                **state.get("inputs", {}),
+                **resolve_node_inputs(_node_id, data_bindings, state),
+            }
             return await _fn(_node_id, _node, state, node_inputs=node_inputs)
 
         wrapped: Callable[..., Coroutine[Any, Any, dict[str, Any]]] = _base
@@ -219,6 +222,8 @@ def _coerce_to_list(value: Any) -> list[Any]:
             return []
         if isinstance(parsed, list):
             return parsed
+        if isinstance(parsed, dict):
+            return _coerce_to_list(parsed)
         return [parsed] if parsed is not None else []
     if isinstance(value, dict):
         for v in value.values():
@@ -414,11 +419,28 @@ def _register_iterator_subgraph(
                 }
                 try:
                     result_state = await body_subgraph.ainvoke(child_state)
+                    child_task_outputs = result_state.get("task_outputs", {})
+                    iteration_child_results = []
+                    for child_id in children:
+                        child_iteration = result_state.get("iterations", {}).get(child_id, 1) - 1
+                        child_output = child_task_outputs.get((child_id, max(0, child_iteration)))
+                        if not isinstance(child_output, dict):
+                            continue
+                        iteration_child_results.append({
+                            "taskId": child_id,
+                            "taskTitle": str(node_lookup.get(child_id, {}).get("label") or child_id),
+                            "status": str(child_output.get("status") or "completed"),
+                            "output": child_output.get("display_text") or child_output.get("displayText") or child_output.get("output"),
+                            "components": child_output.get("components") or [],
+                            "reasoningChain": child_output.get("reasoning_trace") or child_output.get("reasoningChain") or [],
+                            "artifacts": child_output.get("artifacts") or [],
+                        })
                     child_results.append({
                         "index": index,
                         "status": "completed",
                         "item_preview": str(item)[:240],
-                        "output": str(result_state.get("task_outputs", {})),
+                        "output": str(child_task_outputs),
+                        "childResults": iteration_child_results,
                     })
                 except Exception as exc:
                     logger.error("[iterator] Child subgraph failed", iterator_id=_it_id, index=index, error=str(exc))

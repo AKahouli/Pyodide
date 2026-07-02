@@ -23,9 +23,17 @@ const mailboxCapabilityMock = vi.hoisted(() => ({
     missingScopes: string[];
     grantedScopes: string[];
   },
+  fetch: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/modules/connected-app/store', () => ({
+  useConnectedAppStore: (selector: (state: {
+    fetchMailboxCapability: typeof mailboxCapabilityMock.fetch;
+    mailboxCapability: typeof mailboxCapabilityMock.current;
+  }) => unknown) => selector({
+    fetchMailboxCapability: mailboxCapabilityMock.fetch,
+    mailboxCapability: mailboxCapabilityMock.current,
+  }),
   useMailboxCapability: () => mailboxCapabilityMock.current,
 }));
 
@@ -37,14 +45,18 @@ vi.mock('sonner', () => ({
   toast: { error: vi.fn() },
 }));
 
+const localEndOfDayIso = (year: number, monthIndex: number, day: number): string =>
+  new Date(year, monthIndex, day, 23, 59, 59, 999).toISOString();
+
 describe('PlaybookScheduleSheet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storeMock.triggerSaving = false;
     mailboxCapabilityMock.current = null;
+    mailboxCapabilityMock.fetch.mockResolvedValue(undefined);
   });
 
-  it('shows manual trigger and hides schedule editors when no automated trigger is selected', () => {
+  it('shows manual trigger and hides schedule editors when no automated trigger is selected', async () => {
     render(
       <PlaybookScheduleSheet
         open
@@ -59,7 +71,7 @@ describe('PlaybookScheduleSheet', () => {
     expect(screen.getByText('triggers.automated.noneTitle')).toBeInTheDocument();
     expect(screen.getByText('triggers.automated.scheduleTitle')).toBeInTheDocument();
     expect(screen.getByText('triggers.automated.mailTitle')).toBeInTheDocument();
-    expect(screen.getByText('triggers.automated.mailStatusSetup')).toBeInTheDocument();
+    expect(await screen.findByText('triggers.automated.mailStatusSetup')).toBeInTheDocument();
     expect(screen.queryByText('schedule.mode')).not.toBeInTheDocument();
   });
 
@@ -115,7 +127,7 @@ describe('PlaybookScheduleSheet', () => {
     expect(storeMock.upsertPlaybookTriggerSchedule).toHaveBeenCalledWith('p1', { enabled: false });
   });
 
-  it('shows mailbox readiness hint for future mail trigger support', () => {
+  it('shows mailbox readiness hint for future mail trigger support', async () => {
     mailboxCapabilityMock.current = {
       connected: true,
       mailboxReady: true,
@@ -132,10 +144,10 @@ describe('PlaybookScheduleSheet', () => {
       />,
     );
 
-    expect(screen.getByText('triggers.automated.mailReady')).toBeInTheDocument();
+    expect(await screen.findByText('triggers.automated.mailReady')).toBeInTheDocument();
   });
 
-  it('shows missing mailbox scopes hint when mail permissions are incomplete', () => {
+  it('shows missing mailbox scopes hint when mail permissions are incomplete', async () => {
     mailboxCapabilityMock.current = {
       connected: true,
       mailboxReady: false,
@@ -152,7 +164,7 @@ describe('PlaybookScheduleSheet', () => {
       />,
     );
 
-    expect(screen.getByText('triggers.automated.mailScopesMissing')).toBeInTheDocument();
+    expect(await screen.findByText('triggers.automated.mailScopesMissing')).toBeInTheDocument();
   });
 
   it('saves mail trigger filters when mail is selected', async () => {
@@ -192,14 +204,14 @@ describe('PlaybookScheduleSheet', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.from' }), 'alerts@example.com');
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.subjectContains' }), 'invoice');
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.bodyContains' }), 'urgent');
-    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.autoRenewUntil' }), '2026-05-01');
+    await userEvent.type(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), '2026-05-01');
     await userEvent.click(screen.getByRole('checkbox', { name: 'triggers.mailConfig.hasAttachments' }));
     await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
 
     expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
       enabled: true,
       mailboxAppKey: 'microsoft',
-      autoRenewUntil: '2026-05-01T23:59:59.999Z',
+      autoRenewUntil: localEndOfDayIso(2026, 4, 1),
       attachmentImportEnabled: false,
       allowedAttachmentExtensions: [],
       filters: {
@@ -211,7 +223,7 @@ describe('PlaybookScheduleSheet', () => {
     });
   });
 
-  it('does not force hasAttachments false when the checkbox is unchecked', async () => {
+  it('serializes an unchecked hasAttachments filter as false', async () => {
     render(
       <PlaybookScheduleSheet
         open
@@ -257,7 +269,7 @@ describe('PlaybookScheduleSheet', () => {
         from: [],
         subjectContains: [],
         bodyContains: [],
-        hasAttachments: null,
+        hasAttachments: false,
       },
     });
   });
@@ -307,12 +319,12 @@ describe('PlaybookScheduleSheet', () => {
       screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' }),
       'https://example.test/webhook',
     );
-    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.autoRenewUntil' }), '2026-05-01');
+    await userEvent.type(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), '2026-05-01');
     await userEvent.click(screen.getByRole('button', { name: 'triggers.mailConfig.syncSubscription' }));
 
     expect(storeMock.syncPlaybookTriggerMailSubscription).toHaveBeenCalledWith('p1', {
       notificationUrl: 'https://example.test/webhook',
-      autoRenewUntil: '2026-05-01T23:59:59.999Z',
+      autoRenewUntil: localEndOfDayIso(2026, 4, 1),
     });
   });
 });

@@ -28,6 +28,7 @@ The Agent module manages AI agents — both user-created personal agents and sys
 - **Tool Assignment**: Agents can be assigned tools from the Tool module
 - **Knowledge Base Assignment**: Personal agents can reference workspaces for RAG context
 - **Sharing**: A personal agent can be shared with other users by email, with `read` or `write` access (mirrors the Team module's sharing)
+- **Agent Memory**: Agents holding the `smart-memory` connector expose `hasSmartMemory` in their response; their memory cards are read/deleted through the [Memory Cards module](../memory-cards/README.md) (delete gated by `canWriteAgent`)
 - **Stream Integration**: Builds complete gRPC-ready agent payloads with resolved prompts, tools, and model info
 - **Batch Processing**: Resolves prompts and tools in batch for efficiency (2–3 DB queries)
 - **Name Uniqueness**: Per-user for personal agents, global for default agents
@@ -215,6 +216,9 @@ Base route: `/admin/agents` — requires Bearer token + permissions.
 | Method | Description |
 |--------|-------------|
 | `countByAgentType(agentTypeId)` | Count agents using a specific agent type (for deletion checks) |
+| `canWriteAgent(userId, agentId)` | Whether the user may modify the agent (owner or `write`-share; default agents are read-only). Used by the Memory Cards module to gate memory deletion. |
+
+> **Smart-memory flag:** `getAllForUserResponse()` sets `hasSmartMemory` on each returned agent by resolving its connectors in a single query and checking for the `smart-memory` slug (owned **and** shared agents). The frontend uses this flag to decide whether to show the agent-memories icon. See the [Memory Cards module](../memory-cards/README.md).
 
 ---
 
@@ -270,6 +274,8 @@ Returned by all CRUD endpoints:
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  connectors?: string[];
+  hasSmartMemory?: boolean;           // true when the agent has the "smart-memory" connector
   isDefault: boolean;
   isActive: boolean;
   createdBy: string;

@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
@@ -14,8 +14,18 @@ import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-templa
 import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-renderer.service';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import { PlaybookIntentGraphBindingResolverService } from './playbook-intent-graph-binding-resolver.service';
+import { PlaybookIntentBlueprintParserService } from './playbook-intent-blueprint-parser.service';
+import { PlaybookIntentGraphBuilderService } from './playbook-intent-graph-builder.service';
+import { PlaybookFlowPrimitiveRegistryService } from './playbook-flow-primitive-registry.service';
+import { PlaybookIntentSuggestionDiagnosticsService } from './playbook-intent-suggestion-diagnostics.service';
+import { PlaybookIntentBlueprintRepairService } from './playbook-intent-blueprint-repair.service';
+import { PlaybookIntentBlueprintCompilerService } from './playbook-intent-blueprint-compiler.service';
+import type { BuilderDesignCatalog } from './playbook-intent-graph-builder.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 import type { PlaybookIntentClarificationQuestion, PlaybookIntentDesignResponse } from '../interfaces/playbook-flow-intent-design.interface';
+import type { PlaybookIntentTraceEntry, PlaybookIntentTraceResponse } from '../interfaces/playbook-flow-intent-trace.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
+import { PlaybookFlowIntentTraceService } from './playbook-flow-intent-trace.service';
 import { parseDesignResourceLine } from '../utils/playbook-flow-safe-text.util';
 
 export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
@@ -23,6 +33,12 @@ export type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNorma
 const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
 const NO_RESOLVED_DESIGN_RESOURCES = '[]';
 const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
+const ROUTER_CONDITION_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] as const;
+
+type IntentUserMessageContent = string | Array<
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+>;
 
 interface ResolvedDesignResource {
   question: string;
@@ -39,21 +55,24 @@ interface ResolvedDesignResourceBindingValue extends ResolvedDesignResource {
   documentId?: string;
 }
 
-interface AvailableDesignCatalog {
+export interface AvailableDesignCatalog {
   availableSkills: Array<{
     id: string;
+    skillSlug: string;
     name: string;
     description: string;
     category?: string | null;
   }>;
   availableConnectors: Array<{
     id: string;
+    connectorSlug: string;
     name: string;
     description: string;
     category?: string | null;
   }>;
   availableConnectorActions: Array<{
     connectorId: string;
+    connectorSlug: string;
     connectorName: string;
     actionKey: string;
     label: string;
@@ -70,6 +89,8 @@ interface AvailableDesignCatalog {
     }>;
   }>;
 }
+
+type PromptAvailableDesignCatalog = Omit<AvailableDesignCatalog, 'availableSkills'>;
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -96,7 +117,25 @@ export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
-  templateType?: string | null;
+  nodeTemplateKey?: string | null;
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval' | null;
+  taskType?: string | null;
+  routerConfig?: {
+    outputLabels: string[];
+    maxIterations?: number | null;
+    conditions?: Array<{
+      label: string;
+      sourceNode?: string | null;
+      sourcePort?: string | null;
+      path?: string | null;
+      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
+      value?: unknown;
+    }>;
+    defaultLabel?: string | null;
+  } | null;
+  humanApprovalConfig?: Record<string, unknown> | null;
+  retryPolicy?: { maxRetries: number; delayMs?: number } | null;
+  modelId?: string | null;
   inputPorts?: Array<{
     id: string;
     name?: string | null;
@@ -108,13 +147,36 @@ export interface PlaybookIntentTaskDraft {
     name?: string | null;
     artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
   }>;
+  toolBindings?: Array<{
+    id: string;
+    connectorId: string;
+    connectorSlug?: string;
+    connectorName?: string;
+    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    isEnabled?: boolean;
+  }>;
+  skillBindings?: Array<{
+    id: string;
+    skillId: string;
+    skillSlug?: string;
+    skillName?: string;
+    isEnabled?: boolean;
+  }>;
   iteratorBody?: {
     steps: Array<{
       nodeRef: string;
       title: string;
       description: string;
       agentSlug?: string | null;
-      templateType?: string | null;
+      nodeTemplateKey?: string | null;
+      nodeType?: PlaybookIntentTaskDraft['nodeType'];
+      taskType?: string | null;
+      routerConfig?: PlaybookIntentTaskDraft['routerConfig'];
+      humanApprovalConfig?: PlaybookIntentTaskDraft['humanApprovalConfig'];
+      retryPolicy?: PlaybookIntentTaskDraft['retryPolicy'];
+      modelId?: string | null;
+      toolBindings?: PlaybookIntentTaskDraft['toolBindings'];
+      skillBindings?: PlaybookIntentTaskDraft['skillBindings'];
       inputPorts?: Array<{
         id: string;
         name?: string | null;
@@ -130,6 +192,9 @@ export interface PlaybookIntentTaskDraft {
     edges: Array<{
       sourceNodeRef: string;
       targetNodeRef: string;
+      edgeKind?: 'sequential' | 'conditional';
+      routerLabel?: string | null;
+      priority?: number | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
     }>;
@@ -177,19 +242,26 @@ export type PlaybookIntentWorkflowChange =
     type: 'create_edge' | 'delete_edge';
     sourceTaskId: string | null;
     sourceNodeRef: string | null;
+    sourceIteratorNodeRef?: string | null;
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     sourceOutputPortId?: string | null;
     targetInputPortId?: string | null;
+    edgeKind?: 'sequential' | 'conditional';
+    routerLabel?: string | null;
+    priority?: number | null;
   }
   | {
     type: 'create_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'node-output';
     sourceTaskId: string | null;
     sourceNodeRef: string | null;
+    sourceIteratorNodeRef?: string | null;
     sourcePort: string | null;
     iteration?: 'current' | 'previous';
   }
@@ -197,6 +269,7 @@ export type PlaybookIntentWorkflowChange =
     type: 'create_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'constant';
     constantValue: ResolvedDesignResourceBindingValue;
@@ -205,9 +278,11 @@ export type PlaybookIntentWorkflowChange =
     type: 'delete_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceTaskId?: string | null;
     sourceNodeRef?: string | null;
+    sourceIteratorNodeRef?: string | null;
     sourcePort?: string | null;
   };
 
@@ -230,6 +305,11 @@ interface PlaybookIntentWorkflowPlanSuggestion {
     businessOutcome: string;
   };
   changes: PlaybookIntentWorkflowChange[];
+  diagnostics?: PlaybookIntentDiagnostic[];
+  validationDiagnostics?: PlaybookIntentDiagnostic[];
+  validationStatus?: 'valid' | 'valid_with_warnings' | 'blocked';
+  blockingReasons?: string[];
+  repairSummary?: string | null;
   isDirectIntentFallback: false;
 }
 
@@ -243,19 +323,32 @@ export interface PlaybookIntentAnalysisContext {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  userMessageContent: IntentUserMessageContent;
   promptVariables: Record<string, unknown>;
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
+  availableDesignCatalog: AvailableDesignCatalog;
+  nodeTemplates: Array<{
+    id: string; key: string; nodeType: string; title: string; description?: string; category: string;
+    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown
+  }>;
 }
+
+const DEFAULT_GENERIC_NODE_TEMPLATE_KEY = 'generic.agent_step';
 
 export interface PlaybookFlowIntentResponse {
   suggestions: PlaybookIntentSuggestion[];
   model: string;
   settings: EffectiveFlowDesignSettings;
+  lastTrace?: PlaybookIntentTraceEntry;
 }
 
 @Injectable()
 export class PlaybookFlowIntentService {
+  private readonly logger = new Logger(PlaybookFlowIntentService.name);
+
   constructor(
     @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
@@ -265,12 +358,26 @@ export class PlaybookFlowIntentService {
     private readonly agentService: AgentService,
     private readonly nodeTemplateService: PlaybookFlowNodeTemplateService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly traceService: PlaybookFlowIntentTraceService = new PlaybookFlowIntentTraceService(),
     private readonly graphBindingResolver: PlaybookIntentGraphBindingResolverService = new PlaybookIntentGraphBindingResolverService(),
+    blueprintParser: PlaybookIntentBlueprintParserService = new PlaybookIntentBlueprintParserService(),
+    graphBuilder: PlaybookIntentGraphBuilderService = new PlaybookIntentGraphBuilderService(
+      new PlaybookIntentGraphBindingResolverService(),
+    ),
+    private readonly primitiveRegistry: PlaybookFlowPrimitiveRegistryService = new PlaybookFlowPrimitiveRegistryService(),
+    suggestionDiagnostics: PlaybookIntentSuggestionDiagnosticsService = new PlaybookIntentSuggestionDiagnosticsService(),
+    blueprintRepair: PlaybookIntentBlueprintRepairService = new PlaybookIntentBlueprintRepairService(),
+    private readonly blueprintCompiler: PlaybookIntentBlueprintCompilerService = new PlaybookIntentBlueprintCompilerService(
+      blueprintParser,
+      blueprintRepair,
+      graphBuilder,
+      suggestionDiagnostics,
+    ),
     private readonly skillService?: SkillService,
     private readonly connectorService?: ConnectorService,
     private readonly workspaceService?: WorkspaceService,
     private readonly workspaceDocumentService?: WorkspaceDocumentService,
-  ) {}
+  ) { }
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
@@ -280,21 +387,17 @@ export class PlaybookFlowIntentService {
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: context.systemPrompt },
-        { role: 'user', content: context.userPrompt },
+        { role: 'user', content: context.userMessageContent },
       ],
     }, { timeout: 180000 });
+    const rawOutput = this.extractChatCompletionText(response.data);
+    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.analyze', context, rawOutput);
 
     return {
-      suggestions: this.normalizeConstructionSuggestions({
-        raw: this.extractChatCompletionText(response.data),
-        dto,
-        selectedNodeId: context.selectedNodeId,
-        limits: context.limits,
-        validationContext: context.validationContext,
-        includeFallback: true,
-      }),
+      suggestions: this.normalizeConstructionOutput({ raw: rawOutput, context }),
       model: context.model,
       settings: context.effectiveSettings,
+      lastTrace,
     };
   }
 
@@ -304,20 +407,60 @@ export class PlaybookFlowIntentService {
     const userPrompt = prompt?.userTemplate?.trim()
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
       : context.userPrompt;
+    const systemPrompt = prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt();
     const response = await context.httpClient.post('/v1/chat/completions', {
       model: context.model,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt() },
-        { role: 'user', content: userPrompt },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: this.buildUserMessageContent(userPrompt, dto) },
       ],
     }, { timeout: 180000 });
+    const rawOutput = this.extractChatCompletionText(response.data);
+    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
+      systemPromptOverride: systemPrompt,
+      userPromptOverride: userPrompt,
+    });
 
-    return this.normalizeDesignAssessment(
-      this.extractChatCompletionText(response.data),
-      dto.intent,
-    );
+    return {
+      ...this.normalizeDesignAssessment(rawOutput, dto.intent),
+      lastTrace,
+    };
+  }
+
+  getIntentTraces(flowId: string, ownerId: string): PlaybookIntentTraceResponse {
+    return this.traceService.list(ownerId, flowId);
+  }
+
+  private recordTrace(
+    flowId: string,
+    ownerId: string,
+    stage: PlaybookIntentTraceEntry['stage'],
+    context: PlaybookIntentAnalysisContext,
+    rawOutput: string,
+    overrides?: { systemPromptOverride?: string; userPromptOverride?: string },
+  ): PlaybookIntentTraceEntry {
+    const entry: PlaybookIntentTraceEntry = {
+      stage,
+      model: context.model,
+      systemPrompt: overrides?.systemPromptOverride ?? context.systemPrompt,
+      userPrompt: overrides?.userPromptOverride ?? this.serializeUserMessageContent(context.userMessageContent),
+      rawOutput,
+      createdAt: new Date().toISOString(),
+    };
+    this.traceService.push(ownerId, flowId, entry);
+    return entry;
+  }
+
+  private serializeUserMessageContent(content: IntentUserMessageContent): string {
+    if (typeof content === 'string') return content;
+    return content
+      .map((part) => {
+        if (part.type === 'text') return part.text;
+        return `[image: ${part.image_url.url.slice(0, 40)}…]`;
+      })
+      .join('\n\n');
   }
 
   async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
@@ -358,12 +501,13 @@ export class PlaybookFlowIntentService {
         role: agent.role,
       })), null, 2),
       node_templates: JSON.stringify(nodeTemplates.items.map((template) => ({
-        type: template.type,
+        key: template.key,
         title: template.title,
         description: template.description || '',
         category: template.category,
-        nodeType: template.nodeType,
-        executionMode: template.executionMode,
+        semanticNodeType: template.nodeType,
+        primitiveKind: template.nodeType,
+        isDefault: template.key === DEFAULT_GENERIC_NODE_TEMPLATE_KEY,
         inputPorts: template.inputPorts.map((port) => ({
           id: port.id,
           name: port.name,
@@ -378,11 +522,28 @@ export class PlaybookFlowIntentService {
           description: port.description || '',
         })),
         recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        selectedAction: template.selectedAction,
+        requiredToolNames: template.requiredToolNames,
+        iteratorConfig: template.iteratorConfig,
+        routerConfig: template.routerConfig,
+        humanApprovalConfig: template.humanApprovalConfig,
+        retryPolicy: template.retryPolicy,
+        modelId: template.modelId,
       })), null, 2),
+      primitive_catalog: JSON.stringify(this.primitiveRegistry.getPromptCatalog(), null, 2),
+      blueprint_schema_version: '2',
+      blueprint_schema_hint: JSON.stringify({
+        blueprint: {
+          version: 2,
+          nodes: ['ref', 'label', 'purpose', 'nodeTemplateKey', 'primitive', 'inputPorts', 'outputPorts'],
+          links: ['sourceRef', 'targetRef', 'kind', 'routerLabel', 'sourceOutputPortId', 'targetInputPortId'],
+          bindings: ['sourceKind', 'sourceRef', 'sourcePort', 'targetRef', 'targetPort'],
+        },
+      }, null, 2),
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
-      available_design_catalog: JSON.stringify(availableDesignCatalog, null, 2),
+      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog), null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -402,10 +563,63 @@ export class PlaybookFlowIntentService {
       model,
       systemPrompt,
       userPrompt,
+      userMessageContent: this.buildUserMessageContent(userPrompt, dto),
       promptVariables,
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
+      availableDesignCatalog,
+      nodeTemplates: nodeTemplates.items.map((template) => ({
+        id: template.id,
+        key: template.key,
+        nodeType: template.nodeType,
+        title: template.title,
+        description: template.description || '',
+        category: template.category,
+        inputPorts: template.inputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          required: port.required === true,
+          description: port.description || '',
+        })),
+        outputPorts: template.outputPorts.map((port) => ({
+          id: port.id,
+          name: port.name,
+          artifactKind: port.artifactKind,
+          description: port.description || '',
+        })),
+        recommendedAgentTypeSlug: template.recommendedAgentTypeSlug,
+        selectedAction: template.selectedAction,
+        requiredToolNames: template.requiredToolNames,
+        iteratorConfig: template.iteratorConfig,
+        routerConfig: template.routerConfig,
+        humanApprovalConfig: template.humanApprovalConfig,
+        retryPolicy: template.retryPolicy,
+        modelId: template.modelId,
+        enabled: template.enabled,
+      })),
     };
+  }
+
+  private buildUserMessageContent(userPrompt: string, dto: RequestPlaybookFlowIntentDto): IntentUserMessageContent {
+    if (!dto.images?.length) return userPrompt;
+    const imageNames = dto.images
+      .map((image, index) => image.name?.trim() || `pasted image ${index + 1}`)
+      .join(', ');
+    return [
+      {
+        type: 'text',
+        text: `${userPrompt}\n\n<Attached_Images>\n${dto.images.length} image(s) attached: ${imageNames}. Inspect the attached image content as primary user context. If it shows a diagram, layout, screenshot, or visual workflow, preserve its visible entities, grouping, order, labels, arrows, and relationships in the generated workflow.\n</Attached_Images>`,
+      },
+      ...dto.images.map((image) => ({
+        type: 'image_url' as const,
+        image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+      })),
+    ];
+  }
+
+  buildGraphBuilderDesignCatalog(catalog: AvailableDesignCatalog): BuilderDesignCatalog {
+    return this.blueprintCompiler.buildGraphBuilderDesignCatalog(catalog);
   }
 
   private async buildAvailableDesignCatalog(ownerId: string): Promise<AvailableDesignCatalog> {
@@ -421,12 +635,14 @@ export class PlaybookFlowIntentService {
     return {
       availableSkills: skills.map((skill) => ({
         id: skill.id,
+        skillSlug: skill.name,
         name: skill.name,
         description: skill.description || '',
         category: skill.categoryName ?? null,
       })),
       availableConnectors: connectors.map((connector) => ({
         id: connector.id,
+        connectorSlug: connector.slug,
         name: connector.name,
         description: connector.description || '',
         category: connector.categoryName ?? null,
@@ -436,6 +652,7 @@ export class PlaybookFlowIntentService {
           .filter((action) => action.isEnabled !== false)
           .map((action) => ({
             connectorId: connector.id,
+            connectorSlug: connector.slug,
             connectorName: connector.name,
             actionKey: action.key,
             label: action.label || action.key,
@@ -443,6 +660,14 @@ export class PlaybookFlowIntentService {
           })),
       ),
       availableWorkspaces: await this.buildAvailableWorkspaceCatalog(workspaces.workspaces || []),
+    };
+  }
+
+  private buildPromptAvailableDesignCatalog(catalog: AvailableDesignCatalog): PromptAvailableDesignCatalog {
+    return {
+      availableConnectors: catalog.availableConnectors,
+      availableConnectorActions: catalog.availableConnectorActions,
+      availableWorkspaces: catalog.availableWorkspaces,
     };
   }
 
@@ -584,6 +809,13 @@ export class PlaybookFlowIntentService {
       args.validationContext,
       args.includeFallback,
     );
+  }
+
+  normalizeConstructionOutput(args: {
+    raw: string;
+    context: PlaybookIntentAnalysisContext;
+  }): PlaybookIntentSuggestion[] {
+    return this.blueprintCompiler.compile({ raw: args.raw, context: args.context });
   }
 
   private buildDesignAssessmentSystemPrompt(): string {
@@ -858,7 +1090,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const taskTitle = operationType === 'update_node' ? explicitTitle : (explicitTitle || derivedLabel);
     const taskDescription = this.normalizeText(item.taskDescription) || this.normalizeText(nestedTask?.description) || this.normalizeText(item.summary);
     const agentSlug = this.normalizeText(item.agentSlug) || this.normalizeText(nestedTask?.agentSlug);
-    const templateType = this.normalizeText(item.templateType) || this.normalizeText(nestedTask?.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey) || this.normalizeText(nestedTask?.nodeTemplateKey);
     const inputPorts = nestedTask ? this.normalizeInputPorts(nestedTask.inputPorts, limits) : [];
     const outputPorts = nestedTask ? this.normalizeOutputPorts(nestedTask.outputPorts, limits) : [];
 
@@ -869,7 +1101,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           ...(taskTitle ? { title: taskTitle } : {}),
           description: taskDescription,
           ...(agentSlug ? { agentSlug } : {}),
-          ...(templateType ? { templateType } : {}),
+          ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
           ...(inputPorts.length ? { inputPorts } : {}),
           ...(outputPorts.length ? { outputPorts } : {}),
         }
@@ -877,7 +1109,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           title: taskTitle || label,
           description: taskDescription,
           agentSlug: agentSlug || null,
-          templateType: templateType || null,
+          nodeTemplateKey: nodeTemplateKey || null,
           ...(inputPorts.length ? { inputPorts } : {}),
           ...(outputPorts.length ? { outputPorts } : {}),
         };
@@ -929,11 +1161,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       }
     }
 
-    const resolvedChanges = this.graphBindingResolver.resolveWorkflowChanges({
+    const resolved = this.graphBindingResolver.resolveWorkflowChanges({
       changes: acceptedChanges,
       context: ctx,
       deletedTaskIds,
     });
+    const resolvedChanges = resolved.changes;
 
     if (resolvedChanges.length === 0) {
       return null;
@@ -1139,8 +1372,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     if (item.type === 'create_edge' || item.type === 'delete_edge') {
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef) || this.normalizeText(item.sourceRef) || this.normalizeText(item.fromNodeRef);
+      const sourceIteratorNodeRef = this.normalizeText(item.sourceIteratorNodeRef) || this.normalizeText(item.sourceIteratorRef);
       const targetTaskId = this.normalizeText(item.targetTaskId);
       const targetNodeRef = this.normalizeText(item.targetNodeRef) || this.normalizeText(item.targetRef) || this.normalizeText(item.toNodeRef);
+      const targetIteratorNodeRef = this.normalizeText(item.targetIteratorNodeRef) || this.normalizeText(item.targetIteratorRef);
 
       if (!(sourceTaskId || sourceNodeRef) || !(targetTaskId || targetNodeRef)) {
         return null;
@@ -1150,8 +1385,10 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         type: item.type,
         sourceTaskId: sourceTaskId || null,
         sourceNodeRef: sourceNodeRef || null,
+        ...(sourceIteratorNodeRef ? { sourceIteratorNodeRef } : {}),
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
+        ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
         ...(this.normalizeText(item.sourceOutputPortId) ? { sourceOutputPortId: this.normalizeText(item.sourceOutputPortId) } : {}),
         ...(this.normalizeText(item.targetInputPortId) ? { targetInputPortId: this.normalizeText(item.targetInputPortId) } : {}),
       };
@@ -1160,12 +1397,14 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     if (item.type === 'create_data_binding') {
       const targetTaskId = this.normalizeText(item.targetTaskId);
       const targetNodeRef = this.normalizeText(item.targetNodeRef);
+      const targetIteratorNodeRef = this.normalizeText(item.targetIteratorNodeRef) || this.normalizeText(item.targetIteratorRef);
       const targetPort = this.normalizeText(item.targetPort);
       if (!targetPort || !(targetTaskId || targetNodeRef)) {
         return null;
       }
       const sourceTaskId = this.normalizeText(item.sourceTaskId);
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
+      const sourceIteratorNodeRef = this.normalizeText(item.sourceIteratorNodeRef) || this.normalizeText(item.sourceIteratorRef);
       const sourcePort = this.normalizeText(item.sourcePort);
       if (item.sourceKind === 'constant') {
         const constantValue = this.normalizeResolvedDesignResourceBindingValue(item.constantValue);
@@ -1173,6 +1412,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           type: 'create_data_binding',
           targetTaskId: targetTaskId || null,
           targetNodeRef: targetNodeRef || null,
+          ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
           targetPort,
           sourceKind: 'constant',
           constantValue,
@@ -1186,10 +1426,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         type: 'create_data_binding',
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
+        ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
         targetPort,
         sourceKind: 'node-output',
         sourceTaskId: sourceTaskId || null,
         sourceNodeRef: sourceNodeRef || null,
+        ...(sourceIteratorNodeRef ? { sourceIteratorNodeRef } : {}),
         sourcePort: sourcePort || null,
         iteration: item.iteration === 'previous' ? 'previous' : 'current',
       };
@@ -1265,7 +1507,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
-    const templateType = this.normalizeText(item.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
+    const nodeType = this.normalizeNodeType(item.nodeType);
+    const taskType = this.normalizeText(item.taskType);
+    const routerConfig = this.normalizeRouterConfig(item.routerConfig, title || fallbackTitle || 'create_node');
+    const humanApprovalConfig = this.normalizeRecord(item.humanApprovalConfig);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1274,7 +1520,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         title,
         description,
         ...(agentSlug ? { agentSlug } : {}),
-        ...(templateType ? { templateType } : {}),
+        ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+        ...(nodeType ? { nodeType } : {}),
+        ...(taskType ? { taskType } : {}),
+        ...(routerConfig ? { routerConfig } : {}),
+        ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
         ...(inputPorts.length ? { inputPorts } : {}),
         ...(outputPorts.length ? { outputPorts } : {}),
         ...(iteratorBody ? { iteratorBody } : {}),
@@ -1292,7 +1542,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
-    const templateType = this.normalizeText(item.templateType);
+    const nodeTemplateKey = this.normalizeText(item.nodeTemplateKey);
+    const nodeType = this.normalizeNodeType(item.nodeType);
+    const taskType = this.normalizeText(item.taskType);
+    const routerConfig = this.normalizeRouterConfig(item.routerConfig, title || fallbackTitle || 'update_node');
+    const humanApprovalConfig = this.normalizeRecord(item.humanApprovalConfig);
     const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
     const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
@@ -1300,7 +1554,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
       ...(agentSlug ? { agentSlug } : {}),
-      ...(templateType ? { templateType } : {}),
+      ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+      ...(nodeType ? { nodeType } : {}),
+      ...(taskType ? { taskType } : {}),
+      ...(routerConfig ? { routerConfig } : {}),
+      ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
       ...(iteratorBody ? { iteratorBody } : {}),
@@ -1329,7 +1587,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
 
           const description = this.normalizeText(draft.description);
           const agentSlug = this.normalizeText(draft.agentSlug);
-          const templateType = this.normalizeText(draft.templateType);
+          const nodeTemplateKey = this.normalizeText(draft.nodeTemplateKey);
+          const nodeType = this.normalizeNodeType(draft.nodeType);
+          const taskType = this.normalizeText(draft.taskType);
+          const routerConfig = this.normalizeRouterConfig(draft.routerConfig, nodeRef);
+          const humanApprovalConfig = this.normalizeRecord(draft.humanApprovalConfig);
           const inputPorts = this.normalizeInputPorts(draft.inputPorts, limits);
           const outputPorts = this.normalizeOutputPorts(draft.outputPorts, limits);
           return {
@@ -1337,7 +1599,11 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
             title,
             description,
             ...(agentSlug ? { agentSlug } : {}),
-            ...(templateType ? { templateType } : {}),
+            ...(nodeTemplateKey ? { nodeTemplateKey } : {}),
+            ...(nodeType ? { nodeType } : {}),
+            ...(taskType ? { taskType } : {}),
+            ...(routerConfig ? { routerConfig } : {}),
+            ...(humanApprovalConfig ? { humanApprovalConfig } : {}),
             ...(inputPorts.length ? { inputPorts } : {}),
             ...(outputPorts.length ? { outputPorts } : {}),
           };
@@ -1463,6 +1729,68 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       || value === 'dashboard'
       ? value
       : '';
+  }
+
+  private normalizeNodeType(value: unknown): PlaybookIntentTaskDraft['nodeType'] | undefined {
+    const nodeType = this.normalizeText(value);
+    if (nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation' || nodeType === 'iterator' || nodeType === 'router' || nodeType === 'human_approval') {
+      return nodeType;
+    }
+    return undefined;
+  }
+
+  private normalizeRouterConfig(value: unknown, itemId: string): PlaybookIntentTaskDraft['routerConfig'] | undefined {
+    const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    if (!raw) return undefined;
+    const outputLabels = Array.isArray(raw.outputLabels)
+      ? raw.outputLabels.map((label) => this.normalizeText(label)).filter(Boolean)
+      : [];
+    if (outputLabels.length === 0) {
+      this.logger.warn(`playbook_intent_direct_plan_drop rule=router_config_missing_output_labels item=${itemId}`);
+      return undefined;
+    }
+    const defaultLabel = this.normalizeText(raw.defaultLabel);
+    const conditions = this.normalizeRouterConditions(raw.conditions, itemId, outputLabels);
+    return {
+      outputLabels: [...new Set(outputLabels)],
+      ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : {}),
+      ...(defaultLabel ? { defaultLabel } : {}),
+      ...(conditions.length ? { conditions } : {}),
+    };
+  }
+
+  private normalizeRouterConditions(
+    value: unknown,
+    itemId: string,
+    outputLabels: string[],
+  ): NonNullable<NonNullable<PlaybookIntentTaskDraft['routerConfig']>['conditions']> {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((condition, index) => {
+        const raw = condition && typeof condition === 'object' && !Array.isArray(condition) ? condition as Record<string, unknown> : null;
+        if (!raw) return null;
+        const label = this.normalizeText(raw.label);
+        const sourceNode = this.normalizeText(raw.sourceNode);
+        const sourcePort = this.normalizeText(raw.sourcePort);
+        const operator = this.normalizeText(raw.operator) as NonNullable<NonNullable<PlaybookIntentTaskDraft['routerConfig']>['conditions']>[number]['operator'];
+        if (!label || !outputLabels.includes(label) || !sourcePort || !(ROUTER_CONDITION_OPERATORS as readonly string[]).includes(operator)) {
+          this.logger.warn(`playbook_intent_direct_plan_drop rule=router_condition_invalid item=${itemId}:${index}`);
+          return null;
+        }
+        return {
+          label,
+          ...(sourceNode ? { sourceNode } : {}),
+          sourcePort,
+          ...(this.normalizeText(raw.path) ? { path: this.normalizeText(raw.path) } : {}),
+          operator,
+          ...(Object.prototype.hasOwnProperty.call(raw, 'value') ? { value: raw.value } : {}),
+        };
+      })
+      .filter((condition): condition is NonNullable<typeof condition> => condition !== null);
+  }
+
+  private normalizeRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : undefined;
   }
 
   private normalizeInputPorts(value: unknown, limits: IntentNormalizationLimits): NonNullable<PlaybookIntentTaskDraft['inputPorts']> {

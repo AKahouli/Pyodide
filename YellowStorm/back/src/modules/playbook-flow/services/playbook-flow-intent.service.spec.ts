@@ -18,6 +18,13 @@ const DEFAULT_LIMITS: EffectiveFlowDesignSettings['intentNormalizationLimits'] =
   maxIteratorBodyEdges: 24,
 };
 
+const EMPTY_AVAILABLE_DESIGN_CATALOG = {
+  availableSkills: [],
+  availableConnectors: [],
+  availableConnectorActions: [],
+  availableWorkspaces: [],
+};
+
 function createService(overrides: Partial<{
   flowService: PlaybookFlowService;
   settingsService: PlaybookFlowSettingsService;
@@ -39,6 +46,13 @@ function createService(overrides: Partial<{
     overrides.agentService || {} as AgentService,
     overrides.nodeTemplateService || {} as PlaybookFlowNodeTemplateService,
     overrides.liteLLMConnectionService || {} as LiteLLMConnectionService,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     undefined,
     overrides.skillService,
     overrides.connectorService,
@@ -136,9 +150,12 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -148,6 +165,65 @@ describe('PlaybookFlowIntentService normalization', () => {
       messages: [
         { role: 'system', content: 'Custom design assessment prompt' },
         { role: 'user', content: 'User intent context' },
+      ],
+    }), { timeout: 180000 });
+  });
+
+  it('builds multimodal user message content when prompt images are provided', () => {
+    const content = (service as any).buildUserMessageContent('Use this diagram', {
+      intent: 'Use this diagram',
+      images: [{ mediaType: 'image/png', data: 'aW1hZ2U=', name: 'diagram.png' }],
+    });
+
+    expect(content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } }),
+    ]));
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Use this diagram');
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Inspect the attached image content as primary user context');
+    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('diagram.png');
+  });
+
+  it('sends prompt images as multimodal content during design assessment', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom design assessment prompt',
+        userTemplate: 'Prompt={intent_text}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Prompt=Use this diagram',
+      userMessageContent: 'Prompt=Use this diagram',
+      promptVariables: { intent_text: 'Use this diagram' },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', {
+      intent: 'Use this diagram',
+      images: [{ mediaType: 'image/png', data: 'aW1hZ2U=', name: 'diagram.png' }],
+    });
+
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: [
+        { role: 'system', content: 'Custom design assessment prompt' },
+        { role: 'user', content: [
+          { type: 'text', text: expect.stringContaining('Inspect the attached image content as primary user context') },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
+        ] },
       ],
     }), { timeout: 180000 });
   });
@@ -173,12 +249,15 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -212,12 +291,15 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -255,17 +337,36 @@ describe('PlaybookFlowIntentService normalization', () => {
         findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
       } as unknown as AgentService,
       nodeTemplateService: {
-        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+        findEnabled: jest.fn().mockResolvedValue({ items: [{
+          id: 'tpl-1',
+          key: 'generic.agent_step',
+          title: 'Generic agent step',
+          description: 'Default flexible node',
+          category: 'general',
+          nodeType: 'agent',
+          inputPorts: [{ id: 'input', name: 'Input', artifactKind: 'text', required: true, description: 'Input text' }],
+          outputPorts: [{ id: 'output', name: 'Output', artifactKind: 'text', description: 'Output text' }],
+          recommendedAgentTypeSlug: null,
+          selectedAction: 'classify',
+          requiredToolNames: ['policy-engine'],
+          iteratorConfig: null,
+          routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+          humanApprovalConfig: { promptTemplate: 'Approve?' },
+          retryPolicy: { maxRetries: 2, delayMs: 1000 },
+          modelId: 'model-router',
+          enabled: true,
+        }] }),
       } as unknown as PlaybookFlowNodeTemplateService,
       skillService: {
         findAllActive: jest.fn().mockResolvedValue([
-          { id: 'skill-1', name: 'Summarize', description: 'Summarize documents', categoryName: 'Writing' },
+          { id: 'skill-1', name: 'summarize-documents', description: 'Summarize documents', categoryName: 'Writing' },
         ]),
       },
       connectorService: {
         findAllActive: jest.fn().mockResolvedValue([
           {
             id: 'connector-1',
+            slug: 'google-drive',
             name: 'Google Drive',
             description: 'Drive access',
             categoryName: 'Storage',
@@ -290,12 +391,13 @@ describe('PlaybookFlowIntentService normalization', () => {
 
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
+    const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
 
     expect(catalog).toEqual({
-      availableSkills: [{ id: 'skill-1', name: 'Summarize', description: 'Summarize documents', category: 'Writing' }],
-      availableConnectors: [{ id: 'connector-1', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
+        connectorSlug: 'google-drive',
         connectorName: 'Google Drive',
         actionKey: 'search',
         label: 'Search files',
@@ -308,6 +410,27 @@ describe('PlaybookFlowIntentService normalization', () => {
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
+    expect(catalog.availableSkills).toBeUndefined();
+    expect(nodeTemplates[0]).toEqual(expect.objectContaining({
+      key: 'generic.agent_step',
+      semanticNodeType: 'agent',
+      isDefault: true,
+      selectedAction: 'classify',
+      requiredToolNames: ['policy-engine'],
+      routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+      humanApprovalConfig: { promptTemplate: 'Approve?' },
+      retryPolicy: { maxRetries: 2, delayMs: 1000 },
+      modelId: 'model-router',
+    }));
+    expect(context.nodeTemplates[0]).toEqual(expect.objectContaining({
+      selectedAction: 'classify',
+      requiredToolNames: ['policy-engine'],
+      routerConfig: { outputLabels: ['approved', 'rejected'], defaultLabel: 'rejected', maxIterations: 1 },
+      humanApprovalConfig: { promptTemplate: 'Approve?' },
+      retryPolicy: { maxRetries: 2, delayMs: 1000 },
+      modelId: 'model-router',
+    }));
+    expect(nodeTemplates[0].nodeType).toBeUndefined();
     expect(context.userPrompt).toContain('"availableWorkspaces"');
     expect(context.userPrompt).not.toContain('document-1');
     expect(context.userPrompt).not.toContain('originalName');
@@ -334,12 +457,15 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'Fallback user context',
+      userMessageContent: 'Fallback user context',
       promptVariables: {
         intent_text: 'Build workflow',
         captured_clarifications: 'Which datasource?: SAP',
       },
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -370,9 +496,12 @@ describe('PlaybookFlowIntentService normalization', () => {
       model: 'test-model',
       systemPrompt: '',
       userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
       promptVariables: {},
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
     });
 
     await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
@@ -385,12 +514,98 @@ describe('PlaybookFlowIntentService normalization', () => {
     }), { timeout: 180000 });
   });
 
-  it('falls back to clarification questions when design JSON is malformed', () => {
+it('falls back to clarification questions when design JSON is malformed', () => {
     const result = callNormalizeDesign('not-json');
 
     expect(result.status).toBe('needs_clarification');
     if (result.status !== 'needs_clarification') return;
     expect(result.questions[0].choices.length).toBeGreaterThan(0);
+  });
+
+  it('returns and stores a lastTrace for intent.analyze', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"suggestions":[]}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Analyze system prompt',
+        userTemplate: 'Catalog={available_design_catalog}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'gpt-analyze',
+      systemPrompt: 'Analyze system prompt',
+      userPrompt: 'Catalog=…',
+      userMessageContent: 'Catalog=…',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    const response = await service.analyze('flow-1', 'owner-1', { intent: 'Build workflow' });
+    expect(response.lastTrace).toMatchObject({
+      stage: 'intent.analyze',
+      model: 'gpt-analyze',
+      systemPrompt: 'Analyze system prompt',
+      userPrompt: 'Catalog=…',
+      rawOutput: '{"suggestions":[]}',
+    });
+
+    const listed = service.getIntentTraces('flow-1', 'owner-1');
+    expect(listed.intentAnalyze).toHaveLength(1);
+    expect(listed.designAssessment).toHaveLength(0);
+  });
+
+  it('returns and stores a lastTrace for intent.design_assessment with the customized prompts', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"x"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Custom DA system',
+        userTemplate: 'Custom DA user',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService, promptRenderer: new PlaybookFlowPromptRendererService() });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'gpt-da',
+      systemPrompt: 'unused-default',
+      userPrompt: 'unused-default-user',
+      userMessageContent: 'unused-default-user',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    const response = await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+    expect(response.lastTrace).toMatchObject({
+      stage: 'intent.design_assessment',
+      model: 'gpt-da',
+      systemPrompt: 'Custom DA system',
+      userPrompt: 'Custom DA user',
+      rawOutput: '{"status":"ready_to_generate","detectedIntent":"x"}',
+    });
+
+    const listed = service.getIntentTraces('flow-1', 'owner-1');
+    expect(listed.designAssessment).toHaveLength(1);
+    expect(listed.intentAnalyze).toHaveLength(0);
   });
 
   it('splits captured clarification answers from the base intent', () => {
@@ -471,10 +686,19 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(prompt?.userTemplate).toContain('{resolved_design_resources}');
     expect(prompt?.userTemplate).toContain('<Available_Design_Catalog_JSON>');
     expect(prompt?.userTemplate).toContain('{available_design_catalog}');
-    expect(prompt?.systemTemplate).toContain('Treat it as authoritative structured input');
-    expect(prompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
-    expect(prompt?.systemTemplate).toContain('sourceKind: "constant"');
-    expect(prompt?.version).toBe(9);
+    expect(prompt?.systemTemplate).toContain('"blueprint"');
+    expect(prompt?.systemTemplate).toContain('sourceKind');
+    expect(prompt?.systemTemplate).toContain('node-output|constant');
+    expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
+    expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
+    expect(prompt?.version).toBe(16);
+  });
+
+  it('keeps the design assessment prompt distinct from intent analyze', () => {
+    const designPrompt = DEFAULT_FLOW_PROMPTS.find((entry) => entry.key === 'intent.design_assessment');
+    expect(designPrompt?.systemTemplate).toContain('availableWorkspaces[].folders[] contains folders only');
+    expect(designPrompt?.systemTemplate).toContain('If attached images are present');
+    expect(designPrompt?.version).toBe(6);
   });
 
   it('drops duplicate create_node.nodeRef in one plan', () => {
@@ -903,5 +1127,86 @@ describe('PlaybookFlowIntentService normalization', () => {
     const result = callNormalize(raw, ctx);
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeUndefined();
+  });
+
+  describe('blueprint path', () => {
+    it('routes a blueprint response through the deterministic builder when the feature flag is enabled', () => {
+      const raw = JSON.stringify({
+        blueprint: {
+          title: 'Linear',
+          summary: 'Two steps',
+          nodes: [
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+          ],
+          links: [{ sourceRef: 'collect', targetRef: 'draft', sourceOutputPortId: 'data', targetInputPortId: 'data' }],
+        },
+      });
+      const context = {
+        ...makeContext(),
+        effectiveSettings: { useDeterministicBlueprintBuilder: true } as EffectiveFlowDesignSettings,
+        nodeTemplates: [{
+          id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+          inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+        }],
+        limits: DEFAULT_LIMITS,
+        selectedNodeId: null,
+      };
+      const suggestions = (service as any).normalizeConstructionOutput({
+        raw,
+        context: {
+          ...context,
+          httpClient: { post: jest.fn() },
+          flow: {},
+          model: 'm',
+          systemPrompt: '',
+          userPrompt: '',
+          userMessageContent: '',
+          promptVariables: {},
+          availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+          validationContext: makeContext(),
+        },
+      });
+      const plan = suggestions.find((s: any) => s.kind === 'workflow_plan');
+      expect(plan).toBeDefined();
+      expect(plan.changes.filter((c: any) => c.type === 'create_node')).toHaveLength(2);
+      expect(plan.changes.filter((c: any) => c.type === 'create_edge')).toHaveLength(1);
+    });
+
+    it('routes a blueprint response through the deterministic builder even when the feature flag is disabled', () => {
+      const raw = JSON.stringify({
+        blueprint: {
+          title: 'Linear',
+          summary: 'Two steps',
+          nodes: [
+            { ref: 'collect', label: 'Collect', purpose: 'Gather', nodeTemplateKey: 'generic.agent_step', outputPorts: [{ id: 'data', artifactKind: 'data' }] },
+            { ref: 'draft', label: 'Draft', purpose: 'Write', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'data', artifactKind: 'data', required: true }] },
+          ],
+        },
+      });
+      const ctx = makeContext();
+      const suggestions = (service as any).normalizeConstructionOutput({
+        raw,
+        context: {
+          httpClient: { post: jest.fn() },
+          flow: {},
+          selectedNodeId: null,
+          effectiveSettings: { useDeterministicBlueprintBuilder: false } as EffectiveFlowDesignSettings,
+          model: 'm',
+          systemPrompt: '',
+          userPrompt: '',
+          userMessageContent: '',
+          promptVariables: {},
+          validationContext: ctx,
+          limits: DEFAULT_LIMITS,
+          availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+          nodeTemplates: [{
+            id: 'tpl-generic', key: 'generic.agent_step', nodeType: 'agent', title: 'Generic', category: 'general',
+            inputPorts: [], outputPorts: [], recommendedAgentTypeSlug: null, enabled: true,
+          }],
+        },
+      });
+      expect(suggestions.some((s: any) => s.kind === 'workflow_plan')).toBe(true);
+    });
   });
 });

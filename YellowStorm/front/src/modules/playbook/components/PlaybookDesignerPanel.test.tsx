@@ -1,17 +1,20 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
-import type { HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution } from '../types';
+import type { DesignMessage, HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
 
 type StoreSnapshot = {
   currentPlaybook: Playbook | null;
   currentExecution: PlaybookExecution | null;
+  designMessages: DesignMessage[];
   copilotMode: 'design' | 'interrupt';
   designerOpen: boolean;
+  clearDesignMessages: ReturnType<typeof vi.fn>;
   resumeExecution: ReturnType<typeof vi.fn>;
   disableHitlBlocker: ReturnType<typeof vi.fn>;
+  fetchDesignMessages: ReturnType<typeof vi.fn>;
   selectStep: ReturnType<typeof vi.fn>;
   setDesignerOpen: ReturnType<typeof vi.fn>;
   setCopilotMode: ReturnType<typeof vi.fn>;
@@ -23,10 +26,13 @@ const updateNodeHitlPolicyMock = vi.fn();
 const storeState: StoreSnapshot = {
   currentPlaybook: null,
   currentExecution: null,
+  designMessages: [],
   copilotMode: 'interrupt',
   designerOpen: true,
+  clearDesignMessages: vi.fn(),
   resumeExecution: vi.fn(),
   disableHitlBlocker: vi.fn(),
+  fetchDesignMessages: vi.fn(),
   selectStep: vi.fn(),
   setDesignerOpen: vi.fn(),
   setCopilotMode: vi.fn(),
@@ -80,9 +86,10 @@ vi.mock('@/components/ui/tooltip', () => ({
 }));
 
 vi.mock('../store', () => ({
-  usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-    fetchDesignMessages: vi.fn(),
+    usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+    fetchDesignMessages: storeState.fetchDesignMessages,
     designPlaybook: vi.fn(),
+    clearDesignMessages: storeState.clearDesignMessages,
     revertToSnapshot: vi.fn(),
     resumeExecution: storeState.resumeExecution,
     disableHitlBlocker: storeState.disableHitlBlocker,
@@ -92,7 +99,7 @@ vi.mock('../store', () => ({
     stopExecution: vi.fn(),
     isStopping: false,
   }),
-  useDesignMessages: () => [],
+  useDesignMessages: () => storeState.designMessages,
   useDesignMessagesLoading: () => false,
   useIsDesigning: () => false,
   useDesignerOpen: () => storeState.designerOpen,
@@ -249,15 +256,21 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     vi.clearAllMocks();
     storeState.currentPlaybook = buildPlaybook();
     storeState.currentExecution = null;
+    storeState.designMessages = [];
     storeState.copilotMode = 'interrupt';
     storeState.designerOpen = true;
     storeState.resumeExecution = vi.fn().mockResolvedValue(undefined);
     storeState.disableHitlBlocker = vi.fn().mockResolvedValue(undefined);
+    storeState.fetchDesignMessages = vi.fn().mockResolvedValue(undefined);
     storeState.selectStep = vi.fn();
     storeState.setDesignerOpen = vi.fn();
     storeState.setCopilotMode = vi.fn();
     createHitlBlockerMock.mockResolvedValue({ id: 'blocker-2' });
     updateNodeHitlPolicyMock.mockResolvedValue({ mode: 'off' });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('defaults sensitive approvals to step-only feedback without memory', async () => {
@@ -303,6 +316,38 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(screen.queryByLabelText('interrupt.scopeLabel')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'interrupt.options' })).toBeInTheDocument();
     expect(screen.queryByText('designer.empty')).not.toBeInTheDocument();
+  });
+
+  it('shows blocked history suggestions as available for explicit user apply', async () => {
+    storeState.copilotMode = 'design';
+    const user = userEvent.setup();
+    const onApplyHistorySuggestion = vi.fn();
+    const suggestion: PlaybookIntentSuggestion = {
+      id: 'blocked-plan',
+      kind: 'workflow_plan',
+      label: 'Blocked plan',
+      summary: 'Validation status is blocked but history apply remains explicit.',
+      reason: 'A required input is unbound.',
+      confidence: 0.9,
+      impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+      changes: [],
+      validationStatus: 'blocked',
+      isDirectIntentFallback: false,
+    };
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      history={[{ id: 'history-1', suggestion, intent: 'Build blocked workflow', appliedAt: Date.now(), playbookId: 'playbook-1', playbookName: 'Test playbook' }]}
+      onApplyHistorySuggestion={onApplyHistorySuggestion}
+    />);
+
+    await user.click(screen.getByRole('button', { name: 'intentBar.history.title' }));
+
+    expect(screen.getByText('Build blocked workflow')).toBeInTheDocument();
+    const historyButton = screen.getByRole('button', { name: /Build blocked workflow/ });
+    expect(historyButton).toBeEnabled();
+    await user.click(historyButton);
+    expect(onApplyHistorySuggestion).toHaveBeenCalledWith(suggestion);
   });
 
   it('submits the selected scope and memory consent', async () => {
@@ -610,5 +655,314 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     expect(storeState.setCopilotMode).toHaveBeenCalledWith('interrupt');
     expect(storeState.setDesignerOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('submits design-mode sidebar messages through the intent callback', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-22T08:10:11'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add a lead scoring step{Enter}');
+
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Current user request:',
+      '- [2026-06-22 08:10:11] User: Add a lead scoring step',
+    ].join('\n'), 'Add a lead scoring step');
+  });
+
+  it('submits design-mode sidebar messages with timestamped chat history context', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-21T22:37:05'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [
+      {
+        id: 'message-1',
+        playbookId: 'playbook-1',
+        userQuery: 'leadgen\npipeline',
+        aiSummary: 'Which Telegram source\nshould I use?',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'completed',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:34:05',
+        updatedAt: '2026-06-21T22:34:05',
+      },
+      {
+        id: 'message-reverted',
+        playbookId: 'playbook-1',
+        userQuery: 'unused reverted request',
+        aiSummary: 'unused reverted reply',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'reverted',
+        revertedFromMessageId: null,
+        error: null,
+        createdAt: '2026-06-21T22:35:05',
+        updatedAt: '2026-06-21T22:35:05',
+      },
+      {
+        id: 'message-2',
+        playbookId: 'playbook-1',
+        userQuery: 'add exports',
+        aiSummary: 'Export failed.',
+        snapshotBefore: { tasks: [], edges: [] },
+        status: 'failed',
+        revertedFromMessageId: null,
+        error: 'Missing output schema',
+        createdAt: '2026-06-21T22:36:05',
+        updatedAt: '2026-06-21T22:36:05',
+      },
+    ];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add scoring{Enter}');
+
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Previous Designer Assistant chat history:',
+      '- [2026-06-21 22:34:05] User: leadgen pipeline',
+      '- [2026-06-21 22:34:05] Assistant: Which Telegram source should I use?',
+      '- [2026-06-21 22:36:05] User: add exports',
+      '- [2026-06-21 22:36:05] Assistant failed: Missing output schema',
+      '',
+      'Current user request:',
+      '- [2026-06-21 22:37:05] User: Add scoring',
+    ].join('\n'), 'Add scoring');
+  });
+
+  it('restores the design-mode draft when intent submission fails', async () => {
+    const user = userEvent.setup();
+    const onSubmitDesignIntent = vi.fn().mockRejectedValue(new Error('submit failed'));
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+    storeState.fetchDesignMessages.mockClear();
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add scoring{Enter}');
+
+    await waitFor(() => expect(screen.getByPlaceholderText('designer.inputPlaceholder')).toHaveValue('Add scoring'));
+    expect(storeState.fetchDesignMessages).not.toHaveBeenCalled();
+  });
+
+  it('renders design message timestamps with date and seconds', () => {
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [{
+      id: 'message-1',
+      playbookId: 'playbook-1',
+      userQuery: 'leadgen pipeline',
+      aiSummary: 'Created a lead workflow.',
+      snapshotBefore: { tasks: [], edges: [] },
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-21T22:34:05',
+      updatedAt: '2026-06-21T22:34:05',
+    }];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    expect(screen.getByText('2026-06-21 22:34:05')).toBeInTheDocument();
+  });
+
+  it('renders design clarification choices inside the assistant pane', async () => {
+    const user = userEvent.setup();
+    const onAnswerDesignIntent = vi.fn().mockResolvedValue(undefined);
+    const intentDesign: PlaybookIntentDesignResponse = {
+      status: 'needs_clarification',
+      detectedIntent: 'Build lead search',
+      missingRequirements: [],
+      riskFlags: [],
+      questions: [{
+        id: 'region',
+        question: 'Which region should I search?',
+        reason: 'The workflow needs a target market.',
+        category: 'scope',
+        required: true,
+        choices: ['France', 'Germany'],
+      }],
+    };
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" intentDesign={intentDesign} onAnswerDesignIntent={onAnswerDesignIntent} />);
+
+    expect(screen.getByText('Which region should I search?')).toBeInTheDocument();
+    expect(screen.queryByText('The workflow needs a target market.')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /France/ }));
+    await user.click(screen.getByRole('button', { name: 'intentBar.design.generate' }));
+
+    expect(onAnswerDesignIntent).toHaveBeenCalledWith('Which region should I search?: France');
+  });
+
+  it('renders a left-edge resize handle', () => {
+    const { container } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    const handle = container.querySelector('.cursor-ew-resize') as HTMLElement;
+    expect(handle).toBeTruthy();
+  });
+
+  it('defaults the sidebar width to 576px (1.5x the previous 384px)', () => {
+    const { container } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    const handle = container.querySelector('.cursor-ew-resize') as HTMLElement;
+    const panel = handle.parentElement as HTMLElement;
+    expect(panel.style.width).toBe('576px');
+  });
+
+  it('keeps multiline sidebar prompts when Alt+Enter is used', async () => {
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    const input = screen.getByPlaceholderText('designer.inputPlaceholder');
+    fireEvent.change(input, { target: { value: 'First line' } });
+    fireEvent.keyDown(input, { key: 'Enter', altKey: true });
+    expect(onSubmitDesignIntent).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: 'First line\nSecond line' } });
+    expect(input).toHaveValue('First line\nSecond line');
+  });
+
+  it('attaches pasted images to the sidebar prompt submission', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-22T08:20:21'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    const input = screen.getByPlaceholderText('designer.inputPlaceholder');
+    const image = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [image],
+      },
+    });
+    await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());
+
+    await user.type(input, 'Build this workflow{Enter}');
+
+    await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Current user request:',
+      '- [2026-06-22 08:20:21] User: Build this workflow [1 image attached]',
+    ].join('\n'), 'Build this workflow [1 image attached]', [
+      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
+    ]);
+  });
+
+  it('submits pasted images without requiring prompt text', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-22T08:20:21'));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    const input = screen.getByPlaceholderText('designer.inputPlaceholder');
+    const image = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [image],
+      },
+    });
+    await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'designer.send' }));
+
+    await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
+      'Current user request:',
+      '- [2026-06-22 08:20:21] User: [1 image attached]',
+    ].join('\n'), '[1 image attached]', [
+      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
+    ]);
+  });
+
+  it('renders sidebar auto-apply and history controls', async () => {
+    const onAutoApplyChange = vi.fn();
+    const onApplyHistorySuggestion = vi.fn();
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      autoApply={false}
+      onAutoApplyChange={onAutoApplyChange}
+      onApplyHistorySuggestion={onApplyHistorySuggestion}
+      history={[{
+        id: 'history-1',
+        playbookId: 'playbook-1',
+        playbookName: 'Test',
+        intent: 'Improve routing',
+        appliedAt: Date.now(),
+        suggestion: {
+          id: 'suggestion-1',
+          kind: 'workflow_plan',
+          label: 'Improve routing',
+          summary: '',
+          reason: '',
+          confidence: 0.9,
+          isDirectIntentFallback: false,
+          changes: [],
+          impact: {
+            nodesToCreate: 0,
+            nodesToUpdate: 0,
+            nodesToDelete: 0,
+            edgesToCreate: 0,
+            edgesToDelete: 0,
+            dataBindingsToCreate: 0,
+            dataBindingsToDelete: 0,
+            affectedTaskIds: [],
+            businessOutcome: '',
+          },
+        },
+      }]}
+    />);
+
+    await userEvent.click(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' }));
+    expect(onAutoApplyChange).toHaveBeenCalledWith(true);
+    await userEvent.click(screen.getByRole('button', { name: /intentBar.history.title/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Improve routing/ }));
+    expect(onApplyHistorySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'suggestion-1' }));
+    expect(screen.getByRole('button', { name: 'designer.clearMemory' })).toBeInTheDocument();
+  });
+
+  it('clears design chat memory from the visible sidebar control', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [{
+      id: 'message-1',
+      playbookId: 'playbook-1',
+      userQuery: 'Build a workflow',
+      aiSummary: 'Done',
+      snapshotBefore: null,
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-22T08:20:21.000Z',
+      updatedAt: '2026-06-22T08:20:21.000Z',
+    } as unknown as DesignMessage];
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'designer.clearMemory' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith('designer.clearMemoryConfirm');
+    expect(storeState.clearDesignMessages).toHaveBeenCalledWith('playbook-1');
+    confirmSpy.mockRestore();
+  });
+
+  it('switches the sidebar send button to stop during construction', async () => {
+    const onCancelConstruction = vi.fn();
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" constructionStatus="streaming" onCancelConstruction={onCancelConstruction} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'intentBar.actions.stop' }));
+    expect(onCancelConstruction).toHaveBeenCalledTimes(1);
   });
 });

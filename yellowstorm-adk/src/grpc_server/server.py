@@ -13,6 +13,9 @@ except ImportError:
     chatbot_pb2_grpc = None
 
 from src.grpc_server.chatbot_servicer import ChatbotServicer
+from src.grpc_server.auth_interceptor import ApiKeyAuthInterceptor
+from src.grpc_server.credentials import build_server_credentials, resolve_api_key
+from src.config.settings import get_settings
 from src.dependencies import get_agent_team_service
 from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
 
@@ -51,9 +54,22 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
 
     logger.info(f"[gRPC] Initializing gRPC server on {host}:{port}")
 
+    settings = get_settings()
+
+    # Secure by default: validate TLS + API key before binding so any
+    # misconfiguration fails loudly at startup instead of exposing an
+    # unencrypted / unauthenticated channel.
+    server_credentials = build_server_credentials(settings)
+    api_key = resolve_api_key(settings)
+    interceptors = []
+    if api_key:
+        interceptors.append(ApiKeyAuthInterceptor(api_key))
+        logger.info("[gRPC] API-key authentication enabled")
+
     # Create gRPC server with thread pool
     server = grpc.aio.server(
         futures.ThreadPoolExecutor(max_workers=10),
+        interceptors=interceptors,
         options=[
             # Maximum message sizes (50MB)
             ('grpc.max_send_message_length', 50 * 1024 * 1024),
@@ -103,12 +119,17 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
         logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
 
-    # Bind the server to port
-    server.add_insecure_port(f'{host}:{port}')
-    logger.warning(
-        f"[gRPC] Server running in INSECURE mode on {host}:{port}. "
-        "For production, use add_secure_port() with SSL certificates."
-    )
+    # Bind the server to port. Secure by default (TLS); plaintext only under the
+    # explicit GRPC_ALLOW_INSECURE opt-out (server_credentials is None then).
+    if server_credentials is None:
+        server.add_insecure_port(f'{host}:{port}')
+        logger.warning(
+            f"[gRPC] Server running INSECURE (GRPC_ALLOW_INSECURE) on {host}:{port}. "
+            "Never use this in production."
+        )
+    else:
+        server.add_secure_port(f'{host}:{port}', server_credentials)
+        logger.info(f"[gRPC] TLS enabled — server certificate presented on {host}:{port}")
 
     # Start the server
     await server.start()
@@ -131,88 +152,4 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         await server.stop(grace=5)
         await close_checkpointer()
         logger.info("✅ [gRPC] Server stopped gracefully")
-        raise
-
-
-async def start_grpc_server_with_ssl(
-    host: str,
-    port: int,
-    private_key_path: str,
-    certificate_chain_path: str
-) -> None:
-    """
-    Start the gRPC server with SSL/TLS encryption.
-
-    This is the production-ready version that should be used in deployed environments.
-
-    Args:
-        host: Host address to bind the server
-        port: Port number for the gRPC server
-        private_key_path: Path to the private key file (.key)
-        certificate_chain_path: Path to the certificate chain file (.crt)
-
-    Example:
-        await start_grpc_server_with_ssl(
-            host="0.0.0.0",
-            port=50051,
-            private_key_path="/etc/ssl/private/server.key",
-            certificate_chain_path="/etc/ssl/certs/server.crt"
-        )
-    """
-    if chatbot_pb2_grpc is None:
-        logger.error("[gRPC] Cannot start gRPC server: protobuf code not generated")
-        return
-
-    logger.info(f"[gRPC] Initializing SECURE gRPC server on {host}:{port}")
-
-    # Read SSL certificate files
-    try:
-        async with aiofiles.open(private_key_path, 'rb') as f:
-            private_key = await f.read()
-        async with aiofiles.open(certificate_chain_path, 'rb') as f:
-            certificate_chain = await f.read()
-        logger.info("[gRPC] SSL certificates loaded successfully")
-    except Exception as e:
-        logger.error(f"[gRPC] Failed to load SSL certificates: {str(e)}", exc_info=True)
-        raise
-
-    # Create SSL server credentials
-    server_credentials = grpc.ssl_server_credentials(
-        [(private_key, certificate_chain)]
-    )
-
-    # Create gRPC server with thread pool
-    server = grpc.aio.server(
-        futures.ThreadPoolExecutor(max_workers=10),
-        options=[
-            ('grpc.max_send_message_length', 50 * 1024 * 1024),
-            ('grpc.max_receive_message_length', 50 * 1024 * 1024),
-            ('grpc.keepalive_time_ms', 10000),
-            ('grpc.keepalive_timeout_ms', 5000),
-            ('grpc.http2.max_pings_without_data', 0),
-            ('grpc.http2.min_time_between_pings_ms', 10000),
-            ('grpc.http2.min_ping_interval_without_data_ms', 5000),
-            ('grpc.default_compression_algorithm', grpc.Compression.Gzip),
-        ]
-    )
-
-    # Get service instances
-    agent_team_service = get_agent_team_service()
-
-    # Register servicer (V2 only)
-    servicer = ChatbotServicer(agent_team_service=agent_team_service)
-    chatbot_pb2_grpc.add_ChatbotServiceServicer_to_server(servicer, server)
-
-    # Bind with SSL
-    server.add_secure_port(f'{host}:{port}', server_credentials)
-    logger.info(f"✅ [gRPC] SECURE server started on {host}:{port}")
-
-    # Start and wait
-    await server.start()
-    try:
-        await server.wait_for_termination()
-    except asyncio.CancelledError:
-        logger.info("[gRPC] Secure server shutdown requested")
-        await server.stop(grace=5)
-        logger.info("✅ [gRPC] Secure server stopped gracefully")
         raise

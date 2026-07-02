@@ -30,6 +30,7 @@ describe('AgentService connector skill inheritance', () => {
   const createService = () => {
     const agentModel = {
       find: jest.fn(),
+      findById: jest.fn(),
     };
     const logger = {
       setContext: jest.fn(),
@@ -42,12 +43,13 @@ describe('AgentService connector skill inheritance', () => {
     };
     const agentTypeService = {
       resolvePromptsInBatch: jest.fn().mockResolvedValue(new Map()),
+      findAllActive: jest.fn().mockResolvedValue([]),
     };
     const modelsService = {
       findById: jest.fn(),
       getDefaultModel: jest.fn().mockResolvedValue(null),
       getModelIdentifier: jest.fn((model: { id?: string; litellmModel?: string } | null | undefined) =>
-        model?.id || model?.litellmModel || ''),
+        model?.litellmModel || model?.id || ''),
     };
     const skillService = {
       findByIds: jest.fn(),
@@ -99,7 +101,14 @@ describe('AgentService connector skill inheritance', () => {
       connectorService,
       agentTypeService,
       modelsService,
+      agentShareService,
     };
+  };
+
+  const mockFindById = (agentModel: { findById: jest.Mock }, doc: unknown) => {
+    agentModel.findById.mockReturnValue({
+      select: () => ({ lean: () => ({ exec: () => Promise.resolve(doc) }) }),
+    });
   };
 
   it('injects connector skills into stream agent runtime', async () => {
@@ -322,5 +331,70 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
+  });
+
+  describe('canWriteAgent', () => {
+    it('allows the owner of a custom agent', async () => {
+      const { service, agentModel } = createService();
+      mockFindById(agentModel, { createdBy: userId, isDefault: false });
+      await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(true);
+    });
+
+    it('denies a default agent', async () => {
+      const { service, agentModel } = createService();
+      mockFindById(agentModel, { createdBy: 'someone', isDefault: true });
+      await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(false);
+    });
+
+    it('denies a non-owner shared at read level', async () => {
+      const { service, agentModel, agentShareService } = createService();
+      mockFindById(agentModel, { createdBy: 'other-user', isDefault: false });
+      agentShareService.getSharePermission.mockResolvedValue('read');
+      await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(false);
+    });
+
+    it('allows a non-owner shared at write level', async () => {
+      const { service, agentModel, agentShareService } = createService();
+      mockFindById(agentModel, { createdBy: 'other-user', isDefault: false });
+      agentShareService.getSharePermission.mockResolvedValue('write');
+      await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(true);
+    });
+
+    it('denies when the agent does not exist', async () => {
+      const { service, agentModel } = createService();
+      mockFindById(agentModel, null);
+      await expect(service.canWriteAgent(userId, 'missing')).resolves.toBe(false);
+    });
+  });
+
+  describe('applySmartMemoryFlag', () => {
+    it('flags only agents that reference a smart-memory connector', async () => {
+      const { service, connectorService } = createService();
+      connectorService.findByIds.mockResolvedValue([
+        { id: 'c1', slug: 'smart-memory' },
+        { id: 'c2', slug: 'github' },
+      ]);
+      const responses = [
+        { id: 'a1', connectors: ['c1', 'c2'], hasSmartMemory: false },
+        { id: 'a2', connectors: ['c2'], hasSmartMemory: false },
+        { id: 'a3', connectors: [], hasSmartMemory: false },
+      ];
+
+      await (service as any).applySmartMemoryFlag(responses);
+
+      expect(responses[0].hasSmartMemory).toBe(true);
+      expect(responses[1].hasSmartMemory).toBe(false);
+      expect(responses[2].hasSmartMemory).toBe(false);
+    });
+
+    it('does nothing when no connector is referenced', async () => {
+      const { service, connectorService } = createService();
+      const responses = [{ id: 'a1', connectors: [], hasSmartMemory: false }];
+
+      await (service as any).applySmartMemoryFlag(responses);
+
+      expect(connectorService.findByIds).not.toHaveBeenCalled();
+      expect(responses[0].hasSmartMemory).toBe(false);
+    });
   });
 });

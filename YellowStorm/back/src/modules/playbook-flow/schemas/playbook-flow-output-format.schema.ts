@@ -25,6 +25,9 @@ export class OutputFormatPromptTraceItem {
 
   @Prop({ required: true })
   prompt!: string;
+
+  @Prop({ required: false, type: String, default: null })
+  generatedOutput?: string | null;
 }
 
 const OutputFormatPromptTraceItemSchema = SchemaFactory.createForClass(OutputFormatPromptTraceItem);

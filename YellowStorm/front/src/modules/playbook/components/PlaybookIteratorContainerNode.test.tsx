@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
 import { NodeDataActionsContext } from './PlaybookNode';
 
+const storeState = vi.hoisted(() => ({
+  currentPlaybook: {
+    id: 'playbook-1',
+    tasks: [],
+  },
+} as any));
+
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string, vars?: Record<string, unknown>) => {
     if (key === 'iterator.childCount') {
@@ -19,9 +26,21 @@ vi.mock('@/components/ui/badge', () => ({
 vi.mock('@xyflow/react', () => ({
   Handle: ({ id }: { id: string }) => <span data-testid={`handle-${id}`} />,
   Position: { Left: 'left', Right: 'right' },
+  useUpdateNodeInternals: () => vi.fn(),
+}));
+
+vi.mock('../store', () => ({
+  usePlaybookStore: (selector: any) => selector(storeState),
 }));
 
 describe('PlaybookIteratorContainerNode', () => {
+  beforeEach(() => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [],
+    };
+  });
+
   it('shows a resize handle when selected and reports expanded dimensions', () => {
     const setIteratorNodeSize = vi.fn();
     const resizeIteratorNode = vi.fn();
@@ -85,5 +104,46 @@ describe('PlaybookIteratorContainerNode', () => {
     fireEvent.click(repackButton);
     expect(repackButton).toHaveTextContent('iterator.repackChildren');
     expect(repackIteratorChildren).toHaveBeenCalledWith('iterator-1');
+  });
+
+  it('renders visible labels and handles for multiple input ports from the latest store task', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [
+        {
+          id: 'iterator-1',
+          inputPorts: [
+            { id: 'items', name: 'Items', artifactKind: 'data', required: false, role: 'collection' },
+            { id: 'template', name: 'Template', artifactKind: 'document', required: false, role: 'context' },
+          ],
+          outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        },
+      ],
+    };
+
+    render(
+      <NodeDataActionsContext.Provider value={{ updateNodeData: vi.fn() }}>
+        <PlaybookIteratorContainerNode
+          {...({
+            id: 'iterator-1',
+            selected: false,
+            data: {
+              id: 'iterator-1',
+              title: 'Iterator',
+              description: 'Arrange child steps',
+              iteratorConfig: { source: 'items', mode: 'item' },
+              inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false, role: 'collection' }],
+              outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+              childTaskIds: [],
+            },
+          } as any)}
+        />
+      </NodeDataActionsContext.Provider>,
+    );
+
+    expect(screen.getByTestId('handle-items')).toBeInTheDocument();
+    expect(screen.getByTestId('handle-template')).toBeInTheDocument();
+    expect(screen.getByText('Items')).toBeInTheDocument();
+    expect(screen.getByText('Template')).toBeInTheDocument();
   });
 });

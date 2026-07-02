@@ -24,7 +24,7 @@ export class PlaybookFlowTriggerController {
     @CurrentUser('_id') userId: string,
     @Param('id') flowId: string,
   ) {
-    const flow = await this.flowService.findOne(flowId, userId);
+    const flow = await this.flowService.findOneForWrite(flowId, userId);
     return flow.triggerConfig ?? null;
   }
 
@@ -34,7 +34,7 @@ export class PlaybookFlowTriggerController {
     kind: 'schedule' | 'mail',
     body: Record<string, unknown>,
   ) {
-    const flow = await this.flowService.findOne(flowId, userId);
+    const flow = await this.flowService.findOneForWrite(flowId, userId);
     const currentParams = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
 
     return this.flowService.update(flowId, userId, {
@@ -47,7 +47,7 @@ export class PlaybookFlowTriggerController {
     flowId: string,
     kind: 'schedule' | 'mail',
   ) {
-    const flow = await this.flowService.findOne(flowId, userId);
+    const flow = await this.flowService.findOneForWrite(flowId, userId);
     const currentKind = flow.triggerConfig?.kind;
 
     // Compatibility delete routes should never reclassify a different stored trigger kind.
@@ -137,12 +137,12 @@ export class PlaybookFlowTriggerController {
     @Param('id') flowId: string,
     @Body() body: { notificationUrl: string; autoRenewUntil?: string | null },
   ) {
-    const flow = await this.flowService.findOne(flowId, userId);
+    const flow = await this.flowService.findOneForWrite(flowId, userId);
     const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
     const mailboxAppKey = (params['mailboxAppKey'] as string) || '';
     const clientState = flowId;
 
-    const result = await this.graphClient.createInboxSubscription(
+    const { subscription, resolvedAppKey } = await this.graphClient.createInboxSubscription(
       userId,
       mailboxAppKey,
       body.notificationUrl,
@@ -155,9 +155,12 @@ export class PlaybookFlowTriggerController {
         kind: 'mail',
         params: {
           ...params,
-          subscriptionId: result.id,
+          // Persist the key the connection was actually found under so webhook
+          // message fetches and subscription renewals use the correct app key.
+          mailboxAppKey: resolvedAppKey,
+          subscriptionId: subscription.id,
           subscriptionClientState: clientState,
-          subscriptionExpiresAt: result.expirationDateTime,
+          subscriptionExpiresAt: subscription.expirationDateTime,
         },
       },
     } as any);

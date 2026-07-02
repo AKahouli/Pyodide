@@ -269,6 +269,27 @@ export class PlaybookFlowController {
     return this.designService.getDesignMessages(id, userId);
   }
 
+  @Post(':id/design-messages')
+  @ApiOperation({ summary: 'Append a design message history entry for a flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async appendDesignMessage(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { userQuery: string; aiSummary: string; status?: 'completed' | 'failed'; error?: string | null },
+  ) {
+    return this.designService.appendDesignMessage(id, userId, body);
+  }
+
+  @Delete(':id/design-messages')
+  @ApiOperation({ summary: 'Clear design message memory for the current user' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async clearDesignMessages(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.designService.clearDesignMessages(id, userId);
+  }
+
   @Post(':id/design-messages/:msgId/revert')
   @ApiOperation({ summary: 'Revert flow to a prior design snapshot' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
@@ -333,6 +354,16 @@ export class PlaybookFlowController {
     @Body() dto: RequestPlaybookFlowIntentDto,
   ) {
     return this.playbookFlowIntentService.assessDesign(id, userId, dto);
+  }
+
+  @Get(':id/intent-traces')
+  @ApiOperation({ summary: 'Get the last LLM traces for intent.analyze and intent.design_assessment prompts on this playbook.' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getIntentTraces(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.playbookFlowIntentService.getIntentTraces(id, userId);
   }
 
   @Post(':id/intent-constructions')

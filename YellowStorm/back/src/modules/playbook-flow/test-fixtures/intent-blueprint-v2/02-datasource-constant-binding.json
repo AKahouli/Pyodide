@@ -1,0 +1,12 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Datasource constant binding",
+    "summary": "Bind a workspace datasource to an agent.",
+    "nodes": [
+      { "ref": "load", "label": "Load datasource", "purpose": "Read workspace files", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "workspace", "artifactKind": "data", "required": true }], "outputPorts": [{ "id": "records", "artifactKind": "data" }] }
+    ],
+    "bindings": [{ "sourceKind": "constant", "targetRef": "load", "targetPort": "workspace", "constantValue": { "kind": "workspace", "id": "workspace-1", "workspaceId": "workspace-1", "label": "HR workspace" } }]
+  },
+  "expected": { "minNodes": 1, "minConstantBindings": 1 }
+}

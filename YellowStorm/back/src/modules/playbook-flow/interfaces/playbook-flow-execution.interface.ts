@@ -59,6 +59,7 @@ export interface IFlowTaskResultResponse {
   outputs?: Record<string, unknown>;
   artifacts?: Array<Record<string, unknown>>;
   components?: Array<Record<string, unknown>>;
+  iteratorIterations?: Array<Record<string, unknown>>;
   error?: string;
   startedAt?: Date;
   endedAt?: Date;

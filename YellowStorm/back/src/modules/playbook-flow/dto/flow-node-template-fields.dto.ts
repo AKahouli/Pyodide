@@ -57,10 +57,10 @@ export class FlowNodeTemplateRouterConditionDto {
   @IsString()
   path?: string;
 
-  @ApiProperty({ enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] })
+  @ApiProperty({ enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] })
   @IsString()
-  @IsIn(['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'])
-  operator!: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+  @IsIn(['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'])
+  operator!: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
 
   @ApiPropertyOptional()
   @IsOptional()

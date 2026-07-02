@@ -12,6 +12,7 @@
   "input.limitReached": "Usage limit reached",
   "input.limitCountdownHours": "Limit reached · Resets in {{hours}}h {{minutes}}m",
   "input.limitCountdownMinutes": "Limit reached · Resets in {{minutes}}m",
+  "input.deepSearch": "Deep Search",
   "composerSuggestions.loading": "Suggestions…",
   "composerSuggestions.unavailable": "Suggestions unavailable right now.",
   "composerSuggestions.barLabel": "Message suggestions",

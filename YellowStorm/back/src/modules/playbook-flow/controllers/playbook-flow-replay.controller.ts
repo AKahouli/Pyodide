@@ -38,7 +38,7 @@ export class PlaybookFlowReplayController {
     @Param('taskId') taskId: string,
     @Body() body: ValidateTaskReplayDto,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.validateTaskReplay(
       userId, flowId, taskId, body.iteration ?? 0, body.executionId,
       { preserveOutputFormat: body.preserveOutputFormat, mode: body.mode, replayConfig: body.replayConfig } as ValidateTaskReplayOptions,
@@ -53,7 +53,7 @@ export class PlaybookFlowReplayController {
     @Param('id') flowId: string,
     @Param('taskId') taskId: string,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.listTaskReplays(flowId, taskId);
   }
 
@@ -66,7 +66,7 @@ export class PlaybookFlowReplayController {
     @Param('taskId') taskId: string,
     @Query() query: ListReplayReportsQueryDto,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     if (query.executionId && typeof query.iteration === 'number') {
       await this.replayDriftService.ensureIterationReportMaterialized(query.executionId, taskId, query.iteration);
     }
@@ -90,7 +90,7 @@ export class PlaybookFlowReplayController {
     @Param('taskId') taskId: string,
     @Param('replayId') replayId: string,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.activateTaskReplay(flowId, taskId, replayId);
   }
 
@@ -104,7 +104,7 @@ export class PlaybookFlowReplayController {
     @Param('replayId') replayId: string,
     @Body() dto: UpdateTaskReplayFormatGuideDto,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.updateTaskReplayFormatGuide(flowId, taskId, replayId, dto as UpdateReplayFormatGuidePayload);
   }
 
@@ -118,7 +118,7 @@ export class PlaybookFlowReplayController {
     @Param('replayId') replayId: string,
     @Body() body: UpdateTaskReplayLabelDto,
   ) {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.updateTaskReplayLabel(flowId, taskId, replayId, body.label ?? null);
   }
 
@@ -131,7 +131,7 @@ export class PlaybookFlowReplayController {
     @Param('taskId') taskId: string,
     @Param('replayId') replayId: string,
   ): Promise<{ removed: boolean; wasActive: boolean }> {
-    await this.flowService.findOne(flowId, userId);
+    await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.deleteTaskReplay(flowId, taskId, replayId);
   }
 }

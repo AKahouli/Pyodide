@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ProfileMenu } from '@/components/ui/profile-menu';
+import { ModeToggle } from '@/components/mode-toggle';
 import { AppLogo } from '@/components/icons';
 import { cn } from '@/lib/utils';
 import {
@@ -39,7 +40,9 @@ import {
 import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
 import { TeamButton } from '@/modules/team';
+import { GroupsButton } from '@/modules/groups';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
+import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';
@@ -277,7 +280,11 @@ export const AppSidebar = memo(function AppSidebar() {
 
             <TeamButton />
 
+            <GroupsButton />
+
             <PlaybookButton />
+
+            <WorkyButton />
 
             <ConnectedAppButton />
 
@@ -392,8 +399,9 @@ export const AppSidebar = memo(function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className='grid grid-cols-[1fr_auto] items-center group-data-[collapsible=icon]:grid-cols-1 group-data-[collapsible=icon]:justify-items-center'>
+      <SidebarFooter className='grid grid-cols-[1fr_auto_auto] items-center gap-1 group-data-[collapsible=icon]:grid-cols-1 group-data-[collapsible=icon]:justify-items-center'>
         <ProfileMenu />
+        <ModeToggle />
         <SidebarTrigger />
       </SidebarFooter>
 

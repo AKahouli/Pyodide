@@ -30,6 +30,7 @@ EVENT_NODE_COMPLETED = "NodeCompleted"
 EVENT_NODE_FAILED = "NodeFailed"
 EVENT_NODE_SUSPENDED = "NodeSuspended"
 EVENT_NODE_TOKEN = "NodeToken"
+EVENT_NODE_TRACE_UPDATE = "NodeTraceUpdate"
 EVENT_ROUTER_DECISION = "RouterDecision"
 EVENT_ITERATION_INCREMENTED = "IterationIncremented"
 EVENT_APPROVAL_REQUESTED = "ApprovalRequested"
@@ -98,6 +99,14 @@ async def emit_events(
                         execution_id,
                         str(data.get("node_id", "")),
                         {"token": str(data.get("token", "")), "node_id": str(data.get("node_id", ""))},
+                        int(data.get("iteration", 0)),
+                    )
+                elif event_type == EVENT_NODE_TRACE_UPDATE:
+                    yield _build_event(
+                        EVENT_NODE_TRACE_UPDATE,
+                        execution_id,
+                        str(data.get("node_id", "")),
+                        data.get("payload", {}),
                         int(data.get("iteration", 0)),
                     )
                 elif event_type == EVENT_NODE_SUSPENDED:

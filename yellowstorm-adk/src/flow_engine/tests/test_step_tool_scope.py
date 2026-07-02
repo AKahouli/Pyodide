@@ -2,6 +2,7 @@ from src.flow_engine.nodes.step_tool_scope import (
     build_prompt_input_context,
     build_sandbox_prompt_note,
     build_step_tool_scope,
+    sanitize_trigger_context_for_prompt,
 )
 
 
@@ -99,20 +100,89 @@ def test_build_sandbox_prompt_note_warns_against_storage_names() -> None:
     assert "metadata storage filenames" in note
 
 
-def test_build_prompt_input_context_rewrites_storage_filename_for_prompt() -> None:
+def test_build_prompt_input_context_compacts_document_for_prompt() -> None:
     prompt_context = build_prompt_input_context(
         {
             "default": {
+                "kind": "document",
                 "name": "CV_Kevin_Diallo.pdf",
-                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                "path": "6984baadd6b2ec4585e8c707/workspace/doc-1/CV_Kevin_Diallo.pdf",
                 "metadata": {
+                    "documentId": "doc-1",
+                    "workspaceId": "workspace-1",
+                    "workspaceName": "Workspace One",
                     "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                    "mimeType": "application/pdf",
                 },
             }
         }
     )
 
-    assert prompt_context["default"]["metadata"]["filename"] == "CV_Kevin_Diallo.pdf"
+    assert prompt_context["default"] == {
+        "kind": "document",
+        "path": "workspace/doc-1/CV_Kevin_Diallo.pdf",
+        "documentId": "doc-1",
+        "workspaceId": "workspace-1",
+        "workspaceName": "Workspace One",
+        "name": "CV_Kevin_Diallo.pdf",
+        "mimeType": "application/pdf",
+    }
+
+
+def test_build_prompt_input_context_preserves_relative_document_path() -> None:
+    prompt_context = build_prompt_input_context(
+        {
+            "default": {
+                "kind": "document",
+                "path": "workspace/plan.pdf",
+                "documentId": "doc-1",
+                "workspaceId": "workspace-1",
+                "name": "plan.pdf",
+            }
+        }
+    )
+
+    assert prompt_context["default"]["path"] == "workspace/plan.pdf"
+
+
+def test_build_prompt_input_context_sanitizes_playbook_workspace_paths() -> None:
+    prompt_context = build_prompt_input_context(
+        {
+            "__playbook_workspace_paths": {
+                "69e9d92e6f3d08e123c1fed7": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+            },
+            "__playbook_default_workspace_path": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+        }
+    )
+
+    assert prompt_context == {
+        "__playbook_workspace_paths": {
+            "69e9d92e6f3d08e123c1fed7": "mon-workspace-personnel",
+        },
+        "__playbook_default_workspace_path": "mon-workspace-personnel",
+    }
+
+
+def test_build_prompt_input_context_preserves_non_document_structured_data() -> None:
+    prompt_context = build_prompt_input_context(
+        {
+            "default": {
+                "items": [
+                    {"id": "finding-1", "title": "Missing docs", "severity": "high"},
+                    {"name": "homepage", "path": "/home", "handler": "IndexController"},
+                ],
+                "summary": "Keep this structured input intact.",
+            }
+        }
+    )
+
+    assert prompt_context["default"] == {
+        "items": [
+            {"id": "finding-1", "title": "Missing docs", "severity": "high"},
+            {"name": "homepage", "path": "/home", "handler": "IndexController"},
+        ],
+        "summary": "Keep this structured input intact.",
+    }
 
 
 def test_build_step_tool_scope_preserves_opaque_document_refs() -> None:
@@ -240,4 +310,26 @@ def test_build_step_tool_scope_resolves_bound_file_id_to_search_filename() -> No
     assert scope.file_names == ["02-annexe-1-cahier-des-charges-techniques.md"]
     assert scope.documents_by_port == {
         "report": ["02-annexe-1-cahier-des-charges-techniques.md"]
+    }
+
+
+def test_sanitize_trigger_context_for_prompt_strips_owner_from_workspace_paths() -> None:
+    sanitized = sanitize_trigger_context_for_prompt(
+        {
+            "__playbook_workspace_ids": ["69e9d92e6f3d08e123c1fed7"],
+            "__playbook_workspace_paths": {
+                "69e9d92e6f3d08e123c1fed7": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+            },
+            "__playbook_default_workspace_path": "6984baadd6b2ec4585e8c707/mon-workspace-personnel",
+            "__playbook_default_workspace_id": "69e9d92e6f3d08e123c1fed7",
+        }
+    )
+
+    assert sanitized == {
+        "__playbook_workspace_ids": ["69e9d92e6f3d08e123c1fed7"],
+        "__playbook_workspace_paths": {
+            "69e9d92e6f3d08e123c1fed7": "mon-workspace-personnel",
+        },
+        "__playbook_default_workspace_path": "mon-workspace-personnel",
+        "__playbook_default_workspace_id": "69e9d92e6f3d08e123c1fed7",
     }

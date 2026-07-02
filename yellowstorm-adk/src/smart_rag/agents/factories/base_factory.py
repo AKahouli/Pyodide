@@ -142,6 +142,7 @@ class AgentFactory:
         brain_documents: Optional[list] = None,
         conversation_brain_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         connector_bindings: Optional[List[Dict[str, Any]]] = None,
     ) -> Agent:
         """Create an agent with optional tools including calculator, web search, document search, and in-memory extraction.
@@ -267,6 +268,7 @@ class AgentFactory:
                             brain_ids=brain_ids,
                             brain_documents=brain_documents,
                             session_id=session_id,
+                            agent_id=agent_id,
                         ),
                     )
                 )
@@ -548,9 +550,15 @@ class AgentFactory:
         top_k: int = 1,
         citation_manager=None,
         user_id: Optional[str] = None,
+        vectorstore_mcp_tool: bool = False,
+        logical_search_only: bool = False,
+        deep_search: bool = False,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
-        tools, toolkit = self.tool_factory.create_search_tools(
+        if logical_search_only:
+            tools, toolkit = [], None
+        else:
+            tools, toolkit = self.tool_factory.create_search_tools(
             doc_tree,
             brain_tree,
             brain_ids,
@@ -592,6 +600,25 @@ class AgentFactory:
             web_search_prompt_index
         )
         instruction = str(search_agent_prompt) + str(web_search_prompt) + str(tree_info)
+
+        if deep_search:
+            instruction += (
+                "\n\n<deep_search_mode>\n"
+                "You are in DEEP SEARCH mode. You MUST follow this two-phase search strategy:\n\n"
+                "Phase 1 — Find relevant documents:\n"
+                "- Call search_relevant_documents(query=\"your search query\", workspace_name=\"...\") FIRST\n"
+                "- This returns top candidate documents with: document_id, file_name, hybrid_score, matched concepts\n"
+                "- Use the results to identify the most relevant documents for the user's question\n\n"
+                "Phase 2 — Extract detailed information:\n"
+                "- Using the file_name from Phase 1 results, call search_sections() or read_section()\n"
+                "  to get detailed content from those specific documents\n"
+                "- Cross-reference information across multiple documents when relevant\n"
+                "- Use matched_hl_concepts and matched_ll_concepts to guide follow-up searches\n\n"
+                "IMPORTANT: Always start with search_relevant_documents before using other search tools.\n"
+                "This ensures you find the most semantically relevant documents across the entire workspace first,\n"
+                "then dive deep into those specific documents for detailed answers.\n"
+                "</deep_search_mode>"
+            )
 
         # Add perform_standard_search if we have a toolkit
         if toolkit:
@@ -649,6 +676,22 @@ class AgentFactory:
                 tools.append(generate_form_viz)
             except Exception as e:
                 logger.exception(f"Error adding generate_form_viz tool: {e}")
+
+        if vectorstore_mcp_tool and brain_ids:
+            try:
+                vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
+                    brain_ids=brain_ids,
+                    deep_search=deep_search,
+                )
+                if vectorstore_toolset:
+                    tools.extend(vectorstore_toolset)
+                    logger.info(
+                        "Auto-enabled vectorstore MCP toolset with brain_ids=%s deep_search=%s",
+                        brain_ids,
+                        deep_search,
+                    )
+            except Exception as e:
+                logger.exception(f"Error auto-enabling vectorstore toolset: {e}")
 
         return (
             Agent(

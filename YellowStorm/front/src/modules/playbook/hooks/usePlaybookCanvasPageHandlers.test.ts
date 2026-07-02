@@ -30,7 +30,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
   const setImportWarningOpen = vi.fn();
   const setExecutionPanelOpen = vi.fn();
   const setExecutionPanelCollapsed = vi.fn();
-  const setIntentBarCollapsed = vi.fn();
   const setDesignerOpen = vi.fn();
   const setEditorOpen = vi.fn();
   const setPageMode = vi.fn();
@@ -68,7 +67,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook = makePlaybook(),
     pageMode = 'design',
     designerOpen = false,
-    waitingForHumanInput = false,
     nodeReflectionEnabled = true,
     advisorScoringMode = 'llm',
     advisorAutopilotEnabled = false,
@@ -80,7 +78,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook?: Playbook | null;
     pageMode?: 'design' | 'run';
     designerOpen?: boolean;
-    waitingForHumanInput?: boolean;
     nodeReflectionEnabled?: boolean;
     advisorScoringMode?: 'llm' | 'heuristic';
     advisorAutopilotEnabled?: boolean;
@@ -95,7 +92,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
         nodeReflectionEnabled,
         advisorScoringMode,
         advisorAutopilotEnabled,
-        waitingForHumanInput,
         pageMode,
         designerOpen,
         confirmRemoveAllMessage: 'Remove all tasks?',
@@ -112,7 +108,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
         setImportWarningOpen,
         setExecutionPanelOpen,
         setExecutionPanelCollapsed,
-        setIntentBarCollapsed,
         setDesignerOpen,
         setEditorOpen,
         setPageMode,
@@ -145,7 +140,6 @@ describe('usePlaybookCanvasPageHandlers', () => {
     setImportWarningOpen.mockClear();
     setExecutionPanelOpen.mockClear();
     setExecutionPanelCollapsed.mockClear();
-    setIntentBarCollapsed.mockClear();
     setDesignerOpen.mockClear();
     setEditorOpen.mockClear();
     setPageMode.mockClear();
@@ -363,20 +357,23 @@ describe('usePlaybookCanvasPageHandlers', () => {
     confirmSpy.mockRestore();
   });
 
-  it('toggles copilot and closes editor when opening', () => {
+  it('toggles copilot, switches to design mode, and closes editor when opening from run mode', () => {
     const { result } = buildHandler({ pageMode: 'run', designerOpen: false });
 
     act(() => {
       result.current.handleToggleCopilot();
     });
 
-    expect(setCopilotMode).toHaveBeenCalledWith('interrupt');
+    expect(setCopilotMode).toHaveBeenCalledWith('design');
+    expect(setPageMode).toHaveBeenCalledWith('design');
+    expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
+    expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
     expect(setDesignerOpen).toHaveBeenCalledWith(true);
     expect(setEditorOpen).toHaveBeenCalledWith(false);
   });
 
   it('switches run mode and closes design/editor panels', () => {
-    const { result } = buildHandler({ pageMode: 'design', waitingForHumanInput: false, designerOpen: true });
+    const { result } = buildHandler({ pageMode: 'design', designerOpen: true });
 
     act(() => {
       result.current.handlePageModeChange('run');
@@ -384,22 +381,21 @@ describe('usePlaybookCanvasPageHandlers', () => {
 
     expect(setPageMode).toHaveBeenCalledWith('run');
     expect(setDesignerOpen).toHaveBeenCalledWith(false);
-    expect(setIntentBarCollapsed).toHaveBeenCalledWith(true);
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(false);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(true);
   });
 
-  it('keeps designer open while switching to design during active human input', () => {
-    const { result } = buildHandler({ waitingForHumanInput: true, designerOpen: true });
+  it('opens the designer assistant when switching to design mode', () => {
+    const { result } = buildHandler({ designerOpen: true });
 
     act(() => {
       result.current.handlePageModeChange('design');
     });
 
-    expect(setIntentBarCollapsed).toHaveBeenCalledWith(false);
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
-    expect(setDesignerOpen).not.toHaveBeenCalledWith(false);
+    expect(setCopilotMode).toHaveBeenCalledWith('design');
+    expect(setDesignerOpen).toHaveBeenCalledWith(true);
   });
 
   it('saves the new playbook name when blurred with changes', () => {

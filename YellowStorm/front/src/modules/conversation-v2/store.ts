@@ -51,6 +51,10 @@ interface State {
     repoName: string;
     repoUrl?: string;
   } | null;
+  /** Skill IDs selected for the conversation; sent with every message. */
+  selectedSkillIds: string[];
+  /** Connector IDs selected for the conversation; sent with every message. */
+  selectedConnectorIds: string[];
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -127,6 +131,14 @@ interface Actions {
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
+  /** Replace the full set of selected skills for the conversation. */
+  setSelectedSkillIds: (ids: string[]) => void;
+  /** Toggle one skill on/off for the conversation. */
+  toggleSelectedSkill: (id: string) => void;
+  /** Replace the full set of selected connectors for the conversation. */
+  setSelectedConnectorIds: (ids: string[]) => void;
+  /** Toggle one connector on/off for the conversation. */
+  toggleSelectedConnector: (id: string) => void;
   /** Optimistic rename of the current session. Updates title and pointer list. */
   renameCurrent: (title: string) => Promise<void>;
   /** Delete the current session. Resolves once removed from pointer list. */
@@ -153,6 +165,8 @@ const initial: State = {
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
       streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -233,7 +247,9 @@ function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
       return { ...base, events: [...filtered, event] };
     }
     case 'wait':
-      return base;
+      // The agent is paused waiting for the user's reply — re-enable the input
+      // (same as 'done'), otherwise the composer stays stuck in streaming.
+      return { ...base, streaming: false, liveToolCallId: null };
     case 'message': {
       const liveAssistantIds =
         event.role === 'assistant'
@@ -360,6 +376,8 @@ export const useConversationV2Store = create<State & Actions>()(
         set({ streaming: true, streamError: null }, false, 'sendMessage/optimistic');
 
         const repo = get().selectedConnectorRepo;
+        const skillIds = get().selectedSkillIds;
+        const connectorIds = get().selectedConnectorIds;
         try {
           await conversationV2Api.sendMessage(sessionId, {
             message,
@@ -374,6 +392,8 @@ export const useConversationV2Store = create<State & Actions>()(
                   connectorRepoUrl: repo.repoUrl,
                 }
               : {}),
+            ...(skillIds.length ? { skillIds } : {}),
+            ...(connectorIds.length ? { connectorIds } : {}),
           });
         } catch (err) {
           set(
@@ -484,6 +504,30 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       setSelectedConnectorRepo: (repo) =>
         set({ selectedConnectorRepo: repo }, false, 'setSelectedConnectorRepo'),
+      setSelectedSkillIds: (ids) =>
+        set({ selectedSkillIds: ids }, false, 'setSelectedSkillIds'),
+      toggleSelectedSkill: (id) =>
+        set(
+          (s) => ({
+            selectedSkillIds: s.selectedSkillIds.includes(id)
+              ? s.selectedSkillIds.filter((x) => x !== id)
+              : [...s.selectedSkillIds, id],
+          }),
+          false,
+          'toggleSelectedSkill',
+        ),
+      setSelectedConnectorIds: (ids) =>
+        set({ selectedConnectorIds: ids }, false, 'setSelectedConnectorIds'),
+      toggleSelectedConnector: (id) =>
+        set(
+          (s) => ({
+            selectedConnectorIds: s.selectedConnectorIds.includes(id)
+              ? s.selectedConnectorIds.filter((x) => x !== id)
+              : [...s.selectedConnectorIds, id],
+          }),
+          false,
+          'toggleSelectedConnector',
+        ),
       renameCurrent: async (title) => {
         const id = get().sessionId;
         if (!id) return;
@@ -656,7 +700,8 @@ export const useConversationV2Store = create<State & Actions>()(
                 return withSeq({ events: [...filtered, event] });
               }
               case 'wait':
-                return withSeq({});
+                // Agent paused for the user's reply — re-enable the composer.
+                return withSeq({ streaming: false, liveToolCallId: null });
               case 'message': {
                 const nextLiveAssistantIds =
                   event.role === 'assistant'

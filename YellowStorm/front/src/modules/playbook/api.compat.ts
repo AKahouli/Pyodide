@@ -75,7 +75,7 @@ export function mapFlowNodeToPlaybookTask(
     selectedAction: (meta.selectedAction as any) ?? undefined,
     executionMode: (meta.executionMode as any) ?? undefined,
     taskType: (meta.taskType as string) ?? undefined,
-    templateType: (meta.templateType as string) ?? undefined,
+    nodeTemplateKey: (meta.nodeTemplateKey as string) ?? undefined,
     toolBindings: (meta.toolBindings as any) ?? undefined,
     skillBindings: (meta.skillBindings as any) ?? undefined,
     evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
@@ -100,6 +100,7 @@ export function mapFlowNodeToPlaybookTask(
     hitlPolicy: node.hitlPolicy ?? null,
     retryPolicy: node.retryPolicy ?? (meta.retryPolicy as RetryPolicy | null | undefined) ?? null,
     modelId: node.modelId || (meta.modelId as string | null | undefined) || null,
+    deepSearch: node.deepSearch ?? false,
     ...(inputPorts ? { inputPorts } : {}),
     ...(outputPorts ? { outputPorts } : {}),
   };
@@ -314,6 +315,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   if (task.hitlPolicy) node.hitlPolicy = task.hitlPolicy;
   if (task.retryPolicy) node.retryPolicy = task.retryPolicy;
   if (task.modelId) node.modelId = task.modelId;
+  if (task.deepSearch) node.deepSearch = task.deepSearch;
 
   if (task.inputPorts && task.inputPorts.length > 0) {
     node.input = {
@@ -354,7 +356,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   if (task.selectedAction) meta.selectedAction = task.selectedAction;
   if (task.executionMode) meta.executionMode = task.executionMode;
   if (task.taskType) meta.taskType = task.taskType;
-  if (task.templateType) meta.templateType = task.templateType;
+  if (task.nodeTemplateKey) meta.nodeTemplateKey = task.nodeTemplateKey;
   if (task.toolBindings) meta.toolBindings = task.toolBindings;
   if (task.skillBindings) meta.skillBindings = task.skillBindings;
   if (task.evaluationConfig) meta.evaluationConfig = task.evaluationConfig;

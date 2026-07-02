@@ -17,6 +17,8 @@ export interface SessionPointer {
   status: string;
   isShared: boolean;
   workspaceIds: string[];
+  selectedSkillIds: string[];
+  selectedConnectorIds: string[];
   lastEventAt: string;
   eventCount: number;
   systemWorkspaceId: string | null;
@@ -101,6 +103,8 @@ export const conversationV2Api = {
       connectorRepoId?: string;
       connectorRepoName?: string;
       connectorRepoUrl?: string;
+      skillIds?: string[];
+      connectorIds?: string[];
     },
   ): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/message`, body);

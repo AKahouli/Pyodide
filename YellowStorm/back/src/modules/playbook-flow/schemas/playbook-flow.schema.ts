@@ -74,7 +74,7 @@ export class RouterCondition {
   @Prop({ required: false, type: String })
   path?: string;
 
-  @Prop({ required: true, type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] })
+  @Prop({ required: true, type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in'] })
   operator!: string;
 
   @Prop({ required: false, type: Object })
@@ -172,6 +172,9 @@ export class FlowNode {
 
   @Prop({ required: false, type: Object })
   metadata?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  deepSearch?: boolean;
 }
 
 @Schema({ timestamps: true })

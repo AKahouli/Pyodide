@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminPlaybookSettings, getAllModels, updateAdminPlaybookSettings } from '../api';
@@ -63,6 +64,7 @@ export function PlaybookSettingsPage() {
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
     replayEligibilityConfidenceThreshold: 70,
+    useDeterministicBlueprintBuilder: true,
   });
 
   useEffect(() => {
@@ -396,6 +398,48 @@ export function PlaybookSettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   {t('playbookSettings.fields.replayEligibilityThreshold.help')}
                 </p>
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {t('playbookSettings.actions.save')}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('playbookSettings.intent.title')}</CardTitle>
+          <CardDescription>{t('playbookSettings.intent.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('playbookSettings.loading')}</span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-4 rounded-md border border-border/60 p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="use-deterministic-blueprint-builder">
+                    {t('playbookSettings.fields.useDeterministicBlueprintBuilder.label')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {t('playbookSettings.fields.useDeterministicBlueprintBuilder.help')}
+                  </p>
+                </div>
+                <Switch
+                  id="use-deterministic-blueprint-builder"
+                  checked={settings.useDeterministicBlueprintBuilder}
+                  onCheckedChange={(checked) =>
+                    setSettings((prev) => ({ ...prev, useDeterministicBlueprintBuilder: checked === true }))
+                  }
+                />
               </div>
 
               <div className="flex justify-end">

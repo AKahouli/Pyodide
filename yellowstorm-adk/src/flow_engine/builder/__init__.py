@@ -161,4 +161,8 @@ def _add_start_edges(
 
 
 def _collect_interrupt_after(raw_nodes: list[dict[str, Any]]) -> list[str]:
-    return []
+    return [
+        str(node["id"])
+        for node in raw_nodes
+        if node.get("kind") == "human_approval" and node.get("id")
+    ]

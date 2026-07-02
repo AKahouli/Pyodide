@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -55,6 +55,8 @@ interface Props {
   minTopOffset?: number;
   minLeftOffset?: number;
   avoidRectPadding?: number;
+  deepSearch?: boolean;
+  onToggleDeepSearch?: () => void;
 }
 
 export interface PlaybookCanvasFloatingToolbarHandle {
@@ -108,6 +110,8 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   minTopOffset = 0,
   minLeftOffset = DEFAULT_POSITION.x,
   avoidRectPadding = 12,
+  deepSearch = false,
+  onToggleDeepSearch,
 }: Props, ref) {
   const { t } = useModuleTranslation('playbook');
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
@@ -134,22 +138,30 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
     onCollapsedChange?.(resolved);
   }, [collapsed, collapsedProp, onCollapsedChange]);
 
-  const getBottomAnchoredPosition = useCallback((): Position => {
+  const getDefaultPosition = useCallback((): Position => {
     const containerRect = containerRef.current?.getBoundingClientRect();
     const toolbarRect = toolbarRef.current?.getBoundingClientRect();
 
     if (!containerRect || !toolbarRect) {
       return {
         x: Math.max(DEFAULT_POSITION.x, minLeftOffset),
-        y: Math.max(DEFAULT_POSITION.y, Math.max(0, minTopOffset)),
+        y: Math.max(0, minTopOffset),
       };
     }
 
-    return {
-      x: Math.max(DEFAULT_POSITION.x, minLeftOffset),
-      y: Math.max(Math.max(0, minTopOffset), containerRect.height - toolbarRect.height - VIEWPORT_PADDING),
-    };
-  }, [containerRef, minLeftOffset, minTopOffset]);
+    const avoidRect = avoidRectRef?.current?.getBoundingClientRect();
+    let x = Math.max(DEFAULT_POSITION.x, minLeftOffset);
+    let y = Math.max(0, minTopOffset);
+
+    if (avoidRect) {
+      const avoidRightInContainer = avoidRect.right - containerRect.left;
+      const avoidTopInContainer = avoidRect.top - containerRect.top;
+      x = Math.max(x, avoidRightInContainer + avoidRectPadding);
+      y = Math.max(y, avoidTopInContainer);
+    }
+
+    return { x, y };
+  }, [avoidRectPadding, avoidRectRef, containerRef, minLeftOffset, minTopOffset]);
 
   const clampPosition = useCallback((next: Position): Position => {
     const containerRect = containerRef.current?.getBoundingClientRect();
@@ -256,16 +268,16 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   useEffect(() => stopDragging, []);
 
   useLayoutEffect(() => {
-    const next = clampPosition(getBottomAnchoredPosition());
+    const next = clampPosition(getDefaultPosition());
     if (!positionsMatch(positionRef.current, next)) {
       positionRef.current = next;
       setPosition(next);
     }
-  }, [clampPosition, getBottomAnchoredPosition]);
+  }, [clampPosition, getDefaultPosition]);
 
   useLayoutEffect(() => {
     const syncPosition = () => {
-      const next = clampPosition(getBottomAnchoredPosition());
+      const next = clampPosition(getDefaultPosition());
       if (!positionsMatch(positionRef.current, next)) {
         positionRef.current = next;
         setPosition(next);
@@ -275,7 +287,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
     window.addEventListener('resize', syncPosition);
     syncPosition();
     return () => window.removeEventListener('resize', syncPosition);
-  }, [clampPosition, getBottomAnchoredPosition]);
+  }, [clampPosition, getDefaultPosition]);
 
   useLayoutEffect(() => {
     reclampPosition();
@@ -377,6 +389,18 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       disabled: false,
       active: designerOpen,
       hidden: !onToggleDesigner,
+    },
+    {
+      key: 'deepSearch',
+      label: deepSearch ? t('floatingToolbar.deepSearchDisable') : t('floatingToolbar.deepSearchEnable'),
+      icon: Search,
+      onClick: onToggleDeepSearch,
+      disabled: false,
+      active: deepSearch,
+      activeClassName: deepSearch
+        ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 border-amber-500/40'
+        : '',
+      hidden: !onToggleDeepSearch,
     },
     {
       key: 'removeAll',
@@ -530,17 +554,23 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
 
           {actionButtons.filter((a) => !a.hidden).map((action) => {
             const Icon = action.icon;
+            const useCustomActive = Boolean(action.activeClassName);
             return (
               <Button
                 key={action.key}
                 type="button"
-                variant={action.active ? 'default' : 'outline'}
+                variant={useCustomActive ? 'outline' : (action.active ? 'default' : 'outline')}
                 size="sm"
                 onClick={action.onClick}
                 disabled={action.disabled}
-                className={cn('h-9', collapsed ? 'w-9 px-0' : 'w-full justify-start px-3')}
+                className={cn(
+                  'h-9',
+                  collapsed ? 'w-9 px-0' : 'w-full justify-start px-3',
+                  useCustomActive && action.active ? action.activeClassName : '',
+                )}
                 aria-label={collapsed ? action.label : undefined}
                 title={collapsed ? action.label : undefined}
+                aria-pressed={action.active ? 'true' : undefined}
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 {!collapsed && <span className="ml-2 truncate">{action.label}</span>}

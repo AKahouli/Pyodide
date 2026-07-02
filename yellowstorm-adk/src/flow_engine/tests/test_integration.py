@@ -182,7 +182,7 @@ async def test_integration_run_with_input_context(servicer):
         events = [event async for event in servicer.Run(request, None)]
 
     event_types = [e.event_type for e in events]
-    assert "NodeStarted" in event_types
+    assert "NodeCompleted" in event_types
     assert "ExecutionCompleted" in event_types
 
 
@@ -282,12 +282,18 @@ async def test_integration_cancel_during_human_approval(servicer):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock"]),
     ):
+        approval_requested = asyncio.Event()
+
         async def _collect():
-            return [e async for e in servicer.Run(request, None)]
+            events = []
+            async for event in servicer.Run(request, None):
+                events.append(event)
+                if event.event_type == "ApprovalRequested":
+                    approval_requested.set()
+            return events
 
         run_task = asyncio.create_task(_collect())
-
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(approval_requested.wait(), timeout=5)
 
         cancel_req = pb.CancelRequest(execution_id="int-test-cancel-1")
         cancel_resp = await servicer.Cancel(cancel_req, None)

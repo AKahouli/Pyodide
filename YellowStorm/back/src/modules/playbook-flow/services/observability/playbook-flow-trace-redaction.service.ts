@@ -24,6 +24,7 @@ export class PlaybookFlowTraceRedactionService {
     return items.map((item) => ({
       ...item,
       prompt: this.truncateString(this.redactString(item.prompt), MAX_PROMPT_LENGTH) ?? '',
+      generatedOutput: this.truncateString(this.redactString(item.generatedOutput ?? ''), MAX_PROMPT_LENGTH) || null,
     }));
   }
 

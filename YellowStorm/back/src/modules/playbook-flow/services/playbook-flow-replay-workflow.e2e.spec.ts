@@ -373,7 +373,7 @@ function createReplayWorkflowHarness() {
   (executionService as any).playbookFlowClient = { Run: mockRun };
 
   return {
-    replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOne: jest.fn().mockResolvedValue({ id: 'flow-1' }) } as any),
+    replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOneForWrite: jest.fn().mockResolvedValue({ id: 'flow-1' }) } as any),
     executionController: new PlaybookFlowExecutionController(executionService, replayService),
     reports,
     replays,
