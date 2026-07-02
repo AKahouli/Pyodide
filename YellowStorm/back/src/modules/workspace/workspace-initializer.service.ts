@@ -112,6 +112,7 @@ export class WorkspaceInitializerService {
       isSystem: workspace.isSystem || false,
       isPersonal: workspace.isPersonal || false,
       shareCount: workspace.shareCount || 0,
+      isPublic: workspace.isPublic || false,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

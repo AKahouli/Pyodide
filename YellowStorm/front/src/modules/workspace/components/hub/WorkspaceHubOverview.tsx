@@ -1,10 +1,10 @@
-import { Layers, User, Users, type LucideIcon } from 'lucide-react';
+import { Globe, Layers, User, Users, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type { OwnershipFilter } from '../../hooks/useWorkspaceHubFilters';
 
 interface WorkspaceHubOverviewProps {
-  counts: { personal: number; mine: number; shared: number };
+  counts: { personal: number; mine: number; shared: number; public: number };
   activeOwner: OwnershipFilter;
   onSelectOwner: (owner: OwnershipFilter) => void;
 }
@@ -48,6 +48,14 @@ export function WorkspaceHubOverview({
       owner: 'shared',
       accent: 'var(--chart-2)',
     },
+    {
+      key: 'public',
+      label: 'Public',
+      count: counts.public,
+      icon: Globe,
+      owner: 'public',
+      accent: 'var(--chart-4)',
+    },
   ];
 
   return (
@@ -58,7 +66,7 @@ export function WorkspaceHubOverview({
         </span>
         <span className="h-px flex-1 bg-border/60" />
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {tiles.map((tile) => {
           const Icon = tile.icon;
           const active = activeOwner === tile.owner;

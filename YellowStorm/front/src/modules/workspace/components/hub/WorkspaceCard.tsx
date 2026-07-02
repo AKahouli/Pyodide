@@ -44,7 +44,7 @@ export function WorkspaceCard({
   const docLabel = `${workspace.documentCount} doc${workspace.documentCount === 1 ? '' : 's'}`;
   const storageLabel = formatFileSize(workspace.usedStorage);
 
-  const isOwned = !workspace.isShared;
+  const isOwned = !workspace.isShared && !workspace.isReadOnly;
   const canSettings = isOwned && !!onSettings;
   const canShare = isOwned && !workspace.isPersonal && !!onShare;
   const canDelete = isOwned && !workspace.isPersonal && !!onDelete;
@@ -53,6 +53,12 @@ export function WorkspaceCard({
   const sharedBadge = workspace.isShared ? (
     <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
       Partagé par {workspace.sharedByName}
+    </span>
+  ) : null;
+
+  const publicBadge = workspace.isPublicItem ? (
+    <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
+      Public
     </span>
   ) : null;
 
@@ -133,6 +139,7 @@ export function WorkspaceCard({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium tracking-tight">{workspace.name}</span>
             {sharedBadge}
+            {publicBadge}
             {workspace.isReadOnly && (
               <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />
             )}
@@ -186,6 +193,7 @@ export function WorkspaceCard({
             {workspace.isShared ? 'Partagé' : 'Workspace'}
           </span>
           {sharedBadge}
+          {publicBadge}
         </div>
         {workspace.isReadOnly && <Lock className="h-3 w-3 text-muted-foreground" />}
       </div>

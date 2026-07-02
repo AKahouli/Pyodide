@@ -14,11 +14,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import { useWorkspaceStore } from '../../store';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth';
 import { UserSearchInput } from './UserSearchInput';
 import { ShareRow } from './ShareRow';
+import { GroupShareSelector } from './GroupShareSelector';
 import type { WorkspacePermission } from '../../types';
 
 interface PendingShare {
@@ -42,6 +44,9 @@ export function ShareWorkspaceDialog() {
   const revokeShare = useWorkspaceStore((state) => state.revokeShare);
   const searchUsers = useWorkspaceStore((state) => state.searchUsers);
   const fetchWorkspaceShares = useWorkspaceStore((state) => state.fetchWorkspaceShares);
+  const setWorkspaceVisibility = useWorkspaceStore((state) => state.setWorkspaceVisibility);
+  const isPublic = shareModalWorkspace?.isPublic ?? false;
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
 
   const [pendingShares, setPendingShares] = useState<PendingShare[]>([]);
 
@@ -74,6 +79,20 @@ export function ShareWorkspaceDialog() {
     setPendingShares((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
+  const handleAddGroupShares = useCallback(
+    (shares: { email: string; permission: WorkspacePermission }[]) => {
+      if (shares.length === 0) return;
+      setPendingShares((prev) => [
+        ...prev,
+        ...shares.map((s) => ({
+          ...s,
+          id: `${Date.now().toString()}-${Math.random().toString(36).substring(2, 11)}-${s.email}`,
+        })),
+      ]);
+    },
+    [],
+  );
+
   const handleShare = async () => {
     if (!shareModalWorkspace || pendingShares.length === 0) return;
 
@@ -87,6 +106,18 @@ export function ShareWorkspaceDialog() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleToggleVisibility = async (next: boolean) => {
+    if (!shareModalWorkspace) return;
+    setVisibilityBusy(true);
+    try {
+      await setWorkspaceVisibility(shareModalWorkspace.id, next);
+    } catch {
+      // store surfaces the error
+    } finally {
+      setVisibilityBusy(false);
     }
   };
 
@@ -126,20 +157,52 @@ export function ShareWorkspaceDialog() {
 
         <ScrollArea className='flex-1'>
           <div className='p-4 space-y-4'>
-            <UserSearchInput
-              pendingShares={pendingShares}
-              onRemovePending={handleRemovePending}
-              onAddPending={handleAddPending}
-              searchUsers={handleSearchUsers}
-              disabled={isSharingInProgress}
-            />
+            <div className='flex items-start justify-between gap-4 rounded-md border p-3'>
+              <div className='space-y-0.5'>
+                <p className='text-sm font-medium'>{t('sharing.visibility.title')}</p>
+                <p className='text-xs text-muted-foreground'>
+                  {isPublic ? t('sharing.visibility.publicHint') : t('sharing.visibility.privateHint')}
+                </p>
+              </div>
+              <Switch
+                checked={isPublic}
+                onCheckedChange={handleToggleVisibility}
+                disabled={visibilityBusy || isSharingInProgress}
+                aria-label={t('sharing.visibility.title')}
+              />
+            </div>
 
-            {pendingShares.length > 0 && (
-              <Button onClick={handleShare} disabled={isSharingInProgress} className='w-full'>
-                {isSharingInProgress
-                  ? t('sharing.sharing')
-                  : t('sharing.invite')}
-              </Button>
+            {isPublic && (
+              <p className='rounded-md bg-muted/50 p-3 text-xs text-muted-foreground'>
+                {t('sharing.visibility.publicNote')}
+              </p>
+            )}
+
+            {!isPublic && (
+              <>
+                <GroupShareSelector
+                  existingEmails={pendingShares.map((s) => s.email)}
+                  ownerEmail={user?.email ?? ''}
+                  onExpand={handleAddGroupShares}
+                  disabled={isSharingInProgress || visibilityBusy}
+                />
+
+                <UserSearchInput
+                  pendingShares={pendingShares}
+                  onRemovePending={handleRemovePending}
+                  onAddPending={handleAddPending}
+                  searchUsers={handleSearchUsers}
+                  disabled={isSharingInProgress || visibilityBusy}
+                />
+
+                {pendingShares.length > 0 && (
+                  <Button onClick={handleShare} disabled={isSharingInProgress} className='w-full'>
+                    {isSharingInProgress
+                      ? t('sharing.sharing')
+                      : t('sharing.invite')}
+                  </Button>
+                )}
+              </>
             )}
 
             <Separator />

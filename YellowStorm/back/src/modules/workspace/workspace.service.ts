@@ -18,6 +18,8 @@ import {
   WorkspaceQueryParams,
   WorkspaceResponse,
   PaginatedWorkspaces,
+  PublicWorkspaceResponse,
+  PaginatedPublicWorkspaces,
 } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
 import { stripLeadingTrailingChar, collapseRepeatedChar } from '@common/utils';
@@ -330,6 +332,79 @@ export class WorkspaceService implements OnModuleInit {
   }
 
   /**
+   * List public workspaces visible to any logged-in user, excluding the
+   * requester's own (those show under "my workspaces") and system workspaces.
+   */
+  async findPublic(
+    userId: string,
+    params: WorkspaceQueryParams,
+  ): Promise<PaginatedPublicWorkspaces> {
+    const { page = 1, limit = 20, search } = params;
+    const skip = (page - 1) * limit;
+
+    const query: Record<string, unknown> = {
+      isPublic: true,
+      isSystem: { $ne: true },
+      createdBy: { $ne: new Types.ObjectId(userId) },
+    };
+    if (search) {
+      const escaped = escapeRegex(search);
+      query.$or = [
+        { name: { $regex: escaped, $options: 'i' } },
+        { description: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+
+    const [workspaces, total] = await Promise.all([
+      this.workspaceModel
+        .find(query)
+        .populate('createdBy', 'email profile.firstName profile.lastName')
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.workspaceModel.countDocuments(query).exec(),
+    ]);
+
+    const mapped: PublicWorkspaceResponse[] = workspaces
+      .map((ws): PublicWorkspaceResponse | null => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const owner = (ws as any).createdBy;
+        // The owner user may have been deleted, leaving createdBy unresolved by
+        // populate (null). A public workspace with no existing owner shouldn't
+        // be listed — drop it rather than crash the listing endpoint.
+        if (!owner) {
+          return null;
+        }
+        return {
+          id: ws._id.toString(),
+          name: ws.name,
+          alias: ws.alias,
+          storagePrefix: ws.storagePrefix,
+          description: ws.description,
+          owner: {
+            id: owner._id.toString(),
+            email: owner.email,
+            firstName: owner.profile?.firstName,
+            lastName: owner.profile?.lastName,
+          },
+          documentCount: ws.documentCount,
+          usedStorage: ws.usedStorage,
+          allocatedStorage: ws.allocatedStorage,
+          createdAt: ws.createdAt.toISOString(),
+          updatedAt: ws.updatedAt.toISOString(),
+        };
+      })
+      .filter((ws): ws is PublicWorkspaceResponse => ws !== null);
+
+    return {
+      workspaces: mapped,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
    * Update a workspace
    */
   async update(
@@ -401,6 +476,40 @@ export class WorkspaceService implements OnModuleInit {
       userId,
     });
 
+    return this.mapToResponse(workspace);
+  }
+
+  /**
+   * Toggle a workspace's public visibility. Owner-only (the controller's
+   * WorkspaceOwnerGuard enforces this; we re-check defensively). System
+   * workspaces cannot be made public. Shares are left untouched — while public
+   * they are dormant (see WorkspaceAccessGuard), and reactivate when private.
+   */
+  async setVisibility(
+    workspaceId: string,
+    ownerId: string,
+    isPublic: boolean,
+  ): Promise<WorkspaceResponse> {
+    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    if (!workspace) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    }
+    if (workspace.createdBy.toString() !== ownerId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have access to this workspace',
+      );
+    }
+    if (isPublic && workspace.isSystem) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM,
+        'System workspaces cannot be made public',
+      );
+    }
+
+    workspace.isPublic = isPublic;
+    await workspace.save();
+    this.logger.log('Workspace visibility updated', { workspaceId, ownerId, isPublic });
     return this.mapToResponse(workspace);
   }
 
@@ -688,6 +797,7 @@ export class WorkspaceService implements OnModuleInit {
       isSystem: workspace.isSystem || false,
       isPersonal: workspace.isPersonal || false,
       shareCount: workspace.shareCount || 0,
+      isPublic: workspace.isPublic || false,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

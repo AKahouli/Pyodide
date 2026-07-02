@@ -31,6 +31,7 @@ import type {
   PaginatedSharedWorkspaces,
   WorkspaceShareResponse,
   UserSearchResult,
+  PaginatedPublicWorkspaces,
 } from './types';
 
 // ===== Workspace APIs =====
@@ -655,6 +656,24 @@ export async function getSharedWorkspaces(
   const response = await apiClient.get<ApiResponse<PaginatedSharedWorkspaces>>(
     API_ENDPOINTS.workspaces.sharedWithMe,
     { params },
+  );
+  return response.data.data;
+}
+
+export async function getPublicWorkspaces(
+  params?: WorkspaceQueryParams,
+): Promise<PaginatedPublicWorkspaces> {
+  const response = await apiClient.get<ApiResponse<PaginatedPublicWorkspaces>>(
+    API_ENDPOINTS.workspaces.public,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function setVisibility(id: string, isPublic: boolean): Promise<Workspace> {
+  const response = await apiClient.patch<ApiResponse<Workspace>>(
+    API_ENDPOINTS.workspaces.visibility(id),
+    { isPublic },
   );
   return response.data.data;
 }

@@ -65,6 +65,15 @@ export class WorkspaceAccessGuard implements CanActivate {
       return true;
     }
 
+    // Public workspaces are readable by any authenticated user. This takes
+    // precedence over shares: while public, an explicit share is dormant and
+    // everyone (even a readwrite-shared user) gets read-only access.
+    if (workspace.isPublic) {
+      request.workspace = workspace;
+      request.workspaceRole = 'read';
+      return true;
+    }
+
     const share = await this.shareModel
       .findOne({ workspaceId: new Types.ObjectId(workspaceId), sharedWithUserId: user._id })
       .lean()

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { BadgeCount } from '@/components/ui/badge-count';
 import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore, useWorkspaces, useWorkspaceLoading, useSharedWorkspaces } from '../store';
+import { useWorkspaceStore, useWorkspaces, useWorkspaceLoading, useSharedWorkspaces, usePublicWorkspaces } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
 
 type WorkspaceSelectProps = Readonly<{
@@ -21,8 +21,9 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
   const [open, setOpen] = useState(false);
   const workspaces = useWorkspaces();
   const sharedWorkspaces = useSharedWorkspaces();
+  const publicWorkspaces = usePublicWorkspaces();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
-  const { fetchWorkspaces, fetchSharedWorkspaces } = useWorkspaceStore();
+  const { fetchWorkspaces, fetchSharedWorkspaces, fetchPublicWorkspaces } = useWorkspaceStore();
 
   // Load both own and shared-with-me workspaces on mount if the lists are empty.
   useEffect(() => {
@@ -38,6 +39,13 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
     // Only run on mount-equivalent; guarded by length check above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchSharedWorkspaces]);
+
+  useEffect(() => {
+    if (publicWorkspaces.length === 0 && !isLoadingWorkspaces) {
+      fetchPublicWorkspaces(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchPublicWorkspaces]);
 
   const handleToggle = useCallback(
     (workspaceId: string) => {
@@ -83,7 +91,7 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
   );
 
   const renderContent = () => {
-    if (isLoadingWorkspaces && workspaces.length === 0 && sharedWorkspaces.length === 0) {
+    if (isLoadingWorkspaces && workspaces.length === 0 && sharedWorkspaces.length === 0 && publicWorkspaces.length === 0) {
       return (
         <div className='flex items-center justify-center py-8'>
           <div className='h-4 w-4 animate-spin border-2 border-current border-t-transparent rounded-full' />
@@ -91,7 +99,7 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
       );
     }
 
-    if (workspaces.length === 0 && sharedWorkspaces.length === 0) {
+    if (workspaces.length === 0 && sharedWorkspaces.length === 0 && publicWorkspaces.length === 0) {
       return <div className='text-center py-8 text-sm text-muted-foreground'>{t('select.noWorkspaces')}</div>;
     }
 
@@ -109,6 +117,13 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
           <CommandGroup heading={t('select.sharedGroup', { defaultValue: 'Partagés avec moi' })}>
             {sharedWorkspaces.map((workspace) =>
               renderItem(workspace, t('select.sharedBy', { defaultValue: 'Partagé par {{name}}', name: ownerName(workspace.owner) })),
+            )}
+          </CommandGroup>
+        )}
+        {publicWorkspaces.length > 0 && (
+          <CommandGroup heading={t('select.publicGroup', { defaultValue: 'Publics' })}>
+            {publicWorkspaces.map((workspace) =>
+              renderItem(workspace, t('select.publicBy', { defaultValue: 'Public · {{name}}', name: ownerName(workspace.owner) })),
             )}
           </CommandGroup>
         )}

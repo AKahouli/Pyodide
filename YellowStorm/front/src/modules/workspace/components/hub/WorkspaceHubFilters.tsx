@@ -73,6 +73,7 @@ export function WorkspaceHubFilters({
           <SelectItem value="personal">Personnel</SelectItem>
           <SelectItem value="mine">Mes workspaces</SelectItem>
           <SelectItem value="shared">Partagés avec moi</SelectItem>
+          <SelectItem value="public">Publics</SelectItem>
         </SelectContent>
       </Select>
 
