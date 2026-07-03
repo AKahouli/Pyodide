@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkyStreamService } from './services/worky-stream.service';
+import { WorkyElectricConsumerService } from './services/worky-electric-consumer.service';
 import { WorkyIdempotencyService } from './services/worky-idempotency.service';
 import { WorkyEventService } from './services/worky-event.service';
 import { WorkyAuditService } from './services/worky-audit.service';
@@ -209,6 +210,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
   ],
   providers: [
     WorkyStreamService,
+    WorkyElectricConsumerService,
     WorkyIdempotencyService,
     WorkyEventService,
     WorkyAuditService,
