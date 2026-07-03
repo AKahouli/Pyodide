@@ -147,6 +147,20 @@ export class WorkyStreamService implements OnModuleInit {
     return this.toResponse(stream);
   }
 
+  async getAiSessionId(streamId: string): Promise<string> {
+    const doc = await this.streamModel
+      .findById(streamId)
+      .lean<{ aiSessionId?: string | null }>()
+      .exec();
+    if (!doc?.aiSessionId) {
+      throw new NotFoundException(
+        ErrorCode.WORKY_STREAM_NOT_FOUND,
+        'Worky stream has no conversation-v2 session.',
+      );
+    }
+    return doc.aiSessionId;
+  }
+
   async findByAiSessionId(
     aiSessionId: string,
   ): Promise<{ streamId: string; ownerUserId: string } | null> {

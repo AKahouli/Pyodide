@@ -12,18 +12,28 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyPlanningService } from '../services/worky-planning.service';
+import { WorkyStreamService } from '../services/worky-stream.service';
+import { ConversationV2GrpcClientService } from '../../conversation-v2/services/conversation-v2.grpc-client.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
+import { LoggerService } from '../../logger';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
 @UseGuards(WorkyStreamAccessGuard)
 @Controller('worky/streams')
 export class WorkyMessageController {
-  constructor(private readonly planning: WorkyPlanningService) {}
+  constructor(
+    private readonly planning: WorkyPlanningService,
+    private readonly streamService: WorkyStreamService,
+    private readonly grpcClient: ConversationV2GrpcClientService,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(WorkyMessageController.name);
+  }
 
   @Post(':id/messages')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -36,19 +46,13 @@ export class WorkyMessageController {
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
-    // Kick the turn off; the SSE channel `/worky/streams/{id}/events`
-    // surfaces each frame to the owner. We do not await the terminal —
-    // the turn is fire-and-forget from the controller's perspective, so
-    // the HTTP request returns 202 immediately and the UI streams
-    // assistant tokens / kanban updates as they arrive.
-    this.planning.startTurn({
-      streamId,
-      userId: user._id.toString(),
-      content: dto.content,
-      triggerKind: 'owner_message',
-      managerModelIdOverride: dto.managerModelId ?? null,
-      workerModelIdOverride: dto.workerModelId ?? null,
-    });
+    const aiSessionId = await this.streamService.getAiSessionId(streamId);
+    // Fire-and-forget kickoff. The manager writes task/message rows into
+    // its Postgres; the Electric consumer mirrors them into Mongo and
+    // re-emits over the SSE channel `/worky/streams/{id}/events`.
+    void this.grpcClient
+      .worky(user._id.toString(), aiSessionId, dto.content, {})
+      .catch((err) => this.logger.error('Worky gRPC kickoff failed', { streamId, error: (err as Error).message }));
     return { ...saved, turnStarted: true };
   }
 
