@@ -6,9 +6,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
 
-import { useWorkspaces, useSharedWorkspaces } from '../store';
+import { useWorkspaces, useSharedWorkspaces, usePublicWorkspaces } from '../store';
 import { useWorkspaceStore, useWorkspaceLoading } from '../store';
-import type { Workspace, SharedWorkspaceResponse } from '../types';
+import type { Workspace, SharedWorkspaceResponse, PublicWorkspaceResponse } from '../types';
 
 type Props = {
   triggerClassName?: string;
@@ -20,9 +20,11 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
   const navigate = useNavigate();
   const workspaces = useWorkspaces();
   const sharedWorkspaces = useSharedWorkspaces();
+  const publicWorkspaces = usePublicWorkspaces();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
   const fetchSharedWorkspaces = useWorkspaceStore((s) => s.fetchSharedWorkspaces);
+  const fetchPublicWorkspaces = useWorkspaceStore((s) => s.fetchPublicWorkspaces);
 
   const selectedId = useWorkspaceStore((s) => s.selectedWorkspaceId);
 
@@ -39,6 +41,14 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
     // Fetch once on mount; the store caches the result.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchSharedWorkspaces]);
+
+  useEffect(() => {
+    if (publicWorkspaces.length === 0) {
+      fetchPublicWorkspaces(1);
+    }
+    // Fetch once on mount; the store caches the result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchPublicWorkspaces]);
 
   const selected = useMemo(
     () => (selectedId ? workspaces.find((w) => w.id === selectedId) ?? null : null),
@@ -81,6 +91,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
             <WorkspaceList
               workspaces={workspaces}
               sharedWorkspaces={sharedWorkspaces}
+              publicWorkspaces={publicWorkspaces}
               selectedId={selectedId}
               isLoading={isLoadingWorkspaces}
               onSelect={handleSelect}
@@ -106,6 +117,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
         <WorkspaceList
           workspaces={workspaces}
           sharedWorkspaces={sharedWorkspaces}
+          publicWorkspaces={publicWorkspaces}
           selectedId={selectedId}
           isLoading={isLoadingWorkspaces}
           onSelect={handleSelect}
@@ -118,12 +130,14 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
 function WorkspaceList({
   workspaces,
   sharedWorkspaces,
+  publicWorkspaces,
   selectedId,
   isLoading,
   onSelect,
 }: {
   workspaces: Workspace[];
   sharedWorkspaces: SharedWorkspaceResponse[];
+  publicWorkspaces: PublicWorkspaceResponse[];
   selectedId: string | null;
   isLoading: boolean;
   onSelect: (id: string) => void;
@@ -162,6 +176,19 @@ function WorkspaceList({
                           Lecture
                         </span>
                       )}
+                      {isSelected && <Check className='h-4 w-4 text-primary' />}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            )}
+            {publicWorkspaces.length > 0 && (
+              <CommandGroup heading='Publics'>
+                {publicWorkspaces.map((w) => {
+                  const isSelected = selectedId === w.id;
+                  return (
+                    <CommandItem key={w.id} value={w.name} onSelect={() => onSelect(w.id)} className='gap-2'>
+                      <span className='flex-1 truncate'>{w.name}</span>
                       {isSelected && <Check className='h-4 w-4 text-primary' />}
                     </CommandItem>
                   );

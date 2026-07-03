@@ -27,6 +27,7 @@ export function WorkspaceHubGrid({
     { key: 'personal', title: 'Personnel', items: groups.personal },
     { key: 'mine', title: 'Mes workspaces', items: groups.mine },
     { key: 'shared', title: 'Partagés avec moi', items: groups.shared },
+    { key: 'public', title: 'Public', items: groups.public },
   ];
 
   return (

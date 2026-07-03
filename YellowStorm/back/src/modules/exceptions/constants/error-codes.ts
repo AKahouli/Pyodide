@@ -131,6 +131,8 @@ export enum ErrorCode {
   WORKSPACE_SHARE_SYSTEM = 'ERR_1956',
   WORKSPACE_READ_ONLY = 'ERR_1957',
   WORKSPACE_SHARE_USER_NOT_FOUND = 'ERR_1958',
+  WORKSPACE_PUBLIC_NO_SHARE = 'ERR_1959',
+  WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM = 'ERR_1960',
 
   // Auth token missing (for SSE)
   AUTH_TOKEN_MISSING = 'ERR_1120',
@@ -299,6 +301,10 @@ export enum ErrorCode {
   TEAM_SHARE_USER_NOT_FOUND = 'ERR_3311',
   TEAM_GENERATE_FAILED = 'ERR_3312',
   TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
+
+  // User Group errors (3350-3399)
+  USER_GROUP_NOT_FOUND = 'ERR_3350',
+  USER_GROUP_ALREADY_EXISTS = 'ERR_3351',
 
   // Widget Chat errors (3400-3499)
   WIDGET_TOKEN_INVALID = 'ERR_3400',
@@ -475,6 +481,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKSPACE_SHARE_SYSTEM]: 'System workspaces cannot be shared.',
   [ErrorCode.WORKSPACE_READ_ONLY]: 'You have read-only access to this workspace.',
   [ErrorCode.WORKSPACE_SHARE_USER_NOT_FOUND]: 'One or more users were not found.',
+  [ErrorCode.WORKSPACE_PUBLIC_NO_SHARE]:
+    'This workspace is public and cannot be shared. Make it private first.',
+  [ErrorCode.WORKSPACE_PUBLIC_FORBIDDEN_SYSTEM]: 'System workspaces cannot be made public.',
 
   [ErrorCode.AUTH_TOKEN_MISSING]: 'Authentication token is required.',
 
@@ -672,6 +681,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TEAM_SELF_REFERENCE]: 'An agent cannot be its own parent.',
   [ErrorCode.TEAM_CYCLE_DETECTED]: 'This relationship would create a cycle in the hierarchy.',
   [ErrorCode.TEAM_AGENT_NOT_FOUND]: 'One or more agents were not found or do not belong to you.',
+  [ErrorCode.USER_GROUP_NOT_FOUND]: 'User group not found.',
+  [ErrorCode.USER_GROUP_ALREADY_EXISTS]: 'A group with this name already exists.',
   [ErrorCode.TEAM_SHARE_NOT_FOUND]: 'Team share not found.',
   [ErrorCode.TEAM_SHARE_SELF]: 'Cannot share a team with yourself.',
   [ErrorCode.TEAM_SHARE_EXISTS]: 'Team is already shared with this user.',

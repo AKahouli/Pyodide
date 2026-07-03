@@ -106,6 +106,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
     sharedWithMe: '/workspaces/shared-with-me',
+    public: '/workspaces/public',
+    visibility: (id: string) => `/workspaces/${id}/visibility`,
   },
   workspaceShares: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,
@@ -280,6 +282,9 @@ export const API_ENDPOINTS = {
   agentTypes: {
     active: '/agent-types/active',
   },
+  memoryCards: {
+    base: '/memory-cards',
+  },
   agents: {
     list: '/agents',
     all: '/agents/all',
@@ -315,6 +320,12 @@ export const API_ENDPOINTS = {
     shares: (id: string) => `/teams/${id}/shares`,
     shareById: (id: string, shareId: string) => `/teams/${id}/shares/${shareId}`,
     unshare: (id: string) => `/teams/${id}/unshare`,
+  },
+  userGroups: {
+    list: '/user-groups',
+    byId: (id: string) => `/user-groups/${id}`,
+    members: (id: string) => `/user-groups/${id}/members`,
+    memberById: (id: string, userId: string) => `/user-groups/${id}/members/${userId}`,
   },
   tools: {
     active: '/tools/active',

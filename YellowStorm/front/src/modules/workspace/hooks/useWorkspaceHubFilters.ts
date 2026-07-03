@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { useWorkspaces, useSharedWorkspaces } from '../store';
-import type { Workspace, SharedWorkspaceResponse } from '../types';
+import { useWorkspaces, useSharedWorkspaces, usePublicWorkspaces } from '../store';
+import type { Workspace, SharedWorkspaceResponse, PublicWorkspaceResponse } from '../types';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-export type OwnershipFilter = 'all' | 'personal' | 'mine' | 'shared';
+export type OwnershipFilter = 'all' | 'personal' | 'mine' | 'shared' | 'public';
 export type SortKey = 'updated' | 'created' | 'name';
 export type ViewMode = 'grid' | 'list';
 
@@ -28,6 +28,7 @@ export interface WorkspaceHubItem {
   isReadOnly: boolean;
   sharedByName?: string;
   shareCount?: number;
+  isPublicItem?: boolean;
 }
 
 export interface WorkspaceHubFilters {
@@ -41,6 +42,7 @@ export interface WorkspaceHubFilteredGroups {
   personal: WorkspaceHubItem[];
   mine: WorkspaceHubItem[];
   shared: WorkspaceHubItem[];
+  public: WorkspaceHubItem[];
 }
 
 export interface UseWorkspaceHubFiltersResult {
@@ -54,11 +56,14 @@ export interface UseWorkspaceHubFiltersResult {
   hasActiveFilters: boolean;
   filteredGroups: WorkspaceHubFilteredGroups;
   isEmpty: boolean;
-  counts: { personal: number; mine: number; shared: number };
+  counts: { personal: number; mine: number; shared: number; public: number };
 }
 
 function isOwnership(value: string | null): value is OwnershipFilter {
-  return value === 'all' || value === 'personal' || value === 'mine' || value === 'shared';
+  return (
+    value === 'all' || value === 'personal' || value === 'mine' ||
+    value === 'shared' || value === 'public'
+  );
 }
 
 function isSortKey(value: string | null): value is SortKey {
@@ -83,6 +88,7 @@ function toItemFromOwned(w: Workspace): WorkspaceHubItem {
     isPersonal: w.isPersonal,
     isReadOnly: false,
     shareCount: w.shareCount,
+    isPublicItem: w.isPublic,
   };
 }
 
@@ -100,6 +106,24 @@ function toItemFromShared(w: SharedWorkspaceResponse): WorkspaceHubItem {
     isPersonal: false,
     isReadOnly: w.permission === 'read',
     sharedByName: w.owner.firstName || w.owner.email,
+  };
+}
+
+function toItemFromPublic(w: PublicWorkspaceResponse): WorkspaceHubItem {
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description,
+    documentCount: w.documentCount,
+    usedStorage: w.usedStorage,
+    allocatedStorage: w.allocatedStorage,
+    createdAt: w.createdAt,
+    updatedAt: w.updatedAt,
+    isShared: false,
+    isPersonal: false,
+    isReadOnly: true,
+    sharedByName: w.owner.firstName || w.owner.email,
+    isPublicItem: true,
   };
 }
 
@@ -127,6 +151,7 @@ function sortItems(list: WorkspaceHubItem[], sort: SortKey): WorkspaceHubItem[] 
 export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
   const ownedWorkspaces = useWorkspaces();
   const sharedWorkspaces = useSharedWorkspaces();
+  const publicWorkspaces = usePublicWorkspaces();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -222,6 +247,7 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
     [ownedWorkspaces],
   );
   const sharedItems = useMemo(() => sharedWorkspaces.map(toItemFromShared), [sharedWorkspaces]);
+  const publicItems = useMemo(() => publicWorkspaces.map(toItemFromPublic), [publicWorkspaces]);
 
   const filters: WorkspaceHubFilters = useMemo(
     () => ({ search: rawSearch, owner, sort, view }),
@@ -241,14 +267,19 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
       owner === 'all' || owner === 'shared'
         ? sortItems(sharedItems.filter((w) => matches(w, rawSearch)), sort)
         : [];
-    return { personal, mine, shared };
-  }, [personalItems, mineItems, sharedItems, rawSearch, owner, sort]);
+    const publicGroup =
+      owner === 'all' || owner === 'public'
+        ? sortItems(publicItems.filter((w) => matches(w, rawSearch)), sort)
+        : [];
+    return { personal, mine, shared, public: publicGroup };
+  }, [personalItems, mineItems, sharedItems, publicItems, rawSearch, owner, sort]);
 
   const hasActiveFilters = !!rawSearch || owner !== 'all' || sort !== 'updated';
   const isEmpty =
     filteredGroups.personal.length === 0 &&
     filteredGroups.mine.length === 0 &&
-    filteredGroups.shared.length === 0;
+    filteredGroups.shared.length === 0 &&
+    filteredGroups.public.length === 0;
 
   return {
     filters,
@@ -265,6 +296,7 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
       personal: personalItems.length,
       mine: mineItems.length,
       shared: sharedItems.length,
+      public: publicItems.length,
     },
   };
 }

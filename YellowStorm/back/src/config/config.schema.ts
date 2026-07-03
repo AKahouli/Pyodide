@@ -12,6 +12,14 @@ export const configValidationSchema = Joi.object({
   GITHUB_CLIENT_SECRET: Joi.string().optional(),
   GITHUB_CALLBACK_URL: Joi.string().uri().optional(),
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug', 'verbose').default('info'),
+
+  // Agent memory cards Postgres (external "thematic_memory" DB)
+  MEMORY_PG_HOST: Joi.string().optional(),
+  MEMORY_PG_PORT: Joi.number().default(5432),
+  MEMORY_PG_USER: Joi.string().optional(),
+  MEMORY_PG_PASSWORD: Joi.string().optional(),
+  MEMORY_PG_DB: Joi.string().optional(),
+  MEMORY_PG_SSL: Joi.boolean().optional(),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
   // Encryption

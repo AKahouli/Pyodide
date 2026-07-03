@@ -20,6 +20,7 @@ import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
 import whatsappConfig from './config/whatsapp.config';
 import workyConfig from './config/worky.config';
+import memoryCardsConfig from './config/memory-cards.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -49,6 +50,7 @@ import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { TeamModule } from './modules/team/team.module';
+import { UserGroupModule } from './modules/user-group';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
@@ -63,6 +65,7 @@ import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
 import { GuardrailsModule } from './modules/guardrails/guardrails.module';
+import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
 
 @Module({
   imports: [
@@ -70,7 +73,7 @@ import { GuardrailsModule } from './modules/guardrails/guardrails.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -108,6 +111,7 @@ import { GuardrailsModule } from './modules/guardrails/guardrails.module';
     AgentTypeModule,
     AgentModule,
     TeamModule,
+    UserGroupModule,
     PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,
@@ -122,6 +126,7 @@ import { GuardrailsModule } from './modules/guardrails/guardrails.module';
     WidgetChatModule,
     WorkyModule,
     GuardrailsModule,
+    MemoryCardsModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

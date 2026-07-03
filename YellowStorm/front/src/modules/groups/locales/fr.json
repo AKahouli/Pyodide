@@ -1,0 +1,41 @@
+{
+  "button": { "groups": "Groupes", "manage": "Gérer les groupes" },
+  "page": {
+    "title": "Groupes",
+    "subtitle": "Créez des groupes de personnes pour partager des espaces de travail en une seule fois.",
+    "newGroup": "Nouveau groupe",
+    "emptyState": "Vous n'avez pas encore de groupe.",
+    "createFirst": "Créer votre premier groupe",
+    "memberCount_one": "{{count}} membre",
+    "memberCount_other": "{{count}} membres",
+    "noDescription": "Aucune description",
+    "deleteDialog": {
+      "title": "Supprimer le groupe",
+      "description": "Supprimer « {{name}} » ? Les espaces déjà partagés avec ses membres conservent leur accès.",
+      "cancel": "Annuler",
+      "confirm": "Supprimer"
+    }
+  },
+  "dialog": {
+    "createTitle": "Créer un groupe",
+    "editTitle": "Modifier le groupe",
+    "nameLabel": "Nom",
+    "namePlaceholder": "ex. Équipe marketing",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Facultatif",
+    "membersLabel": "Membres",
+    "searchPlaceholder": "Rechercher des utilisateurs par e-mail",
+    "noMembers": "Aucun membre pour le moment.",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "create": "Créer"
+  },
+  "store": {
+    "errors": { "fetchFailed": "Échec du chargement des groupes." },
+    "toasts": {
+      "created": "Groupe « {{name}} » créé",
+      "updated": "Groupe « {{name}} » mis à jour",
+      "deleted": "Groupe « {{name}} » supprimé"
+    }
+  }
+}

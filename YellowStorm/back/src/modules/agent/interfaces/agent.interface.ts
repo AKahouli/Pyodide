@@ -62,6 +62,8 @@ export interface IAgentResponse {
   connectors?: string[];
   connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
   guardrails: AgentGuardrails;
+  /** True when the agent has the "smart-memory" connector (slug === 'smart-memory'). */
+  hasSmartMemory?: boolean;
   skills?: string[];
   disabledSkills?: string[];
   isDefault: boolean;

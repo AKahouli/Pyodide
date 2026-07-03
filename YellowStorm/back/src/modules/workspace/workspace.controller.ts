@@ -30,6 +30,7 @@ import { WorkspaceOwnerGuard, WorkspaceAccessGuard } from './guards';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspaceQueryDto } from './dto/workspace-query.dto';
+import { UpdateVisibilityDto } from './dto/update-visibility.dto';
 
 // Default workspace storage allocation in bytes (100MB)
 const DEFAULT_WORKSPACE_STORAGE = 100 * 1024 * 1024; //104857600
@@ -124,6 +125,18 @@ export class WorkspaceController {
   }
 
   /**
+   * List public workspaces (visible to all logged-in users)
+   */
+  @Get('public')
+  @ApiOperation({ summary: 'List public workspaces' })
+  async getPublic(
+    @CurrentUser() user: UserDocument,
+    @Query() query: WorkspaceQueryDto,
+  ) {
+    return this.workspaceService.findPublic(user._id.toString(), query);
+  }
+
+  /**
    * Get workspace by ID
    */
   @Get(':id')
@@ -160,6 +173,21 @@ export class WorkspaceController {
     @Body() dto: UpdateWorkspaceDto,
   ) {
     return this.workspaceService.update(id, user._id.toString(), dto);
+  }
+
+  /**
+   * Toggle workspace public visibility (owner only)
+   */
+  @Patch(':id/visibility')
+  @UseGuards(WorkspaceOwnerGuard)
+  @ApiOperation({ summary: 'Set workspace public/private visibility' })
+  @ApiParam({ name: 'id', description: 'Workspace ID' })
+  async setVisibility(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+    @Body() dto: UpdateVisibilityDto,
+  ) {
+    return this.workspaceService.setVisibility(id, user._id.toString(), dto.isPublic);
   }
 
   /**

@@ -34,6 +34,7 @@ import type {
   WorkspaceRole,
   WorkspaceTab,
   SharedWorkspaceResponse,
+  PublicWorkspaceResponse,
   UserSearchResult,
   WorkspaceFile,
   WorkspaceFolder,
@@ -109,6 +110,12 @@ interface WorkspaceState {
   sharedCurrentPage: number;
   sharedTotalPages: number;
   totalSharedWorkspaces: number;
+
+  // Public workspaces (cached by page)
+  publicWorkspaces: Map<number, PublicWorkspaceResponse[]>;
+  publicCurrentPage: number;
+  publicTotalPages: number;
+  totalPublicWorkspaces: number;
   activeTab: WorkspaceTab;
 
   // Share modal + share list
@@ -261,6 +268,10 @@ interface WorkspaceActions {
   selectSharedWorkspace: (workspaceId: string, shareId: string) => Promise<void>;
   invalidateSharedWorkspaceCache: () => void;
 
+  // Public workspaces
+  fetchPublicWorkspaces: (page?: number) => Promise<void>;
+  setWorkspaceVisibility: (id: string, isPublic: boolean) => Promise<void>;
+
   // Share management (owner side)
   openShareModal: (workspace?: Workspace) => void;
   closeShareModal: () => void;
@@ -311,6 +322,11 @@ const initialState: WorkspaceState = {
   sharedCurrentPage: 1,
   sharedTotalPages: 0,
   totalSharedWorkspaces: 0,
+
+  publicWorkspaces: new Map(),
+  publicCurrentPage: 1,
+  publicTotalPages: 1,
+  totalPublicWorkspaces: 0,
   activeTab: 'personal',
 
   isShareModalOpen: false,
@@ -1491,6 +1507,68 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
+      // ===== Public workspaces =====
+      fetchPublicWorkspaces: async (page = 1) => {
+        const state = get();
+
+        if (state.publicWorkspaces.has(page)) {
+          set({ publicCurrentPage: page });
+          return;
+        }
+
+        set({ isLoadingWorkspaces: true, error: null });
+
+        try {
+          const result = await workspaceApi.getPublicWorkspaces({
+            page,
+            limit: DEFAULT_PAGE_LIMIT,
+          });
+
+          const newCache = new Map(state.publicWorkspaces);
+          newCache.set(page, result.workspaces);
+
+          set({
+            publicWorkspaces: newCache,
+            publicCurrentPage: page,
+            publicTotalPages: result.pagination.totalPages,
+            totalPublicWorkspaces: result.pagination.total,
+            isLoadingWorkspaces: false,
+          });
+        } catch (err) {
+          const fallback = tError('fetchPublicWorkspaces', 'Failed to fetch public workspaces');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingWorkspaces: false });
+        }
+      },
+
+      setWorkspaceVisibility: async (id, isPublic) => {
+        try {
+          const updated = await workspaceApi.setVisibility(id, isPublic);
+          get().updateWorkspaceInCache(updated);
+          // Keep the open share modal in sync so its switch reflects the new state.
+          const { shareModalWorkspace } = get();
+          if (shareModalWorkspace?.id === id) {
+            set({ shareModalWorkspace: { ...shareModalWorkspace, isPublic } });
+          }
+          // Public listing changed — drop its cache and refetch so a mounted
+          // hub/picker doesn't show an empty Public section until remount.
+          set({ publicWorkspaces: new Map(), publicCurrentPage: 1 });
+          void get().fetchPublicWorkspaces(1);
+          toast.success(
+            tToast(
+              isPublic ? 'sharing.visibilityPublic' : 'sharing.visibilityPrivate',
+              isPublic ? 'Workspace is now public' : 'Workspace is now private',
+            ),
+          );
+        } catch (err) {
+          const fallback = tError('setVisibility', 'Failed to update workspace visibility');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message });
+          toast.error(fallback, { description: message });
+          throw err;
+        }
+      },
+
       selectSharedWorkspace: async (workspaceId, shareId) => {
         const state = get();
 
@@ -1522,6 +1600,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                 isSystem: false,
                 isPersonal: false,
                 shareCount: 0,
+                isPublic: false,
                 createdAt: cached.createdAt,
                 updatedAt: cached.updatedAt,
               }
@@ -2085,6 +2164,18 @@ export const useSharedWorkspaces = () => {
 export const useSharedPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.sharedCurrentPage) ?? 1;
   const totalPages = useWorkspaceStore((state) => state.sharedTotalPages) ?? 1;
+  return { currentPage, totalPages };
+};
+
+export const usePublicWorkspaces = () => {
+  const publicWorkspaces = useWorkspaceStore((state) => state.publicWorkspaces);
+  const publicCurrentPage = useWorkspaceStore((state) => state.publicCurrentPage);
+  return publicWorkspaces.get(publicCurrentPage) ?? [];
+};
+
+export const usePublicPagination = () => {
+  const currentPage = useWorkspaceStore((state) => state.publicCurrentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.publicTotalPages) ?? 1;
   return { currentPage, totalPages };
 };
 

@@ -20,6 +20,8 @@ export interface Agent {
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
+  /** True when the agent has the "smart-memory" connector. */
+  hasSmartMemory?: boolean;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -322,7 +324,7 @@ export interface AgentActions {
   publishAgentToA2A: (id: string) => Promise<A2APublishResult>;
   rotateAgentA2AKey: (id: string) => Promise<A2ARotateKeyResult>;
   revokeAgentA2A: (id: string) => Promise<A2ARevokeResult>;
-  
+
   // Evaluation Actions
   fetchDatasets: () => Promise<void>;
   createDataset: (name: string, items: DatasetItem[]) => Promise<Dataset>;
