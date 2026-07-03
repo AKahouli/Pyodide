@@ -37,7 +37,9 @@
     "subtitle": "Agent is using",
     "close": "Close panel",
     "empty": "Select a tool to inspect.",
-    "jumpToLive": "Jump to live"
+    "jumpToLive": "Jump to live",
+    "tabCode": "Code",
+    "tabPreview": "Preview"
   },
   "vnc": {
     "unavailable": "No VM attached to this session",

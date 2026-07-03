@@ -106,6 +106,9 @@ interface Actions {
   replayEvents: (events: AgentEvent[]) => void;
   reset: () => void;
   openToolPanel: (toolCallId: string) => void;
+  /** Switch the right panel between the Code (tool) and Preview (app) tabs.
+   *  Only meaningful when both a tool and an application component exist. */
+  setRightPanelView: (view: 'code' | 'preview') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
   stop: () => Promise<void>;
@@ -473,6 +476,12 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       openToolPanel: (toolCallId) =>
         set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
+      setRightPanelView: (view) =>
+        set(
+          { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
+          false,
+          `setRightPanelView/${view}`,
+        ),
       jumpToLive: () =>
         set(
           (s) =>
@@ -676,11 +685,19 @@ export const useConversationV2Store = create<State & Actions>()(
                   !isMessageTool &&
                   (state.selectedToolCallId === null ||
                     state.selectedToolCallId === state.liveToolCallId);
+                // Follow the live tool in the Code view: always advance the
+                // selection so the Code tab tracks the newest tool. But DON'T
+                // pull the panel back onto the code view when the user is
+                // watching the app preview ('app' mode) — the preview stays put,
+                // the Code tab just updates in the background. Opening from
+                // 'closed' or staying in 'tool' still shows the code.
                 const autoOpen =
                   !isMessageTool && followingLive
                     ? {
-                        rightPanelMode: 'tool' as const,
                         selectedToolCallId: event.tool_call_id,
+                        ...(state.rightPanelMode !== 'app'
+                          ? { rightPanelMode: 'tool' as const }
+                          : {}),
                       }
                     : {};
                 if (idx >= 0) {
@@ -718,12 +735,12 @@ export const useConversationV2Store = create<State & Actions>()(
                 return withSeq({ streaming: false, liveToolCallId: null });
               case 'application_component':
                 // Agent pushed an embeddable app/preview: surface it in the side
-                // panel immediately (switching the panel away from any tool view).
+                // panel immediately. Keep selectedToolCallId so the Code tab of
+                // the Code/Preview toggle stays available alongside the preview.
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: { url: event.url, title: event.title ?? '' },
                   rightPanelMode: 'app',
-                  selectedToolCallId: null,
                 });
               case 'message': {
                 const nextLiveAssistantIds =

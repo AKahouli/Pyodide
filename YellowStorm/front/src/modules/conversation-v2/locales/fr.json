@@ -37,7 +37,9 @@
     "subtitle": "L'agent utilise",
     "close": "Fermer le panneau",
     "empty": "Sélectionnez un outil pour l'inspecter.",
-    "jumpToLive": "Revenir au direct"
+    "jumpToLive": "Revenir au direct",
+    "tabCode": "Code",
+    "tabPreview": "Aperçu"
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",
