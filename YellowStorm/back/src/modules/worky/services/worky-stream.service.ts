@@ -105,7 +105,6 @@ export class WorkyStreamService implements OnModuleInit {
 
     const artifactWorkspace = await this.createArtifactWorkspace(userId, title);
     const managerAgent = await this.createManagerAgent(userId, title, agentType.id);
-    const aiSessionId = await this.grpcClient.createSession(userId, []);
 
     const stream = await this.streamModel.create({
       ownerUserId: new Types.ObjectId(userId),
@@ -114,7 +113,10 @@ export class WorkyStreamService implements OnModuleInit {
         : artifactWorkspace.createdBy,
       artifactWorkspaceId: artifactWorkspace._id,
       managerAgentId: managerAgent._id,
-      aiSessionId,
+      // aiSessionId is intentionally omitted here (defaults to null via the
+      // schema). The conversation-v2 session is created lazily on first
+      // message send — see `ensureKickoffContext` — so stream creation no
+      // longer depends on manager/gRPC availability.
       // Per-stream model selection starts unset; resolved at
       // planning / execution time by `WorkyPlanningService` using
       // the per-turn override → stream field → admin default chain.
@@ -147,41 +149,36 @@ export class WorkyStreamService implements OnModuleInit {
     return this.toResponse(stream);
   }
 
-  async getAiSessionId(streamId: string): Promise<string> {
-    const doc = await this.streamModel
-      .findById(streamId)
-      .lean<{ aiSessionId?: string | null }>()
-      .exec();
-    if (!doc?.aiSessionId) {
-      throw new NotFoundException(
-        ErrorCode.WORKY_STREAM_NOT_FOUND,
-        'Worky stream has no conversation-v2 session.',
-      );
-    }
-    return doc.aiSessionId;
-  }
-
   /**
    * Used by `WorkyMessageController` to kick off the manager over gRPC:
    * returns both the conversation-v2 session id and the stream's
    * persistent manager model selection (if any), so the caller can
    * resolve the per-turn override → stream field → admin default chain
    * without a second round-trip.
+   *
+   * Lazily creates the conversation-v2 session on first use if the stream
+   * doesn't have one yet (`aiSessionId: null`) — either because it was
+   * created before this design change, or because eager creation was
+   * removed from `create()`. This decouples stream creation from manager
+   * availability and self-heals pre-existing streams.
    */
-  async getKickoffContext(
+  async ensureKickoffContext(
     streamId: string,
+    userId: string,
   ): Promise<{ aiSessionId: string; managerModelId: string | null }> {
     const doc = await this.streamModel
       .findById(streamId)
       .lean<{ aiSessionId?: string | null; managerModelId?: string | null }>()
       .exec();
-    if (!doc?.aiSessionId) {
-      throw new NotFoundException(
-        ErrorCode.WORKY_STREAM_NOT_FOUND,
-        'Worky stream has no conversation-v2 session.',
-      );
+    if (!doc) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
     }
-    return { aiSessionId: doc.aiSessionId, managerModelId: doc.managerModelId ?? null };
+    let aiSessionId = doc.aiSessionId ?? null;
+    if (!aiSessionId) {
+      aiSessionId = await this.grpcClient.createSession(userId, []);
+      await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
+    }
+    return { aiSessionId, managerModelId: doc.managerModelId ?? null };
   }
 
   async findByAiSessionId(

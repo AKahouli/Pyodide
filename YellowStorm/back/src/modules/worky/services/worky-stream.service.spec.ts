@@ -184,15 +184,14 @@ describe('WorkyStreamService.create', () => {
     expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
 
-  it('creates a conversation-v2 session and stores aiSessionId', async () => {
+  it('does not eagerly create a conversation-v2 session on create()', async () => {
     const { service, streamCreate, grpcClient } = makeService();
-    grpcClient.createSession.mockResolvedValue('sess-xyz');
 
     await service.create(userId, { title: 'My stream' } as any);
 
-    expect(grpcClient.createSession).toHaveBeenCalledWith(userId, []);
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
     const createdArg = streamCreate.mock.calls[0][0];
-    expect(createdArg.aiSessionId).toBe('sess-xyz');
+    expect(createdArg.aiSessionId).toBeUndefined();
   });
 
   it('findByAiSessionId returns streamId + ownerUserId', async () => {
@@ -226,6 +225,87 @@ describe('WorkyStreamService.create', () => {
     const res = await service.getOwnerByStreamId('missing-stream');
 
     expect(res).toBeNull();
+  });
+});
+
+describe('WorkyStreamService.ensureKickoffContext', () => {
+  const userId = new Types.ObjectId().toString();
+  const streamId = new Types.ObjectId().toString();
+
+  const makeEnsureService = (findByIdResolved: unknown) => {
+    const updateOne = jest.fn(() => writeQuery({ acknowledged: true }));
+    const streamModel = {
+      create: jest.fn(),
+      findById: jest.fn().mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve(findByIdResolved) }),
+      }),
+      find: jest.fn(),
+      findOne: jest.fn(),
+      updateOne,
+    };
+    const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentTypeService = { findBySlug: jest.fn() };
+    const connection = makeConnection();
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
+    const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-new') };
+    const service = new WorkyStreamService(
+      streamModel as any,
+      workspaceModel as any,
+      agentModel as any,
+      connection as any,
+      agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
+      config,
+      logger as any,
+      grpcClient as any,
+    );
+    return { service, streamModel, grpcClient, updateOne };
+  };
+
+  it('returns the existing aiSessionId without creating a new session', async () => {
+    const { service, grpcClient, updateOne } = makeEnsureService({
+      aiSessionId: 'sess-existing',
+      managerModelId: 'anthropic/claude-3-5-sonnet',
+    });
+
+    const res = await service.ensureKickoffContext(streamId, userId);
+
+    expect(res).toEqual({ aiSessionId: 'sess-existing', managerModelId: 'anthropic/claude-3-5-sonnet' });
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
+    expect(updateOne).not.toHaveBeenCalled();
+  });
+
+  it('lazily creates and persists a session when aiSessionId is null', async () => {
+    const { service, grpcClient, updateOne } = makeEnsureService({
+      aiSessionId: null,
+      managerModelId: null,
+    });
+
+    const res = await service.ensureKickoffContext(streamId, userId);
+
+    expect(grpcClient.createSession).toHaveBeenCalledWith(userId, []);
+    expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
+    expect(res).toEqual({ aiSessionId: 'sess-new', managerModelId: null });
+  });
+
+  it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
+    const { service, grpcClient } = makeEnsureService(null);
+
+    await expect(service.ensureKickoffContext(streamId, userId)).rejects.toMatchObject({
+      code: 'ERR_3500',
+    });
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
   });
 });
 

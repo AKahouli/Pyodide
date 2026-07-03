@@ -48,7 +48,10 @@ export class WorkyMessageController {
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
-    const { aiSessionId, managerModelId } = await this.streamService.getKickoffContext(streamId);
+    const { aiSessionId, managerModelId } = await this.streamService.ensureKickoffContext(
+      streamId,
+      user._id.toString(),
+    );
     // Resolve the Manager model with the same priority chain used by
     // planning turns: per-turn override → stream's persistent field →
     // admin default. The gRPC `worky()` proto marks `model` as required,
