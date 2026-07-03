@@ -100,21 +100,26 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     for (const m of messages as any[]) {
       if (isControlMessage(m) || !isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
-      const row = m.value as unknown as PgWorkyTaskRow;
-      const target = await this.streamService.findByAiSessionId(row.session_id);
-      if (!target) {
-        this.logger.warn('Task for unknown session', { session: row.session_id });
+      try {
+        const row = m.value as unknown as PgWorkyTaskRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('Task for unknown session', { session: row.session_id });
+          continue;
+        }
+        const { set, event } = mapPgTask(row, target.streamId);
+        await this.taskModel
+          .findOneAndUpdate(
+            { streamId: target.streamId, externalId: row.id },
+            { $set: set },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      } catch (err) {
+        this.logger.error('Failed to process task message', { error: (err as Error).message });
         continue;
       }
-      const { set, event } = mapPgTask(row, target.streamId);
-      await this.taskModel
-        .findOneAndUpdate(
-          { streamId: target.streamId, externalId: row.id },
-          { $set: set },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        )
-        .exec();
-      this.events.emit(target.ownerUserId, target.streamId, event);
     }
   }
 
@@ -122,26 +127,31 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     for (const m of messages as any[]) {
       if (isControlMessage(m) || !isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue;
-      const row = m.value as unknown as PgWorkyTaskResultRow;
-      const task = await this.taskModel
-        .findOne({ externalId: row.task_id })
-        .lean<{ _id: unknown; streamId: unknown }>()
-        .exec();
-      if (!task) {
-        this.logger.warn('Result for unknown task', { task: row.task_id });
+      try {
+        const row = m.value as unknown as PgWorkyTaskResultRow;
+        const task = await this.taskModel
+          .findOne({ externalId: row.task_id })
+          .lean<{ _id: unknown; streamId: unknown }>()
+          .exec();
+        if (!task) {
+          this.logger.warn('Result for unknown task', { task: row.task_id });
+          continue;
+        }
+        const streamId = String(task.streamId);
+        const mapped = mapPgTaskResult(row, String(task._id));
+        await this.resultModel
+          .findOneAndUpdate(
+            { taskId: mapped.taskId, version: mapped.version },
+            { $set: mapped.set },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        const owner = await this.streamService.getOwnerByStreamId(streamId);
+        if (owner) this.events.emit(owner, streamId, mapped.event);
+      } catch (err) {
+        this.logger.error('Failed to process task result message', { error: (err as Error).message });
         continue;
       }
-      const streamId = String(task.streamId);
-      const mapped = mapPgTaskResult(row, String(task._id));
-      await this.resultModel
-        .findOneAndUpdate(
-          { taskId: mapped.taskId, version: mapped.version },
-          { $set: mapped.set },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        )
-        .exec();
-      const owner = await this.streamService.getOwnerByStreamId(streamId);
-      if (owner) this.events.emit(owner, streamId, mapped.event);
     }
   }
 }

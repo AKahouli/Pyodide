@@ -124,6 +124,45 @@ describe('WorkyElectricConsumerService.handleTaskMessages', () => {
     expect(streamService.findByAiSessionId).not.toHaveBeenCalled();
   });
 
+  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+    const { service, taskModel, streamService, events, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    taskModel.findOneAndUpdate
+      .mockReturnValueOnce({ exec: () => Promise.reject(new Error('db down')) } as any)
+      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+
+    const makeMsg = (id: string) => ({
+      key: `"public"."worky_tasks"/"${id}"`,
+      headers: { operation: 'insert' },
+      value: {
+        id,
+        session_id: 'sess-xyz',
+        title: 'T',
+        lane: 'running',
+        execution_state: 'running',
+        description: null,
+        priority: null,
+        assignee_type: null,
+        action_category: null,
+        started_at: null,
+        completed_at: null,
+        updated_at: '2026-07-03T00:00:00Z',
+      },
+    });
+
+    await expect(
+      service.handleTaskMessages([makeMsg('pg-1'), makeMsg('pg-2')]),
+    ).resolves.toBeUndefined();
+
+    expect(taskModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'task.updated' }));
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to process task message',
+      expect.objectContaining({ error: 'db down' }),
+    );
+  });
+
   it('skips rows for an unknown session and logs a warning', async () => {
     const { service, taskModel, streamService, logger } = makeService();
     streamService.findByAiSessionId.mockResolvedValue(null);

@@ -164,7 +164,10 @@ WorkyTaskSchema.index({ streamId: 1, lane: 1 });
 WorkyTaskSchema.index({ streamId: 1, status: 1 });
 WorkyTaskSchema.index({ streamId: 1, executionState: 1 });
 WorkyTaskSchema.index({ assigneeId: 1 });
-WorkyTaskSchema.index({ streamId: 1, externalId: 1 });
+WorkyTaskSchema.index(
+  { streamId: 1, externalId: 1 },
+  { unique: true, partialFilterExpression: { externalId: { $type: 'string' } } },
+);
 
 WorkyTaskSchema.set('toJSON', {
   virtuals: true,
