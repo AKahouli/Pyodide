@@ -7,6 +7,7 @@ service ConversationV2 {
   rpc GetSession      (GetSessionRequest)      returns (GetSessionResponse);
   rpc StopSession     (StopSessionRequest)     returns (StopSessionResponse);
   rpc Chat            (ChatRequest)            returns (stream Event);
+  rpc Worky           (ChatRequest)            returns (WorkyResponse);
   rpc GetVncSignedUrl (GetVncSignedUrlRequest) returns (GetVncSignedUrlResponse);
   rpc PauseSession    (PauseSessionRequest)    returns (PauseSessionResponse);
   rpc ResumeSession   (ResumeSessionRequest)   returns (ResumeSessionResponse);
@@ -20,14 +21,6 @@ message PauseSessionResponse  {}
 message ResumeSessionRequest  { string user_id = 1; string session_id = 2; }
 message ResumeSessionResponse {}
 
-// workspace_paths: optional list of Ceph object-key prefixes in the form
-// "{workspaceOwnerUserId}/{workspaceStoragePrefix}" — one entry per workspace
-// the user attached via the frontend selector. The backend validates ownership
-// / share access on the workspaceId portion, looks up the workspace owner
-// and immutable storage prefix, then builds the path before forwarding. The
-// AI service uses these as List-prefix bases when scanning the workspace's
-// documents. Note: path roots under the workspace OWNER, not the current
-// user — collaborator uploads share the same prefix as the owner's files.
 message CreateSessionRequest  { string user_id = 1; repeated string workspace_paths = 2; }
 message CreateSessionResponse { string session_id = 1; }
 
@@ -43,6 +36,8 @@ message GetSessionResponse {
 message StopSessionRequest  { string user_id = 1; string session_id = 2; }
 message StopSessionResponse {}
 
+message WorkyResponse { string session_id = 1; bool accepted = 2; }
+
 message ChatRequest {
   string user_id    = 1;
   string session_id = 2;
@@ -50,20 +45,29 @@ message ChatRequest {
   optional string event_id = 4;
   optional int64  timestamp = 5;
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
-  ConnectorRepo connector_repo = 7;
-  repeated Skill skills = 8;   // skills selected by the user, injected into the agent prompt
+  repeated Skill  skills    = 8;   // skills selected by the user, injected into the agent prompt
   repeated ConnectorBinding connectors = 9;   // selected connectors (MCP servers); auth already resolved by YellowMind
 }
 
-// Identifies a repository scoped under a connector. When present on a
-// ChatRequest, tools bound to that connector SHOULD operate within this
-// repository context rather than prompting the user for a target.
-message ConnectorRepo {
-  string connector_id = 1;
-  string connector_name = 2;
-  string repo_id = 3;
-  string repo_name = 4;
-  string repo_url = 5;
+// --- Skills (Agent Skills pattern / progressive disclosure) ---
+// Same shape as v1 (chatbot.proto) so YellowMind can reuse findByIdsForGrpc().
+message Skill {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string instructions = 4;
+  string license = 5;
+  string compatibility = 6;
+  map<string, string> metadata = 7;
+  repeated string allowed_tools = 8;
+  repeated SkillFile files = 9;
+}
+
+message SkillFile {
+  string path = 1;
+  string kind = 2;
+  string mime_type = 3;
+  string content = 4;
 }
 
 // --- Connectors (remote MCP servers exposed as agent tools) ---
@@ -85,27 +89,6 @@ message ConnectorAction {
   string label = 2;
   string description = 3;
   string parameter_schema_json = 4;         // JSON Schema of the action params, serialized as a string
-}
-
-// --- Skills (pattern Agent Skills / progressive disclosure) ---
-// Same shape as v1 (chatbot.proto) so YellowMind can reuse findByIdsForGrpc().
-message Skill {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-  string instructions = 4;
-  string license = 5;
-  string compatibility = 6;
-  map<string, string> metadata = 7;
-  repeated string allowed_tools = 8;
-  repeated SkillFile files = 9;
-}
-
-message SkillFile {
-  string path = 1;
-  string kind = 2;
-  string mime_type = 3;
-  string content = 4;
 }
 
 message Event {
@@ -163,7 +146,6 @@ message ToolContent {
     GenericToolContent generic = 99;
   }
 }
-
 message BrowserToolContent {
   string screenshot_url = 1;
   string url            = 2;
@@ -201,5 +183,6 @@ message FileInfo {
   string id = 1;
   string name = 2;
   string content_type = 3;
-  string url = 4;
+  string path = 4;
 }
+ 
