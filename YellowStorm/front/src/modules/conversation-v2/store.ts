@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { AgentEvent, ConversationV2PointerSummary } from './types';
 import { conversationV2Api } from './api';
+import type { DeployStatus } from './api';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
@@ -13,13 +14,22 @@ interface State {
   events: AgentEvent[];
   streaming: boolean;
   streamError: string | null;
-  rightPanelMode: 'closed' | 'tool';
+  rightPanelMode: 'closed' | 'tool' | 'app';
+  /** Latest agent-pushed application component (embeddable web app / preview)
+   *  for the current session, shown in the right panel when rightPanelMode is
+   *  'app'. Null until an `application_component` event lands. */
+  applicationComponent: { url: string; title: string } | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
   systemWorkspaceId: string | null;
   /** workspaceIds attached to this session (read-only here; set on session load). */
   workspaceIds: string[];
+  /** App-deployment ("Publish") state for the current session. Hydrated from
+   *  getSession on load; `deploying` is set locally while the deploy POST is
+   *  in flight (drives the header button's loader). */
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -96,6 +106,9 @@ interface Actions {
   replayEvents: (events: AgentEvent[]) => void;
   reset: () => void;
   openToolPanel: (toolCallId: string) => void;
+  /** Switch the right panel between the Code (tool) and Preview (app) tabs.
+   *  Only meaningful when both a tool and an application component exist. */
+  setRightPanelView: (view: 'code' | 'preview') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
   stop: () => Promise<void>;
@@ -117,6 +130,11 @@ interface Actions {
    */
   hydrateSelectedModelForSession: (sessionId: string) => void;
   setWorkspaceIds: (ids: string[]) => void;
+  /** Apply deploy state hydrated from getSession (on session load/switch). */
+  setDeployState: (state: { deployStatus: DeployStatus; deployedUrl: string | null }) => void;
+  /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
+   *  then 'deployed' (+ url) or 'error' once the backend responds. */
+  deploy: () => Promise<void>;
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
@@ -141,6 +159,7 @@ const initial: State = {
   streaming: false,
   streamError: null,
   rightPanelMode: 'closed',
+  applicationComponent: null,
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -149,6 +168,8 @@ const initial: State = {
   lastSequence: 0,
   systemWorkspaceId: null,
   workspaceIds: [],
+  deployStatus: 'idle',
+  deployedUrl: null,
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -284,9 +305,12 @@ function freshViewState(): Partial<State> {
     liveAssistantIds: new Set<string>(),
     selectedToolCallId: null,
     rightPanelMode: 'closed',
+    applicationComponent: null,
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
+    deployStatus: 'idle',
+    deployedUrl: null,
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -317,6 +341,7 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
+          const applicationComponent = deriveApplicationComponent(cached.events);
           set(
             {
               ...freshViewState(),
@@ -328,6 +353,8 @@ export const useConversationV2Store = create<State & Actions>()(
               title: cached.title,
               streaming: cached.streaming,
               streamError: cached.streamError,
+              applicationComponent,
+              ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
               streamingStateCache: newCache,
             },
             false,
@@ -449,6 +476,12 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       openToolPanel: (toolCallId) =>
         set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
+      setRightPanelView: (view) =>
+        set(
+          { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
+          false,
+          `setRightPanelView/${view}`,
+        ),
       jumpToLive: () =>
         set(
           (s) =>
@@ -463,6 +496,24 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
+      setDeployState: ({ deployStatus, deployedUrl }) =>
+        set({ deployStatus, deployedUrl }, false, 'setDeployState'),
+      deploy: async () => {
+        const id = get().sessionId;
+        if (!id) return;
+        set({ deployStatus: 'deploying' }, false, 'deploy/start');
+        try {
+          const r = await conversationV2Api.deploySession(id);
+          set(
+            { deployStatus: r.deployStatus, deployedUrl: r.deployedUrl },
+            false,
+            'deploy/done',
+          );
+        } catch (err) {
+          set({ deployStatus: 'error' }, false, 'deploy/error');
+          throw err;
+        }
+      },
       clearTypewriter: () =>
         set(
           { typewriterSessionId: null, typewriterName: null },
@@ -514,13 +565,17 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
-      replayEvents: (events) =>
+      replayEvents: (events) => {
+        const applicationComponent = deriveApplicationComponent(events);
         set(
           {
             events: dedupeReplayEvents(events),
             title: deriveTitle(events) ?? null,
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
+            applicationComponent,
+            // Re-surface the app viewer on reload when the session has one.
+            ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
             lastSequence: events.reduce(
               (max, e) =>
                 typeof (e as { sequence?: number }).sequence === 'number'
@@ -531,7 +586,8 @@ export const useConversationV2Store = create<State & Actions>()(
           },
           false,
           'replayEvents',
-        ),
+        );
+      },
       stop: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -629,11 +685,19 @@ export const useConversationV2Store = create<State & Actions>()(
                   !isMessageTool &&
                   (state.selectedToolCallId === null ||
                     state.selectedToolCallId === state.liveToolCallId);
+                // Follow the live tool in the Code view: always advance the
+                // selection so the Code tab tracks the newest tool. But DON'T
+                // pull the panel back onto the code view when the user is
+                // watching the app preview ('app' mode) — the preview stays put,
+                // the Code tab just updates in the background. Opening from
+                // 'closed' or staying in 'tool' still shows the code.
                 const autoOpen =
                   !isMessageTool && followingLive
                     ? {
-                        rightPanelMode: 'tool' as const,
                         selectedToolCallId: event.tool_call_id,
+                        ...(state.rightPanelMode !== 'app'
+                          ? { rightPanelMode: 'tool' as const }
+                          : {}),
                       }
                     : {};
                 if (idx >= 0) {
@@ -669,6 +733,15 @@ export const useConversationV2Store = create<State & Actions>()(
               case 'wait':
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
+              case 'application_component':
+                // Agent pushed an embeddable app/preview: surface it in the side
+                // panel immediately. Keep selectedToolCallId so the Code tab of
+                // the Code/Preview toggle stays available alongside the preview.
+                return withSeq({
+                  events: [...state.events, event],
+                  applicationComponent: { url: event.url, title: event.title ?? '' },
+                  rightPanelMode: 'app',
+                });
               case 'message': {
                 const nextLiveAssistantIds =
                   event.role === 'assistant'
@@ -706,6 +779,23 @@ export const useConversationV2Store = create<State & Actions>()(
 function deriveTitle(events: AgentEvent[]): string | undefined {
   const last = [...events].reverse().find((e) => e.type === 'title');
   return last?.type === 'title' ? last.title : undefined;
+}
+
+/**
+ * The application component to show in the side panel is whatever the agent
+ * pushed last. Used on replay/session-switch to restore the app viewer from
+ * persisted history (the live path sets it directly in handleEvent).
+ */
+function deriveApplicationComponent(
+  events: AgentEvent[],
+): { url: string; title: string } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'application_component') {
+      return { url: ev.url, title: ev.title ?? '' };
+    }
+  }
+  return null;
 }
 
 /**

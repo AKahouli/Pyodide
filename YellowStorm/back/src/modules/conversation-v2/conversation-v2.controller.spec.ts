@@ -9,6 +9,7 @@ import { ConversationV2EventStoreService } from './services/conversation-v2-even
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
+import { EmailService } from '@modules/email';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
@@ -63,6 +64,11 @@ describe('ConversationV2Controller', () => {
     listSince: jest.fn(),
   };
 
+  const mockEmail = {
+    isAvailable: jest.fn().mockReturnValue(true),
+    send: jest.fn().mockResolvedValue({ success: true }),
+  };
+
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
 
   beforeEach(async () => {
@@ -77,6 +83,7 @@ describe('ConversationV2Controller', () => {
         { provide: ConversationV2EventStoreService, useValue: mockEventStore },
         { provide: WorkspaceService, useValue: mockWorkspaceService },
         { provide: ConfigService, useValue: mockConfig },
+        { provide: EmailService, useValue: mockEmail },
       ],
     }).compile();
     controller = module.get(ConversationV2Controller);

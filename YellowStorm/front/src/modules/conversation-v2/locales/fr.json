@@ -37,7 +37,9 @@
     "subtitle": "L'agent utilise",
     "close": "Fermer le panneau",
     "empty": "Sélectionnez un outil pour l'inspecter.",
-    "jumpToLive": "Revenir au direct"
+    "jumpToLive": "Revenir au direct",
+    "tabCode": "Code",
+    "tabPreview": "Aperçu"
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",
@@ -83,6 +85,25 @@
       "delete": "Supprimer",
       "more": "Autres actions"
     }
+  },
+  "deploy": {
+    "publish": "Publier",
+    "publishing": "Publication…",
+    "update": "Mettre à jour",
+    "liveUrl": "URL en ligne",
+    "copy": "Copier le lien",
+    "open": "Ouvrir",
+    "viewUrl": "Voir l'URL déployée",
+    "menu": "Options de déploiement"
+  },
+  "share": {
+    "title": "Partager l'application",
+    "searchPlaceholder": "Rechercher un utilisateur par email…",
+    "searching": "Recherche…",
+    "noResults": "Aucun utilisateur trouvé",
+    "remove": "Retirer",
+    "cancel": "Annuler",
+    "send": "Envoyer"
   },
   "dialogs": {
     "rename": {
@@ -130,6 +151,16 @@
     "workspaces": {
       "loadListError": "Impossible de charger les workspaces",
       "loadDocumentsError": "Impossible de charger les documents"
+    },
+    "deploy": {
+      "success": "Application déployée",
+      "error": "Échec du déploiement",
+      "copied": "Lien copié",
+      "copyError": "Impossible de copier le lien"
+    },
+    "share": {
+      "success": "Application partagée par email",
+      "error": "Impossible de partager l'application"
     }
   }
 }

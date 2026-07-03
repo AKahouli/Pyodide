@@ -37,7 +37,9 @@
     "subtitle": "Agent is using",
     "close": "Close panel",
     "empty": "Select a tool to inspect.",
-    "jumpToLive": "Jump to live"
+    "jumpToLive": "Jump to live",
+    "tabCode": "Code",
+    "tabPreview": "Preview"
   },
   "vnc": {
     "unavailable": "No VM attached to this session",
@@ -83,6 +85,25 @@
       "delete": "Delete",
       "more": "More actions"
     }
+  },
+  "deploy": {
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "update": "Update",
+    "liveUrl": "Live URL",
+    "copy": "Copy link",
+    "open": "Open",
+    "viewUrl": "View deployed URL",
+    "menu": "Deployment options"
+  },
+  "share": {
+    "title": "Share the app",
+    "searchPlaceholder": "Search a user by email…",
+    "searching": "Searching…",
+    "noResults": "No user found",
+    "remove": "Remove",
+    "cancel": "Cancel",
+    "send": "Send"
   },
   "dialogs": {
     "rename": {
@@ -130,6 +151,16 @@
     "workspaces": {
       "loadListError": "Failed to load workspaces",
       "loadDocumentsError": "Failed to load documents"
+    },
+    "deploy": {
+      "success": "App deployed",
+      "error": "Deployment failed",
+      "copied": "Link copied",
+      "copyError": "Failed to copy link"
+    },
+    "share": {
+      "success": "App shared by email",
+      "error": "Failed to share the app"
     }
   }
 }

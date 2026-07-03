@@ -30,7 +30,7 @@ export default function App() {
       <ShareNotificationsBridge />
       <UploadProgress />
       <FileFloatingWindow />
-      <Toaster position='top-right' richColors offset={80} />
+      <Toaster position='top-right' richColors offset={80} closeButton />
     </CombinedProvider>
   );
 }

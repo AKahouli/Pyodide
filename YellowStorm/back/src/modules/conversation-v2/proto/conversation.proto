@@ -10,6 +10,7 @@ service ConversationV2 {
   rpc GetVncSignedUrl (GetVncSignedUrlRequest) returns (GetVncSignedUrlResponse);
   rpc PauseSession    (PauseSessionRequest)    returns (PauseSessionResponse);
   rpc ResumeSession   (ResumeSessionRequest)   returns (ResumeSessionResponse);
+  rpc Deploy          (DeployRequest)          returns (DeployResponse);
 }
 
 message GetVncSignedUrlRequest  { string user_id = 1; string session_id = 2; }
@@ -19,6 +20,12 @@ message PauseSessionRequest   { string user_id = 1; string session_id = 2; }
 message PauseSessionResponse  {}
 message ResumeSessionRequest  { string user_id = 1; string session_id = 2; }
 message ResumeSessionResponse {}
+
+// Deploy/publish the app built in this session to a public URL. Synchronous:
+// Manus performs the deployment and returns the live URL. `deployed_at` is
+// epoch seconds. Re-invoking redeploys (update).
+message DeployRequest  { string user_id = 1; string session_id = 2; }
+message DeployResponse { string url = 1; int64 deployed_at = 2; }
 
 // workspace_paths: optional list of Ceph object-key prefixes in the form
 // "{workspaceOwnerUserId}/{workspaceStoragePrefix}" — one entry per workspace
@@ -120,6 +127,7 @@ message Event {
     DoneEvent    done    = 15;
     WaitEvent    wait    = 16;
     ErrorEvent   error   = 17;
+    ApplicationComponentEvent application_component = 18;
   }
 }
 
@@ -153,6 +161,15 @@ message DoneEvent  {}
 message WaitEvent  {}
 message ErrorEvent { string error = 1; }
 
+// Pushes a UI "application component" (an embeddable web app / preview) for the
+// frontend to render in the conversation's side panel. Unlike a tool result,
+// this is not tied to a tool_call — the agent asks the app to display `url`
+// (shown in an <iframe>) directly. `title` labels the panel.
+message ApplicationComponentEvent {
+  string url = 1;
+  string title = 2;
+}
+
 message ToolContent {
   oneof variant {
     BrowserToolContent browser = 1;
@@ -160,6 +177,7 @@ message ToolContent {
     FileToolContent    file    = 3;
     SearchToolContent  search  = 4;
     McpToolContent     mcp     = 5;
+    WebPageToolContent webpage = 6;
     GenericToolContent generic = 99;
   }
 }
@@ -194,6 +212,10 @@ message McpToolContent {
   string server      = 1;
   string tool        = 2;
   string result_json = 3;
+}
+message WebPageToolContent {
+  string url   = 1;
+  string title = 2;
 }
 message GenericToolContent { string json = 1; }
 
