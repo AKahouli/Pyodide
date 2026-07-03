@@ -46,6 +46,8 @@ describe('WorkyStreamService.create', () => {
     workspaceFindOne?: jest.Mock;
     agentFindOne?: jest.Mock;
     agentTypeFindBySlug?: jest.Mock;
+    streamFindOne?: jest.Mock;
+    grpcClient?: { createSession: jest.Mock };
   } = {}) => {
     const streamCreate =
       overrides.streamCreate ?? jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
@@ -59,7 +61,12 @@ describe('WorkyStreamService.create', () => {
       overrides.agentTypeFindBySlug ??
       jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Manager' });
 
-    const streamModel = { create: streamCreate, findById: jest.fn(), find: jest.fn(), findOne: jest.fn() };
+    const streamModel = {
+      create: streamCreate,
+      findById: jest.fn(),
+      find: jest.fn(),
+      findOne: overrides.streamFindOne ?? jest.fn(),
+    };
     const workspaceModel = { create: workspaceCreate, findOne: workspaceFindOne };
     const agentModel = { create: agentCreate, findOne: agentFindOne };
     const agentTypeService = { findBySlug: agentTypeFindBySlug };
@@ -74,6 +81,7 @@ describe('WorkyStreamService.create', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = overrides.grpcClient ?? { createSession: jest.fn().mockResolvedValue('sess-xyz') };
 
     const service = new WorkyStreamService(
       streamModel as any,
@@ -85,8 +93,9 @@ describe('WorkyStreamService.create', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
-    return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne };
+    return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne, streamModel, grpcClient };
   };
 
   it('provisions a dedicated artifact workspace and a per-stream Manager agent', async () => {
@@ -174,6 +183,28 @@ describe('WorkyStreamService.create', () => {
 
     expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
+
+  it('creates a conversation-v2 session and stores aiSessionId', async () => {
+    const { service, streamCreate, grpcClient } = makeService();
+    grpcClient.createSession.mockResolvedValue('sess-xyz');
+
+    await service.create(userId, { title: 'My stream' } as any);
+
+    expect(grpcClient.createSession).toHaveBeenCalledWith(userId, []);
+    const createdArg = streamCreate.mock.calls[0][0];
+    expect(createdArg.aiSessionId).toBe('sess-xyz');
+  });
+
+  it('findByAiSessionId returns streamId + ownerUserId', async () => {
+    const { service, streamModel } = makeService();
+    streamModel.findOne.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve({ _id: 'stream-1', ownerUserId: 'owner-1' }) }),
+    } as any);
+
+    const res = await service.findByAiSessionId('sess-xyz');
+
+    expect(res).toEqual({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+  });
 });
 
 describe('WorkyStreamService.patch (per-stream model selection)', () => {
@@ -234,6 +265,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
@@ -244,6 +276,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
     return { service, streamDoc };
   };
@@ -316,6 +349,7 @@ describe('WorkyStreamService.delete', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
@@ -326,6 +360,7 @@ describe('WorkyStreamService.delete', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
     return { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments };
   };

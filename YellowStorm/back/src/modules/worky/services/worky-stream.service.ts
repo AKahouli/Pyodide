@@ -35,6 +35,7 @@ import { WorkyScheduledEvent } from '../schemas/worky-scheduled-event.schema';
 import { WorkyTask } from '../schemas/worky-task.schema';
 import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
 import { WorkyTrace } from '../schemas/worky-trace.schema';
+import { ConversationV2GrpcClientService } from '../../conversation-v2/services/conversation-v2.grpc-client.service';
 
 const ARTIFACT_WORKSPACE_NAME_PREFIX = 'Worky';
 const STREAM_AGENT_NAME_PREFIX = 'Worky Manager';
@@ -66,6 +67,7 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
+    private readonly grpcClient: ConversationV2GrpcClientService,
   ) {
     this.logger.setContext(WorkyStreamService.name);
   }
@@ -103,6 +105,7 @@ export class WorkyStreamService implements OnModuleInit {
 
     const artifactWorkspace = await this.createArtifactWorkspace(userId, title);
     const managerAgent = await this.createManagerAgent(userId, title, agentType.id);
+    const aiSessionId = await this.grpcClient.createSession(userId, []);
 
     const stream = await this.streamModel.create({
       ownerUserId: new Types.ObjectId(userId),
@@ -111,6 +114,7 @@ export class WorkyStreamService implements OnModuleInit {
         : artifactWorkspace.createdBy,
       artifactWorkspaceId: artifactWorkspace._id,
       managerAgentId: managerAgent._id,
+      aiSessionId,
       // Per-stream model selection starts unset; resolved at
       // planning / execution time by `WorkyPlanningService` using
       // the per-turn override → stream field → admin default chain.
@@ -141,6 +145,17 @@ export class WorkyStreamService implements OnModuleInit {
     });
 
     return this.toResponse(stream);
+  }
+
+  async findByAiSessionId(
+    aiSessionId: string,
+  ): Promise<{ streamId: string; ownerUserId: string } | null> {
+    const doc = await this.streamModel
+      .findOne({ aiSessionId })
+      .lean<{ _id: unknown; ownerUserId: unknown }>()
+      .exec();
+    if (!doc) return null;
+    return { streamId: String(doc._id), ownerUserId: String(doc.ownerUserId) };
   }
 
   async delete(userId: string, streamId: string): Promise<{ ok: true; deletedWorkspaceId: string | null }> {

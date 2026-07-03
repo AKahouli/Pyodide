@@ -127,6 +127,7 @@ import { UserModule } from '../user/user.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { ModelsModule } from '../models/models.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
+import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
 import { WorkyWhatsAppIntegrationController } from './controllers/worky-whatsapp-integration.controller';
 import {
   WorkyWhatsAppIntegration,
@@ -153,6 +154,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkspaceModule,
     ModelsModule,
     forwardRef(() => WhatsAppModule),
+    ConversationV2Module,
     MongooseModule.forFeature([
       { name: WorkyStream.name, schema: WorkyStreamSchema },
       { name: WorkyTask.name, schema: WorkyTaskSchema },
