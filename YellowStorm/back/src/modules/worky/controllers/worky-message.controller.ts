@@ -20,6 +20,7 @@ import { UserDocument } from '../../user/schemas/user.schema';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
+import { ModelsService } from '../../models/models.service';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -30,6 +31,7 @@ export class WorkyMessageController {
     private readonly planning: WorkyPlanningService,
     private readonly streamService: WorkyStreamService,
     private readonly grpcClient: ConversationV2GrpcClientService,
+    private readonly models: ModelsService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyMessageController.name);
@@ -46,12 +48,21 @@ export class WorkyMessageController {
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
-    const aiSessionId = await this.streamService.getAiSessionId(streamId);
+    const { aiSessionId, managerModelId } = await this.streamService.getKickoffContext(streamId);
+    // Resolve the Manager model with the same priority chain used by
+    // planning turns: per-turn override → stream's persistent field →
+    // admin default. The gRPC `worky()` proto marks `model` as required,
+    // so passing empty opts would silently dead-end every message.
+    const override = dto.managerModelId?.trim();
+    let model = override || managerModelId || null;
+    if (!model) {
+      model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
+    }
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
     void this.grpcClient
-      .worky(user._id.toString(), aiSessionId, dto.content, {})
+      .worky(user._id.toString(), aiSessionId, dto.content, model ? { model } : {})
       .catch((err) => this.logger.error('Worky gRPC kickoff failed', { streamId, error: (err as Error).message }));
     return { ...saved, turnStarted: true };
   }

@@ -161,6 +161,29 @@ export class WorkyStreamService implements OnModuleInit {
     return doc.aiSessionId;
   }
 
+  /**
+   * Used by `WorkyMessageController` to kick off the manager over gRPC:
+   * returns both the conversation-v2 session id and the stream's
+   * persistent manager model selection (if any), so the caller can
+   * resolve the per-turn override → stream field → admin default chain
+   * without a second round-trip.
+   */
+  async getKickoffContext(
+    streamId: string,
+  ): Promise<{ aiSessionId: string; managerModelId: string | null }> {
+    const doc = await this.streamModel
+      .findById(streamId)
+      .lean<{ aiSessionId?: string | null; managerModelId?: string | null }>()
+      .exec();
+    if (!doc?.aiSessionId) {
+      throw new NotFoundException(
+        ErrorCode.WORKY_STREAM_NOT_FOUND,
+        'Worky stream has no conversation-v2 session.',
+      );
+    }
+    return { aiSessionId: doc.aiSessionId, managerModelId: doc.managerModelId ?? null };
+  }
+
   async findByAiSessionId(
     aiSessionId: string,
   ): Promise<{ streamId: string; ownerUserId: string } | null> {
