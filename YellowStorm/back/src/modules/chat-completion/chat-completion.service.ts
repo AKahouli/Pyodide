@@ -52,6 +52,15 @@ export class ChatCompletionService {
 
     const temperature = request.temperature ?? DEFAULT_TEMPERATURE;
 
+    // gpt-5 family models (gpt-5, gpt-5-codex, gpt-5.x nano/mini/…) reject any
+    // temperature other than 1 → LiteLLM returns 400 UnsupportedParamsError.
+    // Omit the param entirely for them so the server applies its default (1)
+    // instead of failing. Detect via both the model id and the LiteLLM
+    // deployment string so either naming ("gpt-5.4-nano") matches.
+    const supportsTemperature = !/gpt-5/i.test(
+      `${resolved.modelId} ${resolved.litellmModel}`,
+    );
+
     const startTime = Date.now();
 
     try {
@@ -61,7 +70,7 @@ export class ChatCompletionService {
           model: resolved.modelId,
           messages: finalMessages,
           //max_tokens: maxTokens,
-          temperature,
+          ...(supportsTemperature ? { temperature } : {}),
           stream: false,
         },
         { timeout: COMPLETION_TIMEOUT_MS },
