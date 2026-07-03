@@ -15,6 +15,7 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
+import { AgentGuardrailsDto } from './create-agent.dto';
 
 export class UpdateAgentDto {
   @ApiPropertyOptional({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
@@ -123,4 +124,10 @@ export class UpdateAgentDto {
   @IsOptional()
   @IsBoolean()
   isDefaultForType?: boolean;
+
+  @ApiPropertyOptional({ description: 'Agent guardrails configuration', type: AgentGuardrailsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentGuardrailsDto)
+  guardrails?: AgentGuardrailsDto;
 }

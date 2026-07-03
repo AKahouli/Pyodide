@@ -47,6 +47,7 @@ describe('AgentService connector skill inheritance', () => {
     const modelsService = {
       findById: jest.fn(),
       getDefaultModel: jest.fn().mockResolvedValue(null),
+      getGuardrailsClassifierModel: jest.fn().mockResolvedValue(null),
       getModelIdentifier: jest.fn((model: { id?: string; litellmModel?: string } | null | undefined) =>
         model?.litellmModel || model?.id || ''),
     };
@@ -75,6 +76,21 @@ describe('AgentService connector skill inheritance', () => {
       getSharePermission: jest.fn().mockResolvedValue(null),
       removeAllSharesForAgent: jest.fn().mockResolvedValue(undefined),
     };
+    const guardrailsSettingsService = {
+      getSettings: jest.fn().mockResolvedValue({
+        forceActivation: false,
+        promptInjection: {
+          inputGuardrailEnabled: false,
+          outputGuardrailEnabled: false,
+          toolCallGuardrailEnabled: false,
+          mode: 'balanced',
+          inputClassifierPrompt: 'input policy',
+          outputClassifierPrompt: 'output policy',
+          toolCallClassifierPrompt: 'tool policy',
+          blockMessage: 'I cannot follow this instruction.',
+        },
+      }),
+    };
 
     const service = new AgentService(
       agentModel as any,
@@ -89,6 +105,7 @@ describe('AgentService connector skill inheritance', () => {
       configService as unknown as ConfigService,
       teamService as any,
       agentShareService as any,
+      guardrailsSettingsService as any,
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);
@@ -119,6 +136,18 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
+      guardrails: {
+        promptInjection: {
+          inputGuardrailEnabled: false,
+          outputGuardrailEnabled: false,
+          toolCallGuardrailEnabled: false,
+          mode: 'balanced',
+          inputClassifierPrompt: 'input policy',
+          outputClassifierPrompt: 'output policy',
+          toolCallClassifierPrompt: 'tool policy',
+          blockMessage: 'I cannot follow this instruction.',
+        },
+      },
       connectorIds: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],

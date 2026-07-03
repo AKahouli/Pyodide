@@ -19,6 +19,7 @@ export interface Agent {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  guardrails?: AgentGuardrails;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -31,6 +32,23 @@ export interface Agent {
   updatedAt: string;
   /** Present when the agent was shared with the current user (non-owner). */
   shareInfo?: SharedAgentInfo;
+}
+
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
+export interface PromptInjectionGuardrailsConfig {
+  inputGuardrailEnabled: boolean;
+  outputGuardrailEnabled: boolean;
+  toolCallGuardrailEnabled: boolean;
+  mode: GuardrailMode;
+  inputClassifierPrompt: string;
+  outputClassifierPrompt: string;
+  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export interface AgentGuardrails {
+  promptInjection: PromptInjectionGuardrailsConfig;
 }
 
 export type AgentPermissionLevel = 'read' | 'write';

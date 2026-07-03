@@ -4,6 +4,22 @@ export interface IAgentConnectorActionSelectionResponse {
 }
 
 export type AgentPermissionLevel = 'read' | 'write';
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
+export interface PromptInjectionGuardrailsConfig {
+  inputGuardrailEnabled: boolean;
+  outputGuardrailEnabled: boolean;
+  toolCallGuardrailEnabled: boolean;
+  mode: GuardrailMode;
+  inputClassifierPrompt: string;
+  outputClassifierPrompt: string;
+  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export interface AgentGuardrails {
+  promptInjection: PromptInjectionGuardrailsConfig;
+}
 
 /** A single share entry on an agent (owner's view of who it's shared with). */
 export interface IAgentShareEntry {
@@ -45,6 +61,7 @@ export interface IAgentResponse {
   tools: string[];
   connectors?: string[];
   connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
+  guardrails: AgentGuardrails;
   skills?: string[];
   disabledSkills?: string[];
   isDefault: boolean;
@@ -77,6 +94,7 @@ export interface IAgentForStream {
   toolIds: string[];
   connectorIds?: string[];
   connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
+  guardrails: AgentGuardrails;
   connectorSkillIds?: string[];
   skillIds?: string[];
   disabledSkillIds?: string[];

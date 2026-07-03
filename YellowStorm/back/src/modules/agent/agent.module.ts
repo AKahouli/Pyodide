@@ -22,6 +22,7 @@ import { ConnectorModule } from '../connector/connector.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import { TeamModule } from '../team/team.module';
 import { UserModule } from '../user/user.module';
+import { GuardrailsModule } from '../guardrails/guardrails.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { UserModule } from '../user/user.module';
     ConnectedAppModule,
     forwardRef(() => TeamModule),
     UserModule,
+    GuardrailsModule,
   ],
   controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
   providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService],

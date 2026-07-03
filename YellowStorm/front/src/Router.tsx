@@ -94,6 +94,7 @@ import {
   PermissionGuard,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
+  GuardrailsPage,
 } from "./modules/admin";
 
 function RouteErrorFallback() {
@@ -280,6 +281,7 @@ export const router = createHashRouter([
           { path: "plans", element: <PlansPage /> },
           { path: "reports", element: <ReportsPage /> },
           { path: "models", element: <ModelsPage /> },
+          { path: "guardrails", element: <GuardrailsPage /> },
           { path: "tools", element: <ToolsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "connectors", element: <ConnectorsPage /> },
@@ -385,6 +387,14 @@ export const router = createHashRouter([
             element: (
               <PermissionGuard permissions={['models.read_all', 'models.*', '*']}>
                 <ModelsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'guardrails',
+            element: (
+              <PermissionGuard permissions={['admin.*', '*']}>
+                <GuardrailsPage />
               </PermissionGuard>
             ),
           },

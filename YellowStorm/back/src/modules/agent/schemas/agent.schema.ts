@@ -4,6 +4,46 @@ import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } fr
 
 export type AgentDocument = HydratedDocument<Agent>;
 
+export const GUARDRAIL_MODES = ['monitor', 'balanced', 'strict'] as const;
+export type GuardrailMode = (typeof GUARDRAIL_MODES)[number];
+
+@Schema({ _id: false })
+export class AgentPromptInjectionGuardrails {
+  @Prop({ type: Boolean, default: false })
+  inputGuardrailEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  outputGuardrailEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  toolCallGuardrailEnabled!: boolean;
+
+  @Prop({ type: String, enum: GUARDRAIL_MODES, default: 'balanced' })
+  mode!: GuardrailMode;
+
+  @Prop({ type: String, default: '' })
+  inputClassifierPrompt!: string;
+
+  @Prop({ type: String, default: '' })
+  outputClassifierPrompt!: string;
+
+  @Prop({ type: String, default: '' })
+  toolCallClassifierPrompt!: string;
+
+  @Prop({ type: String, default: 'I cannot follow this instruction.' })
+  blockMessage!: string;
+}
+
+const AgentPromptInjectionGuardrailsSchema = SchemaFactory.createForClass(AgentPromptInjectionGuardrails);
+
+@Schema({ _id: false })
+export class AgentGuardrails {
+  @Prop({ type: AgentPromptInjectionGuardrailsSchema, default: () => ({}) })
+  promptInjection!: AgentPromptInjectionGuardrails;
+}
+
+const AgentGuardrailsSchema = SchemaFactory.createForClass(AgentGuardrails);
+
 @Schema({ _id: false })
 export class AgentConnectorActionSelection {
   @Prop({ type: Types.ObjectId, ref: 'Connector', required: true })
@@ -82,6 +122,9 @@ export class Agent extends Document {
 
   @Prop({ type: [AgentConnectorActionSelectionSchema], default: [] })
   connectorActionSelections!: AgentConnectorActionSelection[];
+
+  @Prop({ type: AgentGuardrailsSchema, default: () => ({}) })
+  guardrails!: AgentGuardrails;
 
   @Prop({ default: false, index: true })
   isDefault!: boolean;

@@ -71,6 +71,9 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
+  adminGuardrails: {
+    base: '/admin/guardrails',
+  },
   adminWorkyWhatsAppSystemBot: {
     base: '/admin/worky/whatsapp-system-bot',
     expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',

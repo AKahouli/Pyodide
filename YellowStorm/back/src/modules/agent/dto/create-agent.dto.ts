@@ -10,11 +10,66 @@ import {
   MaxLength,
   Min,
   Max,
+  IsIn,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
+
+export class PromptInjectionGuardrailsDto {
+  @ApiPropertyOptional({ description: 'Enable input prompt injection guardrail', default: false })
+  @IsOptional()
+  @IsBoolean()
+  inputGuardrailEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable output prompt injection guardrail', default: false })
+  @IsOptional()
+  @IsBoolean()
+  outputGuardrailEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable tool-call prompt injection guardrail', default: false })
+  @IsOptional()
+  @IsBoolean()
+  toolCallGuardrailEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  @IsOptional()
+  @IsIn(['monitor', 'balanced', 'strict'])
+  mode?: 'monitor' | 'balanced' | 'strict';
+
+  @ApiPropertyOptional({ description: 'Input classifier policy prompt', maxLength: 20000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  inputClassifierPrompt?: string;
+
+  @ApiPropertyOptional({ description: 'Output classifier policy prompt', maxLength: 20000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  outputClassifierPrompt?: string;
+
+  @ApiPropertyOptional({ description: 'Tool-call classifier policy prompt', maxLength: 20000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  toolCallClassifierPrompt?: string;
+
+  @ApiPropertyOptional({ description: 'Message returned when a request is blocked', maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  blockMessage?: string;
+}
+
+export class AgentGuardrailsDto {
+  @ApiPropertyOptional({ type: PromptInjectionGuardrailsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PromptInjectionGuardrailsDto)
+  promptInjection?: PromptInjectionGuardrailsDto;
+}
 
 export class CreateAgentDto {
   @ApiProperty({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
@@ -119,4 +174,10 @@ export class CreateAgentDto {
   @IsOptional()
   @IsBoolean()
   isDefaultForType?: boolean;
+
+  @ApiPropertyOptional({ description: 'Agent guardrails configuration', type: AgentGuardrailsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentGuardrailsDto)
+  guardrails?: AgentGuardrailsDto;
 }

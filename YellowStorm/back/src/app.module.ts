@@ -62,6 +62,7 @@ import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
+import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 
 @Module({
   imports: [
@@ -120,6 +121,7 @@ import { WorkyModule } from './modules/worky';
     EvaluationModule,
     WidgetChatModule,
     WorkyModule,
+    GuardrailsModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default
