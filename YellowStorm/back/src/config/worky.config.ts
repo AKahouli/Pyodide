@@ -33,4 +33,11 @@ export default registerAs('worky', () => ({
   ttsProvider: process.env.WORKY_TTS_PROVIDER || '', // e.g. 'google-vertex'
   ttsTimeoutMs: parseInt(process.env.WORKY_TTS_TIMEOUT_MS || '30000', 10),
   ttsMaxChars: parseInt(process.env.WORKY_TTS_MAX_CHARS || '2000', 10),
+
+  // Electric SQL sync (manager-owned Postgres → Nest consumer).
+  electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',
+  electricTasksTable: process.env.WORKY_ELECTRIC_TASKS_TABLE || 'worky_tasks',
+  electricTaskResultsTable: process.env.WORKY_ELECTRIC_TASK_RESULTS_TABLE || 'worky_task_results',
+  electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'worky_messages',
+  electricInteractionsTable: process.env.WORKY_ELECTRIC_INTERACTIONS_TABLE || 'worky_interactions',
 }));
