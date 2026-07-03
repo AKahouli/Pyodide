@@ -1,4 +1,4 @@
-import { mapPgTask, mapPgTaskResult } from './worky-electric.mapper';
+import { mapPgTask, mapPgTaskResult, mapPgMessage, mapPgInteraction } from './worky-electric.mapper';
 
 describe('worky-electric.mapper', () => {
   it('maps a task row to Mongo $set + a task.updated event', () => {
@@ -26,5 +26,27 @@ describe('worky-electric.mapper', () => {
     const r = mapPgTaskResult({ id: 'r1', task_id: 'pg-1', version: 2, status: 'ok', summary: 's', payload: null }, 'obj-1');
     expect(r).toMatchObject({ taskId: 'obj-1', version: 2 });
     expect(r.event.type).toBe('task.completed');
+  });
+
+  it('maps a message row to Mongo $set with streamId and no externalId', () => {
+    const { set, event } = mapPgMessage(
+      { id: 'pg-msg-1', session_id: 's', role: 'owner', content: 'hello', created_at: '2026-07-03T00:00:00Z' },
+      'stream-1',
+    );
+    expect(set).toMatchObject({ streamId: 'stream-1', role: 'owner', content: 'hello' });
+    expect(set).not.toHaveProperty('externalId');
+    expect(event.type).toBe('message.appended');
+  });
+
+  it('maps an interaction row to Mongo $set using schema field names (type/question)', () => {
+    const { set, event } = mapPgInteraction(
+      { id: 'pg-int-1', session_id: 's', kind: 'clarification', prompt: 'Which repo?', status: 'pending', created_at: '2026-07-03T00:00:00Z' },
+      'stream-1',
+    );
+    expect(set).toMatchObject({ streamId: 'stream-1', type: 'clarification', question: 'Which repo?', status: 'pending' });
+    expect(set).not.toHaveProperty('externalId');
+    expect(set).not.toHaveProperty('kind');
+    expect(set).not.toHaveProperty('prompt');
+    expect(event.type).toBe('interaction.requested');
   });
 });

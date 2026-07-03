@@ -44,16 +44,16 @@ export function mapPgTaskResult(
   };
 }
 
-export function mapPgMessage(row: PgWorkyMessageRow, _streamId: string): { set: Record<string, unknown>; event: Frame } {
+export function mapPgMessage(row: PgWorkyMessageRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   return {
-    set: { externalId: row.id, role: row.role, content: row.content, createdAt: new Date(row.created_at) },
+    set: { streamId, role: row.role, content: row.content, createdAt: new Date(row.created_at) },
     event: { type: 'message.appended', emittedAt: now(), payload: { role: row.role, content: row.content } },
   };
 }
 
-export function mapPgInteraction(row: PgWorkyInteractionRow, _streamId: string): { set: Record<string, unknown>; event: Frame } {
+export function mapPgInteraction(row: PgWorkyInteractionRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   return {
-    set: { externalId: row.id, kind: row.kind, prompt: row.prompt, status: row.status, createdAt: new Date(row.created_at) },
+    set: { streamId, type: row.kind, question: row.prompt, status: row.status, createdAt: new Date(row.created_at) },
     event: { type: 'interaction.requested', emittedAt: now(), payload: { interactionId: row.id, kind: row.kind } },
   };
 }
