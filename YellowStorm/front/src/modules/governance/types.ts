@@ -128,6 +128,8 @@ export interface CreateGovernanceMembershipPayload {
   status?: GovernanceMembership['status'];
 }
 
+export type UpdateGovernanceMembershipPayload = Partial<Omit<CreateGovernanceMembershipPayload, 'userId'>>;
+
 export type GovernanceChannels = Record<string, unknown>;
 
 export interface GovernanceDeployment {
@@ -189,6 +191,7 @@ export interface GovernanceDryRun {
   scopeId: string;
   deploymentId: string;
   revisionId: string;
+  conversationId?: string;
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
   testCases: Array<Record<string, unknown>>;
@@ -200,6 +203,15 @@ export interface GovernanceDryRun {
 export interface CreateGovernanceDryRunPayload {
   input?: string;
   simulatedChannel?: 'widget' | 'whatsapp' | 'telegram' | 'api';
+  conversationId?: string;
+}
+
+export interface GovernanceDryRunMessage {
+  id: string;
+  conversationType: 'user' | 'ai';
+  content?: string;
+  components?: Array<{ type: string; data?: Record<string, unknown> }>;
+  createdAt: string;
 }
 
 export interface GovernanceMetric {

@@ -1,12 +1,15 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/workspace';
+import { governanceApi } from '../api';
 import {
   useCreateGovernanceDeployment,
   useCreateGovernanceDryRun,
@@ -16,23 +19,26 @@ import {
   useDeleteGovernanceMembership,
   useDeleteGovernanceScope,
   useDeleteGovernanceSource,
+  useGovernanceDryRunMessages,
   useGovernanceDryRuns,
   useGovernanceUiStore,
   useMarkGovernanceDryRun,
   usePublishGovernanceDeployment,
   useSuspendGovernanceDeployment,
   useUpdateGovernanceDeployment,
+  useUpdateGovernanceMembership,
   useUpdateGovernanceScope,
   type GovernanceChannelConfig,
+  type GovernanceDryRunMessage,
   type GovernanceMembership,
   type GovernanceMembershipRole,
   type GovernanceMetric,
   type GovernanceScope,
   type GovernanceScopeOverview,
+  type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName, GovernanceAgentSelector } from './GovernanceAgentSelector';
 import { GovernanceUserName } from './GovernanceUserName';
-import { GovernanceWorkspaceSelector } from './GovernanceWorkspaceSelector';
 
 const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
 
@@ -248,54 +254,108 @@ function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element
 
 function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const createSource = useCreateGovernanceSource(programId);
   const deleteSource = useDeleteGovernanceSource(programId);
-  const [workspaceId, setWorkspaceId] = useState('');
-  const [workspaceName, setWorkspaceName] = useState('');
-  const [title, setTitle] = useState('');
-  const [titleTouched, setTitleTouched] = useState(false);
-
-  const handleSelectWorkspace = (id: string, name?: string) => {
-    setWorkspaceId(id);
-    setWorkspaceName(name ?? '');
-    if (!titleTouched) setTitle(name ?? '');
-  };
-
-  const resetForm = () => {
-    setWorkspaceId('');
-    setWorkspaceName('');
-    setTitle('');
-    setTitleTouched(false);
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!workspaceId) return;
-    const finalTitle = (title.trim() || workspaceName).trim();
-    if (!finalTitle) return;
-    createSource.mutate({ title: finalTitle, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: resetForm });
-  };
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const allSources = [...overview.knowledge.sharedSources, ...overview.knowledge.localSources];
+  const mappedWorkspaceIds = allSources.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
+  const removingId = deleteSource.isPending ? deleteSource.variables ?? null : null;
 
   return (
-    <div className='grid gap-5'>
-      <form className='grid gap-3 rounded-xl border bg-background p-4' onSubmit={handleSubmit}>
+    <div className='grid gap-4'>
+      <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>
           <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.knowledge.mapHint')}</p>
         </div>
-        <GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={handleSelectWorkspace} />
-        {workspaceId && (
-          <div className='grid gap-1.5'>
-            <label className='text-xs font-medium text-muted-foreground' htmlFor='governance-scope-source-title'>{t('scopeShell.knowledge.titleOptional')}</label>
-            <Input id='governance-scope-source-title' name='sourceTitle' value={title} onChange={(event) => { setTitle(event.target.value); setTitleTouched(true); }} placeholder={workspaceName || t('scopeShell.knowledge.sourceTitle')} />
-          </div>
-        )}
-        <Button type='submit' disabled={createSource.isPending || !workspaceId} className='w-fit'>{t('scopeShell.knowledge.map')}</Button>
-      </form>
-      <SourceGroup title={t('scopeShell.knowledge.shared')} sources={overview.knowledge.sharedSources} />
-      <SourceGroup title={t('scopeShell.knowledge.local')} sources={overview.knowledge.localSources} onRemove={(id) => deleteSource.mutate(id)} removingId={deleteSource.isPending ? deleteSource.variables ?? null : null} />
-      <SourceGroup title={t('scopeShell.knowledge.workspaces')} sources={overview.knowledge.workspaceMappings} onRemove={(id) => deleteSource.mutate(id)} removingId={deleteSource.isPending ? deleteSource.variables ?? null : null} />
+        <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('scopeShell.knowledge.addWorkspace')}</Button>
+      </div>
+      <div className='grid gap-2'>
+        {allSources.map((source) => {
+          const isShared = source.visibility === 'program_shared';
+          return (
+            <div key={source.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
+              <div className='min-w-0'>
+                <div className='truncate font-medium'>{source.title}</div>
+                <p className='text-xs text-muted-foreground'>{isShared ? t('scopeShell.knowledge.sharedBadge') : t('scopeShell.knowledge.scopeBadge')} · {t(`scopeShell.knowledge.status.${source.status}`)}</p>
+              </div>
+              {!isShared && (
+                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.knowledge.remove')} disabled={removingId === source.id} onClick={() => deleteSource.mutate(source.id)}>
+                  <Trash2 className='h-4 w-4' />
+                </Button>
+              )}
+            </div>
+          );
+        })}
+        {allSources.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.knowledge.empty')}</p>}
+      </div>
+      <WorkspaceMapDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} mappedWorkspaceIds={mappedWorkspaceIds} />
     </div>
+  );
+}
+
+function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWorkspaceIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; mappedWorkspaceIds: string[] }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const createSource = useCreateGovernanceSource(programId);
+  const workspaces = useWorkspaces();
+  const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
+  const searchWorkspaces = useWorkspaceStore((state) => state.searchWorkspaces);
+  const openCreateModal = useWorkspaceStore((state) => state.openCreateModal);
+  const isLoading = useWorkspaceStore((state) => state.isLoadingWorkspaces);
+  const [search, setSearch] = useState('');
+  const [addedIds, setAddedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (open) void fetchWorkspaces(1);
+  }, [open, fetchWorkspaces]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timeout = window.setTimeout(() => void searchWorkspaces(search), 250);
+    return () => window.clearTimeout(timeout);
+  }, [search, searchWorkspaces, open]);
+
+  useEffect(() => {
+    if (!open) { setSearch(''); setAddedIds([]); }
+  }, [open]);
+
+  const handleAdd = (workspace: Workspace) => {
+    createSource.mutate(
+      { title: workspace.name, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId: workspace.id },
+      { onSuccess: () => setAddedIds((prev) => [...prev, workspace.id]) },
+    );
+  };
+
+  const handleCreateWorkspace = () => openCreateModal((workspace) => handleAdd(workspace));
+
+  const availableWorkspaces = workspaces.filter((workspace) => !mappedWorkspaceIds.includes(workspace.id) && !addedIds.includes(workspace.id));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='max-h-[85vh] overflow-y-auto'>
+        <DialogHeader>
+          <DialogTitle>{t('scopeShell.knowledge.addWorkspace')}</DialogTitle>
+          <DialogDescription>{t('scopeShell.knowledge.mapHint')}</DialogDescription>
+        </DialogHeader>
+        <Input aria-label={t('scopeShell.knowledge.workspaceSearch')} placeholder={t('scopeShell.knowledge.workspaceSearch')} value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className='grid max-h-72 gap-1 overflow-y-auto rounded-xl border bg-background p-2'>
+          {availableWorkspaces.map((workspace) => (
+            <div key={workspace.id} className='flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-muted'>
+              <div className='min-w-0'>
+                <p className='truncate text-sm font-medium'>{workspace.name}</p>
+                <p className='text-xs text-muted-foreground'>{t('scopeShell.knowledge.workspaceDetails', { count: workspace.documentCount })}</p>
+              </div>
+              <Button type='button' size='sm' disabled={createSource.isPending} onClick={() => handleAdd(workspace)}>{t('scopeShell.knowledge.add')}</Button>
+            </div>
+          ))}
+          {!isLoading && availableWorkspaces.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('scopeShell.knowledge.noWorkspaces')}</p>}
+          {isLoading && <p className='p-2 text-sm text-muted-foreground'>{t('scopeShell.knowledge.loadingWorkspaces')}</p>}
+        </div>
+        <DialogFooter className='sm:justify-between'>
+          <Button type='button' variant='ghost' onClick={handleCreateWorkspace}>{t('scopeShell.knowledge.createWorkspace')}</Button>
+          <Button type='button' onClick={() => onOpenChange(false)}>{t('scopeShell.knowledge.done')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -315,28 +375,128 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
 
 function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const createMembership = useCreateGovernanceMembership(programId);
+  const updateMembership = useUpdateGovernanceMembership(programId);
   const deleteMembership = useDeleteGovernanceMembership(programId);
-  const [userId, setUserId] = useState('');
-  const [role, setRole] = useState<GovernanceMembershipRole>('scope_viewer');
-  const [level, setLevel] = useState<'scope' | 'program'>('scope');
+  const [dialogOpen, setDialogOpen] = useState(false);
   const scopeMemberships = memberships.filter((membership) => !membership.scopeId || membership.scopeId === scopeId);
-
-  const handleInvite = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!userId.trim()) return;
-    createMembership.mutate({ userId: userId.trim(), scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }, { onSuccess: () => setUserId('') });
-  };
+  const existingUserIds = scopeMemberships.map((membership) => membership.userId);
 
   return (
     <div className='grid gap-4'>
-      <form onSubmit={handleInvite} className='grid gap-3 rounded-xl border bg-background p-4'>
+      <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.access.inviteTitle')}</h3>
           <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.access.inviteHint')}</p>
         </div>
-        <div className='grid gap-3 md:grid-cols-3'>
-          <Input aria-label={t('access.userIdLabel')} value={userId} onChange={(event) => setUserId(event.target.value)} placeholder={t('access.userIdPlaceholder')} />
+        <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('access.invite')}</Button>
+      </div>
+      <div className='grid gap-2'>
+        {scopeMemberships.map((membership) => (
+          <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
+            <div className='min-w-0'>
+              <div className='truncate font-medium'><GovernanceUserName userId={membership.userId} /></div>
+              <p className='text-xs text-muted-foreground'>{t(`scopeShell.access.status.${membership.status}`)}{membership.scopeId ? '' : ` · ${t('access.programLevel')}`}</p>
+            </div>
+            <div className='flex flex-none items-center gap-2'>
+              <select
+                aria-label={t('access.roleLabel')}
+                className='h-9 rounded-md border bg-background px-2 text-sm'
+                value={membership.role}
+                disabled={updateMembership.isPending}
+                onChange={(event) => updateMembership.mutate({ membershipId: membership.id, payload: { role: event.target.value as GovernanceMembershipRole } })}
+              >
+                {inviteRoles.map((option) => <option key={option} value={option}>{t(`scopeShell.access.roles.${option}`)}</option>)}
+              </select>
+              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('access.disable')} disabled={deleteMembership.isPending} onClick={() => deleteMembership.mutate(membership.id)}>
+                <Trash2 className='h-4 w-4' />
+              </Button>
+            </div>
+          </div>
+        ))}
+        {scopeMemberships.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('access.empty')}</p>}
+      </div>
+      <InviteUsersDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} excludeUserIds={existingUserIds} />
+    </div>
+  );
+}
+
+function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUserIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; excludeUserIds: string[] }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const createMembership = useCreateGovernanceMembership(programId);
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState<GovernanceUserSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selected, setSelected] = useState<GovernanceUserSearchResult[]>([]);
+  const [role, setRole] = useState<GovernanceMembershipRole>('scope_viewer');
+  const [level, setLevel] = useState<'scope' | 'program'>('scope');
+
+  useEffect(() => {
+    if (!open) { setSearch(''); setResults([]); setSelected([]); }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !search.trim()) { setResults([]); return; }
+    setIsSearching(true);
+    const timeout = window.setTimeout(() => {
+      governanceApi.searchUsers(search.trim(), 10)
+        .then((users) => setResults(users))
+        .catch(() => setResults([]))
+        .finally(() => setIsSearching(false));
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [search, open]);
+
+  const toggleSelect = (user: GovernanceUserSearchResult) => {
+    setSelected((prev) => (prev.some((item) => item.id === user.id) ? prev.filter((item) => item.id !== user.id) : [...prev, user]));
+  };
+
+  const handleInvite = () => {
+    selected.forEach((user) => createMembership.mutate({ userId: user.id, scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }));
+    onOpenChange(false);
+  };
+
+  const availableResults = results.filter((user) => !excludeUserIds.includes(user.id));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='max-h-[85vh] overflow-y-auto'>
+        <DialogHeader>
+          <DialogTitle>{t('scopeShell.access.inviteTitle')}</DialogTitle>
+          <DialogDescription>{t('scopeShell.access.inviteHint')}</DialogDescription>
+        </DialogHeader>
+        <Input aria-label={t('access.userSearchLabel')} placeholder={t('access.userSearchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)} />
+        {selected.length > 0 && (
+          <div className='flex flex-wrap gap-2'>
+            {selected.map((user) => {
+              const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+              return (
+                <span key={user.id} className='inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary'>
+                  {fullName || user.email}
+                  <button type='button' onClick={() => toggleSelect(user)} aria-label={t('access.remove')}><X className='h-3 w-3' /></button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+        <div className='grid max-h-56 gap-1 overflow-y-auto rounded-xl border bg-background p-2'>
+          {availableResults.map((user) => {
+            const isSelected = selected.some((item) => item.id === user.id);
+            const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+            return (
+              <button key={user.id} type='button' onClick={() => toggleSelect(user)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
+                <span className='min-w-0'>
+                  <span className='block truncate font-medium'>{fullName || user.email}</span>
+                  {fullName && <span className='block truncate text-xs text-muted-foreground'>{user.email}</span>}
+                </span>
+                {isSelected && <span className='flex-none text-xs font-medium text-primary'>{t('access.selected')}</span>}
+              </button>
+            );
+          })}
+          {isSearching && <p className='p-2 text-sm text-muted-foreground'>{t('access.searching')}</p>}
+          {!isSearching && search.trim() && availableResults.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('access.noResults')}</p>}
+          {!search.trim() && <p className='p-2 text-sm text-muted-foreground'>{t('access.searchHint')}</p>}
+        </div>
+        <div className='grid gap-3 md:grid-cols-2'>
           <select aria-label={t('access.roleLabel')} className='h-10 rounded-md border bg-background px-3 text-sm' value={role} onChange={(event) => setRole(event.target.value as GovernanceMembershipRole)}>
             {inviteRoles.map((option) => <option key={option} value={option}>{t(`scopeShell.access.roles.${option}`)}</option>)}
           </select>
@@ -345,23 +505,11 @@ function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: st
             <option value='program'>{t('access.programLevel')}</option>
           </select>
         </div>
-        <Button type='submit' className='w-fit' disabled={createMembership.isPending || !userId.trim()}>{t('access.invite')}</Button>
-      </form>
-      <div className='grid gap-2'>
-        {scopeMemberships.map((membership) => (
-          <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
-            <div className='min-w-0'>
-              <div className='truncate font-medium'><GovernanceUserName userId={membership.userId} /></div>
-              <p className='text-xs text-muted-foreground'>{t(`scopeShell.access.roles.${membership.role}`)} · {t(`scopeShell.access.status.${membership.status}`)}{membership.scopeId ? '' : ` · ${t('access.programLevel')}`}</p>
-            </div>
-            <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('access.disable')} disabled={deleteMembership.isPending} onClick={() => deleteMembership.mutate(membership.id)}>
-              <Trash2 className='h-4 w-4' />
-            </Button>
-          </div>
-        ))}
-        {scopeMemberships.length === 0 && <p className='text-sm text-muted-foreground'>{t('access.empty')}</p>}
-      </div>
-    </div>
+        <DialogFooter>
+          <Button type='button' onClick={handleInvite} disabled={selected.length === 0 || createMembership.isPending}>{t('access.inviteCount', { count: selected.length })}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -464,14 +612,16 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
     createRevision.mutate({ agentId, workspaceIds });
   };
 
+  const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
+  const latestDraftDryRun = draftDryRuns[0];
+  const { data: transcriptMessages = [] } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null);
+  const canPublish = overview.draftRevision !== undefined && draftDryRuns.some((dryRun) => dryRun.status === 'passed') && overview.readiness.blockers.length === 0;
+
   const handleDryRun = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!dryRunInput.trim()) return;
-    createDryRun.mutate({ input: dryRunInput.trim(), simulatedChannel: 'widget' }, { onSuccess: () => setDryRunInput('') });
+    createDryRun.mutate({ input: dryRunInput.trim(), simulatedChannel: 'widget', conversationId: latestDraftDryRun?.conversationId }, { onSuccess: () => setDryRunInput('') });
   };
-
-  const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
-  const canPublish = overview.draftRevision !== undefined && draftDryRuns.some((dryRun) => dryRun.status === 'passed') && overview.readiness.blockers.length === 0;
 
   return (
     <div className='grid gap-4'>
@@ -500,19 +650,21 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       {overview.draftRevision && (
         <div className='rounded-xl border bg-background p-4'>
           <h3 className='text-sm font-semibold'>{t('dryRun.title')}</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{t('dryRun.hint')}</p>
+          <div className='mt-3 grid max-h-96 gap-1 overflow-y-auto rounded-lg border bg-muted/20 p-3'>
+            {transcriptMessages.map((message) => <DryRunMessageBubble key={message.id} message={message} />)}
+            {transcriptMessages.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
+          </div>
           <form className='mt-3 flex gap-2' onSubmit={handleDryRun}>
             <Input id='governance-test-publish-dry-run-input' name='dryRunInput' aria-label={t('dryRun.inputLabel')} value={dryRunInput} onChange={(event) => setDryRunInput(event.target.value)} placeholder={t('dryRun.inputPlaceholder')} />
             <Button type='submit' disabled={createDryRun.isPending || !dryRunInput.trim()}>{t('dryRun.run')}</Button>
           </form>
-          <div className='mt-3 grid gap-2'>
-            {draftDryRuns.map((dryRun) => (
-              <div key={dryRun.id} className='flex items-center justify-between gap-3 rounded-lg border p-3'>
-                <span className='text-sm'>{t(`scopeShell.testPublish.status.${dryRun.status}`)}</span>
-                {dryRun.status !== 'passed' && <Button type='button' variant='outline' size='sm' onClick={() => markDryRun.mutate({ dryRunId: dryRun.id, status: 'passed' })} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
-              </div>
-            ))}
-            {draftDryRuns.length === 0 && <p className='text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
-          </div>
+          {latestDraftDryRun && (
+            <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
+              <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
+              {latestDraftDryRun.status !== 'passed' && <Button type='button' variant='outline' size='sm' onClick={() => markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'passed' })} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
+            </div>
+          )}
         </div>
       )}
 
@@ -532,26 +684,13 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
   return <div className='grid gap-3 md:grid-cols-2'><SummaryCard label={t('scopeShell.monitor.total')} value={String(overview.metricsSummary.totalEvents)} />{scopeMetrics.map((metric) => <SummaryCard key={metric.id} label={metric.type} value={String(metric.value)} />)}</div>;
 }
 
-function SourceGroup({ title, sources, onRemove, removingId }: Readonly<{ title: string; sources: GovernanceScopeOverview['knowledge']['localSources']; onRemove?: (sourceId: string) => void; removingId?: string | null }>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
+function DryRunMessageBubble({ message }: Readonly<{ message: GovernanceDryRunMessage }>): JSX.Element {
+  const isUser = message.conversationType === 'user';
+  const text = isUser ? message.content ?? '' : (message.components?.find((component) => component.type === 'text')?.data?.content as string | undefined) ?? '';
   return (
-    <div>
-      <h3 className='text-sm font-semibold'>{title}</h3>
-      <div className='mt-2 grid gap-2'>
-        {sources.map((source) => (
-          <div key={source.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
-            <div className='min-w-0'>
-              <div className='truncate font-medium'>{source.title}</div>
-              <p className='text-xs text-muted-foreground'>{source.workspaceId ? t('scopeShell.knowledge.workspaceMapped') : t(`sources.visibility.${source.visibility}`)} · {t(`scopeShell.knowledge.status.${source.status}`)}</p>
-            </div>
-            {onRemove && (
-              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.knowledge.remove')} disabled={removingId === source.id} onClick={() => onRemove(source.id)}>
-                <Trash2 className='h-4 w-4' />
-              </Button>
-            )}
-          </div>
-        ))}
-        {sources.length === 0 && <p className='text-sm text-muted-foreground'>{t('sources.empty')}</p>}
+    <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
+      <div className={cn('my-1 max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm', isUser ? 'rounded-br-none bg-primary text-primary-foreground' : 'rounded-bl-none border bg-background')}>
+        {text || '…'}
       </div>
     </div>
   );

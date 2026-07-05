@@ -50,24 +50,24 @@ export class GovernanceDryRunService {
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     const input = dto.input ?? this.firstTestCaseInput(dto.testCases) ?? '';
     const simulatedChannel = dto.simulatedChannel ?? 'api';
-    const conversation = await this.conversationService.create(actorId, { title: 'Governance dry run', workspaces: revision.workspaceIds.map((id) => id.toString()) });
-    const requestId = `governance-dry-run:${deployment.currentDraftRevisionId.toString()}`;
-    const userMessage = await this.messageService.createUserMessage({ conversationId: conversation.id, senderId: actorId, content: input, agentIds: [revision.agentId.toString()], requestId });
-    const aiMessage = await this.messageService.createAIPlaceholder({ conversationId: conversation.id, questionMessageId: userMessage.id, requestId });
+    const conversationId = dto.conversationId ?? (await this.conversationService.create(actorId, { title: 'Governance dry run', workspaces: revision.workspaceIds.map((id) => id.toString()) })).id;
+    const requestId = `governance-dry-run:${deployment.currentDraftRevisionId.toString()}:${Date.now()}`;
+    const userMessage = await this.messageService.createUserMessage({ conversationId, senderId: actorId, content: input, agentIds: [revision.agentId.toString()], requestId });
+    const aiMessage = await this.messageService.createAIPlaceholder({ conversationId, questionMessageId: userMessage.id, requestId });
     const testCases = dto.testCases ?? [{ input, simulatedChannel }];
     const dryRun = await this.dryRunModel.create({
       programId: deployment.programId,
       scopeId: deployment.scopeId,
       deploymentId: deployment._id,
       revisionId: deployment.currentDraftRevisionId,
-      conversationId: new Types.ObjectId(conversation.id),
+      conversationId: new Types.ObjectId(conversationId),
       testerId: new Types.ObjectId(actorId),
       status: 'running',
       testCases,
       checks: dto.checks ?? { draftRevisionId: deployment.currentDraftRevisionId.toString() },
     });
     try {
-      await this.streamService.startStream(actorId, conversation.id, aiMessage.id, { content: input, agentIds: [revision.agentId.toString()] }, requestId, actorEmail);
+      await this.streamService.startStream(actorId, conversationId, aiMessage.id, { content: input, agentIds: [revision.agentId.toString()] }, requestId, actorEmail);
       dryRun.status = 'passed';
       dryRun.checks = { ...dryRun.checks, runtime: 'completed', simulatedChannel };
     } catch (error) {

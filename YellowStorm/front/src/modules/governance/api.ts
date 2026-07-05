@@ -12,6 +12,7 @@ import type {
   GovernanceDeployment,
   GovernanceDeploymentRevision,
   GovernanceDryRun,
+  GovernanceDryRunMessage,
   GovernanceMembership,
   GovernanceMetric,
   GovernanceScope,
@@ -19,6 +20,7 @@ import type {
   GovernanceSource,
   GovernanceUserSearchResult,
   UpdateGovernanceDeploymentPayload,
+  UpdateGovernanceMembershipPayload,
   UpdateGovernanceProgramPayload,
   UpdateGovernanceScopePayload,
   UpdateGovernanceSourcePayload,
@@ -102,6 +104,11 @@ export const governanceApi = {
     return res.data.data;
   },
 
+  async updateMembership(programId: string, membershipId: string, payload: UpdateGovernanceMembershipPayload): Promise<GovernanceMembership> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.membership(programId, membershipId), payload);
+    return res.data.data;
+  },
+
   async deleteMembership(programId: string, membershipId: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.governance.membership(programId, membershipId));
   },
@@ -138,6 +145,11 @@ export const governanceApi = {
 
   async listDryRuns(deploymentId: string): Promise<GovernanceDryRun[]> {
     const res = await apiClient.get(API_ENDPOINTS.governance.dryRuns(deploymentId));
+    return res.data.data;
+  },
+
+  async getDryRunMessages(dryRunId: string): Promise<GovernanceDryRunMessage[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.dryRunMessages(dryRunId));
     return res.data.data;
   },
 

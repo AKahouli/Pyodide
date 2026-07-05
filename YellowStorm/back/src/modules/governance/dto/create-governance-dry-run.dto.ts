@@ -7,6 +7,11 @@ export class CreateGovernanceDryRunDto {
   @IsIn(['widget', 'whatsapp', 'telegram', 'api'])
   simulatedChannel?: string;
 
+  @ApiPropertyOptional({ description: 'Continue an existing dry-run conversation instead of starting a new one' })
+  @IsOptional()
+  @IsString()
+  conversationId?: string;
+
   @ApiPropertyOptional({ maxLength: 4000 })
   @IsOptional()
   @IsString()

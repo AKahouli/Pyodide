@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { governanceApi } from '../api';
 import { governanceQueryKeys } from './queryKeys';
-import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceScopePayload } from '../types';
+import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceMembershipPayload, UpdateGovernanceScopePayload } from '../types';
 
 export function useGovernancePrograms() {
   return useQuery({
@@ -77,6 +77,14 @@ export function useGovernanceDryRuns(deploymentId: string | null) {
     queryKey: deploymentId ? governanceQueryKeys.dryRuns(deploymentId) : governanceQueryKeys.dryRuns('none'),
     queryFn: () => governanceApi.listDryRuns(deploymentId ?? ''),
     enabled: Boolean(deploymentId),
+  });
+}
+
+export function useGovernanceDryRunMessages(dryRunId: string | null) {
+  return useQuery({
+    queryKey: dryRunId ? governanceQueryKeys.dryRunMessages(dryRunId) : governanceQueryKeys.dryRunMessages('none'),
+    queryFn: () => governanceApi.getDryRunMessages(dryRunId ?? ''),
+    enabled: Boolean(dryRunId),
   });
 }
 
@@ -159,6 +167,16 @@ export function useCreateGovernanceMembership(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateGovernanceMembershipPayload) => governanceApi.createMembership(programId ?? '', payload),
+    onSuccess: () => {
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.memberships(programId) });
+    },
+  });
+}
+
+export function useUpdateGovernanceMembership(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ membershipId, payload }: { membershipId: string; payload: UpdateGovernanceMembershipPayload }) => governanceApi.updateMembership(programId ?? '', membershipId, payload),
     onSuccess: () => {
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.memberships(programId) });
     },

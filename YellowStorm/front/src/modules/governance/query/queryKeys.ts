@@ -11,5 +11,6 @@ export const governanceQueryKeys = {
   revisions: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'revisions'] as const,
   readiness: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'readiness'] as const,
   dryRuns: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'dry-runs'] as const,
+  dryRunMessages: (dryRunId: string) => [...governanceQueryKeys.all, 'dry-run', dryRunId, 'messages'] as const,
   metrics: (programId: string) => [...governanceQueryKeys.program(programId), 'metrics'] as const,
 };
