@@ -14,11 +14,17 @@ describe('GovernanceDryRunService', () => {
   const userMessageId = '507f1f77bcf86cd799439018';
   const aiMessageId = '507f1f77bcf86cd799439019';
 
+  let lastCreatedDryRun: Record<string, unknown> | undefined;
+
   function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error) {
+    lastCreatedDryRun = undefined;
     const deploymentModel = { findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(deployment) }) };
     const revisionModel = { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: revisionId, agentId, workspaceIds: [] }) }) }) };
     const dryRunModel = {
-      create: jest.fn().mockImplementation(async (payload) => ({ _id: { toString: () => 'dry-run-1' }, ...payload, save: jest.fn(), createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') })),
+      create: jest.fn().mockImplementation(async (payload) => {
+        lastCreatedDryRun = { _id: { toString: () => 'dry-run-1' }, ...payload, save: jest.fn(), createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') };
+        return lastCreatedDryRun;
+      }),
     };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const accessService = { assertScopeAccess: jest.fn().mockImplementation(async () => { if (scopeAccessError) throw scopeAccessError; }) };
@@ -27,6 +33,7 @@ describe('GovernanceDryRunService', () => {
       createUserMessage: jest.fn().mockResolvedValue({ id: userMessageId }),
       createAIPlaceholder: jest.fn().mockResolvedValue({ id: aiMessageId }),
       findByConversation: jest.fn().mockResolvedValue({ messages: [] }),
+      markStreamFailed: jest.fn().mockResolvedValue(undefined),
     };
     const streamService = { startStream: jest.fn().mockImplementation(async () => { if (streamError) throw streamError; }) };
     const auditLogService = { logSuccess: jest.fn() };
@@ -41,7 +48,10 @@ describe('GovernanceDryRunService', () => {
     };
   }
 
-  it('creates dry-runs against the current draft revision through the conversation runtime', async () => {
+  // Let the fire-and-forget stream promise (and its .then/.catch) settle.
+  const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('creates dry-runs against the current draft revision through the conversation runtime, non-blocking', async () => {
     const { service, dryRunModel, programService, accessService, conversationService, messageService, streamService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId });
 
     const result = await service.create(actorId, actorEmail, deploymentId, { input: 'hello', simulatedChannel: 'api' });
@@ -53,16 +63,35 @@ describe('GovernanceDryRunService', () => {
     expect(streamService.startStream).toHaveBeenCalledWith(actorId, conversationId, aiMessageId, expect.objectContaining({ content: 'hello', agentIds: [agentId] }), expect.any(String), actorEmail);
     expect(dryRunModel.create).toHaveBeenCalledWith(expect.objectContaining({ revisionId, conversationId: expect.anything(), testerId: expect.anything() }));
     expect(result.revisionId).toBe(revisionId);
-    expect(result.status).toBe('passed');
+    // POST returns immediately while the reply streams in the background.
+    expect(result.status).toBe('running');
+
+    // Once the background stream resolves, the record is flipped to passed.
+    await flushMicrotasks();
+    expect(lastCreatedDryRun?.status).toBe('passed');
+    expect(lastCreatedDryRun?.save).toHaveBeenCalled();
+  });
+
+  it('tests the requested mapped agent instead of the revision primary agent', async () => {
+    const { service, messageService, streamService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId });
+    const otherAgentId = '507f1f77bcf86cd7994390ff';
+
+    await service.create(actorId, actorEmail, deploymentId, { input: 'hello', agentId: otherAgentId });
+
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({ agentIds: [otherAgentId] }));
+    expect(streamService.startStream).toHaveBeenCalledWith(actorId, conversationId, aiMessageId, expect.objectContaining({ agentIds: [otherAgentId] }), expect.any(String), actorEmail);
   });
 
   it('records failed dry-runs when runtime execution fails', async () => {
-    const { service } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, new Error('grpc down'));
+    const { service, messageService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, new Error('grpc down'));
 
     const result = await service.create(actorId, actorEmail, deploymentId, { input: 'hello' });
+    expect(result.status).toBe('running');
 
-    expect(result.status).toBe('failed');
-    expect(result.checks).toEqual(expect.objectContaining({ runtime: 'failed', error: 'grpc down' }));
+    await flushMicrotasks();
+    expect(messageService.markStreamFailed).toHaveBeenCalledWith(aiMessageId);
+    expect(lastCreatedDryRun?.status).toBe('failed');
+    expect(lastCreatedDryRun?.checks).toEqual(expect.objectContaining({ runtime: 'failed', error: 'grpc down' }));
   });
 
   it('rejects dry-runs outside the actor scope', async () => {

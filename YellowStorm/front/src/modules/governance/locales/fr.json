@@ -108,6 +108,8 @@
   "dryRun.empty": "Aucun test à blanc pour le moment.",
   "dryRun.error": "Échec du test à blanc",
   "dryRun.loadError": "Impossible de charger la transcription de la conversation.",
+  "dryRun.testAgent": "Agent testé",
+  "dryRun.testingAgent": "Test : {{name}}",
   "publish.title": "Publication",
   "publish.score": "Score de préparation",
   "publish.publish": "Publier le brouillon",

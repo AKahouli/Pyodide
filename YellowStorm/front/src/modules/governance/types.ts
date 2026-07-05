@@ -204,6 +204,7 @@ export interface CreateGovernanceDryRunPayload {
   input?: string;
   simulatedChannel?: 'widget' | 'whatsapp' | 'telegram' | 'api';
   conversationId?: string;
+  agentId?: string;
 }
 
 export interface GovernanceDryRunMessage {

@@ -80,11 +80,12 @@ export function useGovernanceDryRuns(deploymentId: string | null) {
   });
 }
 
-export function useGovernanceDryRunMessages(dryRunId: string | null) {
+export function useGovernanceDryRunMessages(dryRunId: string | null, options?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: dryRunId ? governanceQueryKeys.dryRunMessages(dryRunId) : governanceQueryKeys.dryRunMessages('none'),
     queryFn: () => governanceApi.getDryRunMessages(dryRunId ?? ''),
     enabled: Boolean(dryRunId),
+    refetchInterval: options?.refetchInterval ?? false,
   });
 }
 

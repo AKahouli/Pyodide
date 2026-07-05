@@ -108,6 +108,8 @@
   "dryRun.empty": "No dry-runs yet.",
   "dryRun.error": "Dry-run failed",
   "dryRun.loadError": "Could not load the conversation transcript.",
+  "dryRun.testAgent": "Test agent",
+  "dryRun.testingAgent": "Testing: {{name}}",
   "publish.title": "Publish",
   "publish.score": "Readiness score",
   "publish.publish": "Publish draft",

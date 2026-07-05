@@ -12,6 +12,11 @@ export class CreateGovernanceDryRunDto {
   @IsString()
   conversationId?: string;
 
+  @ApiPropertyOptional({ description: 'Which mapped agent to test. Defaults to the draft revision primary agent.' })
+  @IsOptional()
+  @IsString()
+  agentId?: string;
+
   @ApiPropertyOptional({ maxLength: 4000 })
   @IsOptional()
   @IsString()

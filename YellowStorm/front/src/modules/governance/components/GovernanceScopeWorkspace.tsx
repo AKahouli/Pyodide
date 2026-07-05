@@ -824,12 +824,9 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
   const deploymentId = overview.deployment?.id ?? null;
   const createDeployment = useCreateGovernanceDeployment(programId);
   const createRevision = useCreateGovernanceRevision(deploymentId);
-  const createDryRun = useCreateGovernanceDryRun(deploymentId);
-  const markDryRun = useMarkGovernanceDryRun(deploymentId);
   const publishDeployment = usePublishGovernanceDeployment(deploymentId);
   const suspendDeployment = useSuspendGovernanceDeployment(deploymentId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
-  const [dryRunInput, setDryRunInput] = useState('');
 
   const handleCreateDeployment = () => {
     createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => showError(t('scopeShell.testPublish.deploymentError'), { description: parseApiError(error).message }) });
@@ -843,22 +840,10 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
   };
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
-  const latestDraftDryRun = draftDryRuns[0];
-  const { data: transcriptMessages = [], isError: transcriptError } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null);
   const canPublish = overview.draftRevision !== undefined && draftDryRuns.some((dryRun) => dryRun.status === 'passed') && overview.readiness.blockers.length === 0;
-
-  const handleDryRun = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!dryRunInput.trim()) return;
-    createDryRun.mutate(
-      { input: dryRunInput.trim(), simulatedChannel: 'widget', conversationId: latestDraftDryRun?.conversationId },
-      { onSuccess: () => setDryRunInput(''), onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) },
-    );
-  };
 
   const handlePublish = () => publishDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.publishError'), { description: parseApiError(error).message }) });
   const handleSuspend = () => suspendDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.suspendError'), { description: parseApiError(error).message }) });
-  const handleMarkPassed = (dryRunId: string) => markDryRun.mutate({ dryRunId, status: 'passed' }, { onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) });
 
   return (
     <div className='grid gap-4'>
@@ -884,26 +869,8 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
         </div>
       )}
 
-      {overview.draftRevision && (
-        <div className='rounded-xl border bg-background p-4'>
-          <h3 className='text-sm font-semibold'>{t('dryRun.title')}</h3>
-          <p className='mt-0.5 text-xs text-muted-foreground'>{t('dryRun.hint')}</p>
-          <div className='mt-3 grid max-h-96 gap-1 overflow-y-auto rounded-lg border bg-muted/20 p-3'>
-            {transcriptError && <p className='p-2 text-sm text-destructive'>{t('dryRun.loadError')}</p>}
-            {!transcriptError && transcriptMessages.map((message) => <DryRunMessageBubble key={message.id} message={message} />)}
-            {!transcriptError && transcriptMessages.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
-          </div>
-          <form className='mt-3 flex gap-2' onSubmit={handleDryRun}>
-            <Input id='governance-test-publish-dry-run-input' name='dryRunInput' aria-label={t('dryRun.inputLabel')} value={dryRunInput} onChange={(event) => setDryRunInput(event.target.value)} placeholder={t('dryRun.inputPlaceholder')} />
-            <Button type='submit' disabled={createDryRun.isPending || !dryRunInput.trim()}>{t('dryRun.run')}</Button>
-          </form>
-          {latestDraftDryRun && (
-            <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
-              <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
-              {latestDraftDryRun.status !== 'passed' && <Button type='button' variant='outline' size='sm' onClick={() => handleMarkPassed(latestDraftDryRun.id)} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
-            </div>
-          )}
-        </div>
+      {overview.draftRevision && deploymentId && (
+        <DryRunChat deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} />
       )}
 
       {overview.draftRevision && (
@@ -922,14 +889,143 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
   return <div className='grid gap-3 md:grid-cols-2'><SummaryCard label={t('scopeShell.monitor.total')} value={String(overview.metricsSummary.totalEvents)} />{scopeMetrics.map((metric) => <SummaryCard key={metric.id} label={metric.type} value={String(metric.value)} />)}</div>;
 }
 
-function DryRunMessageBubble({ message }: Readonly<{ message: GovernanceDryRunMessage }>): JSX.Element {
-  const isUser = message.conversationType === 'user';
-  const text = isUser ? message.content ?? '' : (message.components?.find((component) => component.type === 'text')?.data?.content as string | undefined) ?? '';
+function dryRunMessageText(message: GovernanceDryRunMessage): string {
+  if (message.conversationType === 'user') return message.content ?? '';
+  return (message.components?.find((component) => component.type === 'text')?.data?.content as string | undefined) ?? '';
+}
+
+function DryRunBubble({ role, text }: Readonly<{ role: 'user' | 'ai'; text: string }>): JSX.Element {
+  const isUser = role === 'user';
   return (
     <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
       <div className={cn('my-1 max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm', isUser ? 'rounded-br-none bg-primary text-primary-foreground' : 'rounded-bl-none border bg-background')}>
-        {text || '…'}
+        {text}
       </div>
+    </div>
+  );
+}
+
+function DryRunTypingBubble(): JSX.Element {
+  return (
+    <div className='flex w-full justify-start'>
+      <div className='my-1 flex gap-1 rounded-2xl rounded-bl-none border bg-background px-3 py-3'>
+        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s]' />
+        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s]' />
+        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground' />
+      </div>
+    </div>
+  );
+}
+
+function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgentId }: Readonly<{ deploymentId: string; draftRevisionId: string; mappedAgentIds: string[]; primaryAgentId?: string }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const agents = useAgents();
+  const fetchAgents = useAgentStore((state) => state.fetchAgents);
+  const createDryRun = useCreateGovernanceDryRun(deploymentId);
+  const markDryRun = useMarkGovernanceDryRun(deploymentId);
+  const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
+
+  const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === draftRevisionId);
+  const latestDraftDryRun = draftDryRuns[0];
+  const conversationId = latestDraftDryRun?.conversationId;
+
+  const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
+  const [selectedAgentId, setSelectedAgentId] = useState(primaryAgentId ?? mappedAgentIds[0] ?? '');
+  const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [pendingUserText, setPendingUserText] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchAgents();
+  }, [fetchAgents]);
+
+  useEffect(() => {
+    // Keep the selection valid as the mapped-agent set changes.
+    if (!mappedAgentIds.includes(selectedAgentId)) setSelectedAgentId(primaryAgentId ?? mappedAgentIds[0] ?? '');
+  }, [mappedAgentIds, primaryAgentId, selectedAgentId]);
+
+  const { data: rawMessages = [], isError } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null, { refetchInterval: isStreaming ? 1200 : false });
+  // Drop the empty AI placeholder that exists while the reply is still streaming —
+  // the typing indicator stands in for it until real content lands.
+  const messages = rawMessages.filter((message) => message.conversationType === 'user' || dryRunMessageText(message).trim().length > 0);
+  const lastMessage = messages[messages.length - 1];
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    // The reply has landed once the newest message is an AI message with real content.
+    if (lastMessage && lastMessage.conversationType === 'ai' && dryRunMessageText(lastMessage).trim().length > 0) {
+      setIsStreaming(false);
+      setPendingUserText(null);
+    }
+  }, [isStreaming, lastMessage]);
+
+  const serverHasPending = pendingUserText !== null && messages.some((message) => message.conversationType === 'user' && dryRunMessageText(message) === pendingUserText);
+
+  const handleSend = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const text = input.trim();
+    if (!text || isStreaming || !selectedAgentId) return;
+    setPendingUserText(text);
+    setIsStreaming(true);
+    setInput('');
+    createDryRun.mutate(
+      { input: text, simulatedChannel: 'widget', conversationId, agentId: selectedAgentId },
+      {
+        onError: (error) => {
+          setIsStreaming(false);
+          setPendingUserText(null);
+          showError(t('dryRun.error'), { description: parseApiError(error).message });
+        },
+      },
+    );
+  };
+
+  const handleMarkPassed = () => {
+    if (!latestDraftDryRun) return;
+    markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'passed' }, { onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) });
+  };
+
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const isEmpty = messages.length === 0 && !pendingUserText && !isStreaming;
+
+  return (
+    <div className='rounded-xl border bg-background p-4'>
+      <div className='flex flex-wrap items-center justify-between gap-3'>
+        <div>
+          <h3 className='text-sm font-semibold'>{t('dryRun.title')}</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{t('dryRun.hint')}</p>
+        </div>
+        {mappedAgents.length > 1 ? (
+          <label className='flex items-center gap-2 text-xs text-muted-foreground'>
+            {t('dryRun.testAgent')}
+            <select className='h-9 rounded-md border bg-background px-2 text-sm text-foreground' value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)} disabled={isStreaming} aria-label={t('dryRun.testAgent')}>
+              {mappedAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+            </select>
+          </label>
+        ) : selectedAgent ? (
+          <span className='rounded-full border px-2 py-1 text-xs text-muted-foreground'>{t('dryRun.testingAgent', { name: selectedAgent.name })}</span>
+        ) : null}
+      </div>
+
+      <div className='mt-3 flex max-h-96 flex-col gap-1 overflow-y-auto rounded-lg border bg-muted/20 p-3'>
+        {isError && <p className='p-2 text-sm text-destructive'>{t('dryRun.loadError')}</p>}
+        {!isError && messages.map((message) => <DryRunBubble key={message.id} role={message.conversationType} text={dryRunMessageText(message)} />)}
+        {!isError && pendingUserText !== null && !serverHasPending && <DryRunBubble role='user' text={pendingUserText} />}
+        {!isError && isStreaming && <DryRunTypingBubble />}
+        {!isError && isEmpty && <p className='p-2 text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
+      </div>
+
+      <form className='mt-3 flex gap-2' onSubmit={handleSend}>
+        <Input id='governance-test-publish-dry-run-input' name='dryRunInput' aria-label={t('dryRun.inputLabel')} value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('dryRun.inputPlaceholder')} disabled={isStreaming || !selectedAgentId} />
+        <Button type='submit' disabled={isStreaming || !input.trim() || !selectedAgentId}>{t('dryRun.run')}</Button>
+      </form>
+
+      {latestDraftDryRun && (
+        <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
+          <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
+          {latestDraftDryRun.status !== 'passed' && !isStreaming && <Button type='button' variant='outline' size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
+        </div>
+      )}
     </div>
   );
 }

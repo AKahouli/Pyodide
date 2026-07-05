@@ -50,11 +50,14 @@ export class GovernanceDryRunService {
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     const input = dto.input ?? this.firstTestCaseInput(dto.testCases) ?? '';
     const simulatedChannel = dto.simulatedChannel ?? 'api';
+    // Which mapped agent to test — the panel lets the admin pick when several are mapped.
+    // Falls back to the draft revision's primary agent when unspecified.
+    const agentId = dto.agentId ?? revision.agentId.toString();
     const conversationId = dto.conversationId ?? (await this.conversationService.create(actorId, { title: 'Governance dry run', workspaces: revision.workspaceIds.map((id) => id.toString()) })).id;
     const requestId = `governance-dry-run:${deployment.currentDraftRevisionId.toString()}:${Date.now()}`;
-    const userMessage = await this.messageService.createUserMessage({ conversationId, senderId: actorId, content: input, agentIds: [revision.agentId.toString()], requestId });
+    const userMessage = await this.messageService.createUserMessage({ conversationId, senderId: actorId, content: input, agentIds: [agentId], requestId });
     const aiMessage = await this.messageService.createAIPlaceholder({ conversationId, questionMessageId: userMessage.id, requestId });
-    const testCases = dto.testCases ?? [{ input, simulatedChannel }];
+    const testCases = dto.testCases ?? [{ input, simulatedChannel, agentId }];
     const dryRun = await this.dryRunModel.create({
       programId: deployment.programId,
       scopeId: deployment.scopeId,
@@ -64,18 +67,19 @@ export class GovernanceDryRunService {
       testerId: new Types.ObjectId(actorId),
       status: 'running',
       testCases,
-      checks: dto.checks ?? { draftRevisionId: deployment.currentDraftRevisionId.toString() },
+      checks: dto.checks ?? { draftRevisionId: deployment.currentDraftRevisionId.toString(), agentId },
     });
-    try {
-      await this.streamService.startStream(actorId, conversationId, aiMessage.id, { content: input, agentIds: [revision.agentId.toString()] }, requestId, actorEmail);
-      dryRun.status = 'passed';
-      dryRun.checks = { ...dryRun.checks, runtime: 'completed', simulatedChannel };
-    } catch (error) {
-      dryRun.status = 'failed';
-      dryRun.checks = { ...dryRun.checks, runtime: 'failed', simulatedChannel, error: error instanceof Error ? error.message : 'Unknown runtime failure' };
-    }
-    await dryRun.save();
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.created', targetType: 'governance_dry_run', targetId: dryRun._id.toString(), metadata: { deploymentId, revisionId: deployment.currentDraftRevisionId.toString() } });
+    // Fire the stream non-blocking — mirrors MessageController so the POST returns
+    // immediately (status 'running') and tokens are produced in the background. The
+    // panel polls messages() for the reply and flips the readiness check once passed.
+    void this.streamService
+      .startStream(actorId, conversationId, aiMessage.id, { content: input, agentIds: [agentId] }, requestId, actorEmail)
+      .then(() => this.finishDryRun(dryRun, 'passed', { runtime: 'completed', simulatedChannel }))
+      .catch(async (error) => {
+        await this.messageService.markStreamFailed(aiMessage.id).catch(() => undefined);
+        await this.finishDryRun(dryRun, 'failed', { runtime: 'failed', simulatedChannel, error: error instanceof Error ? error.message : 'Unknown runtime failure' });
+      });
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.created', targetType: 'governance_dry_run', targetId: dryRun._id.toString(), metadata: { deploymentId, revisionId: deployment.currentDraftRevisionId.toString(), agentId } });
     return this.toResponse(dryRun);
   }
 
@@ -106,6 +110,12 @@ export class GovernanceDryRunService {
       return page.messages as unknown as Array<Record<string, unknown>>;
     }
     return dryRun.testCases as Array<Record<string, unknown>>;
+  }
+
+  private async finishDryRun(dryRun: GovernanceDryRunDocument, status: 'passed' | 'failed', extraChecks: Record<string, unknown>): Promise<void> {
+    dryRun.status = status;
+    dryRun.checks = { ...dryRun.checks, ...extraChecks };
+    await dryRun.save();
   }
 
   private firstTestCaseInput(testCases?: Array<Record<string, unknown>>): string | undefined {
