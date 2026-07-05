@@ -3,14 +3,27 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceSource, useUpdateGovernanceScope, type GovernanceMembership, type GovernanceMetric, type GovernanceScopeOverview } from '@/modules/governance';
+import {
+  useCreateGovernanceDeployment,
+  useCreateGovernanceDryRun,
+  useCreateGovernanceRevision,
+  useCreateGovernanceSource,
+  useGovernanceDryRuns,
+  useMarkGovernanceDryRun,
+  usePublishGovernanceDeployment,
+  useSuspendGovernanceDeployment,
+  useUpdateGovernanceScope,
+  type GovernanceMembership,
+  type GovernanceMetric,
+  type GovernanceScopeOverview,
+} from '@/modules/governance';
 import { GovernanceAgentName, GovernanceAgentSelector } from './GovernanceAgentSelector';
 import { GovernanceUserName } from './GovernanceUserName';
 import { GovernanceWorkspaceSelector } from './GovernanceWorkspaceSelector';
 
-type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'channels' | 'testPublish' | 'monitor';
+export type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'channels' | 'testPublish' | 'monitor';
 
-const tabs: TabKey[] = ['overview', 'knowledge', 'agents', 'access', 'channels', 'testPublish', 'monitor'];
+export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', 'access', 'channels', 'testPublish', 'monitor'];
 
 const channelLabelKeys = {
   widget: 'scopeShell.channels.widget',
@@ -35,15 +48,12 @@ interface Props {
   overview?: GovernanceScopeOverview;
   memberships: GovernanceMembership[];
   metrics: GovernanceMetric[];
+  activeTab: TabKey;
+  onTabChange: (tab: TabKey) => void;
 }
 
-export function GovernanceScopeWorkspace({ programId, scopeId, overview, memberships, metrics }: Readonly<Props>): JSX.Element {
+export function GovernanceScopeWorkspace({ programId, scopeId, overview, memberships, metrics, activeTab, onTabChange }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
-
-  useEffect(() => {
-    setActiveTab('overview');
-  }, [scopeId]);
 
   if (!overview || !scopeId) {
     return <section className='rounded-2xl border bg-card p-8 text-center shadow-sm'><h2 className='text-xl font-semibold'>{t('scopeShell.workspace.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.emptyDescription')}</p></section>;
@@ -57,7 +67,7 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
       </div>
       <div className='flex gap-2 overflow-x-auto border-b p-3'>
-        {tabs.map((tab) => <button key={tab} type='button' className={cn('rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', activeTab === tab && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={() => setActiveTab(tab)}>{t(`scopeShell.tabs.${tab}`)}</button>)}
+        {governanceScopeTabs.map((tab) => <button key={tab} type='button' className={cn('rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', activeTab === tab && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={() => onTabChange(tab)}>{t(`scopeShell.tabs.${tab}`)}</button>)}
       </div>
       <div className='p-5'>
         {activeTab === 'overview' && <OverviewTab overview={overview} />}
@@ -65,7 +75,7 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'access' && <AccessTab memberships={memberships} scopeId={scopeId} />}
         {activeTab === 'channels' && <ChannelsTab overview={overview} />}
-        {activeTab === 'testPublish' && <TestPublishTab overview={overview} />}
+        {activeTab === 'testPublish' && <TestPublishTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'monitor' && <MonitorTab overview={overview} metrics={metrics} scopeId={scopeId} />}
       </div>
     </section>
@@ -116,9 +126,89 @@ function ChannelsTab({ overview }: Readonly<{ overview: GovernanceScopeOverview 
   return <div className='grid gap-3 md:grid-cols-3'>{channels.map(([name, value]) => <ChannelCard key={name} name={name} value={value} />)}{channels.length === 0 && <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.empty')}</p>}</div>;
 }
 
-function TestPublishTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {
+function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  return <div className='grid gap-3'><SummaryCard label={t('scopeShell.testPublish.draft')} value={overview.draftRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.draftRevision.revisionNumber }) : t('scopeShell.overview.none')} /><SummaryCard label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber }) : t('scopeShell.overview.none')} /><SummaryCard label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} /><div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{overview.readiness.blockers.length > 0 ? t('scopeShell.testPublish.blockedHelp') : t('scopeShell.testPublish.advancedHelp')}</div></div>;
+  const deploymentId = overview.deployment?.id ?? null;
+  const createDeployment = useCreateGovernanceDeployment(programId);
+  const createRevision = useCreateGovernanceRevision(deploymentId);
+  const createDryRun = useCreateGovernanceDryRun(deploymentId);
+  const markDryRun = useMarkGovernanceDryRun(deploymentId);
+  const publishDeployment = usePublishGovernanceDeployment(deploymentId);
+  const suspendDeployment = useSuspendGovernanceDeployment(deploymentId);
+  const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
+  const [dryRunInput, setDryRunInput] = useState('');
+
+  const handleCreateDeployment = () => {
+    createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } });
+  };
+
+  const handleCreateRevision = () => {
+    const agentId = overview.agents.primaryAgentId;
+    if (!agentId) return;
+    const workspaceIds = overview.knowledge.workspaceMappings.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
+    createRevision.mutate({ agentId, workspaceIds });
+  };
+
+  const handleDryRun = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!dryRunInput.trim()) return;
+    createDryRun.mutate({ input: dryRunInput.trim(), simulatedChannel: 'widget' }, { onSuccess: () => setDryRunInput('') });
+  };
+
+  const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
+  const canPublish = overview.draftRevision !== undefined && draftDryRuns.some((dryRun) => dryRun.status === 'passed') && overview.readiness.blockers.length === 0;
+
+  return (
+    <div className='grid gap-4'>
+      <div className='grid gap-3 md:grid-cols-3'>
+        <SummaryCard label={t('scopeShell.testPublish.draft')} value={overview.draftRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.draftRevision.revisionNumber }) : t('scopeShell.overview.none')} />
+        <SummaryCard label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber }) : t('scopeShell.overview.none')} />
+        <SummaryCard label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} />
+      </div>
+
+      {overview.readiness.blockers.length > 0 && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.testPublish.blockedHelp')}</div>}
+
+      {!overview.deployment && (
+        <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
+          <p className='text-sm text-muted-foreground'>{t('scopeShell.testPublish.noDeployment')}</p>
+          <Button type='button' onClick={handleCreateDeployment} disabled={createDeployment.isPending}>{t('deployment.create')}</Button>
+        </div>
+      )}
+
+      {overview.deployment && !overview.draftRevision && (
+        <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
+          <p className='text-sm text-muted-foreground'>{t('scopeShell.testPublish.noDraftRevision')}</p>
+          <Button type='button' onClick={handleCreateRevision} disabled={createRevision.isPending || !overview.agents.primaryAgentId}>{t('deployment.createRevision')}</Button>
+        </div>
+      )}
+
+      {overview.draftRevision && (
+        <div className='rounded-xl border bg-background p-4'>
+          <h3 className='text-sm font-semibold'>{t('dryRun.title')}</h3>
+          <form className='mt-3 flex gap-2' onSubmit={handleDryRun}>
+            <Input id='governance-test-publish-dry-run-input' name='dryRunInput' aria-label={t('dryRun.inputLabel')} value={dryRunInput} onChange={(event) => setDryRunInput(event.target.value)} placeholder={t('dryRun.inputPlaceholder')} />
+            <Button type='submit' disabled={createDryRun.isPending || !dryRunInput.trim()}>{t('dryRun.run')}</Button>
+          </form>
+          <div className='mt-3 grid gap-2'>
+            {draftDryRuns.map((dryRun) => (
+              <div key={dryRun.id} className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                <span className='text-sm'>{t(`scopeShell.testPublish.status.${dryRun.status}`)}</span>
+                {dryRun.status !== 'passed' && <Button type='button' variant='outline' size='sm' onClick={() => markDryRun.mutate({ dryRunId: dryRun.id, status: 'passed' })} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
+              </div>
+            ))}
+            {draftDryRuns.length === 0 && <p className='text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
+          </div>
+        </div>
+      )}
+
+      {overview.draftRevision && (
+        <div className='flex items-center gap-2'>
+          <Button type='button' onClick={() => publishDeployment.mutate()} disabled={!canPublish || publishDeployment.isPending}>{t('publish.publish')}</Button>
+          {overview.publishedRevision && <Button type='button' variant='outline' onClick={() => suspendDeployment.mutate()} disabled={suspendDeployment.isPending}>{t('publish.suspend')}</Button>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: GovernanceScopeOverview; metrics: GovernanceMetric[]; scopeId: string }>): JSX.Element {

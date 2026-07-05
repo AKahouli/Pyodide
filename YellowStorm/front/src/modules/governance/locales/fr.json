@@ -193,7 +193,8 @@
   "scopeShell.testPublish.status.failed": "Échoué",
   "scopeShell.testPublish.status.needs_review": "À réviser",
   "scopeShell.testPublish.blockedHelp": "Résolvez les blocages du panneau de préparation avant de publier ce périmètre.",
-  "scopeShell.testPublish.advancedHelp": "Ce périmètre est structurellement prêt. Utilisez les outils avancés pour les actions de test à blanc et publication au niveau déploiement jusqu'à leur promotion ici.",
+  "scopeShell.testPublish.noDeployment": "Ce périmètre n'a pas encore de déploiement.",
+  "scopeShell.testPublish.noDraftRevision": "Ce périmètre n'a pas encore de révision brouillon.",
   "scopeShell.monitor.total": "Événements gouvernés totaux",
   "scopeShell.readiness.kicker": "Préparation",
   "scopeShell.readiness.title": "Prochaines actions",
@@ -222,6 +223,6 @@
   "scopeShell.blockers.draft_revision": "Aucune révision brouillon",
   "scopeShell.blockers.dry_run_passed": "Test à blanc non réussi",
   "scopeShell.blockers.channel_ready": "Aucun canal prêt",
-  "scopeShell.advanced.title": "Outils avancés de cycle de vie",
-  "scopeShell.advanced.description": "Utilisez ces contrôles existants de déploiement, révision, test à blanc, publication et métriques quand le cockpit de périmètre n'expose pas encore un détail."
+  "scopeShell.advanced.title": "Outils avancés d'accès",
+  "scopeShell.advanced.description": "Invitez un collaborateur par identifiant utilisateur brut, au niveau du programme ou pour un scope précis. Les actions de déploiement, test à blanc et publication vivent maintenant dans l'onglet Test & Publication."
 }

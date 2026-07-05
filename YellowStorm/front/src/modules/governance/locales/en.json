@@ -193,7 +193,8 @@
   "scopeShell.testPublish.status.failed": "Failed",
   "scopeShell.testPublish.status.needs_review": "Needs review",
   "scopeShell.testPublish.blockedHelp": "Resolve the blockers in the readiness panel before publishing this scope.",
-  "scopeShell.testPublish.advancedHelp": "This scope is structurally ready. Use advanced lifecycle tools for deployment-level dry-run and publish actions until scope-level runtime actions are promoted here.",
+  "scopeShell.testPublish.noDeployment": "This scope has no deployment yet.",
+  "scopeShell.testPublish.noDraftRevision": "This scope has no draft revision yet.",
   "scopeShell.monitor.total": "Total governed events",
   "scopeShell.readiness.kicker": "Readiness",
   "scopeShell.readiness.title": "Next actions",
@@ -222,6 +223,6 @@
   "scopeShell.blockers.draft_revision": "No draft revision yet",
   "scopeShell.blockers.dry_run_passed": "Dry-run not passed",
   "scopeShell.blockers.channel_ready": "No channel ready",
-  "scopeShell.advanced.title": "Advanced lifecycle tools",
-  "scopeShell.advanced.description": "Use these existing deployment, revision, dry-run, publish, and metric controls when the scope cockpit does not yet expose a detail."
+  "scopeShell.advanced.title": "Advanced access tools",
+  "scopeShell.advanced.description": "Invite a collaborator by raw user ID, at the program level or scoped to one scope. Deployment, dry-run, and publish actions now live in the Test & Publish tab."
 }
