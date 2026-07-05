@@ -18,6 +18,7 @@ import type {
   GovernanceScopeOverview,
   GovernanceSource,
   GovernanceUserSearchResult,
+  UpdateGovernanceDeploymentPayload,
   UpdateGovernanceProgramPayload,
   UpdateGovernanceScopePayload,
   UpdateGovernanceSourcePayload,
@@ -112,6 +113,11 @@ export const governanceApi = {
 
   async createDeployment(programId: string, payload: CreateGovernanceDeploymentPayload): Promise<GovernanceDeployment> {
     const res = await apiClient.post(API_ENDPOINTS.governance.deployments(programId), payload);
+    return res.data.data;
+  },
+
+  async updateDeployment(deploymentId: string, payload: UpdateGovernanceDeploymentPayload): Promise<GovernanceDeployment> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.deployment(deploymentId), payload);
     return res.data.data;
   },
 

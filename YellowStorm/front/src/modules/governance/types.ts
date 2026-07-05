@@ -149,6 +149,17 @@ export interface CreateGovernanceDeploymentPayload {
   channels?: GovernanceChannels;
 }
 
+export interface UpdateGovernanceDeploymentPayload {
+  name?: string;
+  channels?: GovernanceChannels;
+}
+
+export interface GovernanceChannelConfig {
+  enabled?: boolean;
+  status?: 'not_configured' | 'ready' | 'blocked' | string;
+  allowedOrigins?: string[];
+}
+
 export interface GovernanceDeploymentRevision {
   id: string;
   deploymentId: string;

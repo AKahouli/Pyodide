@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { governanceApi } from '../api';
 import { governanceQueryKeys } from './queryKeys';
-import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceScopePayload } from '../types';
+import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceScopePayload } from '../types';
 
 export function useGovernancePrograms() {
   return useQuery({
@@ -125,6 +125,16 @@ export function useUpdateGovernanceScope(programId: string | null, scopeId: stri
   });
 }
 
+export function useDeleteGovernanceScope(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (scopeId: string) => governanceApi.deleteScope(programId ?? '', scopeId),
+    onSuccess: () => {
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+    },
+  });
+}
+
 export function useCreateGovernanceSource(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -172,6 +182,17 @@ export function useCreateGovernanceDeployment(programId: string | null) {
     onSuccess: () => {
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.deployments(programId) });
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+    },
+  });
+}
+
+export function useUpdateGovernanceDeployment(programId: string | null, deploymentId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: UpdateGovernanceDeploymentPayload) => governanceApi.updateDeployment(deploymentId ?? '', payload),
+    onSuccess: () => {
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+      void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
     },
   });
 }

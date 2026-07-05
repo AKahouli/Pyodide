@@ -2,26 +2,53 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   useCreateGovernanceDeployment,
   useCreateGovernanceDryRun,
+  useCreateGovernanceMembership,
   useCreateGovernanceRevision,
   useCreateGovernanceSource,
+  useDeleteGovernanceMembership,
+  useDeleteGovernanceScope,
   useDeleteGovernanceSource,
   useGovernanceDryRuns,
+  useGovernanceUiStore,
   useMarkGovernanceDryRun,
   usePublishGovernanceDeployment,
   useSuspendGovernanceDeployment,
+  useUpdateGovernanceDeployment,
   useUpdateGovernanceScope,
+  type GovernanceChannelConfig,
   type GovernanceMembership,
+  type GovernanceMembershipRole,
   type GovernanceMetric,
+  type GovernanceScope,
   type GovernanceScopeOverview,
 } from '@/modules/governance';
 import { GovernanceAgentName, GovernanceAgentSelector } from './GovernanceAgentSelector';
 import { GovernanceUserName } from './GovernanceUserName';
 import { GovernanceWorkspaceSelector } from './GovernanceWorkspaceSelector';
+
+const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
+
+const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipality', 'department', 'business_unit', 'country', 'team', 'custom'];
+
+const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'];
+
+function normalizeChannels(channels: GovernanceScopeOverview['channels']): Record<string, GovernanceChannelConfig> {
+  const source = (channels ?? {}) as Record<string, GovernanceChannelConfig>;
+  const result: Record<string, GovernanceChannelConfig> = {};
+  for (const key of channelKeys) {
+    const existing = source[key] ?? {};
+    result[key] = { enabled: existing.enabled ?? false, status: existing.status ?? 'not_configured', allowedOrigins: existing.allowedOrigins ?? [] };
+  }
+  return result;
+}
 
 export type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'channels' | 'testPublish' | 'monitor';
 
@@ -72,11 +99,11 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         {governanceScopeTabs.map((tab) => <button key={tab} type='button' className={cn('rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', activeTab === tab && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={() => onTabChange(tab)}>{t(`scopeShell.tabs.${tab}`)}</button>)}
       </div>
       <div className='p-5'>
-        {activeTab === 'overview' && <OverviewTab overview={overview} />}
+        {activeTab === 'overview' && <OverviewTab programId={programId} overview={overview} />}
         {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
-        {activeTab === 'access' && <AccessTab memberships={memberships} scopeId={scopeId} />}
-        {activeTab === 'channels' && <ChannelsTab overview={overview} />}
+        {activeTab === 'access' && <AccessTab programId={programId} memberships={memberships} scopeId={scopeId} />}
+        {activeTab === 'channels' && <ChannelsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'testPublish' && <TestPublishTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'monitor' && <MonitorTab overview={overview} metrics={metrics} scopeId={scopeId} />}
       </div>
@@ -84,11 +111,13 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
   );
 }
 
-function OverviewTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {
+function OverviewTab({ programId, overview }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const channelEntries = Object.entries(overview.channels);
   return (
-    <div className='grid gap-3 md:grid-cols-2'>
+    <div className='grid gap-3'>
+      <ScopeSettingsCard programId={programId} overview={overview} />
+      <div className='grid gap-3 md:grid-cols-2'>
       <OverviewCard title={t('scopeShell.overview.knowledgeCard')}>
         <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedSources.length)} />
         <OverviewRow label={t('scopeShell.knowledge.local')} value={String(overview.knowledge.localSources.length)} />
@@ -116,7 +145,71 @@ function OverviewTab({ overview }: Readonly<{ overview: GovernanceScopeOverview 
         <OverviewRow label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber }) : t('scopeShell.overview.none')} />
         <OverviewRow label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} />
       </OverviewCard>
+      </div>
     </div>
+  );
+}
+
+function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
+  const updateScope = useUpdateGovernanceScope(programId, overview.scope.id);
+  const deleteScope = useDeleteGovernanceScope(programId);
+  const [name, setName] = useState(overview.scope.name);
+  const [type, setType] = useState<GovernanceScope['type']>(overview.scope.type);
+
+  useEffect(() => {
+    setName(overview.scope.name);
+    setType(overview.scope.type);
+  }, [overview.scope.id, overview.scope.name, overview.scope.type]);
+
+  const isDirty = name.trim() !== overview.scope.name || type !== overview.scope.type;
+
+  const handleSave = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!name.trim() || !isDirty) return;
+    updateScope.mutate({ name: name.trim(), type });
+  };
+
+  const handleDelete = () => {
+    deleteScope.mutate(overview.scope.id, { onSuccess: () => setSelectedScopeId(null) });
+  };
+
+  return (
+    <form onSubmit={handleSave} className='rounded-xl border bg-background p-4'>
+      <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('scopeShell.settings.title')}</p>
+      <div className='mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px]'>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</Label>
+          <Input id='governance-scope-name' value={name} onChange={(event) => setName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
+        </div>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='governance-scope-type'>{t('scopeShell.settings.typeLabel')}</Label>
+          <select id='governance-scope-type' className='h-10 rounded-md border bg-background px-3 text-sm' value={type} onChange={(event) => setType(event.target.value as GovernanceScope['type'])}>
+            {scopeTypeOptions.map((option) => <option key={option} value={option}>{t(`scopeShell.scopeTypes.${option}`)}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className='mt-3 flex items-center gap-2'>
+        <Button type='submit' size='sm' disabled={!isDirty || !name.trim() || updateScope.isPending}>{t('scopeShell.settings.save')}</Button>
+        <span className='flex-1' />
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button type='button' variant='outline' size='sm' className='text-destructive hover:text-destructive'>{t('scopeShell.settings.delete')}</Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('scopeShell.settings.deleteConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>{t('scopeShell.settings.deleteConfirmBody', { name: overview.scope.name })}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('scopeShell.settings.deleteCancel')}</AlertDialogCancel>
+              <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={handleDelete} disabled={deleteScope.isPending}>{t('scopeShell.settings.delete')}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </form>
   );
 }
 
@@ -220,16 +313,132 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
   return <div className='grid gap-4'><form className='grid gap-3' onSubmit={handleSubmit}><GovernanceAgentSelector selectedAgentIds={agentIds} onChange={setAgentIds} /><Button type='submit' disabled={updateScope.isPending}>{t('scopeShell.agents.save')}</Button></form>{overview.agents.mappedAgents.map((agent) => <div key={agent.id} className='rounded-xl border p-3'><div className='font-medium'><GovernanceAgentName agentId={agent.id} /></div><p className='text-xs text-muted-foreground'>{agent.isPrimary ? t('scopeShell.agents.primary') : t('scopeShell.agents.secondary')}</p></div>)}{overview.agents.mappedAgents.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.agents.empty')}</p>}</div>;
 }
 
-function AccessTab({ memberships, scopeId }: Readonly<{ memberships: GovernanceMembership[]; scopeId: string }>): JSX.Element {
+function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
+  const createMembership = useCreateGovernanceMembership(programId);
+  const deleteMembership = useDeleteGovernanceMembership(programId);
+  const [userId, setUserId] = useState('');
+  const [role, setRole] = useState<GovernanceMembershipRole>('scope_viewer');
+  const [level, setLevel] = useState<'scope' | 'program'>('scope');
   const scopeMemberships = memberships.filter((membership) => !membership.scopeId || membership.scopeId === scopeId);
-  return <div className='grid gap-2'>{scopeMemberships.map((membership) => <div key={membership.id} className='rounded-xl border p-3'><div className='font-medium'><GovernanceUserName userId={membership.userId} /></div><p className='text-xs text-muted-foreground'>{t(`scopeShell.access.roles.${membership.role}`)} · {t(`scopeShell.access.status.${membership.status}`)}</p></div>)}{scopeMemberships.length === 0 && <p className='text-sm text-muted-foreground'>{t('access.empty')}</p>}</div>;
+
+  const handleInvite = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!userId.trim()) return;
+    createMembership.mutate({ userId: userId.trim(), scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }, { onSuccess: () => setUserId('') });
+  };
+
+  return (
+    <div className='grid gap-4'>
+      <form onSubmit={handleInvite} className='grid gap-3 rounded-xl border bg-background p-4'>
+        <div>
+          <h3 className='text-sm font-semibold'>{t('scopeShell.access.inviteTitle')}</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.access.inviteHint')}</p>
+        </div>
+        <div className='grid gap-3 md:grid-cols-3'>
+          <Input aria-label={t('access.userIdLabel')} value={userId} onChange={(event) => setUserId(event.target.value)} placeholder={t('access.userIdPlaceholder')} />
+          <select aria-label={t('access.roleLabel')} className='h-10 rounded-md border bg-background px-3 text-sm' value={role} onChange={(event) => setRole(event.target.value as GovernanceMembershipRole)}>
+            {inviteRoles.map((option) => <option key={option} value={option}>{t(`scopeShell.access.roles.${option}`)}</option>)}
+          </select>
+          <select aria-label={t('scopeShell.access.levelLabel')} className='h-10 rounded-md border bg-background px-3 text-sm' value={level} onChange={(event) => setLevel(event.target.value as 'scope' | 'program')}>
+            <option value='scope'>{t('scopeShell.access.thisScope')}</option>
+            <option value='program'>{t('access.programLevel')}</option>
+          </select>
+        </div>
+        <Button type='submit' className='w-fit' disabled={createMembership.isPending || !userId.trim()}>{t('access.invite')}</Button>
+      </form>
+      <div className='grid gap-2'>
+        {scopeMemberships.map((membership) => (
+          <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
+            <div className='min-w-0'>
+              <div className='truncate font-medium'><GovernanceUserName userId={membership.userId} /></div>
+              <p className='text-xs text-muted-foreground'>{t(`scopeShell.access.roles.${membership.role}`)} · {t(`scopeShell.access.status.${membership.status}`)}{membership.scopeId ? '' : ` · ${t('access.programLevel')}`}</p>
+            </div>
+            <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('access.disable')} disabled={deleteMembership.isPending} onClick={() => deleteMembership.mutate(membership.id)}>
+              <Trash2 className='h-4 w-4' />
+            </Button>
+          </div>
+        ))}
+        {scopeMemberships.length === 0 && <p className='text-sm text-muted-foreground'>{t('access.empty')}</p>}
+      </div>
+    </div>
+  );
 }
 
-function ChannelsTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {
+function ChannelsTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const channels = Object.entries(overview.channels);
-  return <div className='grid gap-3 md:grid-cols-3'>{channels.map(([name, value]) => <ChannelCard key={name} name={name} value={value} />)}{channels.length === 0 && <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.empty')}</p>}</div>;
+  const deploymentId = overview.deployment?.id ?? null;
+  const createDeployment = useCreateGovernanceDeployment(programId);
+  const updateDeployment = useUpdateGovernanceDeployment(programId, deploymentId);
+  const [draft, setDraft] = useState<Record<string, GovernanceChannelConfig>>(() => normalizeChannels(overview.channels));
+  const channelsSignature = JSON.stringify(overview.channels);
+
+  useEffect(() => {
+    setDraft(normalizeChannels(overview.channels));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deploymentId, channelsSignature]);
+
+  if (!overview.deployment) {
+    return (
+      <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
+        <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.noDeployment')}</p>
+        <Button type='button' onClick={() => createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } })} disabled={createDeployment.isPending}>{t('deployment.create')}</Button>
+      </div>
+    );
+  }
+
+  const setChannel = (key: string, patch: Partial<GovernanceChannelConfig>) => setDraft((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+
+  const handleSave = () => updateDeployment.mutate({ channels: draft });
+
+  return (
+    <div className='grid gap-4'>
+      <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.editHint')}</p>
+      <div className='grid gap-3'>
+        {channelKeys.map((key) => {
+          const config = draft[key] ?? {};
+          const labelKey = channelLabelKeys[key];
+          return (
+            <div key={key} className='rounded-xl border bg-background p-4'>
+              <div className='flex items-center justify-between gap-3'>
+                <div>
+                  <p className='text-sm font-medium'>{t(labelKey)}</p>
+                  <p className='text-xs text-muted-foreground'>{config.status === 'ready' ? t('scopeShell.channels.status.ready') : t('scopeShell.channels.status.not_configured')}</p>
+                </div>
+                <Switch checked={config.enabled ?? false} onCheckedChange={(checked) => setChannel(key, { enabled: checked, status: checked ? config.status : 'not_configured' })} aria-label={t(labelKey)} />
+              </div>
+              {config.enabled && (
+                <div className='mt-3 grid gap-3 border-t pt-3'>
+                  {key === 'widget' && (
+                    <div className='grid gap-1.5'>
+                      <Label htmlFor='governance-widget-origins'>{t('scopeShell.channels.allowedOrigins')}</Label>
+                      <Input
+                        id='governance-widget-origins'
+                        value={(config.allowedOrigins ?? []).join(', ')}
+                        onChange={(event) => {
+                          const origins = event.target.value.split(',').map((origin) => origin.trim()).filter(Boolean);
+                          setChannel(key, { allowedOrigins: origins, status: origins.length > 0 ? 'ready' : 'not_configured' });
+                        }}
+                        placeholder={t('scopeShell.channels.allowedOriginsPlaceholder')}
+                      />
+                      <p className='text-xs text-muted-foreground'>{t('scopeShell.channels.allowedOriginsHint')}</p>
+                    </div>
+                  )}
+                  {key !== 'widget' && (
+                    <label className='flex items-center gap-2 text-sm'>
+                      <Switch checked={config.status === 'ready'} onCheckedChange={(checked) => setChannel(key, { status: checked ? 'ready' : 'not_configured' })} aria-label={t('scopeShell.channels.markReady')} />
+                      <span>{t('scopeShell.channels.markReady')}</span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <Button type='button' className='w-fit' onClick={handleSave} disabled={updateDeployment.isPending}>{t('scopeShell.channels.save')}</Button>
+    </div>
+  );
 }
 
 function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
@@ -346,16 +555,6 @@ function SourceGroup({ title, sources, onRemove, removingId }: Readonly<{ title:
       </div>
     </div>
   );
-}
-
-function ChannelCard({ name, value }: Readonly<{ name: string; value: unknown }>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
-  const config = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const isEnabled = config.enabled === true;
-  const status = typeof config.status === 'string' ? config.status : isEnabled ? 'enabled' : 'not_configured';
-  const labelKey = channelLabelKeys[name as keyof typeof channelLabelKeys];
-  const statusKey = channelStatusKeys[status as keyof typeof channelStatusKeys];
-  return <div className='rounded-xl border bg-background p-4'><p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{labelKey ? t(labelKey) : name}</p><p className='mt-2 text-sm font-medium'>{statusKey ? t(statusKey) : status}</p><p className='mt-1 text-xs text-muted-foreground'>{isEnabled ? t('scopeShell.channels.configured') : t('scopeShell.channels.configureInAdvanced')}</p></div>;
 }
 
 function SummaryCard({ label, value }: Readonly<{ label: string; value: string }>): JSX.Element {

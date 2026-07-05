@@ -1,7 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { useModuleTranslation } from '@/modules/localization';
-import { GovernanceOperationsPanel } from './GovernanceOperationsPanel';
 import { GovernanceReadinessPanel } from './GovernanceReadinessPanel';
 import { GovernanceScopeTree } from './GovernanceScopeTree';
 import { GovernanceScopeWorkspace, type TabKey } from './GovernanceScopeWorkspace';
@@ -13,7 +10,6 @@ interface Props {
 }
 
 export function GovernanceScopeLifecycleShell({ programId, onCreateScope }: Readonly<Props>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const { data: scopes = [] } = useGovernanceScopes(programId);
@@ -37,14 +33,6 @@ export function GovernanceScopeLifecycleShell({ programId, onCreateScope }: Read
       <GovernanceScopeTree scopes={scopes} selectedScopeId={selectedScopeId} overviewsByScopeId={byScopeId} onSelectScope={setSelectedScopeId} onCreateScope={onCreateScope} />
       <div className='grid min-w-0 gap-4'>
         <GovernanceScopeWorkspace programId={programId} scopeId={selectedScopeId} overview={overview} memberships={memberships} metrics={metrics} activeTab={activeTab} onTabChange={setActiveTab} />
-        <details className='rounded-2xl border bg-card p-4 shadow-sm'>
-          <summary className='cursor-pointer text-sm font-semibold'>{t('scopeShell.advanced.title')}</summary>
-          <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.advanced.description')}</p>
-          <div className='mt-4'>
-            <GovernanceOperationsPanel programId={programId} scopes={scopes} />
-          </div>
-          <Button className='sr-only' type='button'>{t('scopeShell.advanced.title')}</Button>
-        </details>
       </div>
       <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
     </div>
