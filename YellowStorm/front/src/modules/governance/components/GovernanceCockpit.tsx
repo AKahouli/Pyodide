@@ -1,10 +1,8 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, Plus, ShieldCheck } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { useMemo, type ReactNode } from 'react';
+import { AlertTriangle, ArrowRight, BookOpen, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceScope, useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
+import { useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 
 interface Props {
@@ -33,8 +31,6 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
   const { data: scopes = [] } = useGovernanceScopes(programId);
   const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
   const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
-  const createScope = useCreateGovernanceScope(programId);
-  const [scopeName, setScopeName] = useState('');
   const { translateBlocker } = useGovernanceCheckLabel();
 
   const overviews = scopes.map((scope) => byScopeId[scope.id]).filter((value): value is GovernanceScopeOverview => Boolean(value));
@@ -50,27 +46,8 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
     })),
   );
 
-  const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = scopeName.trim();
-    if (!name || !programId) return;
-    createScope.mutate({ name, type: 'custom' }, { onSuccess: (scope) => { setScopeName(''); onSelectScope(scope.id); } });
-  };
-
   return (
     <div className='grid gap-5'>
-      <section className='grid gap-4 rounded-2xl border bg-card p-5 shadow-sm sm:flex sm:items-center sm:justify-between'>
-        <div>
-          <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('cockpit.kicker')}</p>
-          <h2 className='mt-1 text-xl font-semibold'>{t('cockpit.title')}</h2>
-          <p className='mt-1 max-w-xl text-sm text-muted-foreground'>{t('cockpit.description')}</p>
-        </div>
-        <form className='flex gap-2 sm:justify-end' onSubmit={handleCreateScope}>
-          <Input id='governance-cockpit-new-scope' name='scopeName' aria-label={t('scopes.nameLabel')} value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder={t('scopes.namePlaceholder')} disabled={!programId} className='sm:w-56' />
-          <Button type='submit' disabled={!programId || createScope.isPending}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
-        </form>
-      </section>
-
       <section className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         <KpiTile label={t('cockpit.kpis.scopes')} value={scopes.length}>
           <div className='mt-2 flex flex-wrap gap-1.5'>

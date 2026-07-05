@@ -47,6 +47,8 @@
   "cockpit.guardrails.status": "Managed outside governance",
   "cockpit.guardrails.managedIn": "Configured per agent, or in Admin.",
   "programs.title": "Programs",
+  "programs.switcher": "Program",
+  "programs.new": "New program",
   "programs.nameLabel": "Program name",
   "programs.namePlaceholder": "Program name",
   "programs.create": "Create program",

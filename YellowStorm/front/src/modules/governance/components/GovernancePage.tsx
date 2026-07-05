@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronLeft, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Plus, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { useCreateGovernanceProgram, useCreateGovernanceScope, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
 import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
 
@@ -16,17 +17,30 @@ export function GovernancePage(): JSX.Element {
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const createProgram = useCreateGovernanceProgram();
+  const createScope = useCreateGovernanceScope(selectedProgramId);
+  const [programDialogOpen, setProgramDialogOpen] = useState(false);
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
   const [programName, setProgramName] = useState('');
+  const [scopeName, setScopeName] = useState('');
 
   useEffect(() => {
     if (!selectedProgramId && programs[0]) setSelectedProgramId(programs[0].id);
   }, [programs, selectedProgramId, setSelectedProgramId]);
 
+  const selectedProgram = programs.find((program) => program.id === selectedProgramId);
+
   const handleCreateProgram = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = programName.trim();
     if (!name) return;
-    createProgram.mutate({ name }, { onSuccess: (program) => { setProgramName(''); setSelectedProgramId(program.id); setSelectedScopeId(null); } });
+    createProgram.mutate({ name }, { onSuccess: (program) => { setProgramName(''); setProgramDialogOpen(false); setSelectedProgramId(program.id); setSelectedScopeId(null); } });
+  };
+
+  const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = scopeName.trim();
+    if (!name || !selectedProgramId) return;
+    createScope.mutate({ name, type: 'custom' }, { onSuccess: (scope) => { setScopeName(''); setScopeDialogOpen(false); setSelectedScopeId(scope.id); } });
   };
 
   const handleSelectProgram = (programId: string) => {
@@ -37,34 +51,39 @@ export function GovernancePage(): JSX.Element {
   return (
     <main className='flex h-full w-full overflow-auto bg-background p-4 md:p-6'>
       <div className='mx-auto flex w-full max-w-7xl flex-col gap-5'>
-        <header className='overflow-hidden rounded-3xl border bg-card shadow-sm'>
-          <div className='grid gap-6 p-6 lg:grid-cols-[1fr_360px]'>
-            <div className='flex items-start gap-4'>
-              <div className='rounded-2xl bg-primary/10 p-3 text-primary'>
-                <ShieldCheck className='h-7 w-7' />
-              </div>
-              <div>
-                <p className='text-sm font-medium text-primary'>{t('page.kicker')}</p>
-                <h1 className='mt-1 text-3xl font-semibold tracking-tight'>{t('page.title')}</h1>
-                <p className='mt-3 max-w-3xl text-sm leading-6 text-muted-foreground'>{t('page.description')}</p>
-              </div>
+        <header className='flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-3 shadow-sm'>
+          <div className='flex items-center gap-2.5'>
+            <span className='grid h-9 w-9 flex-none place-items-center rounded-xl bg-primary/10 text-primary'>
+              <ShieldCheck className='h-5 w-5' />
+            </span>
+            <div>
+              <h1 className='text-base font-semibold leading-tight'>{t('page.title')}</h1>
+              <p className='text-xs text-muted-foreground'>{t('page.kicker')}</p>
             </div>
-            <form className='grid content-start gap-3' onSubmit={handleCreateProgram}>
-              <label className='text-sm font-medium' htmlFor='governance-program-name'>{t('programs.nameLabel')}</label>
-              <div className='flex gap-2'>
-                <Input id='governance-program-name' name='programName' aria-label={t('programs.nameLabel')} value={programName} onChange={(event) => setProgramName(event.target.value)} placeholder={t('programs.namePlaceholder')} />
-                <Button type='submit' disabled={createProgram.isPending}>{t('programs.create')}</Button>
-              </div>
-            </form>
           </div>
-          <div className='flex gap-2 overflow-x-auto border-t bg-muted/20 p-3'>
-            {programs.map((program) => (
-              <button key={program.id} type='button' className={cn('rounded-full border bg-background px-4 py-2 text-sm transition hover:bg-muted', selectedProgramId === program.id && 'border-primary bg-primary text-primary-foreground hover:bg-primary')} onClick={() => handleSelectProgram(program.id)}>
-                {program.name}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type='button' className='inline-flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm font-medium transition hover:bg-muted'>
+                <span className='text-muted-foreground'>{t('programs.switcher')}</span>
+                <span className='max-w-[220px] truncate'>{selectedProgram?.name ?? t('programs.empty')}</span>
+                <ChevronDown className='h-4 w-4 text-muted-foreground' />
               </button>
-            ))}
-            {programs.length === 0 && <p className='px-2 py-1 text-sm text-muted-foreground'>{t('programs.empty')}</p>}
-          </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start' className='w-64'>
+              {programs.map((program) => (
+                <DropdownMenuItem key={program.id} onSelect={() => handleSelectProgram(program.id)}>
+                  {program.name}
+                </DropdownMenuItem>
+              ))}
+              {programs.length === 0 && <p className='px-2 py-1.5 text-sm text-muted-foreground'>{t('programs.empty')}</p>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className='flex-1' />
+
+          <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.new')}</Button>
+          <Button type='button' size='sm' disabled={!selectedProgramId} onClick={() => setScopeDialogOpen(true)}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
         </header>
 
         {selectedScopeId ? (
@@ -78,6 +97,40 @@ export function GovernancePage(): JSX.Element {
           <GovernanceCockpit programId={selectedProgramId} onSelectScope={setSelectedScopeId} />
         )}
       </div>
+
+      <Dialog open={programDialogOpen} onOpenChange={setProgramDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('programs.create')}</DialogTitle>
+          </DialogHeader>
+          <form className='grid gap-3' onSubmit={handleCreateProgram}>
+            <div className='grid gap-1.5'>
+              <label className='text-sm font-medium' htmlFor='governance-program-name'>{t('programs.nameLabel')}</label>
+              <Input id='governance-program-name' name='programName' autoFocus value={programName} onChange={(event) => setProgramName(event.target.value)} placeholder={t('programs.namePlaceholder')} />
+            </div>
+            <DialogFooter>
+              <Button type='submit' disabled={createProgram.isPending}>{t('programs.create')}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scopeDialogOpen} onOpenChange={setScopeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('cockpit.newScope')}</DialogTitle>
+          </DialogHeader>
+          <form className='grid gap-3' onSubmit={handleCreateScope}>
+            <div className='grid gap-1.5'>
+              <label className='text-sm font-medium' htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</label>
+              <Input id='governance-scope-name' name='scopeName' autoFocus value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
+            </div>
+            <DialogFooter>
+              <Button type='submit' disabled={createScope.isPending}>{t('cockpit.newScope')}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
