@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceProgram, useCreateGovernanceScope, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { useCreateGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
 import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
+import { GovernanceScopeWizard } from './GovernanceScopeWizard';
 
 export function GovernancePage(): JSX.Element {
   const { t } = useModuleTranslation('governance');
@@ -17,11 +18,9 @@ export function GovernancePage(): JSX.Element {
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const createProgram = useCreateGovernanceProgram();
-  const createScope = useCreateGovernanceScope(selectedProgramId);
   const [programDialogOpen, setProgramDialogOpen] = useState(false);
-  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [scopeWizardOpen, setScopeWizardOpen] = useState(false);
   const [programName, setProgramName] = useState('');
-  const [scopeName, setScopeName] = useState('');
 
   useEffect(() => {
     if (!selectedProgramId && programs[0]) setSelectedProgramId(programs[0].id);
@@ -34,13 +33,6 @@ export function GovernancePage(): JSX.Element {
     const name = programName.trim();
     if (!name) return;
     createProgram.mutate({ name }, { onSuccess: (program) => { setProgramName(''); setProgramDialogOpen(false); setSelectedProgramId(program.id); setSelectedScopeId(null); } });
-  };
-
-  const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = scopeName.trim();
-    if (!name || !selectedProgramId) return;
-    createScope.mutate({ name, type: 'custom' }, { onSuccess: (scope) => { setScopeName(''); setScopeDialogOpen(false); setSelectedScopeId(scope.id); } });
   };
 
   const handleSelectProgram = (programId: string) => {
@@ -83,7 +75,7 @@ export function GovernancePage(): JSX.Element {
           <div className='flex-1' />
 
           <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.new')}</Button>
-          <Button type='button' size='sm' disabled={!selectedProgramId} onClick={() => setScopeDialogOpen(true)}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
+          <Button type='button' size='sm' disabled={!selectedProgramId} onClick={() => setScopeWizardOpen(true)}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
         </header>
 
         {selectedScopeId ? (
@@ -115,22 +107,7 @@ export function GovernancePage(): JSX.Element {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={scopeDialogOpen} onOpenChange={setScopeDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('cockpit.newScope')}</DialogTitle>
-          </DialogHeader>
-          <form className='grid gap-3' onSubmit={handleCreateScope}>
-            <div className='grid gap-1.5'>
-              <label className='text-sm font-medium' htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</label>
-              <Input id='governance-scope-name' name='scopeName' autoFocus value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
-            </div>
-            <DialogFooter>
-              <Button type='submit' disabled={createScope.isPending}>{t('cockpit.newScope')}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <GovernanceScopeWizard programId={selectedProgramId} open={scopeWizardOpen} onOpenChange={setScopeWizardOpen} onComplete={setSelectedScopeId} />
     </main>
   );
 }
