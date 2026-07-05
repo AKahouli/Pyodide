@@ -135,6 +135,16 @@ export function useCreateGovernanceSource(programId: string | null) {
   });
 }
 
+export function useDeleteGovernanceSource(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) => governanceApi.deleteSource(programId ?? '', sourceId),
+    onSuccess: () => {
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+    },
+  });
+}
+
 export function useCreateGovernanceMembership(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

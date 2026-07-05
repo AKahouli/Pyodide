@@ -38,7 +38,9 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
   const [type, setType] = useState<GovernanceScope['type']>('municipality');
   const [parentScopeId, setParentScopeId] = useState('');
   const [sourceTitle, setSourceTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
   const [workspaceId, setWorkspaceId] = useState('');
+  const [workspaceName, setWorkspaceName] = useState('');
   const [agentIds, setAgentIds] = useState<string[]>([]);
 
   const { data: overview } = useGovernanceScopeOverview(programId, scopeId);
@@ -55,7 +57,9 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
       setType('municipality');
       setParentScopeId('');
       setSourceTitle('');
+      setTitleTouched(false);
       setWorkspaceId('');
+      setWorkspaceName('');
       setAgentIds([]);
     }
   }, [open]);
@@ -75,10 +79,18 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     publish: true,
   };
 
+  const handleSelectWorkspace = (id: string, wsName?: string) => {
+    setWorkspaceId(id);
+    setWorkspaceName(wsName ?? '');
+    if (!titleTouched) setSourceTitle(wsName ?? '');
+  };
+
   const handleAddSource = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!sourceTitle.trim() || !workspaceId || !scopeId) return;
-    createSource.mutate({ title: sourceTitle.trim(), visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: () => { setSourceTitle(''); setWorkspaceId(''); } });
+    if (!workspaceId || !scopeId) return;
+    const finalTitle = (sourceTitle.trim() || workspaceName).trim();
+    if (!finalTitle) return;
+    createSource.mutate({ title: finalTitle, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: () => { setSourceTitle(''); setTitleTouched(false); setWorkspaceId(''); setWorkspaceName(''); } });
   };
 
   const handleSaveAgents = () => {
@@ -173,9 +185,14 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
                 <p className='mt-1 text-sm text-muted-foreground'>{t('wizard.knowledge.description')}</p>
               </div>
               <form className='grid gap-3' onSubmit={handleAddSource}>
-                <Input aria-label={t('scopeShell.knowledge.sourceTitle')} value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} placeholder={t('scopeShell.knowledge.sourceTitle')} />
-                <GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={setWorkspaceId} />
-                <Button type='submit' disabled={createSource.isPending || !workspaceId || !sourceTitle.trim()}>{t('scopeShell.knowledge.map')}</Button>
+                <GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={handleSelectWorkspace} />
+                {workspaceId && (
+                  <div className='grid gap-1.5'>
+                    <label className='text-xs font-medium text-muted-foreground' htmlFor='wizard-source-title'>{t('scopeShell.knowledge.titleOptional')}</label>
+                    <Input id='wizard-source-title' value={sourceTitle} onChange={(event) => { setSourceTitle(event.target.value); setTitleTouched(true); }} placeholder={workspaceName || t('scopeShell.knowledge.sourceTitle')} />
+                  </div>
+                )}
+                <Button type='submit' disabled={createSource.isPending || !workspaceId} className='w-fit'>{t('scopeShell.knowledge.map')}</Button>
               </form>
               <div className='rounded-xl border border-dashed p-3 text-sm text-muted-foreground'>
                 {knowledgeCount > 0 ? t('wizard.knowledge.mappedCount', { count: knowledgeCount }) : t('wizard.knowledge.empty')}

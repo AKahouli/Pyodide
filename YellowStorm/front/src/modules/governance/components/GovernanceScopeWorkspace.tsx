@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -8,6 +9,7 @@ import {
   useCreateGovernanceDryRun,
   useCreateGovernanceRevision,
   useCreateGovernanceSource,
+  useDeleteGovernanceSource,
   useGovernanceDryRuns,
   useMarkGovernanceDryRun,
   usePublishGovernanceDeployment,
@@ -154,14 +156,54 @@ function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element
 function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const createSource = useCreateGovernanceSource(programId);
-  const [title, setTitle] = useState('');
+  const deleteSource = useDeleteGovernanceSource(programId);
   const [workspaceId, setWorkspaceId] = useState('');
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [title, setTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
+
+  const handleSelectWorkspace = (id: string, name?: string) => {
+    setWorkspaceId(id);
+    setWorkspaceName(name ?? '');
+    if (!titleTouched) setTitle(name ?? '');
+  };
+
+  const resetForm = () => {
+    setWorkspaceId('');
+    setWorkspaceName('');
+    setTitle('');
+    setTitleTouched(false);
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim() || !workspaceId) return;
-    createSource.mutate({ title: title.trim(), visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: () => { setTitle(''); setWorkspaceId(''); } });
+    if (!workspaceId) return;
+    const finalTitle = (title.trim() || workspaceName).trim();
+    if (!finalTitle) return;
+    createSource.mutate({ title: finalTitle, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: resetForm });
   };
-  return <div className='grid gap-5'><form className='grid gap-3' onSubmit={handleSubmit}><Input id='governance-scope-source-title' name='sourceTitle' aria-label={t('scopeShell.knowledge.sourceTitle')} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t('scopeShell.knowledge.sourceTitle')} /><GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={setWorkspaceId} /><Button type='submit' disabled={createSource.isPending || !workspaceId || !title.trim()}>{t('scopeShell.knowledge.map')}</Button></form><SourceGroup title={t('scopeShell.knowledge.shared')} sources={overview.knowledge.sharedSources} /><SourceGroup title={t('scopeShell.knowledge.local')} sources={overview.knowledge.localSources} /><SourceGroup title={t('scopeShell.knowledge.workspaces')} sources={overview.knowledge.workspaceMappings} /></div>;
+
+  return (
+    <div className='grid gap-5'>
+      <form className='grid gap-3 rounded-xl border bg-background p-4' onSubmit={handleSubmit}>
+        <div>
+          <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.knowledge.mapHint')}</p>
+        </div>
+        <GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={handleSelectWorkspace} />
+        {workspaceId && (
+          <div className='grid gap-1.5'>
+            <label className='text-xs font-medium text-muted-foreground' htmlFor='governance-scope-source-title'>{t('scopeShell.knowledge.titleOptional')}</label>
+            <Input id='governance-scope-source-title' name='sourceTitle' value={title} onChange={(event) => { setTitle(event.target.value); setTitleTouched(true); }} placeholder={workspaceName || t('scopeShell.knowledge.sourceTitle')} />
+          </div>
+        )}
+        <Button type='submit' disabled={createSource.isPending || !workspaceId} className='w-fit'>{t('scopeShell.knowledge.map')}</Button>
+      </form>
+      <SourceGroup title={t('scopeShell.knowledge.shared')} sources={overview.knowledge.sharedSources} />
+      <SourceGroup title={t('scopeShell.knowledge.local')} sources={overview.knowledge.localSources} onRemove={(id) => deleteSource.mutate(id)} removingId={deleteSource.isPending ? deleteSource.variables ?? null : null} />
+      <SourceGroup title={t('scopeShell.knowledge.workspaces')} sources={overview.knowledge.workspaceMappings} onRemove={(id) => deleteSource.mutate(id)} removingId={deleteSource.isPending ? deleteSource.variables ?? null : null} />
+    </div>
+  );
 }
 
 function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
@@ -281,9 +323,29 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
   return <div className='grid gap-3 md:grid-cols-2'><SummaryCard label={t('scopeShell.monitor.total')} value={String(overview.metricsSummary.totalEvents)} />{scopeMetrics.map((metric) => <SummaryCard key={metric.id} label={metric.type} value={String(metric.value)} />)}</div>;
 }
 
-function SourceGroup({ title, sources }: Readonly<{ title: string; sources: GovernanceScopeOverview['knowledge']['localSources'] }>): JSX.Element {
+function SourceGroup({ title, sources, onRemove, removingId }: Readonly<{ title: string; sources: GovernanceScopeOverview['knowledge']['localSources']; onRemove?: (sourceId: string) => void; removingId?: string | null }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  return <div><h3 className='text-sm font-semibold'>{title}</h3><div className='mt-2 grid gap-2'>{sources.map((source) => <div key={source.id} className='rounded-xl border p-3'><div className='font-medium'>{source.title}</div><p className='text-xs text-muted-foreground'>{source.workspaceId ? t('scopeShell.knowledge.workspaceMapped') : t(`sources.visibility.${source.visibility}`)} · {t(`scopeShell.knowledge.status.${source.status}`)}</p></div>)}{sources.length === 0 && <p className='text-sm text-muted-foreground'>{t('sources.empty')}</p>}</div></div>;
+  return (
+    <div>
+      <h3 className='text-sm font-semibold'>{title}</h3>
+      <div className='mt-2 grid gap-2'>
+        {sources.map((source) => (
+          <div key={source.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
+            <div className='min-w-0'>
+              <div className='truncate font-medium'>{source.title}</div>
+              <p className='text-xs text-muted-foreground'>{source.workspaceId ? t('scopeShell.knowledge.workspaceMapped') : t(`sources.visibility.${source.visibility}`)} · {t(`scopeShell.knowledge.status.${source.status}`)}</p>
+            </div>
+            {onRemove && (
+              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.knowledge.remove')} disabled={removingId === source.id} onClick={() => onRemove(source.id)}>
+                <Trash2 className='h-4 w-4' />
+              </Button>
+            )}
+          </div>
+        ))}
+        {sources.length === 0 && <p className='text-sm text-muted-foreground'>{t('sources.empty')}</p>}
+      </div>
+    </div>
+  );
 }
 
 function ChannelCard({ name, value }: Readonly<{ name: string; value: unknown }>): JSX.Element {

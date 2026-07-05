@@ -6,7 +6,7 @@ import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/work
 
 interface Props {
   selectedWorkspaceId: string;
-  onChange: (workspaceId: string) => void;
+  onChange: (workspaceId: string, workspaceName?: string) => void;
 }
 
 export function GovernanceWorkspaceSelector({ selectedWorkspaceId, onChange }: Readonly<Props>): JSX.Element {
@@ -40,7 +40,7 @@ export function GovernanceWorkspaceSelector({ selectedWorkspaceId, onChange }: R
       />
       <div className='grid max-h-48 gap-2 overflow-y-auto rounded-xl border bg-background p-2'>
         {workspaces.map((workspace) => (
-          <WorkspaceOption key={workspace.id} workspace={workspace} isSelected={workspace.id === selectedWorkspaceId} onSelect={() => onChange(workspace.id)} />
+          <WorkspaceOption key={workspace.id} workspace={workspace} isSelected={workspace.id === selectedWorkspaceId} onSelect={() => onChange(workspace.id, workspace.name)} />
         ))}
         {!isLoading && workspaces.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('scopeShell.knowledge.noWorkspaces')}</p>}
         {isLoading && <p className='p-2 text-sm text-muted-foreground'>{t('scopeShell.knowledge.loadingWorkspaces')}</p>}
