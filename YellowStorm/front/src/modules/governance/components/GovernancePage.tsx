@@ -83,7 +83,7 @@ export function GovernancePage(): JSX.Element {
             <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'>
               <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
             </button>
-            <GovernanceScopeLifecycleShell programId={selectedProgramId} />
+            <GovernanceScopeLifecycleShell programId={selectedProgramId} onCreateScope={() => setScopeWizardOpen(true)} />
           </>
         ) : (
           <GovernanceCockpit programId={selectedProgramId} onSelectScope={setSelectedScopeId} />

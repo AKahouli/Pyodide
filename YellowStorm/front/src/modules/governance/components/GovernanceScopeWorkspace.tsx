@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -84,7 +84,71 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
 
 function OverviewTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  return <div className='grid gap-3 md:grid-cols-2'><SummaryCard label={t('scopeShell.overview.knowledge')} value={String(overview.knowledge.sharedSources.length + overview.knowledge.localSources.length)} /><SummaryCard label={t('scopeShell.overview.agents')} value={String(overview.agents.mappedAgents.length)} /><SummaryCard label={t('scopeShell.overview.deployment')} value={overview.deployment?.status ?? t('scopeShell.overview.none')} /><SummaryCard label={t('scopeShell.overview.dryRun')} value={overview.latestDryRun?.status ?? t('scopeShell.overview.none')} /></div>;
+  const channelEntries = Object.entries(overview.channels);
+  return (
+    <div className='grid gap-3 md:grid-cols-2'>
+      <OverviewCard title={t('scopeShell.overview.knowledgeCard')}>
+        <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedSources.length)} />
+        <OverviewRow label={t('scopeShell.knowledge.local')} value={String(overview.knowledge.localSources.length)} />
+        <OverviewRow label={t('scopeShell.knowledge.workspaces')} value={String(overview.knowledge.workspaceMappings.length)} />
+      </OverviewCard>
+      <OverviewCard title={t('scopeShell.overview.agentsCard')}>
+        <OverviewRow label={t('scopeShell.overview.agents')} value={String(overview.agents.mappedAgents.length)} />
+        <OverviewRow label={t('scopeShell.overview.primaryAgent')} value={overview.agents.primaryAgentId ? <GovernanceAgentName agentId={overview.agents.primaryAgentId} /> : t('scopeShell.overview.none')} />
+        <OverviewRow
+          label={t('scopeShell.overview.knowledgeCoverage')}
+          value={overview.agents.missingAgent
+            ? <span className='rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-400'>{t('scopeShell.overview.missing')}</span>
+            : <span className='rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400'>{t('scopeShell.overview.ok')}</span>}
+        />
+      </OverviewCard>
+      <OverviewCard title={t('scopeShell.overview.channelsCard')}>
+        {channelEntries.map(([name, value]) => {
+          const labelKey = channelLabelKeys[name as keyof typeof channelLabelKeys];
+          return <OverviewRow key={name} label={labelKey ? t(labelKey) : name} value={<ChannelStatusPill value={value} />} />;
+        })}
+        {channelEntries.length === 0 && <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.empty')}</p>}
+      </OverviewCard>
+      <OverviewCard title={t('scopeShell.overview.lifecycleCard')}>
+        <OverviewRow label={t('scopeShell.testPublish.draft')} value={overview.draftRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.draftRevision.revisionNumber }) : t('scopeShell.overview.none')} />
+        <OverviewRow label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber }) : t('scopeShell.overview.none')} />
+        <OverviewRow label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} />
+      </OverviewCard>
+    </div>
+  );
+}
+
+function OverviewCard({ title, children }: Readonly<{ title: string; children: ReactNode }>): JSX.Element {
+  return (
+    <div className='rounded-xl border bg-background p-4'>
+      <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{title}</p>
+      <div className='mt-2'>{children}</div>
+    </div>
+  );
+}
+
+function OverviewRow({ label, value }: Readonly<{ label: string; value: ReactNode }>): JSX.Element {
+  return (
+    <div className='flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0'>
+      <span className='text-muted-foreground'>{label}</span>
+      <span className='font-medium'>{value}</span>
+    </div>
+  );
+}
+
+function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const config = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const isEnabled = config.enabled === true;
+  const status = typeof config.status === 'string' ? config.status : isEnabled ? 'enabled' : 'not_configured';
+  const statusKey = channelStatusKeys[status as keyof typeof channelStatusKeys];
+  const isReady = status === 'ready' || status === 'active';
+  const isBlocked = status === 'blocked';
+  return (
+    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', isReady && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', isBlocked && 'bg-red-500/15 text-red-600 dark:text-red-400', !isReady && !isBlocked && 'bg-muted text-muted-foreground')}>
+      {statusKey ? t(statusKey) : status}
+    </span>
+  );
 }
 
 function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {

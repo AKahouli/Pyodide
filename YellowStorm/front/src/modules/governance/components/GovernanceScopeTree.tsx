@@ -1,55 +1,46 @@
-import { useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceScope, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
+import type { GovernanceScope, GovernanceScopeOverview } from '@/modules/governance';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
+import { ReadinessRing } from './ReadinessRing';
 
 interface Props {
-  programId: string | null;
   scopes: GovernanceScope[];
   selectedScopeId: string | null;
-  overview?: GovernanceScopeOverview;
+  overviewsByScopeId: Record<string, GovernanceScopeOverview | undefined>;
   onSelectScope: (scopeId: string) => void;
+  onCreateScope: () => void;
 }
 
-export function GovernanceScopeTree({ programId, scopes, selectedScopeId, overview, onSelectScope }: Readonly<Props>): JSX.Element {
+export function GovernanceScopeTree({ scopes, selectedScopeId, overviewsByScopeId, onSelectScope, onCreateScope }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const createScope = useCreateGovernanceScope(programId);
-  const [scopeName, setScopeName] = useState('');
   const { translateBlocker } = useGovernanceCheckLabel();
-
-  const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = scopeName.trim();
-    if (!name || !programId) return;
-    createScope.mutate({ name, type: 'custom' }, { onSuccess: (scope) => { setScopeName(''); onSelectScope(scope.id); } });
-  };
 
   return (
     <aside className='rounded-2xl border bg-card p-4 shadow-sm lg:sticky lg:top-4 lg:self-start'>
-      <div>
-        <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.scopeTree.kicker')}</p>
-        <h2 className='mt-1 text-lg font-semibold'>{t('scopeShell.scopeTree.title')}</h2>
-        <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.scopeTree.description')}</p>
+      <div className='flex items-center justify-between gap-2'>
+        <div>
+          <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.scopeTree.kicker')}</p>
+          <h2 className='mt-1 text-lg font-semibold'>{t('scopeShell.scopeTree.title')}</h2>
+        </div>
       </div>
-      <form className='mt-4 grid gap-2' onSubmit={handleCreateScope}>
-        <Input id='governance-new-scope-name' name='scopeName' aria-label={t('scopes.nameLabel')} value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder={t('scopes.namePlaceholder')} disabled={!programId} />
-        <Button type='submit' disabled={!programId || createScope.isPending}>{t('scopes.create')}</Button>
-      </form>
+      <Button type='button' variant='outline' size='sm' className='mt-3 w-full justify-center' onClick={onCreateScope}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
       <div className='mt-4 grid gap-2'>
         {scopes.map((scope) => {
           const isSelected = scope.id === selectedScopeId;
-          const score = isSelected ? overview?.readiness.score : undefined;
+          const overview = overviewsByScopeId[scope.id];
+          const score = overview?.readiness.score;
+          const topBlocker = overview?.readiness.blockers[0];
           return (
-            <button key={scope.id} type='button' className={cn('rounded-xl border p-3 text-left transition hover:bg-muted/60', isSelected && 'border-primary bg-primary/5')} onClick={() => onSelectScope(scope.id)}>
-              <div className='flex items-center justify-between gap-3'>
-                <span className='font-medium'>{scope.name}</span>
-                <span className='rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground'>{score === undefined ? scope.status : t('scopeShell.readiness.scoreValue', { score })}</span>
-              </div>
-              <p className='mt-1 text-xs text-muted-foreground'>{t(`scopeShell.scopeTypes.${scope.type}`)}</p>
-              {isSelected && overview?.readiness.blockers[0] && <p className='mt-2 text-xs text-destructive'>{translateBlocker(overview.readiness.blockers[0].key, overview.readiness.blockers[0].label)}</p>}
+            <button key={scope.id} type='button' className={cn('grid grid-cols-[30px_1fr] items-center gap-3 rounded-xl border p-3 text-left transition hover:bg-muted/60', isSelected && 'border-primary bg-primary/5')} onClick={() => onSelectScope(scope.id)}>
+              <ReadinessRing score={score ?? 0} size={30} />
+              <span className='min-w-0'>
+                <span className='block truncate font-medium'>{scope.name}</span>
+                <span className='block truncate text-xs text-muted-foreground'>{t(`scopeShell.scopeTypes.${scope.type}`)}</span>
+                {topBlocker && <span className='mt-0.5 block truncate text-xs text-destructive'>{translateBlocker(topBlocker.key, topBlocker.label)}</span>}
+              </span>
             </button>
           );
         })}
