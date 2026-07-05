@@ -213,6 +213,13 @@
   "scopeShell.checks.draft_revision": "Révision brouillon existante",
   "scopeShell.checks.dry_run_passed": "Test à blanc réussi",
   "scopeShell.checks.channel_ready": "Canal prêt",
+  "scopeShell.blockers.scope_active": "Périmètre inactif",
+  "scopeShell.blockers.agents_mapped": "Aucun agent mappé",
+  "scopeShell.blockers.knowledge_mapped": "Aucune connaissance mappée",
+  "scopeShell.blockers.deployment_exists": "Aucun déploiement",
+  "scopeShell.blockers.draft_revision": "Aucune révision brouillon",
+  "scopeShell.blockers.dry_run_passed": "Test à blanc non réussi",
+  "scopeShell.blockers.channel_ready": "Aucun canal prêt",
   "scopeShell.advanced.title": "Outils avancés de cycle de vie",
   "scopeShell.advanced.description": "Utilisez ces contrôles existants de déploiement, révision, test à blanc, publication et métriques quand le cockpit de périmètre n'expose pas encore un détail."
 }

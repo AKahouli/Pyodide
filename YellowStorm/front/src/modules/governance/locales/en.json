@@ -213,6 +213,13 @@
   "scopeShell.checks.draft_revision": "Draft revision exists",
   "scopeShell.checks.dry_run_passed": "Dry-run passed",
   "scopeShell.checks.channel_ready": "Channel ready",
+  "scopeShell.blockers.scope_active": "Scope is inactive",
+  "scopeShell.blockers.agents_mapped": "No agent mapped",
+  "scopeShell.blockers.knowledge_mapped": "No knowledge mapped",
+  "scopeShell.blockers.deployment_exists": "No deployment yet",
+  "scopeShell.blockers.draft_revision": "No draft revision yet",
+  "scopeShell.blockers.dry_run_passed": "Dry-run not passed",
+  "scopeShell.blockers.channel_ready": "No channel ready",
   "scopeShell.advanced.title": "Advanced lifecycle tools",
   "scopeShell.advanced.description": "Use these existing deployment, revision, dry-run, publish, and metric controls when the scope cockpit does not yet expose a detail."
 }

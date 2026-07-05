@@ -5,16 +5,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateGovernanceScope, useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
-
-const checkLabelKeys = {
-  scope_active: 'scopeShell.checks.scope_active',
-  agents_mapped: 'scopeShell.checks.agents_mapped',
-  knowledge_mapped: 'scopeShell.checks.knowledge_mapped',
-  deployment_exists: 'scopeShell.checks.deployment_exists',
-  draft_revision: 'scopeShell.checks.draft_revision',
-  dry_run_passed: 'scopeShell.checks.dry_run_passed',
-  channel_ready: 'scopeShell.checks.channel_ready',
-} as const;
+import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 
 interface Props {
   programId: string | null;
@@ -30,7 +21,7 @@ function readinessTone(score: number): { hex: string; text: string } {
 function ReadinessRing({ score, size = 44 }: Readonly<{ score: number; size?: number }>): JSX.Element {
   const tone = readinessTone(score);
   return (
-    <span className='relative grid flex-none place-items-center rounded-full' style={{ width: size, height: size, background: `conic-gradient(${tone.hex} ${score}%, hsl(var(--border)) 0)` }}>
+    <span className='relative grid flex-none place-items-center rounded-full' style={{ width: size, height: size, background: `conic-gradient(${tone.hex} ${score}%, var(--border) 0)` }}>
       <span className='absolute rounded-full bg-card' style={{ inset: Math.round(size * 0.1) }} />
       <span className={cn('relative text-xs font-semibold tabular-nums', tone.text)}>{score}</span>
     </span>
@@ -44,12 +35,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
   const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
   const createScope = useCreateGovernanceScope(programId);
   const [scopeName, setScopeName] = useState('');
-
-  const translateCheckLabel = (key: string, fallback: string): string => {
-    if (key.startsWith('source_')) return fallback;
-    const translationKey = checkLabelKeys[key as keyof typeof checkLabelKeys];
-    return translationKey ? t(translationKey) : fallback;
-  };
+  const { translateBlocker } = useGovernanceCheckLabel();
 
   const overviews = scopes.map((scope) => byScopeId[scope.id]).filter((value): value is GovernanceScopeOverview => Boolean(value));
   const scored = overviews.map((overview) => overview.readiness.score);
@@ -60,7 +46,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
     overview.readiness.blockers.map((blocker) => ({
       scopeId: overview.scope.id,
       scopeName: overview.scope.name,
-      label: translateCheckLabel(blocker.key, blocker.label),
+      label: translateBlocker(blocker.key, blocker.label),
     })),
   );
 
@@ -108,7 +94,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
           ) : (
             <div className='grid gap-3 p-4 sm:grid-cols-2'>
               {scopes.map((scope) => (
-                <ScopeCard key={scope.id} scope={scope} overview={byScopeId[scope.id]} onOpen={() => onSelectScope(scope.id)} translateCheckLabel={translateCheckLabel} typeLabel={t(`scopeShell.scopeTypes.${scope.type}`)} statusReady={t('cockpit.scopes.ready')} statusPublished={t('cockpit.scopes.published')} />
+                <ScopeCard key={scope.id} scope={scope} overview={byScopeId[scope.id]} onOpen={() => onSelectScope(scope.id)} translateBlocker={translateBlocker} typeLabel={t(`scopeShell.scopeTypes.${scope.type}`)} statusReady={t('cockpit.scopes.ready')} statusPublished={t('cockpit.scopes.published')} />
               ))}
             </div>
           )}
@@ -168,13 +154,13 @@ interface ScopeCardProps {
   scope: GovernanceScope;
   overview?: GovernanceScopeOverview;
   onOpen: () => void;
-  translateCheckLabel: (key: string, fallback: string) => string;
+  translateBlocker: (key: string, fallback: string) => string;
   typeLabel: string;
   statusReady: string;
   statusPublished: string;
 }
 
-function ScopeCard({ scope, overview, onOpen, translateCheckLabel, typeLabel, statusReady, statusPublished }: Readonly<ScopeCardProps>): JSX.Element {
+function ScopeCard({ scope, overview, onOpen, translateBlocker, typeLabel, statusReady, statusPublished }: Readonly<ScopeCardProps>): JSX.Element {
   const score = overview?.readiness.score ?? 0;
   const topBlocker = overview?.readiness.blockers[0];
   const isPublished = Boolean(overview?.publishedRevision);
@@ -190,7 +176,7 @@ function ScopeCard({ scope, overview, onOpen, translateCheckLabel, typeLabel, st
           {!isPublished && isReady && <span className='rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary'>{statusReady}</span>}
           {topBlocker && (
             <span className='inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-400'>
-              <BookOpen className='h-3 w-3' />{translateCheckLabel(topBlocker.key, topBlocker.label)}
+              <BookOpen className='h-3 w-3' />{translateBlocker(topBlocker.key, topBlocker.label)}
             </span>
           )}
         </span>

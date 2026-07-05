@@ -4,16 +4,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateGovernanceScope, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
-
-const checkLabelKeys = {
-  scope_active: 'scopeShell.checks.scope_active',
-  agents_mapped: 'scopeShell.checks.agents_mapped',
-  knowledge_mapped: 'scopeShell.checks.knowledge_mapped',
-  deployment_exists: 'scopeShell.checks.deployment_exists',
-  draft_revision: 'scopeShell.checks.draft_revision',
-  dry_run_passed: 'scopeShell.checks.dry_run_passed',
-  channel_ready: 'scopeShell.checks.channel_ready',
-} as const;
+import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 
 interface Props {
   programId: string | null;
@@ -27,10 +18,7 @@ export function GovernanceScopeTree({ programId, scopes, selectedScopeId, overvi
   const { t } = useModuleTranslation('governance');
   const createScope = useCreateGovernanceScope(programId);
   const [scopeName, setScopeName] = useState('');
-  const translateCheckLabel = (key: string, fallback: string): string => {
-    const translationKey = checkLabelKeys[key as keyof typeof checkLabelKeys];
-    return translationKey ? t(translationKey) : fallback;
-  };
+  const { translateBlocker } = useGovernanceCheckLabel();
 
   const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,7 +49,7 @@ export function GovernanceScopeTree({ programId, scopes, selectedScopeId, overvi
                 <span className='rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground'>{score === undefined ? scope.status : t('scopeShell.readiness.scoreValue', { score })}</span>
               </div>
               <p className='mt-1 text-xs text-muted-foreground'>{t(`scopeShell.scopeTypes.${scope.type}`)}</p>
-              {isSelected && overview?.readiness.blockers[0] && <p className='mt-2 text-xs text-destructive'>{translateCheckLabel(overview.readiness.blockers[0].key, overview.readiness.blockers[0].label)}</p>}
+              {isSelected && overview?.readiness.blockers[0] && <p className='mt-2 text-xs text-destructive'>{translateBlocker(overview.readiness.blockers[0].key, overview.readiness.blockers[0].label)}</p>}
             </button>
           );
         })}
