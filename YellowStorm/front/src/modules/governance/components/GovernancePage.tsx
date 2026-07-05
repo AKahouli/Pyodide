@@ -1,19 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { ChevronLeft, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
-
-const lifecycleSteps = ['program', 'scopes', 'sources', 'access', 'deployment', 'dryRun', 'publish', 'monitor'] as const;
 
 export function GovernancePage(): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const { data: programs = [] } = useGovernancePrograms();
   const selectedProgramId = useGovernanceUiStore((state) => state.selectedProgramId);
   const setSelectedProgramId = useGovernanceUiStore((state) => state.setSelectedProgramId);
+  const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const createProgram = useCreateGovernanceProgram();
   const [programName, setProgramName] = useState('');
@@ -67,16 +67,16 @@ export function GovernancePage(): JSX.Element {
           </div>
         </header>
 
-        <section className='grid gap-3 md:grid-cols-4 xl:grid-cols-8'>
-          {lifecycleSteps.map((stepKey, index) => (
-            <article key={stepKey} className='rounded-2xl border bg-card p-3 shadow-sm'>
-              <div className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('steps.stepNumber', { number: index + 1 })}</div>
-              <h2 className='mt-2 text-sm font-semibold'>{t(`steps.${stepKey}.title`)}</h2>
-            </article>
-          ))}
-        </section>
-
-        <GovernanceScopeLifecycleShell programId={selectedProgramId} />
+        {selectedScopeId ? (
+          <>
+            <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'>
+              <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
+            </button>
+            <GovernanceScopeLifecycleShell programId={selectedProgramId} />
+          </>
+        ) : (
+          <GovernanceCockpit programId={selectedProgramId} onSelectScope={setSelectedScopeId} />
+        )}
       </div>
     </main>
   );

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { governanceApi } from '../api';
 import { governanceQueryKeys } from './queryKeys';
 import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceScopePayload } from '../types';
@@ -31,6 +31,20 @@ export function useGovernanceScopeOverview(programId: string | null, scopeId: st
     queryKey: programId && scopeId ? governanceQueryKeys.scopeOverview(programId, scopeId) : governanceQueryKeys.scopeOverview('none', 'none'),
     queryFn: () => governanceApi.getScopeOverview(programId ?? '', scopeId ?? ''),
     enabled: Boolean(programId && scopeId),
+  });
+}
+
+export function useGovernanceScopeOverviews(programId: string | null, scopeIds: string[]) {
+  return useQueries({
+    queries: scopeIds.map((scopeId) => ({
+      queryKey: programId ? governanceQueryKeys.scopeOverview(programId, scopeId) : governanceQueryKeys.scopeOverview('none', scopeId),
+      queryFn: () => governanceApi.getScopeOverview(programId ?? '', scopeId),
+      enabled: Boolean(programId && scopeId),
+    })),
+    combine: (results) => ({
+      byScopeId: Object.fromEntries(scopeIds.map((scopeId, index) => [scopeId, results[index]?.data])),
+      isLoading: results.some((result) => result.isLoading),
+    }),
   });
 }
 

@@ -22,8 +22,7 @@ export function GovernanceScopeLifecycleShell({ programId }: Readonly<Props>): J
   useGovernanceDeployments(programId);
 
   useEffect(() => {
-    if (!selectedScopeId && scopes[0]) setSelectedScopeId(scopes[0].id);
-    if (selectedScopeId && scopes.length > 0 && !scopes.some((scope) => scope.id === selectedScopeId)) setSelectedScopeId(scopes[0].id);
+    if (selectedScopeId && scopes.length > 0 && !scopes.some((scope) => scope.id === selectedScopeId)) setSelectedScopeId(null);
   }, [scopes, selectedScopeId, setSelectedScopeId]);
 
   return (
