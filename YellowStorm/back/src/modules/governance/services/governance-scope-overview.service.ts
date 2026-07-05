@@ -1,0 +1,184 @@
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { NotFoundException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { GovernanceAccessService } from './governance-access.service';
+import { GovernanceProgramService } from './governance-program.service';
+import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
+import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
+import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
+import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
+import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
+import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+
+type ReadinessStatus = 'ready' | 'blocked' | 'warning';
+type CheckStatus = 'passed' | 'warning' | 'failed';
+type CheckSeverity = 'info' | 'warning' | 'blocking';
+
+export interface GovernanceScopeOverviewCheck {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  severity: CheckSeverity;
+  message?: string;
+  targetType?: string;
+  targetId?: string;
+}
+
+export interface GovernanceScopeOverview {
+  scope: Record<string, unknown>;
+  readiness: { score: number; status: ReadinessStatus; blockers: GovernanceScopeOverviewCheck[]; warnings: GovernanceScopeOverviewCheck[]; checks: GovernanceScopeOverviewCheck[] };
+  knowledge: { sharedSources: Record<string, unknown>[]; localSources: Record<string, unknown>[]; workspaceMappings: Record<string, unknown>[]; reviewBlockers: GovernanceScopeOverviewCheck[] };
+  agents: { mappedAgents: Array<{ id: string; isPrimary: boolean }>; primaryAgentId?: string; missingAgent: boolean };
+  deployment?: Record<string, unknown>;
+  draftRevision?: Record<string, unknown>;
+  publishedRevision?: Record<string, unknown>;
+  channels: Record<string, unknown>;
+  latestDryRun?: Record<string, unknown>;
+  metricsSummary: { totalEvents: number; byChannel: Record<string, number>; byType: Record<string, number> };
+}
+
+@Injectable()
+export class GovernanceScopeOverviewService {
+  constructor(
+    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
+    @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
+    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
+    @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
+    private readonly programService: GovernanceProgramService,
+    private readonly accessService: GovernanceAccessService,
+  ) {}
+
+  async getOverview(actorId: string, programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
+    await this.programService.assertOwnedProgram(actorId, programId);
+    await this.accessService.assertScopeAccess(actorId, programId, scopeId);
+    const [scope, sources, deployment] = await Promise.all([
+      this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
+      this.loadEffectiveSources(programId, scopeId),
+      this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).sort({ updatedAt: -1 }).lean().exec(),
+    ]);
+    if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
+    const [draftRevision, publishedRevision, latestDryRun, metrics] = await Promise.all([
+      this.findRevision(deployment?.currentDraftRevisionId),
+      this.findRevision(deployment?.currentPublishedRevisionId),
+      this.findLatestDryRun(deployment?._id),
+      this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
+    ]);
+    const checks = this.buildChecks(scope, sources, deployment, draftRevision, latestDryRun);
+    const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
+    const localSources = sources.filter((source) => source.visibility !== 'program_shared');
+    return {
+      scope: this.scopeToResponse(scope),
+      readiness: this.buildReadiness(checks),
+      knowledge: {
+        sharedSources: sharedSources.map((source) => this.sourceToResponse(source)),
+        localSources: localSources.map((source) => this.sourceToResponse(source)),
+        workspaceMappings: sources.filter((source) => source.workspaceId).map((source) => this.sourceToResponse(source)),
+        reviewBlockers: checks.filter((check) => check.targetType === 'source' && check.status !== 'passed'),
+      },
+      agents: this.buildAgentSummary(scope.agentIds ?? []),
+      deployment: deployment ? this.deploymentToResponse(deployment) : undefined,
+      draftRevision: draftRevision ? this.revisionToResponse(draftRevision) : undefined,
+      publishedRevision: publishedRevision ? this.revisionToResponse(publishedRevision) : undefined,
+      channels: (deployment?.channels as Record<string, unknown>) ?? {},
+      latestDryRun: latestDryRun ? this.dryRunToResponse(latestDryRun) : undefined,
+      metricsSummary: this.summarizeMetrics(metrics),
+    };
+  }
+
+  private async loadEffectiveSources(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
+    return this.sourceModel.find({
+      programId: new Types.ObjectId(programId),
+      $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }],
+    }).sort({ visibility: 1, title: 1 }).lean().exec();
+  }
+
+  private async findRevision(revisionId?: Types.ObjectId): Promise<Record<string, unknown> | null> {
+    if (!revisionId) return null;
+    return this.revisionModel.findById(revisionId).lean().exec();
+  }
+
+  private async findLatestDryRun(deploymentId?: Types.ObjectId): Promise<Record<string, unknown> | null> {
+    if (!deploymentId) return null;
+    return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
+  }
+
+  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], deployment: Record<string, unknown> | null, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): GovernanceScopeOverviewCheck[] {
+    const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
+    const channels = (deployment?.channels ?? {}) as Record<string, { enabled?: boolean; status?: string }>;
+    const enabledChannels = Object.entries(channels).filter(([, channel]) => channel?.enabled);
+    return [
+      this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
+      this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
+      this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0, 'blocking', 'source'),
+      this.check('deployment_exists', 'Deployment exists', Boolean(deployment), 'blocking', 'rule'),
+      this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
+      this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
+      this.check('channel_ready', 'Channel ready', enabledChannels.length === 0 || enabledChannels.some(([, channel]) => channel.status === 'ready'), 'warning', 'channel'),
+      ...sources.map((source) => this.sourceReviewCheck(source)),
+    ];
+  }
+
+  private check(key: string, label: string, passed: boolean, severity: CheckSeverity, targetType: string): GovernanceScopeOverviewCheck {
+    return { key, label, status: passed ? 'passed' : 'failed', severity, targetType };
+  }
+
+  private sourceReviewCheck(source: Record<string, unknown>): GovernanceScopeOverviewCheck {
+    const isBlocked = source.status === 'expired' || source.status === 'rejected';
+    const needsReview = source.status === 'to_review';
+    return { key: `source_${String(source._id)}`, label: String(source.title), status: isBlocked ? 'failed' : needsReview ? 'warning' : 'passed', severity: isBlocked ? 'blocking' : 'warning', targetType: 'source', targetId: String(source._id) };
+  }
+
+  private buildReadiness(checks: GovernanceScopeOverviewCheck[]): GovernanceScopeOverview['readiness'] {
+    const blockers = checks.filter((check) => check.severity === 'blocking' && check.status === 'failed');
+    const warnings = checks.filter((check) => check.severity === 'warning' && check.status !== 'passed');
+    const score = Math.round((checks.filter((check) => check.status === 'passed').length / checks.length) * 100);
+    return { score, status: blockers.length ? 'blocked' : warnings.length ? 'warning' : 'ready', blockers, warnings, checks };
+  }
+
+  private buildAgentSummary(agentIds: Types.ObjectId[]): GovernanceScopeOverview['agents'] {
+    const mappedAgents = agentIds.map((id, index) => ({ id: id.toString(), isPrimary: index === 0 }));
+    return { mappedAgents, primaryAgentId: mappedAgents[0]?.id, missingAgent: mappedAgents.length === 0 };
+  }
+
+  private summarizeMetrics(metrics: Record<string, unknown>[]): GovernanceScopeOverview['metricsSummary'] {
+    const initialSummary: GovernanceScopeOverview['metricsSummary'] = { totalEvents: 0, byChannel: {}, byType: {} };
+    return metrics.reduce<GovernanceScopeOverview['metricsSummary']>((summary, metric) => {
+      const value = Number(metric.value ?? 0);
+      const channel = String(metric.channel ?? 'unknown');
+      const type = String(metric.type ?? 'unknown');
+      summary.totalEvents += value;
+      summary.byChannel[channel] = (summary.byChannel[channel] ?? 0) + value;
+      summary.byType[type] = (summary.byType[type] ?? 0) + value;
+      return summary;
+    }, initialSummary);
+  }
+
+  private scopeToResponse(doc: Record<string, unknown>): Record<string, unknown> {
+    return { id: String(doc._id), programId: String(doc.programId), parentScopeId: this.optionalId(doc.parentScopeId), name: doc.name, type: doc.type, status: doc.status, agentIds: this.toStrings(doc.agentIds), metadata: doc.metadata ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private sourceToResponse(doc: Record<string, unknown>): Record<string, unknown> {
+    return { id: String(doc._id), programId: String(doc.programId), scopeIds: this.toStrings(doc.scopeIds), visibility: doc.visibility, title: doc.title, sourceType: doc.sourceType, url: doc.url, workspaceId: this.optionalId(doc.workspaceId), documentId: this.optionalId(doc.documentId), status: doc.status, tags: doc.tags ?? [], metadata: doc.metadata ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private deploymentToResponse(doc: Record<string, unknown>): Record<string, unknown> {
+    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), name: doc.name, status: doc.status, currentDraftRevisionId: this.optionalId(doc.currentDraftRevisionId), currentPublishedRevisionId: this.optionalId(doc.currentPublishedRevisionId), channels: doc.channels ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private revisionToResponse(doc: Record<string, unknown>): Record<string, unknown> {
+    return { id: String(doc._id), deploymentId: String(doc.deploymentId), revisionNumber: doc.revisionNumber, status: doc.status, agentId: String(doc.agentId), workspaceIds: this.toStrings(doc.workspaceIds), sourceIds: this.toStrings(doc.sourceIds), includedSourceIds: this.toStrings(doc.includedSourceIds), excludedSourceIds: this.toStrings(doc.excludedSourceIds), createdBy: String(doc.createdBy), publishedBy: this.optionalId(doc.publishedBy), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private dryRunToResponse(doc: Record<string, unknown>): Record<string, unknown> {
+    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), deploymentId: String(doc.deploymentId), revisionId: String(doc.revisionId), testerId: String(doc.testerId), status: doc.status, testCases: doc.testCases ?? [], checks: doc.checks ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private toStrings(value: unknown): string[] { return Array.isArray(value) ? value.map((id) => id.toString()) : []; }
+  private optionalId(value: unknown): string | undefined { return value ? value.toString() : undefined; }
+  private toIso(value: unknown): string { return value instanceof Date ? value.toISOString() : String(value ?? ''); }
+  private toOptionalIso(value: unknown): string | undefined { return value ? this.toIso(value) : undefined; }
+}

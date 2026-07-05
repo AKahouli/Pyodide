@@ -71,6 +71,9 @@ const WorkspacePage = React.lazy(() =>
 const WorkspaceHubPage = React.lazy(() =>
   import("./modules/workspace").then((m) => ({ default: m.WorkspaceHubPage }))
 );
+const GovernancePage = React.lazy(() =>
+  import('./modules/governance').then((m) => ({ default: m.GovernancePage }))
+);
 import {
   AdminGuard,
   AdminLayout,
@@ -215,6 +218,16 @@ export const router = createHashRouter([
           <Suspense fallback={null}>
             <AgentHubPage />
           </Suspense>
+        ),
+      },
+      {
+        path: 'governance',
+        element: (
+          <PermissionGuard permissions={['governance.read', 'governance.*', '*']} fallbackPath='/'>
+            <Suspense fallback={null}>
+              <GovernancePage />
+            </Suspense>
+          </PermissionGuard>
         ),
       },
       {

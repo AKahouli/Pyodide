@@ -66,6 +66,7 @@ import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
 import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
+import { GovernanceModule } from './modules/governance';
 
 @Module({
   imports: [
@@ -127,6 +128,7 @@ import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
     WorkyModule,
     GuardrailsModule,
     MemoryCardsModule,
+    GovernanceModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

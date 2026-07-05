@@ -61,6 +61,20 @@ export class WidgetChatService {
     return this.widgetTokenModel.find({ agentId }).select('-tokenHash').sort({ createdAt: -1 }).lean().exec();
   }
 
+  async hasActiveToken(agentId: string): Promise<boolean> {
+    const now = new Date();
+    const token = await this.widgetTokenModel
+      .findOne({
+        agentId,
+        isActive: true,
+        $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: now } }],
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return Boolean(token);
+  }
+
   async updateToken(agentId: string, tokenId: string, update: { label?: string; allowedOrigins?: string[]; isActive?: boolean; expiresAt?: string }) {
     const doc = await this.widgetTokenModel.findOneAndUpdate(
       { _id: tokenId, agentId },

@@ -63,6 +63,8 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     WhatsAppGateway,
   ],
   exports: [
+    WhatsAppIntegrationService,
+    WhatsAppConnectionService,
     WorkyWhatsAppConnectionService,
     WorkyWhatsAppSystemBotConnectionService,
     WorkyWhatsAppGroupService,
