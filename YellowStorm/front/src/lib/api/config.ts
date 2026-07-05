@@ -336,6 +336,9 @@ export const API_ENDPOINTS = {
     update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
     revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
   },
+  adminWidgetTokens: {
+    create: (agentId: string) => `/admin/agents/${agentId}/widget-tokens`,
+  },
   teams: {
     list: '/teams',
     all: '/teams/all',

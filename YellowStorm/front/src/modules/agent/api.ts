@@ -294,5 +294,13 @@ export async function createWidgetToken(agentId: string): Promise<WidgetTokenRes
   return response.data.data;
 }
 
+/** Default (admin-owned) agents are read-only on the user widget-token endpoint; use the admin one instead. */
+export async function createAdminWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.adminWidgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
+
 // Re-export evaluation API functions
 export * from './evaluation-api';

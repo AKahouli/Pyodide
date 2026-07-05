@@ -381,4 +381,5 @@ export interface UpdateAgentData {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
 }

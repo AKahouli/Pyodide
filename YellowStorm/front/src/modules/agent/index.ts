@@ -17,6 +17,10 @@ export type {
   AgentState,
   AgentActions,
   AgentStore,
+  AgentGuardrails,
+  PromptInjectionGuardrailsConfig,
   CreateAgentData,
   UpdateAgentData,
+  WidgetTokenResponse,
 } from './types';
+export { createWidgetToken, createAdminWidgetToken } from './api';

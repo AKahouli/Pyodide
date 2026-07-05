@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GovernanceAccessService } from './governance-access.service';
+import { GovernanceChannelReadinessService } from './governance-channel-readiness.service';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
@@ -50,6 +51,7 @@ export class GovernanceScopeOverviewService {
     @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
+    private readonly channelReadinessService: GovernanceChannelReadinessService,
   ) {}
 
   async getOverview(actorId: string, programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
@@ -67,7 +69,7 @@ export class GovernanceScopeOverviewService {
       this.findLatestDryRun(deployment?._id),
       this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
     ]);
-    const checks = this.buildChecks(scope, sources, deployment, draftRevision, latestDryRun);
+    const checks = await this.buildChecks(actorId, scope, sources, deployment, draftRevision, latestDryRun);
     const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
     const localSources = sources.filter((source) => source.visibility !== 'program_shared');
     return {
@@ -106,10 +108,16 @@ export class GovernanceScopeOverviewService {
     return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
   }
 
-  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], deployment: Record<string, unknown> | null, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): GovernanceScopeOverviewCheck[] {
+  private async buildChecks(actorId: string, scope: Record<string, unknown>, sources: Record<string, unknown>[], deployment: Record<string, unknown> | null, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): Promise<GovernanceScopeOverviewCheck[]> {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
     const channels = (deployment?.channels ?? {}) as Record<string, { enabled?: boolean; status?: string }>;
-    const enabledChannels = Object.entries(channels).filter(([, channel]) => channel?.enabled);
+    // Mirrors the exact gate GovernanceDeploymentService.publish() enforces, so a scope
+    // shown as "ready" here can never be silently rejected at publish time for a reason
+    // the admin never saw (real widget token / WhatsApp / Telegram connection, not just
+    // the cosmetic per-channel "status" flag set from the Channels tab).
+    const channelChecks = draftRevision
+      ? await this.channelReadinessService.buildChannelChecks(actorId, String(draftRevision.agentId), channels)
+      : [];
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
@@ -117,7 +125,7 @@ export class GovernanceScopeOverviewService {
       this.check('deployment_exists', 'Deployment exists', Boolean(deployment), 'blocking', 'rule'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
       this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
-      this.check('channel_ready', 'Channel ready', enabledChannels.length === 0 || enabledChannels.some(([, channel]) => channel.status === 'ready'), 'warning', 'channel'),
+      ...channelChecks.map((channelCheck) => ({ ...channelCheck, key: `channel_${channelCheck.key}` })),
       ...sources.map((source) => this.sourceReviewCheck(source)),
     ];
   }
