@@ -7,20 +7,21 @@ import { LoggerService } from '../../logger';
 import { WorkyStreamService } from './worky-stream.service';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
-import { WorkyTaskResult, WorkyTaskResultDocument } from '../schemas/worky-task-result.schema';
+import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
+import { WorkyPlanProjection, WorkyPlanProjectionDocument } from '../schemas/worky-plan-projection.schema';
 import { WorkyElectricCursor, WorkyElectricCursorDocument } from '../schemas/worky-electric-cursor.schema';
-import { PgWorkyTaskRow, PgWorkyTaskResultRow } from '../electric/worky-electric.contract';
-import { mapPgTask, mapPgTaskResult } from '../electric/worky-electric.mapper';
+import { PgMessageRow, PgPlanRow, PgPlanStepRow } from '../electric/worky-electric.contract';
+import { mapMessage, mapPlan, mapPlanStep, isKnownPlanStepStatus } from '../electric/worky-electric.mapper';
 
 /**
  * Nest-side `ShapeStream` consumer that mirrors the manager's Postgres rows
  * (synced via Electric SQL) into Mongo and re-broadcasts a `WorkyEvent` over
  * the existing SSE channel (`WorkyEventService.emit`).
  *
- * Scope: `tasks` + `task_results` only (canonical §Electric sync). Messages
- * and interactions have mappers (Task 6) but their Mongo schemas don't yet
- * carry an idempotency key (external PG id) — wiring those shapes is
- * deferred to a follow-up task.
+ * Real contract (reconciled): three whole-table shapes scoped by
+ * `session_id` — `messages`, `plans`, `plan_steps` (the board). Every shape
+ * request carries `&secret=<ELECTRIC_SECRET>`. `plan_steps` rows update IN
+ * PLACE — there is no separate task_results shape/table.
  *
  * Resume: each shape's Electric `handle`+`offset` is persisted in
  * `WorkyElectricCursor` after every processed batch, so a restart resumes
@@ -36,7 +37,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     private readonly events: WorkyEventService,
     private readonly logger: LoggerService,
     @InjectModel(WorkyTask.name) private readonly taskModel: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyTaskResult.name) private readonly resultModel: Model<WorkyTaskResultDocument>,
+    @InjectModel(WorkyMessage.name) private readonly messageModel: Model<WorkyMessageDocument>,
+    @InjectModel(WorkyPlanProjection.name) private readonly planProjectionModel: Model<WorkyPlanProjectionDocument>,
     @InjectModel(WorkyElectricCursor.name) private readonly cursorModel: Model<WorkyElectricCursorDocument>,
   ) {
     this.logger.setContext(WorkyElectricConsumerService.name);
@@ -44,18 +46,20 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
 
   async onModuleInit(): Promise<void> {
     await this.subscribe(
-      'tasks',
-      this.config.get<string>('worky.electricTasksTable')!,
-      (m) => this.handleTaskMessages(m),
+      'messages',
+      this.config.get<string>('worky.electricMessagesTable')!,
+      (m) => this.handleMessages(m),
     );
     await this.subscribe(
-      'task_results',
-      this.config.get<string>('worky.electricTaskResultsTable')!,
-      (m) => this.handleTaskResultMessages(m),
+      'plans',
+      this.config.get<string>('worky.electricPlansTable')!,
+      (m) => this.handlePlans(m),
     );
-    // messages + interactions follow the same subscribe(...) shape once
-    // their Mongo schemas carry an idempotency key (Task 6 mappers already
-    // exist: mapPgMessage / mapPgInteraction) — out of scope for this task.
+    await this.subscribe(
+      'plan_steps',
+      this.config.get<string>('worky.electricPlanStepsTable')!,
+      (m) => this.handlePlanSteps(m),
+    );
   }
 
   onModuleDestroy(): void {
@@ -74,9 +78,10 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     handler: (messages: unknown[]) => Promise<void>,
   ): Promise<void> {
     const cursor = await this.cursorModel.findOne({ shape }).lean<{ handle?: string | null; offset?: string | null }>().exec();
+    const secret = this.config.get<string>('worky.electricSecret');
     const stream = new ShapeStream({
       url: this.config.get<string>('worky.electricUrl')!,
-      params: { table },
+      params: { table, ...(secret ? { secret } : {}) },
       handle: cursor?.handle ?? undefined,
       offset: (cursor?.offset as never) ?? undefined,
     });
@@ -96,19 +101,19 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       .exec();
   }
 
-  async handleTaskMessages(messages: unknown[]): Promise<void> {
+  async handleMessages(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (isControlMessage(m) || !isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
       try {
-        const row = m.value as unknown as PgWorkyTaskRow;
+        const row = m.value as unknown as PgMessageRow;
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('Task for unknown session', { session: row.session_id });
+          this.logger.warn('Message for unknown session', { session: row.session_id });
           continue;
         }
-        const { set, event } = mapPgTask(row, target.streamId);
-        await this.taskModel
+        const { set, event } = mapMessage(row, target.streamId);
+        await this.messageModel
           .findOneAndUpdate(
             { streamId: target.streamId, externalId: row.id },
             { $set: set },
@@ -117,39 +122,64 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
       } catch (err) {
-        this.logger.error('Failed to process task message', { error: (err as Error).message });
+        this.logger.error('Failed to process message row', { error: (err as Error).message });
         continue;
       }
     }
   }
 
-  async handleTaskResultMessages(messages: unknown[]): Promise<void> {
+  async handlePlanSteps(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (isControlMessage(m) || !isChangeMessage(m)) continue;
-      if (m.headers.operation === 'delete') continue;
+      if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
       try {
-        const row = m.value as unknown as PgWorkyTaskResultRow;
-        const task = await this.taskModel
-          .findOne({ externalId: row.task_id })
-          .lean<{ _id: unknown; streamId: unknown }>()
-          .exec();
-        if (!task) {
-          this.logger.warn('Result for unknown task', { task: row.task_id });
+        const row = m.value as unknown as PgPlanStepRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('Plan step for unknown session', { session: row.session_id });
           continue;
         }
-        const streamId = String(task.streamId);
-        const mapped = mapPgTaskResult(row, String(task._id));
-        await this.resultModel
+        if (!isKnownPlanStepStatus(row.status)) {
+          this.logger.warn('Unknown plan_step status', { status: row.status, step: row.step_id });
+        }
+        const { set, event } = mapPlanStep(row, target.streamId);
+        await this.taskModel
           .findOneAndUpdate(
-            { taskId: mapped.taskId, version: mapped.version },
-            { $set: mapped.set },
+            { streamId: target.streamId, externalId: row.step_id },
+            { $set: set },
             { upsert: true, new: true, setDefaultsOnInsert: true },
           )
           .exec();
-        const owner = await this.streamService.getOwnerByStreamId(streamId);
-        if (owner) this.events.emit(owner, streamId, mapped.event);
+        this.events.emit(target.ownerUserId, target.streamId, event);
       } catch (err) {
-        this.logger.error('Failed to process task result message', { error: (err as Error).message });
+        this.logger.error('Failed to process plan_step row', { error: (err as Error).message });
+        continue;
+      }
+    }
+  }
+
+  async handlePlans(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (isControlMessage(m) || !isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
+      try {
+        const row = m.value as unknown as PgPlanRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('Plan for unknown session', { session: row.session_id });
+          continue;
+        }
+        const { set, event } = mapPlan(row, target.streamId);
+        await this.planProjectionModel
+          .findOneAndUpdate(
+            { streamId: target.streamId },
+            { $set: set },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      } catch (err) {
+        this.logger.error('Failed to process plan row', { error: (err as Error).message });
         continue;
       }
     }

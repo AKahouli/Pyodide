@@ -36,6 +36,10 @@ export class WorkyTask extends Document {
   @Prop({ type: String, default: null })
   externalId?: string | null;
 
+  /** plan_steps.ordinal (Electric source) — step ordering within the plan. */
+  @Prop({ type: Number, default: null })
+  ordinal?: number | null;
+
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 200 })
   title!: string;
 

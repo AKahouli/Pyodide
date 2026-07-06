@@ -6,7 +6,10 @@ const makeService = () => {
     findOneAndUpdate: jest.fn(),
     findOne: jest.fn(),
   };
-  const resultModel = {
+  const messageModel = {
+    findOneAndUpdate: jest.fn(),
+  };
+  const planProjectionModel = {
     findOneAndUpdate: jest.fn(),
   };
   const cursorModel = {
@@ -30,8 +33,10 @@ const makeService = () => {
     get: jest.fn((key: string) => {
       const values: Record<string, string> = {
         'worky.electricUrl': 'http://electric:3000/v1/shape',
-        'worky.electricTasksTable': 'worky_tasks',
-        'worky.electricTaskResultsTable': 'worky_task_results',
+        'worky.electricMessagesTable': 'messages',
+        'worky.electricPlansTable': 'plans',
+        'worky.electricPlanStepsTable': 'plan_steps',
+        'worky.electricSecret': 'shh',
       };
       return values[key];
     }),
@@ -43,85 +48,166 @@ const makeService = () => {
     events as any,
     logger as any,
     taskModel as any,
-    resultModel as any,
+    messageModel as any,
+    planProjectionModel as any,
     cursorModel as any,
   );
 
-  return { service, taskModel, resultModel, cursorModel, streamService, events, logger };
+  return { service, taskModel, messageModel, planProjectionModel, cursorModel, streamService, events, logger };
 };
 
-describe('WorkyElectricConsumerService.handleTaskMessages', () => {
-  it('upserts a task by externalId and emits to the owner', async () => {
-    const { service, taskModel, streamService, events } = makeService();
+describe('WorkyElectricConsumerService.handleMessages', () => {
+  it('upserts a message by (streamId, externalId) and emits to the owner', async () => {
+    const { service, messageModel, streamService, events } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
-    taskModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
+    messageModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
 
-    await service.handleTaskMessages([
+    await service.handleMessages([
       {
-        key: '"public"."worky_tasks"/"pg-1"',
+        key: '"public"."messages"/"pg-msg-1"',
         headers: { operation: 'insert' },
         value: {
-          id: 'pg-1',
+          id: 'pg-msg-1',
           session_id: 'sess-xyz',
-          title: 'T',
-          lane: 'running',
-          execution_state: 'running',
-          description: null,
-          priority: null,
-          assignee_type: null,
-          action_category: null,
-          started_at: null,
-          completed_at: null,
-          updated_at: '2026-07-03T00:00:00Z',
+          role: 'assistant',
+          content: 'hello',
+          created_at: '2026-07-03T00:00:00Z',
         },
       },
       { headers: { control: 'up-to-date' } },
     ]);
 
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { streamId: 'stream-1', externalId: 'pg-msg-1' },
+      expect.objectContaining({ $set: expect.objectContaining({ role: 'manager', content: 'hello' }) }),
+      expect.objectContaining({ upsert: true, new: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'owner-1',
+      'stream-1',
+      expect.objectContaining({ type: 'message.appended' }),
+    );
+  });
+
+  it('skips delete operations (manager tombstones out of scope)', async () => {
+    const { service, messageModel, streamService } = makeService();
+    await service.handleMessages([
+      { key: '"public"."messages"/"pg-1"', headers: { operation: 'delete' }, value: { id: 'pg-1', session_id: 'sess-xyz' } },
+    ]);
+    expect(messageModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(streamService.findByAiSessionId).not.toHaveBeenCalled();
+  });
+
+  it('skips rows for an unknown session and logs a warning', async () => {
+    const { service, messageModel, streamService, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue(null);
+
+    await service.handleMessages([
+      {
+        key: '"public"."messages"/"pg-1"',
+        headers: { operation: 'insert' },
+        value: { id: 'pg-1', session_id: 'sess-unknown', role: 'user', content: 'hi', created_at: '2026-07-03T00:00:00Z' },
+      },
+    ]);
+
+    expect(messageModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+    const { service, messageModel, streamService, events, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    messageModel.findOneAndUpdate
+      .mockReturnValueOnce({ exec: () => Promise.reject(new Error('db down')) } as any)
+      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+
+    const makeMsg = (id: string) => ({
+      key: `"public"."messages"/"${id}"`,
+      headers: { operation: 'insert' },
+      value: { id, session_id: 'sess-xyz', role: 'user', content: 'hi', created_at: '2026-07-03T00:00:00Z' },
+    });
+
+    await expect(service.handleMessages([makeMsg('pg-1'), makeMsg('pg-2')])).resolves.toBeUndefined();
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to process message row',
+      expect.objectContaining({ error: 'db down' }),
+    );
+  });
+});
+
+describe('WorkyElectricConsumerService.handlePlanSteps', () => {
+  it('upserts a plan_step by (streamId, externalId) and emits to the owner', async () => {
+    const { service, taskModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    taskModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
+
+    await service.handlePlanSteps([
+      {
+        key: '"public"."plan_steps"/"step-1"',
+        headers: { operation: 'insert' },
+        value: { session_id: 'sess-xyz', step_id: 'step-1', ordinal: 1, status: 'in_progress', description: 'Do it' },
+      },
+      { headers: { control: 'up-to-date' } },
+    ]);
+
     expect(taskModel.findOneAndUpdate).toHaveBeenCalledWith(
-      { streamId: 'stream-1', externalId: 'pg-1' },
-      expect.objectContaining({ $set: expect.objectContaining({ lane: 'running' }) }),
+      { streamId: 'stream-1', externalId: 'step-1' },
+      expect.objectContaining({ $set: expect.objectContaining({ lane: 'running', ordinal: 1 }) }),
       expect.objectContaining({ upsert: true, new: true }),
     );
     expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'task.updated' }));
   });
 
-  it('is idempotent: same row twice upserts once per call with the same filter', async () => {
-    const { service, taskModel, streamService } = makeService();
+  it('logs a warning for an unknown plan_step status but still upserts (defaults to backlog)', async () => {
+    const { service, taskModel, streamService, logger } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
     taskModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
-    const msg = {
-      key: '"public"."worky_tasks"/"pg-1"',
-      headers: { operation: 'update' },
-      value: {
-        id: 'pg-1',
-        session_id: 'sess-xyz',
-        title: 'T',
-        lane: 'done',
-        execution_state: 'done',
-        description: null,
-        priority: null,
-        assignee_type: null,
-        action_category: null,
-        started_at: null,
-        completed_at: '2026-07-03T01:00:00Z',
-        updated_at: '2026-07-03T01:00:00Z',
+
+    await service.handlePlanSteps([
+      {
+        key: '"public"."plan_steps"/"step-1"',
+        headers: { operation: 'insert' },
+        value: { session_id: 'sess-xyz', step_id: 'step-1', ordinal: 1, status: 'some_weird_status', description: 'd' },
       },
-    };
-    await service.handleTaskMessages([msg]);
-    await service.handleTaskMessages([msg]);
-    expect(taskModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
-    // both calls use the same upsert filter → one row
-    expect(taskModel.findOneAndUpdate.mock.calls[0][0]).toEqual(taskModel.findOneAndUpdate.mock.calls[1][0]);
+    ]);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Unknown plan_step status',
+      expect.objectContaining({ status: 'some_weird_status', step: 'step-1' }),
+    );
+    expect(taskModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { streamId: 'stream-1', externalId: 'step-1' },
+      expect.objectContaining({ $set: expect.objectContaining({ lane: 'backlog' }) }),
+      expect.objectContaining({ upsert: true, new: true }),
+    );
   });
 
-  it('skips delete operations (manager tombstones out of scope)', async () => {
+  it('skips delete operations', async () => {
     const { service, taskModel, streamService } = makeService();
-    await service.handleTaskMessages([
-      { key: '"public"."worky_tasks"/"pg-1"', headers: { operation: 'delete' }, value: { id: 'pg-1', session_id: 'sess-xyz' } },
+    await service.handlePlanSteps([
+      { key: '"public"."plan_steps"/"step-1"', headers: { operation: 'delete' }, value: { session_id: 'sess-xyz', step_id: 'step-1' } },
     ]);
     expect(taskModel.findOneAndUpdate).not.toHaveBeenCalled();
     expect(streamService.findByAiSessionId).not.toHaveBeenCalled();
+  });
+
+  it('skips rows for an unknown session and logs a warning', async () => {
+    const { service, taskModel, streamService, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue(null);
+
+    await service.handlePlanSteps([
+      {
+        key: '"public"."plan_steps"/"step-1"',
+        headers: { operation: 'insert' },
+        value: { session_id: 'sess-unknown', step_id: 'step-1', ordinal: 1, status: 'pending', description: 'd' },
+      },
+    ]);
+
+    expect(taskModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalled();
   });
 
   it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
@@ -132,152 +218,100 @@ describe('WorkyElectricConsumerService.handleTaskMessages', () => {
       .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
 
     const makeMsg = (id: string) => ({
-      key: `"public"."worky_tasks"/"${id}"`,
+      key: `"public"."plan_steps"/"${id}"`,
       headers: { operation: 'insert' },
-      value: {
-        id,
-        session_id: 'sess-xyz',
-        title: 'T',
-        lane: 'running',
-        execution_state: 'running',
-        description: null,
-        priority: null,
-        assignee_type: null,
-        action_category: null,
-        started_at: null,
-        completed_at: null,
-        updated_at: '2026-07-03T00:00:00Z',
-      },
+      value: { session_id: 'sess-xyz', step_id: id, ordinal: 1, status: 'pending', description: 'd' },
     });
 
-    await expect(
-      service.handleTaskMessages([makeMsg('pg-1'), makeMsg('pg-2')]),
-    ).resolves.toBeUndefined();
+    await expect(service.handlePlanSteps([makeMsg('step-1'), makeMsg('step-2')])).resolves.toBeUndefined();
 
     expect(taskModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
     expect(events.emit).toHaveBeenCalledTimes(1);
-    expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'task.updated' }));
     expect(logger.error).toHaveBeenCalledWith(
-      'Failed to process task message',
+      'Failed to process plan_step row',
       expect.objectContaining({ error: 'db down' }),
     );
   });
-
-  it('skips rows for an unknown session and logs a warning', async () => {
-    const { service, taskModel, streamService, logger } = makeService();
-    streamService.findByAiSessionId.mockResolvedValue(null);
-
-    await service.handleTaskMessages([
-      {
-        key: '"public"."worky_tasks"/"pg-1"',
-        headers: { operation: 'insert' },
-        value: {
-          id: 'pg-1',
-          session_id: 'sess-unknown',
-          title: 'T',
-          lane: 'running',
-          execution_state: 'running',
-          description: null,
-          priority: null,
-          assignee_type: null,
-          action_category: null,
-          started_at: null,
-          completed_at: null,
-          updated_at: '2026-07-03T00:00:00Z',
-        },
-      },
-    ]);
-
-    expect(taskModel.findOneAndUpdate).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalled();
-  });
 });
 
-describe('WorkyElectricConsumerService.handleTaskResultMessages', () => {
-  it('upserts a task result by (taskId, version) and emits to the owner', async () => {
-    const { service, taskModel, resultModel, streamService, events } = makeService();
-    taskModel.findOne.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve({ _id: 'obj-1', streamId: 'stream-1' }) }),
-    } as any);
-    resultModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'result-1' }) } as any);
-    streamService.getOwnerByStreamId.mockResolvedValue('owner-1');
+describe('WorkyElectricConsumerService.handlePlans', () => {
+  it('upserts a plan projection by streamId and emits to the owner', async () => {
+    const { service, planProjectionModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    planProjectionModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
 
-    await service.handleTaskResultMessages([
+    await service.handlePlans([
       {
-        key: '"public"."worky_task_results"/"pgr-1"',
+        key: '"public"."plans"/"sess-xyz"',
         headers: { operation: 'insert' },
-        value: {
-          id: 'pgr-1',
-          task_id: 'pg-1',
-          version: 1,
-          status: 'success',
-          summary: 'done',
-          payload: null,
-        },
+        value: { session_id: 'sess-xyz', title: 'My Plan', status: 'completed' },
       },
       { headers: { control: 'up-to-date' } },
     ]);
 
-    expect(resultModel.findOneAndUpdate).toHaveBeenCalledWith(
-      { taskId: 'obj-1', version: 1 },
-      expect.objectContaining({ $set: expect.objectContaining({ status: 'success' }) }),
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { streamId: 'stream-1' },
+      expect.objectContaining({ $set: expect.objectContaining({ title: 'My Plan', status: 'completed' }) }),
       expect.objectContaining({ upsert: true, new: true }),
     );
-    expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'task.completed' }));
-  });
-
-  it('is idempotent: same row twice upserts once per call with the same filter', async () => {
-    const { service, taskModel, resultModel, streamService } = makeService();
-    taskModel.findOne.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve({ _id: 'obj-1', streamId: 'stream-1' }) }),
-    } as any);
-    resultModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'result-1' }) } as any);
-    streamService.getOwnerByStreamId.mockResolvedValue('owner-1');
-    const msg = {
-      key: '"public"."worky_task_results"/"pgr-1"',
-      headers: { operation: 'insert' },
-      value: { id: 'pgr-1', task_id: 'pg-1', version: 1, status: 'success', summary: 'done', payload: null },
-    };
-
-    await service.handleTaskResultMessages([msg]);
-    await service.handleTaskResultMessages([msg]);
-
-    expect(resultModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
-    expect(resultModel.findOneAndUpdate.mock.calls[0][0]).toEqual(resultModel.findOneAndUpdate.mock.calls[1][0]);
-  });
-
-  it('skips results for an unknown task and logs a warning', async () => {
-    const { service, resultModel, taskModel, logger } = makeService();
-    taskModel.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) } as any);
-
-    await service.handleTaskResultMessages([
-      {
-        key: '"public"."worky_task_results"/"pgr-1"',
-        headers: { operation: 'insert' },
-        value: { id: 'pgr-1', task_id: 'pg-missing', version: 1, status: 'success', summary: null, payload: null },
-      },
-    ]);
-
-    expect(resultModel.findOneAndUpdate).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'stream.updated' }));
   });
 
   it('skips delete operations', async () => {
-    const { service, resultModel, taskModel } = makeService();
-    await service.handleTaskResultMessages([
-      { key: '"public"."worky_task_results"/"pgr-1"', headers: { operation: 'delete' }, value: { id: 'pgr-1', task_id: 'pg-1', version: 1 } },
+    const { service, planProjectionModel, streamService } = makeService();
+    await service.handlePlans([
+      { key: '"public"."plans"/"sess-xyz"', headers: { operation: 'delete' }, value: { session_id: 'sess-xyz' } },
     ]);
-    expect(taskModel.findOne).not.toHaveBeenCalled();
-    expect(resultModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(planProjectionModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(streamService.findByAiSessionId).not.toHaveBeenCalled();
+  });
+
+  it('skips rows for an unknown session and logs a warning', async () => {
+    const { service, planProjectionModel, streamService, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue(null);
+
+    await service.handlePlans([
+      {
+        key: '"public"."plans"/"sess-unknown"',
+        headers: { operation: 'insert' },
+        value: { session_id: 'sess-unknown', title: 'T', status: 'pending' },
+      },
+    ]);
+
+    expect(planProjectionModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+    const { service, planProjectionModel, streamService, events, logger } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    planProjectionModel.findOneAndUpdate
+      .mockReturnValueOnce({ exec: () => Promise.reject(new Error('db down')) } as any)
+      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+
+    const makeMsg = (id: string) => ({
+      key: `"public"."plans"/"${id}"`,
+      headers: { operation: 'insert' },
+      value: { session_id: id, title: 'T', status: 'pending' },
+    });
+
+    await expect(service.handlePlans([makeMsg('sess-1'), makeMsg('sess-2')])).resolves.toBeUndefined();
+
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to process plan row',
+      expect.objectContaining({ error: 'db down' }),
+    );
   });
 });
 
 describe('WorkyElectricConsumerService.persistCursor', () => {
   it('upserts the cursor document for a shape', async () => {
     const { service, cursorModel } = makeService();
-    await service.persistCursor('tasks', 'handle-1', '1234_0');
+    await service.persistCursor('messages', 'handle-1', '1234_0');
     expect(cursorModel.updateOne).toHaveBeenCalledWith(
-      { shape: 'tasks' },
+      { shape: 'messages' },
       { $set: { handle: 'handle-1', offset: '1234_0' } },
       { upsert: true },
     );

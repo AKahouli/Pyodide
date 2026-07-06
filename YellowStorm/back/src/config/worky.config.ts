@@ -36,8 +36,9 @@ export default registerAs('worky', () => ({
 
   // Electric SQL sync (manager-owned Postgres → Nest consumer).
   electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',
-  electricTasksTable: process.env.WORKY_ELECTRIC_TASKS_TABLE || 'worky_tasks',
-  electricTaskResultsTable: process.env.WORKY_ELECTRIC_TASK_RESULTS_TABLE || 'worky_task_results',
-  electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'worky_messages',
-  electricInteractionsTable: process.env.WORKY_ELECTRIC_INTERACTIONS_TABLE || 'worky_interactions',
+  // Shared secret appended as `&secret=<...>` to every Electric shape request.
+  electricSecret: process.env.ELECTRIC_SECRET || '',
+  electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'messages',
+  electricPlansTable: process.env.WORKY_ELECTRIC_PLANS_TABLE || 'plans',
+  electricPlanStepsTable: process.env.WORKY_ELECTRIC_PLAN_STEPS_TABLE || 'plan_steps',
 }));
