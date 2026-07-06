@@ -205,27 +205,6 @@ describe('WorkyStreamService.create', () => {
     expect(res).toEqual({ streamId: 'stream-1', ownerUserId: 'owner-1' });
   });
 
-  it('getOwnerByStreamId returns the owner id when the stream exists', async () => {
-    const { service, streamModel } = makeService();
-    streamModel.findById.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve({ ownerUserId: 'owner-1' }) }),
-    } as any);
-
-    const res = await service.getOwnerByStreamId('stream-1');
-
-    expect(res).toBe('owner-1');
-  });
-
-  it('getOwnerByStreamId returns null when the stream is missing', async () => {
-    const { service, streamModel } = makeService();
-    streamModel.findById.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve(null) }),
-    } as any);
-
-    const res = await service.getOwnerByStreamId('missing-stream');
-
-    expect(res).toBeNull();
-  });
 });
 
 describe('WorkyStreamService.ensureKickoffContext', () => {

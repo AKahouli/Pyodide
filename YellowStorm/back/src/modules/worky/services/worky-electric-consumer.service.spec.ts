@@ -18,7 +18,6 @@ const makeService = () => {
   };
   const streamService = {
     findByAiSessionId: jest.fn(),
-    getOwnerByStreamId: jest.fn(),
   };
   const events = {
     emit: jest.fn(),

@@ -75,7 +75,7 @@ function laneToExecState(lane: string): string {
 export function mapMessage(row: PgMessageRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   const role = mapRole(row.role);
   return {
-    set: { streamId, externalId: row.id, role, content: row.content, createdAt: new Date(row.created_at) },
+    set: { streamId, externalId: row.id, role, content: row.content, emittedAt: new Date(row.created_at) },
     event: { type: 'message.appended', emittedAt: now(), payload: { role, content: row.content } },
   };
 }

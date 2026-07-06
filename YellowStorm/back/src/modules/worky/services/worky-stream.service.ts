@@ -192,19 +192,6 @@ export class WorkyStreamService implements OnModuleInit {
     return { streamId: String(doc._id), ownerUserId: String(doc.ownerUserId) };
   }
 
-  /**
-   * Used by `WorkyElectricConsumerService` when it only has a `streamId`
-   * (e.g. resolved from a task's Mongo document) and needs the owner to
-   * target the SSE emit.
-   */
-  async getOwnerByStreamId(streamId: string): Promise<string | null> {
-    const doc = await this.streamModel
-      .findById(streamId)
-      .lean<{ ownerUserId: unknown }>()
-      .exec();
-    return doc ? String(doc.ownerUserId) : null;
-  }
-
   async delete(userId: string, streamId: string): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
     const stream = await this.streamModel.findById(streamId).exec();
     if (!stream) {
