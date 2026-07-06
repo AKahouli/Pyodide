@@ -121,6 +121,10 @@ import {
   WorkyElectricCursor,
   WorkyElectricCursorSchema,
 } from './schemas/worky-electric-cursor.schema';
+import {
+  WorkyPlanProjection,
+  WorkyPlanProjectionSchema,
+} from './schemas/worky-plan-projection.schema';
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
 import workyConfig from '../../config/worky.config';
@@ -182,6 +186,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       { name: WorkyMemoryProposal.name, schema: WorkyMemoryProposalSchema },
       { name: WorkyMemoryEntry.name, schema: WorkyMemoryEntrySchema },
       { name: WorkyElectricCursor.name, schema: WorkyElectricCursorSchema },
+      { name: WorkyPlanProjection.name, schema: WorkyPlanProjectionSchema },
       // Re-registered here so WorkyStreamService can inject them directly
       // without pulling in AgentModule/WorkspaceModule's full transitive
       // dependency graph. Nest reuses the same Mongoose model instance via DI.
