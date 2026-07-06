@@ -31,6 +31,11 @@ describe('AgentService connector skill inheritance', () => {
     const agentModel = {
       find: jest.fn(),
       findById: jest.fn(),
+      findOne: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+        }),
+      }),
     };
     const logger = {
       setContext: jest.fn(),
@@ -111,6 +116,12 @@ describe('AgentService connector skill inheritance', () => {
     });
   };
 
+  const mockFindOne = (agentModel: { findOne: jest.Mock }, doc: unknown) => {
+    agentModel.findOne.mockReturnValue({
+      populate: () => ({ lean: () => ({ exec: () => Promise.resolve(doc) }) }),
+    });
+  };
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService } = createService();
     const streamAgent: IAgentForStream = {
@@ -170,6 +181,113 @@ describe('AgentService connector skill inheritance', () => {
       'agent-skill',
       'connector-skill',
     ]);
+  });
+
+  it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
+    const { service, agentModel, agentTypeService } = createService();
+
+    const workerAgent: IAgentForStream = {
+      id: 'agent-worker',
+      name: 'Worker',
+      agentTypeName: 'Worker',
+      agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker',
+      role: 'Role',
+      description: '',
+      temperature: 0,
+      model: 'model-1',
+      instruction: '',
+      ignorePrePrompt: false,
+      knowledgeBases: [],
+      toolIds: [],
+      connectorIds: [],
+      connectorActionSelections: [],
+      skillIds: [],
+      disabledSkillIds: [],
+      agentTypeSkillIds: [],
+      isDefault: true,
+      isDefaultForType: false,
+    };
+
+    // The user's roster never includes the mono-agent — it's a hidden system default.
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent]);
+    agentTypeService.findAllActive.mockResolvedValue([
+      { id: '555555555555555555555555', slug: 'mono-agent', name: 'Mono Agent' },
+    ]);
+    mockFindOne(agentModel, {
+      _id: new Types.ObjectId(),
+      name: 'Mono Agent Instance',
+      role: 'Role',
+      description: '',
+      temperature: 0,
+      llmModel: 'model-1',
+      instruction: '',
+      ignorePrePrompt: false,
+      knowledgeBases: [],
+      tools: [],
+      skills: [],
+      disabledSkills: [],
+      connectors: [],
+      isDefault: true,
+      isDefaultForType: false,
+      agentType: { _id: new Types.ObjectId(), name: 'Mono Agent', slug: 'mono-agent', skills: [] },
+    });
+
+    const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
+
+    expect(agentModel.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ agentType: expect.anything(), isDefault: true }),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('Mono Agent Instance');
+  });
+
+  it('routes through a single agent when no agent is tagged, even if no "mono-agent" type is configured', async () => {
+    const { service, agentTypeService } = createService();
+
+    const agentA: IAgentForStream = {
+      id: 'agent-a',
+      name: 'Agent A',
+      agentTypeName: 'Manager',
+      agentTypeSlug: 'manager',
+      agentTypeId: 'type-manager',
+      role: 'Role',
+      description: '',
+      temperature: 0,
+      model: 'model-1',
+      instruction: '',
+      ignorePrePrompt: false,
+      knowledgeBases: [],
+      toolIds: [],
+      connectorIds: [],
+      connectorActionSelections: [],
+      skillIds: [],
+      disabledSkillIds: [],
+      agentTypeSkillIds: [],
+      isDefault: true,
+      isDefaultForType: false,
+    };
+    const agentB: IAgentForStream = {
+      ...agentA,
+      id: 'agent-b',
+      name: 'Agent B',
+      agentTypeName: 'Worker',
+      agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker',
+    };
+
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([agentA, agentB]);
+    // No "mono-agent" agent type configured anywhere.
+    agentTypeService.findAllActive.mockResolvedValue([]);
+
+    const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
+
+    // 0 agents tagged must always resolve to exactly one agent so the caller
+    // routes through RunSingleAgent instead of RunAgentTeam.
+    expect(result).toHaveLength(1);
+    // The manager is an orchestrator, not a standalone chat agent — it must
+    // never be the fallback pick when a real mono-agent isn't configured.
+    expect(result[0].agent_type).toBe('worker');
   });
 
   it('injects connector skills into playbook agent runtime', async () => {
