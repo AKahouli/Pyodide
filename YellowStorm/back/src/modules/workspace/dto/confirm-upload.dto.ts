@@ -10,9 +10,4 @@ export class ConfirmUploadDto {
   @IsOptional()
   @IsBoolean()
   deepSearch?: boolean;
-
-  @ApiPropertyOptional({ description: 'When true, uses Mistral embeddings for indexing' })
-  @IsOptional()
-  @IsBoolean()
-  mistralIndex?: boolean;
 }

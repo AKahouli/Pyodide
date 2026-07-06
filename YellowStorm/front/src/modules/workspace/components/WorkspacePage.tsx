@@ -21,7 +21,6 @@ import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
-import { useMistralIndexation } from '../hooks/useMistralIndexation';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -142,7 +141,6 @@ export function WorkspacePage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
   const { enabled: deepSearch, setEnabled: setDeepSearch } = useDeepSearchIndexation();
-  const { enabled: mistralIndex, setEnabled: setMistralIndex } = useMistralIndexation();
 
   const handleSync = useCallback(async () => {
     if (!activeWorkspaceId || isSyncing) return;
@@ -307,22 +305,6 @@ export function WorkspacePage() {
                 </TooltipTrigger>
                 <TooltipContent side='bottom' className='max-w-xs text-center'>
                   {deepSearch ? 'Indexation avec analyse approfondie : le document est envoyé au graphe de connaissances en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour enrichir le document avec une analyse approfondie.'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
-                    <Label htmlFor='mistral-index-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
-                      Indexation Mistral
-                    </Label>
-                    <Switch id='mistral-index-toggle' checked={mistralIndex} onCheckedChange={setMistralIndex} aria-label="Activer l'indexation Mistral" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side='bottom' className='max-w-xs text-center'>
-                  {mistralIndex ? 'Les documents sont indexés avec l\'embeddings Mistral en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour utiliser l\'embeddings Mistral.'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

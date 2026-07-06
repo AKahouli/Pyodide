@@ -37,13 +37,11 @@ export class IndexingController {
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
     @Query('deepSearch') deepSearch?: string,
-    @Query('mistralIndex') mistralIndex?: string,
   ) {
     const document = await this.indexingService.reindexDocument(
       workspaceId,
       docId,
       deepSearch === 'true',
-      mistralIndex === 'true',
     );
     return {
       id: document._id.toString(),
