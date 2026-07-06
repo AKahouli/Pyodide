@@ -5,6 +5,7 @@ import {
   ConversationV2Session,
   ConversationV2SessionDocument,
   ConversationV2SessionStatus,
+  ConversationV2DeployStatus,
 } from '../schemas/conversation-v2-session.schema';
 import { ListSessionsDto } from '../dto/list-sessions.dto';
 
@@ -46,6 +47,9 @@ export class ConversationV2SessionService {
       isShared: false,
       shareTokenHash: null,
       deletedAt: null,
+      deployStatus: 'idle',
+      deployedUrl: null,
+      lastDeployedAt: null,
       workspaceIds,
       eventSequence: 0,
       eventCount: 0,
@@ -142,6 +146,26 @@ export class ConversationV2SessionService {
       .findOneAndUpdate(
         { _id: new Types.ObjectId(id), ownerId, deletedAt: null },
         { $set: { isShared, shareTokenHash } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+  }
+
+  async setDeployState(
+    ownerId: string,
+    id: string,
+    patch: {
+      deployStatus?: ConversationV2DeployStatus;
+      deployedUrl?: string | null;
+      lastDeployedAt?: Date | null;
+    },
+  ) {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.model
+      .findOneAndUpdate(
+        { _id: new Types.ObjectId(id), ownerId, deletedAt: null },
+        { $set: patch },
         { new: true },
       )
       .lean()

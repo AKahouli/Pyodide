@@ -40,6 +40,7 @@ export default function ConversationV2SessionPage() {
     switchToSession,
     setSystemWorkspaceId,
     setWorkspaceIds,
+    setDeployState,
     setSelectedSkillIds,
     setSelectedConnectorIds,
     replayEvents,
@@ -53,6 +54,7 @@ export default function ConversationV2SessionPage() {
       switchToSession: s.switchToSession,
       setSystemWorkspaceId: s.setSystemWorkspaceId,
       setWorkspaceIds: s.setWorkspaceIds,
+      setDeployState: s.setDeployState,
       setSelectedSkillIds: s.setSelectedSkillIds,
       setSelectedConnectorIds: s.setSelectedConnectorIds,
       replayEvents: s.replayEvents,
@@ -104,6 +106,10 @@ export default function ConversationV2SessionPage() {
           if (cancelled) return;
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
+          setDeployState({
+            deployStatus: pointer.deployStatus ?? 'idle',
+            deployedUrl: pointer.deployedUrl ?? null,
+          });
           setSelectedSkillIds(pointer.selectedSkillIds ?? []);
           setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
         } catch {
@@ -123,6 +129,10 @@ export default function ConversationV2SessionPage() {
 
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
+        setDeployState({
+          deployStatus: pointer.deployStatus ?? 'idle',
+          deployedUrl: pointer.deployedUrl ?? null,
+        });
         setSelectedSkillIds(pointer.selectedSkillIds ?? []);
         setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
 
@@ -155,7 +165,7 @@ export default function ConversationV2SessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setSelectedSkillIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, setSelectedSkillIds, setSelectedConnectorIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
 
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send

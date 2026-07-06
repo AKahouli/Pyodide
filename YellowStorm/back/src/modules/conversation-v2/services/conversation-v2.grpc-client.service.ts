@@ -58,12 +58,13 @@ interface RawProtoEvent {
     function: string;
     args_json: string;
     content?: {
-      variant: 'browser' | 'shell' | 'file' | 'search' | 'mcp' | 'generic';
+      variant: 'browser' | 'shell' | 'file' | 'search' | 'mcp' | 'webpage' | 'generic';
       browser?: { screenshot_url: string; url?: string; title?: string };
       shell?: { command: string; output: string; exit_code: number; session_handle?: string };
       file?: { path: string; content: string; language?: string; operation?: string };
       search?: { query: string; results?: Array<{ title: string; url: string; snippet: string }> };
       mcp?: { server: string; tool: string; result_json: string };
+      webpage?: { url: string; title?: string };
       generic?: { json: string };
     };
   };
@@ -73,6 +74,7 @@ interface RawProtoEvent {
   done?: Record<string, never>;
   wait?: Record<string, never>;
   error?: { error: string };
+  application_component?: { url: string; title?: string };
 }
 
 @Injectable()
@@ -298,6 +300,36 @@ export class ConversationV2GrpcClientService
     });
   }
 
+  /**
+   * Deploy/publish the session's app. Blocking unary call — Manus performs the
+   * deployment and returns the live URL. Generous 5-minute deadline since a
+   * first deploy can be slow. Returns null when Manus doesn't implement Deploy
+   * yet (UNIMPLEMENTED), mirroring getVncSignedUrl, so the caller can fall back.
+   */
+  async deploy(
+    userId: string,
+    sessionId: string,
+  ): Promise<{ url: string; deployedAt: number } | null> {
+    return new Promise((resolve, reject) => {
+      this.client.Deploy(
+        { user_id: userId, session_id: sessionId },
+        new grpc.Metadata(),
+        { deadline: Date.now() + 300_000 },
+        (
+          err: grpc.ServiceError | null,
+          response: { url: string; deployed_at: number },
+        ) => {
+          if (err) {
+            if (err.code === grpc.status.UNIMPLEMENTED) return resolve(null);
+            return reject(err);
+          }
+          if (!response.url) return resolve(null);
+          resolve({ url: response.url, deployedAt: response.deployed_at });
+        },
+      );
+    });
+  }
+
   chat(
     userId: string,
     sessionId: string,
@@ -409,6 +441,9 @@ export class ConversationV2GrpcClientService
           case 'mcp':
             content = { kind: 'mcp', server: t.content!.mcp!.server, tool: t.content!.mcp!.tool, result: safeJson(t.content!.mcp!.result_json) };
             break;
+          case 'webpage':
+            content = { kind: 'webpage', url: t.content!.webpage!.url, title: t.content!.webpage!.title };
+            break;
           case 'generic':
             content = { kind: 'generic', data: safeJson(t.content!.generic!.json) };
             break;
@@ -440,6 +475,15 @@ export class ConversationV2GrpcClientService
         return { type: 'wait', payload: base };
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
+      case 'application_component':
+        return {
+          type: 'application_component',
+          payload: {
+            ...base,
+            url: raw.application_component!.url,
+            title: raw.application_component!.title,
+          },
+        };
       default:
         throw new Error(`Unknown event payload: ${raw.payload}`);
     }

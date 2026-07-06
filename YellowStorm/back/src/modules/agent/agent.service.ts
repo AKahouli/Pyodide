@@ -682,9 +682,26 @@ export class AgentService {
 
     if (pingedAgents.length === 0) {
       // No agents tagged: route through RunSingleAgent with the admin-created
-      // mono-agent (resolved via its agentType reference + isDefault).
-      const monoAgent = await this.resolveDefaultMonoAgent(finalUserAgents);
-      filteredAgents = monoAgent ? [monoAgent] : [];
+      // mono-agent (resolved via its agentType reference + isDefault). If no
+      // "mono-agent" type/agent is configured, fall back to a single agent
+      // (never the full roster) — the caller decides RunSingleAgent vs.
+      // RunAgentTeam purely from roster size, so dumping every available
+      // agent here would silently flip an untagged message to RunAgentTeam.
+      const monoAgent = await this.resolveDefaultMonoAgent();
+      if (monoAgent) {
+        filteredAgents = [monoAgent];
+      } else {
+        // The manager is an orchestrator, not a standalone chat agent — never
+        // let it be picked as the fallback single agent (only use it if it's
+        // truly the only agent available at all).
+        const managerSlug = this.canonicalSlug(MANAGER_SLUG);
+        const nonManagerAgents = finalUserAgents.filter(
+          (a) => this.canonicalSlug(a.agentTypeSlug) !== managerSlug,
+        );
+        const fallbackPool = nonManagerAgents.length > 0 ? nonManagerAgents : finalUserAgents;
+        const fallbackAgent = fallbackPool.find((a) => a.isDefault) ?? fallbackPool[0];
+        filteredAgents = fallbackAgent ? [fallbackAgent] : [];
+      }
     } else if (pingedAgents.length === 1) {
       // Exactly one agent tagged: send only that agent
       filteredAgents = [...pingedAgents];
@@ -696,11 +713,6 @@ export class AgentService {
         filteredAgents.push(manager);
       }
       selectedManager = manager;
-    }
-
-    // Safety net: if nothing resolved (e.g. no mono-agent configured), send all available agents
-    if (filteredAgents.length === 0) {
-      filteredAgents = finalUserAgents;
     }
 
     this.logger.log('Agents filtered for stream', {
@@ -1390,14 +1402,18 @@ export class AgentService {
   /**
    * Resolve the admin-created mono-agent sent when no agent is tagged.
    *
+   * The mono-agent is a hidden system default: it is not part of any user's
+   * personal/shared roster (it's deliberately excluded from agent listings so
+   * it's not user-selectable), so it must be fetched directly from the
+   * collection rather than searched for inside an already-resolved roster —
+   * it will never be found there.
+   *
    * Agents reference their type via the `agentType` ObjectId (→ agent-types
-   * collection), so we resolve the "mono-agent" type id from that collection and
-   * match by id rather than the populated slug. The mono-agent is an admin agent
-   * (isDefault=true); we prefer it but fall back to any agent of that type.
+   * collection), so we resolve the "mono-agent" type id from that collection
+   * first and then look up the admin default (isDefault=true) agent of that
+   * type directly.
    */
-  private async resolveDefaultMonoAgent(
-    agents: IAgentForStream[],
-  ): Promise<IAgentForStream | undefined> {
+  private async resolveDefaultMonoAgent(): Promise<IAgentForStream | undefined> {
     const target = this.canonicalSlug(MONO_AGENT_SLUG);
     const agentTypes = await this.agentTypeService.findAllActive();
     const monoType = agentTypes.find((t) => this.canonicalSlug(t.slug) === target);
@@ -1410,18 +1426,25 @@ export class AgentService {
       return undefined;
     }
 
-    const monoAgent =
-      agents.find((a) => a.isDefault && a.agentTypeId === monoType.id) ??
-      agents.find((a) => a.agentTypeId === monoType.id);
+    const monoAgentDoc = await this.agentModel
+      .findOne({
+        agentType: new Types.ObjectId(monoType.id),
+        isDefault: true,
+        isActive: true,
+      })
+      .populate('agentType', 'name slug skills')
+      .lean()
+      .exec();
 
-    if (!monoAgent) {
-      this.logger.warn('No agent of the "mono-agent" type available for this user', {
+    if (!monoAgentDoc) {
+      this.logger.warn('No admin default agent of the "mono-agent" type is configured', {
         monoTypeId: monoType.id,
         monoTypeSlug: monoType.slug,
       });
+      return undefined;
     }
 
-    return monoAgent;
+    return this.toStreamAgent(monoAgentDoc);
   }
 
   private resolveDefaultAgentBySlug(

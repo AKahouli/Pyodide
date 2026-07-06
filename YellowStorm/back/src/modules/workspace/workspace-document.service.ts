@@ -412,6 +412,7 @@ export class WorkspaceDocumentService {
     userId: string,
     documentId: string,
     deepSearch?: boolean,
+    mistralIndex?: boolean,
   ): Promise<DocumentResponse> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -449,7 +450,7 @@ export class WorkspaceDocumentService {
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
     if (!document.isFolder) {
-      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+      this.indexingService.queueDocument(document._id.toString(), deepSearch, mistralIndex).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
           documentId: document._id,
           error: err instanceof Error ? err.message : 'Unknown error',
@@ -488,6 +489,7 @@ export class WorkspaceDocumentService {
     folderId?: string,
     deepSearch?: boolean,
     autoIndex: boolean = true,
+    mistralIndex?: boolean,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -559,7 +561,7 @@ export class WorkspaceDocumentService {
 
     // Trigger indexing (non-blocking), unless auto-indexation is disabled.
     if (autoIndex) {
-      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+      this.indexingService.queueDocument(document._id.toString(), deepSearch, mistralIndex).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
           documentId: document._id,
           error: err instanceof Error ? err.message : 'Unknown error',
@@ -897,6 +899,7 @@ export class WorkspaceDocumentService {
     sessionId: string,
     deepSearch?: boolean,
     autoIndex: boolean = true,
+    mistralIndex?: boolean,
   ): Promise<BulkUploadCompleteResponse> {
     const startTime = Date.now();
 
@@ -949,7 +952,7 @@ export class WorkspaceDocumentService {
         // Trigger indexing (non-blocking). Skip folders — nothing to index —
         // and skip entirely when auto-indexation is disabled by the uploader.
         if (!document.isFolder && autoIndex) {
-          this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+          this.indexingService.queueDocument(document._id.toString(), deepSearch, mistralIndex).catch((err) => {
             this.logger.warn('Failed to queue document for indexing', {
               documentId: document._id,
               error: err instanceof Error ? err.message : 'Unknown error',

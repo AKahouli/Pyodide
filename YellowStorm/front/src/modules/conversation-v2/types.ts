@@ -1,5 +1,5 @@
 export type ConversationV2EventType =
-  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error';
+  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error' | 'application_component';
 
 export interface BaseEvent {
   event_id: string;
@@ -20,7 +20,8 @@ export type AgentEvent =
   | ({ type: 'title' } & BaseEvent & { title: string })
   | ({ type: 'done' } & BaseEvent)
   | ({ type: 'wait' } & BaseEvent)
-  | ({ type: 'error' } & BaseEvent & { error: string });
+  | ({ type: 'error' } & BaseEvent & { error: string })
+  | ({ type: 'application_component' } & BaseEvent & { url: string; title?: string });
 
 export type ToolContent =
   | { kind: 'browser'; screenshot_url: string; url?: string; title?: string }
@@ -28,7 +29,15 @@ export type ToolContent =
   | { kind: 'file'; path: string; content: string; language?: string; operation?: 'read' | 'write' | 'edit' | string }
   | { kind: 'search'; query: string; results: Array<{ title: string; url: string; snippet: string }> }
   | { kind: 'mcp'; server: string; tool: string; result: unknown }
+  | { kind: 'webpage'; url: string; title?: string }
   | { kind: 'generic'; data: unknown };
+
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
 
 export interface FileInfo {
   id: string;

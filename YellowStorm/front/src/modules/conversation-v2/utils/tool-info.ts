@@ -1,4 +1,5 @@
 import {
+  AppWindowIcon,
   FileTextIcon,
   GlobeIcon,
   MessageSquareIcon,
@@ -40,6 +41,8 @@ export const TOOL_FUNCTION_LABEL: Record<string, string> = {
 
   message_notify_user: 'Sending notification',
   message_ask_user: 'Asking question',
+
+  webpage_show: 'Displaying webpage',
 };
 
 /** Which arg to surface next to the label, mirrors Manus' TOOL_FUNCTION_ARG_MAP. */
@@ -69,6 +72,7 @@ export const TOOL_FUNCTION_ARG_KEY: Record<string, string> = {
   info_search_web: 'query',
   message_notify_user: 'text',
   message_ask_user: 'text',
+  webpage_show: 'url',
 };
 
 export const TOOL_GROUP_LABEL: Record<string, string> = {
@@ -79,6 +83,7 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   info: 'Search',
   message: 'Message',
   mcp: 'MCP',
+  webpage: 'Web Page',
 };
 
 export const TOOL_GROUP_ICON: Record<string, LucideIcon> = {
@@ -89,6 +94,7 @@ export const TOOL_GROUP_ICON: Record<string, LucideIcon> = {
   info: SearchIcon,
   message: MessageSquareIcon,
   mcp: PuzzleIcon,
+  webpage: AppWindowIcon,
 };
 
 export interface ResolvedToolInfo {

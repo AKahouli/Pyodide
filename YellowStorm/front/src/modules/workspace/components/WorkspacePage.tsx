@@ -21,6 +21,7 @@ import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
+import { useMistralIndexation } from '../hooks/useMistralIndexation';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -141,6 +142,7 @@ export function WorkspacePage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
   const { enabled: deepSearch, setEnabled: setDeepSearch } = useDeepSearchIndexation();
+  const { enabled: mistralIndex, setEnabled: setMistralIndex } = useMistralIndexation();
 
   const handleSync = useCallback(async () => {
     if (!activeWorkspaceId || isSyncing) return;
@@ -264,8 +266,8 @@ export function WorkspacePage() {
 
       {/* Toolbar */}
       <div className='border-b bg-card/40'>
-        <div className='mx-auto flex w-full max-w-7xl flex-wrap items-center gap-2 px-6 py-3'>
-          <div className='relative flex-1 min-w-[240px] max-w-md'>
+        <div className='mx-auto flex w-full max-w-7xl items-center gap-3 px-6 py-3'>
+          <div className='relative w-64 shrink-0'>
             <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder='Rechercher dossier ou fichier…' className='pl-9 pr-9 h-9' />
             {search && (
@@ -275,7 +277,7 @@ export function WorkspacePage() {
             )}
           </div>
 
-          <div className='ml-auto flex items-center gap-2'>
+          <div className='flex items-center gap-2 overflow-x-auto'>
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -300,11 +302,27 @@ export function WorkspacePage() {
                       Recherche approfondie
                     </Label>
                     <Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label="Activer la recherche approfondie lors de l'indexation" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', deepSearch ? 'text-amber-600' : 'text-muted-foreground')}>{deepSearch ? 'ON' : 'OFF'}</span>
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side='bottom' className='max-w-xs text-center'>
                   {deepSearch ? 'Indexation avec analyse approfondie : le document est envoyé au graphe de connaissances en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour enrichir le document avec une analyse approfondie.'}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
+                    <Label htmlFor='mistral-index-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
+                      Indexation Mistral
+                    </Label>
+                    <Switch id='mistral-index-toggle' checked={mistralIndex} onCheckedChange={setMistralIndex} aria-label="Activer l'indexation Mistral" />
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='max-w-xs text-center'>
+                  {mistralIndex ? 'Les documents sont indexés avec l\'embeddings Mistral en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour utiliser l\'embeddings Mistral.'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

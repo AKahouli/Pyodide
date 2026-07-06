@@ -1736,12 +1736,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     logOpts?: LogOptions,
   ): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     return new Promise((resolve, reject) => {
-      const metadata = new grpc.Metadata();
+      const metadata = createGrpcMetadata(this.configService);
       const username =
         (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
       metadata.set('user', username);
 
-      const call = this.chatbotClient.RunSingleAgent(grpcRequest, { metadata });
+      const call = this.chatbotClient.RunSingleAgent(grpcRequest, metadata);
       const buffer = new Map<string, MessageComponent>();
       const startTime = Date.now();
       let chunkCount = 0;
