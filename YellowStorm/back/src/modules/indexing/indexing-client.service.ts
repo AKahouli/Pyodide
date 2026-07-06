@@ -111,6 +111,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       oneshot_prompt: request.oneshotPrompt || undefined,
       brain_tag: [''],
       deep_research: request.deepSearch || false,
+      mistral: request.mistralIndex || false,
     };
 
     try {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'workspace:auto-indexation';
+const STORAGE_KEY = 'workspace:mistral-indexation';
 
-export function readAutoIndexationValue(): boolean {
+export function readMistralIndexationValue(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     return window.localStorage.getItem(STORAGE_KEY) === 'true';
@@ -11,13 +11,13 @@ export function readAutoIndexationValue(): boolean {
   }
 }
 
-export function useAutoIndexation() {
-  const [enabled, setEnabledState] = useState<boolean>(() => readAutoIndexationValue());
+export function useMistralIndexation() {
+  const [enabled, setEnabledState] = useState<boolean>(() => readMistralIndexationValue());
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key === STORAGE_KEY) {
-        setEnabledState(readAutoIndexationValue());
+        setEnabledState(readMistralIndexationValue());
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -29,7 +29,6 @@ export function useAutoIndexation() {
     try {
       window.localStorage.setItem(STORAGE_KEY, value ? 'true' : 'false');
     } catch {
-      // Ignore quota/access errors — state remains in memory for this session
     }
   }, []);
 
