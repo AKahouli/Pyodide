@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronLeft, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -77,27 +77,9 @@ export function GovernancePage(): JSX.Element {
             </div>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button type='button' className='inline-flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm font-medium transition hover:bg-muted'>
-                <span className='text-muted-foreground'>{t('programs.switcher')}</span>
-                <span className='max-w-[220px] truncate'>{selectedProgram?.name ?? t('programs.empty')}</span>
-                <ChevronDown className='h-4 w-4 text-muted-foreground' />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align='start' className='w-64'>
-              {programs.map((program) => (
-                <DropdownMenuItem key={program.id} onSelect={() => handleSelectProgram(program.id)}>
-                  {program.name}
-                </DropdownMenuItem>
-              ))}
-              {programs.length === 0 && <p className='px-2 py-1.5 text-sm text-muted-foreground'>{t('programs.empty')}</p>}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
           <div className='flex-1' />
 
-          <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.new')}</Button>
+          <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.create')}</Button>
           {selectedProgram && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -117,7 +99,24 @@ export function GovernancePage(): JSX.Element {
               </AlertDialogContent>
             </AlertDialog>
           )}
-          <Button type='button' size='sm' disabled={!selectedProgramId} onClick={() => setScopeWizardOpen(true)}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type='button' className='inline-flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm font-medium transition hover:bg-muted'>
+                <span className='text-muted-foreground'>{t('programs.switcher')}</span>
+                <span className='max-w-[220px] truncate'>{selectedProgram?.name ?? t('programs.empty')}</span>
+                <ChevronDown className='h-4 w-4 text-muted-foreground' />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end' className='w-64'>
+              {programs.map((program) => (
+                <DropdownMenuItem key={program.id} onSelect={() => handleSelectProgram(program.id)}>
+                  {program.name}
+                </DropdownMenuItem>
+              ))}
+              {programs.length === 0 && <p className='px-2 py-1.5 text-sm text-muted-foreground'>{t('programs.empty')}</p>}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </header>
 
         {selectedScopeId ? (

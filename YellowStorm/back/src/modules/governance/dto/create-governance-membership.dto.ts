@@ -8,8 +8,14 @@ export class CreateGovernanceMembershipDto {
   scopeId?: string;
 
   @ApiProperty()
+  @IsOptional()
   @IsMongoId()
-  userId!: string;
+  userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsMongoId()
+  groupId?: string;
 
   @ApiProperty({ enum: ['program_owner', 'program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'] })
   @IsIn(['program_owner', 'program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'])

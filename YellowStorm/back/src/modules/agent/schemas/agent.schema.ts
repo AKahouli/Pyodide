@@ -45,6 +45,17 @@ export class AgentGuardrails {
 const AgentGuardrailsSchema = SchemaFactory.createForClass(AgentGuardrails);
 
 @Schema({ _id: false })
+export class AgentDeploymentSettings {
+  @Prop({ type: Boolean, default: false })
+  embedEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  restEnabled!: boolean;
+}
+
+const AgentDeploymentSettingsSchema = SchemaFactory.createForClass(AgentDeploymentSettings);
+
+@Schema({ _id: false })
 export class AgentConnectorActionSelection {
   @Prop({ type: Types.ObjectId, ref: 'Connector', required: true })
   connector!: Types.ObjectId;
@@ -125,6 +136,9 @@ export class Agent extends Document {
 
   @Prop({ type: AgentGuardrailsSchema, default: () => ({}) })
   guardrails!: AgentGuardrails;
+
+  @Prop({ type: AgentDeploymentSettingsSchema, default: () => ({}) })
+  deploymentSettings!: AgentDeploymentSettings;
 
   @Prop({ default: false, index: true })
   isDefault!: boolean;

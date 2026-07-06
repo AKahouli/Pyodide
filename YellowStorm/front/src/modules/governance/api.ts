@@ -187,4 +187,9 @@ export const governanceApi = {
     const res = await apiClient.get(API_ENDPOINTS.users.search, { params: { q: query, limit } });
     return res.data.data;
   },
+
+  async listUsers(): Promise<GovernanceUserSearchResult[]> {
+    const res = await apiClient.get(API_ENDPOINTS.users.directory);
+    return res.data.data;
+  },
 };

@@ -12,7 +12,6 @@ import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/g
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument, GovernancePublicationAttemptStatus } from '../schemas/governance-publication-attempt.schema';
-import { GovernanceChannelReadinessService } from './governance-channel-readiness.service';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
 export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; workspaceIds: string[]; sourceIds: string[]; includedSourceIds: string[]; excludedSourceIds: string[]; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
@@ -29,7 +28,6 @@ export class GovernanceDeploymentService {
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
-    private readonly channelReadinessService: GovernanceChannelReadinessService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -213,11 +211,8 @@ export class GovernanceDeploymentService {
       { key: 'draft_revision', label: 'Draft revision', status: deployment.currentDraftRevisionId ? 'passed' : 'failed', severity: 'blocking', targetType: 'rule' },
       { key: 'published_revision', label: 'Published revision', status: deployment.currentPublishedRevisionId ? 'passed' : 'warning', severity: 'warning', targetType: 'rule' },
     ];
-    const channels = (deployment.channels ?? {}) as Record<string, { enabled?: boolean; status?: string }>;
-    if (!deployment.currentDraftRevisionId) return checks;
-    const revision = await this.revisionModel.findById(deployment.currentDraftRevisionId).lean().exec();
-    if (!revision) return checks;
-    return [...checks, ...(await this.channelReadinessService.buildChannelChecks(actorId, revision.agentId.toString(), channels))];
+    void actorId;
+    return checks;
   }
 
   private async createPublicationAttempt(actorId: string, actorEmail: string, deployment: GovernanceDeploymentDocument, revisionId: string | undefined, dto: PublishGovernanceDeploymentDto, status: GovernancePublicationAttemptStatus, readiness?: GovernanceReadiness, errorCode?: string, errorMessage?: string): Promise<void> {

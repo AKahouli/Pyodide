@@ -204,7 +204,12 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleEnabledChange = async (nextEnabled: boolean) => {
-    if (!agentId || !integration) return;
+    if (!agentId) return;
+    if (!integration) {
+      setEnabled(nextEnabled);
+      return;
+    }
+
     const previousEnabled = enabled;
     setEnabled(nextEnabled);
     setEnabledBusy(true);
@@ -351,7 +356,7 @@ export function AgentWhatsAppIntegrationSection({
         <Switch
           data-testid="whatsapp-enabled-switch"
           checked={enabled}
-          disabled={!agentId || !integration || loading || busy || enabledBusy}
+          disabled={!agentId || loading || busy || enabledBusy}
           onCheckedChange={(checked) => void handleEnabledChange(checked)}
         />
       </div>
@@ -448,7 +453,7 @@ export function AgentWhatsAppIntegrationSection({
           )}
 
           <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-            {notConnected && !pairing && (
+            {enabled && notConnected && !pairing && (
               <Button
                 type="button"
                 size="sm"

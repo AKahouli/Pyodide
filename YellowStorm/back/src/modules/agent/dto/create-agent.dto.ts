@@ -71,6 +71,18 @@ export class AgentGuardrailsDto {
   promptInjection?: PromptInjectionGuardrailsDto;
 }
 
+export class AgentDeploymentSettingsDto {
+  @ApiPropertyOptional({ description: 'Enable website embed deployment mode', default: false })
+  @IsOptional()
+  @IsBoolean()
+  embedEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable REST API deployment mode', default: false })
+  @IsOptional()
+  @IsBoolean()
+  restEnabled?: boolean;
+}
+
 export class CreateAgentDto {
   @ApiProperty({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
   @IsString()
@@ -180,4 +192,10 @@ export class CreateAgentDto {
   @ValidateNested()
   @Type(() => AgentGuardrailsDto)
   guardrails?: AgentGuardrailsDto;
+
+  @ApiPropertyOptional({ description: 'Agent deployment channel settings', type: AgentDeploymentSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentDeploymentSettingsDto)
+  deploymentSettings?: AgentDeploymentSettingsDto;
 }

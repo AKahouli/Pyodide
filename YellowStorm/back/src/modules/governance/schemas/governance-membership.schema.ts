@@ -19,8 +19,11 @@ export class GovernanceMembership extends Document {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceScope', index: true })
   scopeId?: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-  userId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  userId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'UserGroup', index: true })
+  groupId?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   invitedBy!: Types.ObjectId;
@@ -45,8 +48,10 @@ export class GovernanceMembership extends Document {
 
 export const GovernanceMembershipSchema = SchemaFactory.createForClass(GovernanceMembership);
 
-GovernanceMembershipSchema.index({ programId: 1, scopeId: 1, userId: 1 }, { unique: true });
+GovernanceMembershipSchema.index({ programId: 1, scopeId: 1, userId: 1 }, { unique: true, partialFilterExpression: { userId: { $exists: true } } });
+GovernanceMembershipSchema.index({ programId: 1, scopeId: 1, groupId: 1 }, { unique: true, partialFilterExpression: { groupId: { $exists: true } } });
 GovernanceMembershipSchema.index({ userId: 1, status: 1 });
+GovernanceMembershipSchema.index({ groupId: 1, status: 1 });
 
 GovernanceMembershipSchema.set('toJSON', {
   virtuals: true,

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Copy, Pencil, Trash2, X } from 'lucide-react';
+import { Pencil, Phone, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +10,8 @@ import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { CreateEditAgentDialog, createAdminWidgetToken, createWidgetToken, useAgents, useAgentsLoading, useAgentStore, type Agent, type PromptInjectionGuardrailsConfig, type UserAgentFormValues } from '@/modules/agent';
+import { CreateEditAgentDialog, useAgents, useAgentsLoading, useAgentStore, type Agent, type PromptInjectionGuardrailsConfig, type UserAgentFormValues } from '@/modules/agent';
+import { useGroups, useGroupsStore, type UserGroup } from '@/modules/groups';
 import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/workspace';
 import { governanceApi } from '../api';
 import {
@@ -28,10 +29,8 @@ import {
   useMarkGovernanceDryRun,
   usePublishGovernanceDeployment,
   useSuspendGovernanceDeployment,
-  useUpdateGovernanceDeployment,
   useUpdateGovernanceMembership,
   useUpdateGovernanceScope,
-  type GovernanceChannelConfig,
   type GovernanceDryRun,
   type GovernanceDryRunMessage,
   type GovernanceMembership,
@@ -42,7 +41,6 @@ import {
   type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
-import { GovernanceUserName } from './GovernanceUserName';
 
 const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
   inputGuardrailEnabled: false,
@@ -61,19 +59,9 @@ const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipali
 
 const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'];
 
-function normalizeChannels(channels: GovernanceScopeOverview['channels']): Record<string, GovernanceChannelConfig> {
-  const source = (channels ?? {}) as Record<string, GovernanceChannelConfig>;
-  const result: Record<string, GovernanceChannelConfig> = {};
-  for (const key of channelKeys) {
-    const existing = source[key] ?? {};
-    result[key] = { enabled: existing.enabled ?? false, status: existing.status ?? 'not_configured', allowedOrigins: existing.allowedOrigins ?? [] };
-  }
-  return result;
-}
+export type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'testPublish' | 'monitor';
 
-export type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'channels' | 'testPublish' | 'monitor';
-
-export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', 'access', 'channels', 'testPublish', 'monitor'];
+export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', 'access', 'testPublish', 'monitor'];
 
 const channelLabelKeys = {
   widget: 'scopeShell.channels.widget',
@@ -124,7 +112,6 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'access' && <AccessTab programId={programId} memberships={memberships} scopeId={scopeId} />}
-        {activeTab === 'channels' && <ChannelsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'testPublish' && <TestPublishTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'monitor' && <MonitorTab overview={overview} metrics={metrics} scopeId={scopeId} />}
       </div>
@@ -156,8 +143,11 @@ function OverviewTab({ programId, overview }: Readonly<{ programId: string | nul
       </OverviewCard>
       <OverviewCard title={t('scopeShell.overview.channelsCard')}>
         {channelEntries.map(([name, value]) => {
-          const labelKey = channelLabelKeys[name as keyof typeof channelLabelKeys];
-          return <OverviewRow key={name} label={labelKey ? t(labelKey) : name} value={<ChannelStatusPill value={value} />} />;
+          const parsed = parseChannelConfigKey(name);
+          const labelKey = channelLabelKeys[parsed.channel as keyof typeof channelLabelKeys];
+          const channelLabel = labelKey ? t(labelKey) : parsed.channel;
+          const label = parsed.agentId ? <><GovernanceAgentName agentId={parsed.agentId} /> · {channelLabel}</> : channelLabel;
+          return <OverviewRow key={name} label={label} value={<ChannelStatusPill value={value} />} />;
         })}
         {channelEntries.length === 0 && <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.empty')}</p>}
       </OverviewCard>
@@ -243,7 +233,7 @@ function OverviewCard({ title, children }: Readonly<{ title: string; children: R
   );
 }
 
-function OverviewRow({ label, value }: Readonly<{ label: string; value: ReactNode }>): JSX.Element {
+function OverviewRow({ label, value }: Readonly<{ label: ReactNode; value: ReactNode }>): JSX.Element {
   return (
     <div className='flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0'>
       <span className='text-muted-foreground'>{label}</span>
@@ -402,18 +392,28 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
   const updateAgent = useAgentStore((state) => state.updateAgent);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [editingAgentTab, setEditingAgentTab] = useState<'identity' | 'guardrails' | 'deployment'>('identity');
   const [bulkPending, setBulkPending] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
+  const mappedAgentIds = overview.scope.agentIds;
 
   useEffect(() => {
     void fetchAgents();
   }, [fetchAgents]);
 
-  const mappedAgentIds = overview.scope.agentIds;
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
   const allGuardrailsEnabled = mappedAgents.length > 0 && mappedAgents.every(isAgentGuardrailsEnabled);
 
+  const openAgentModal = (agent: Agent, tab: 'identity' | 'guardrails' | 'deployment') => {
+    setEditingAgentTab(tab);
+    setEditingAgent(agent);
+  };
+
   const handleToggleAgent = async (agent: Agent, enabled: boolean) => {
+    if (enabled) {
+      openAgentModal(agent, 'guardrails');
+      return;
+    }
     try {
       await setAgentGuardrailsEnabled(agent, enabled);
     } catch (error) {
@@ -463,6 +463,7 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
         isActive: data.isActive,
         isDefaultForType: data.isDefaultForType,
         guardrails: data.guardrails,
+        deploymentSettings: data.deploymentSettings,
       });
       setEditingAgent(null);
     } catch (error) {
@@ -492,32 +493,46 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
 
       <div className='grid gap-2'>
         {mappedAgents.map((agent, index) => (
-          <div key={agent.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
-            <div className='min-w-0'>
-              <div className='truncate font-medium'>{agent.name}</div>
-              <p className='text-xs text-muted-foreground'>{index === 0 ? t('scopeShell.agents.primary') : t('scopeShell.agents.secondary')}</p>
+          <details key={agent.id} className='group rounded-xl border bg-background p-3' open={index === 0}>
+            <summary className='flex cursor-pointer list-none items-center justify-between gap-3'>
+              <div className='min-w-0'>
+                <div className='truncate font-medium'>{agent.name}</div>
+                <p className='text-xs text-muted-foreground'>{index === 0 ? t('scopeShell.agents.primary') : t('scopeShell.agents.secondary')}</p>
+              </div>
+              <div className='flex flex-none items-center gap-3'>
+                <label className='flex items-center gap-2 text-xs text-muted-foreground' onClick={(event) => event.stopPropagation()}>
+                  <Switch checked={isAgentGuardrailsEnabled(agent)} onCheckedChange={(checked) => handleToggleAgent(agent, checked)} aria-label={t('scopeShell.agents.guardrails')} />
+                  {t('scopeShell.agents.guardrails')}
+                </label>
+                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-foreground' aria-label={t('scopeShell.agents.deployment')} onClick={(event) => { event.preventDefault(); openAgentModal(agent, 'deployment'); }}>
+                  <Phone className='h-4 w-4' />
+                </Button>
+                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-foreground' aria-label={t('scopeShell.agents.edit')} onClick={(event) => { event.preventDefault(); openAgentModal(agent, 'identity'); }}>
+                  <Pencil className='h-4 w-4' />
+                </Button>
+                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.agents.remove')} disabled={updateScope.isPending} onClick={(event) => { event.preventDefault(); handleRemove(agent.id); }}>
+                  <Trash2 className='h-4 w-4' />
+                </Button>
+              </div>
+            </summary>
+            <div className='mt-3 rounded-xl border border-dashed p-3 text-sm text-muted-foreground'>
+              {t('scopeShell.agents.deploymentHint')}
             </div>
-            <div className='flex flex-none items-center gap-3'>
-              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
-                <Switch checked={isAgentGuardrailsEnabled(agent)} onCheckedChange={(checked) => handleToggleAgent(agent, checked)} aria-label={t('scopeShell.agents.guardrails')} />
-                {t('scopeShell.agents.guardrails')}
-              </label>
-              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-foreground' aria-label={t('scopeShell.agents.edit')} onClick={() => setEditingAgent(agent)}>
-                <Pencil className='h-4 w-4' />
-              </Button>
-              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.agents.remove')} disabled={updateScope.isPending} onClick={() => handleRemove(agent.id)}>
-                <Trash2 className='h-4 w-4' />
-              </Button>
-            </div>
-          </div>
+          </details>
         ))}
         {mappedAgents.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.agents.empty')}</p>}
       </div>
 
       <AgentPickerDialog open={dialogOpen} onOpenChange={setDialogOpen} mappedAgentIds={mappedAgentIds} onAdd={handleAdd} pending={updateScope.isPending} />
-      <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} onSave={handleSaveAgent} saving={savingAgent} />
+      <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} initialTab={editingAgentTab} onSave={handleSaveAgent} saving={savingAgent} />
     </div>
   );
+}
+
+function parseChannelConfigKey(key: string): { agentId?: string; channel: string } {
+  const separatorIndex = key.indexOf(':');
+  if (separatorIndex <= 0) return { channel: key };
+  return { agentId: key.slice(0, separatorIndex), channel: key.slice(separatorIndex + 1) };
 }
 
 function AgentPickerDialog({ open, onOpenChange, mappedAgentIds, onAdd, pending }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; mappedAgentIds: string[]; onAdd: (agentId: string) => void; pending: boolean }>): JSX.Element {
@@ -583,7 +598,8 @@ function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: st
   const deleteMembership = useDeleteGovernanceMembership(programId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const scopeMemberships = memberships.filter((membership) => !membership.scopeId || membership.scopeId === scopeId);
-  const existingUserIds = scopeMemberships.map((membership) => membership.userId);
+  const existingUserIds = scopeMemberships.map((membership) => membership.userId).filter((id): id is string => Boolean(id));
+  const existingGroupIds = scopeMemberships.map((membership) => membership.groupId).filter((id): id is string => Boolean(id));
 
   return (
     <div className='grid gap-4'>
@@ -596,10 +612,12 @@ function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: st
       </div>
       <div className='grid gap-2'>
         {scopeMemberships.map((membership) => (
-          <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
-            <div className='min-w-0'>
-              <div className='truncate font-medium'><GovernanceUserName userId={membership.userId} /></div>
-              <p className='text-xs text-muted-foreground'>{t(`scopeShell.access.status.${membership.status}`)}{membership.scopeId ? '' : ` · ${t('access.programLevel')}`}</p>
+            <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
+              <div className='min-w-0'>
+              <div className='truncate font-medium'>{membershipDisplayName(membership)}</div>
+              <p className='text-xs text-muted-foreground'>
+                {t(`scopeShell.access.status.${membership.status}`)}{membership.scopeId ? '' : ` · ${t('access.programLevel')}`}{membership.group ? ` · ${t('scopeShell.access.groupMembers', { count: membership.group.memberCount })}` : membership.user?.email ? ` · ${membership.user.email}` : ''}
+              </p>
             </div>
             <div className='flex flex-none items-center gap-2'>
               <select
@@ -619,23 +637,52 @@ function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: st
         ))}
         {scopeMemberships.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('access.empty')}</p>}
       </div>
-      <InviteUsersDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} excludeUserIds={existingUserIds} />
+      <InviteUsersDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} excludeUserIds={existingUserIds} excludeGroupIds={existingGroupIds} />
     </div>
   );
 }
 
-function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUserIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; excludeUserIds: string[] }>): JSX.Element {
+function membershipDisplayName(membership: GovernanceMembership): string {
+  if (membership.group) return membership.group.name;
+  const user = membership.user;
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ');
+  return fullName || user?.email || membership.userId || membership.groupId || '';
+}
+
+type AccessSelection = { type: 'user'; user: GovernanceUserSearchResult } | { type: 'group'; group: UserGroup };
+
+function selectionLabel(selection: AccessSelection): string {
+  if (selection.type === 'group') return selection.group.name;
+  const fullName = [selection.user.firstName, selection.user.lastName].filter(Boolean).join(' ');
+  return fullName || selection.user.email;
+}
+
+function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUserIds, excludeGroupIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; excludeUserIds: string[]; excludeGroupIds: string[] }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const createMembership = useCreateGovernanceMembership(programId);
+  const groups = useGroups();
+  const fetchGroups = useGroupsStore((state) => state.fetchGroups);
   const [search, setSearch] = useState('');
+  const [directoryUsers, setDirectoryUsers] = useState<GovernanceUserSearchResult[]>([]);
   const [results, setResults] = useState<GovernanceUserSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [selected, setSelected] = useState<GovernanceUserSearchResult[]>([]);
+  const [selected, setSelected] = useState<AccessSelection[]>([]);
   const [role, setRole] = useState<GovernanceMembershipRole>('scope_viewer');
   const [level, setLevel] = useState<'scope' | 'program'>('scope');
 
   useEffect(() => {
-    if (!open) { setSearch(''); setResults([]); setSelected([]); }
+    if (!open) return;
+    void fetchGroups();
+    governanceApi.listUsers()
+      .then(setDirectoryUsers)
+      .catch((error) => {
+        setDirectoryUsers([]);
+        showError(t('scopeShell.access.directoryError'), { description: parseApiError(error).message });
+      });
+  }, [open, fetchGroups, t]);
+
+  useEffect(() => {
+    if (!open) { setSearch(''); setResults([]); setDirectoryUsers([]); setSelected([]); }
   }, [open]);
 
   useEffect(() => {
@@ -650,16 +697,23 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
     return () => window.clearTimeout(timeout);
   }, [search, open]);
 
-  const toggleSelect = (user: GovernanceUserSearchResult) => {
-    setSelected((prev) => (prev.some((item) => item.id === user.id) ? prev.filter((item) => item.id !== user.id) : [...prev, user]));
+  const toggleUser = (user: GovernanceUserSearchResult) => {
+    setSelected((prev) => (prev.some((item) => item.type === 'user' && item.user.id === user.id) ? prev.filter((item) => !(item.type === 'user' && item.user.id === user.id)) : [...prev, { type: 'user', user }]));
+  };
+
+  const toggleGroup = (group: UserGroup) => {
+    setSelected((prev) => (prev.some((item) => item.type === 'group' && item.group.id === group.id) ? prev.filter((item) => !(item.type === 'group' && item.group.id === group.id)) : [...prev, { type: 'group', group }]));
   };
 
   const handleInvite = () => {
-    selected.forEach((user) => createMembership.mutate({ userId: user.id, scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }));
+    selected.forEach((item) => createMembership.mutate({ userId: item.type === 'user' ? item.user.id : undefined, groupId: item.type === 'group' ? item.group.id : undefined, scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }));
     onOpenChange(false);
   };
 
-  const availableResults = results.filter((user) => !excludeUserIds.includes(user.id));
+  const normalizedSearch = search.trim().toLowerCase();
+  const userSource = normalizedSearch ? results : directoryUsers;
+  const availableResults = userSource.filter((user) => !excludeUserIds.includes(user.id) && (!normalizedSearch || `${user.email} ${user.firstName ?? ''} ${user.lastName ?? ''}`.toLowerCase().includes(normalizedSearch)));
+  const availableGroups = groups.filter((group) => !excludeGroupIds.includes(group.id) && (!normalizedSearch || `${group.name} ${group.description}`.toLowerCase().includes(normalizedSearch)));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -672,22 +726,34 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
         {selected.length > 0 && (
           <div className='flex flex-wrap gap-2'>
             {selected.map((user) => {
-              const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+              const label = selectionLabel(user);
               return (
-                <span key={user.id} className='inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary'>
-                  {fullName || user.email}
-                  <button type='button' onClick={() => toggleSelect(user)} aria-label={t('access.remove')}><X className='h-3 w-3' /></button>
+                <span key={`${user.type}-${user.type === 'user' ? user.user.id : user.group.id}`} className='inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary'>
+                  {label}
+                  <button type='button' onClick={() => user.type === 'user' ? toggleUser(user.user) : toggleGroup(user.group)} aria-label={t('access.remove')}><X className='h-3 w-3' /></button>
                 </span>
               );
             })}
           </div>
         )}
         <div className='grid max-h-56 gap-1 overflow-y-auto rounded-xl border bg-background p-2'>
+          {availableGroups.map((group) => {
+            const isSelected = selected.some((item) => item.type === 'group' && item.group.id === group.id);
+            return (
+              <button key={`group-${group.id}`} type='button' onClick={() => toggleGroup(group)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
+                <span className='min-w-0'>
+                  <span className='block truncate font-medium'>{group.name}</span>
+                  <span className='block truncate text-xs text-muted-foreground'>{t('scopeShell.access.groupMembers', { count: group.memberCount })}</span>
+                </span>
+                {isSelected && <span className='flex-none text-xs font-medium text-primary'>{t('access.selected')}</span>}
+              </button>
+            );
+          })}
           {availableResults.map((user) => {
-            const isSelected = selected.some((item) => item.id === user.id);
+            const isSelected = selected.some((item) => item.type === 'user' && item.user.id === user.id);
             const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
             return (
-              <button key={user.id} type='button' onClick={() => toggleSelect(user)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
+              <button key={`user-${user.id}`} type='button' onClick={() => toggleUser(user)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
                 <span className='min-w-0'>
                   <span className='block truncate font-medium'>{fullName || user.email}</span>
                   {fullName && <span className='block truncate text-xs text-muted-foreground'>{user.email}</span>}
@@ -697,7 +763,7 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
             );
           })}
           {isSearching && <p className='p-2 text-sm text-muted-foreground'>{t('access.searching')}</p>}
-          {!isSearching && search.trim() && availableResults.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('access.noResults')}</p>}
+          {!isSearching && search.trim() && availableResults.length === 0 && availableGroups.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('access.noResults')}</p>}
           {!search.trim() && <p className='p-2 text-sm text-muted-foreground'>{t('access.searchHint')}</p>}
         </div>
         <div className='grid gap-3 md:grid-cols-2'>
@@ -717,148 +783,6 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
   );
 }
 
-function ChannelsTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
-  const deploymentId = overview.deployment?.id ?? null;
-  const createDeployment = useCreateGovernanceDeployment(programId);
-  const updateDeployment = useUpdateGovernanceDeployment(programId, deploymentId);
-  const agents = useAgents();
-  const fetchAgents = useAgentStore((state) => state.fetchAgents);
-  const [draft, setDraft] = useState<Record<string, GovernanceChannelConfig>>(() => normalizeChannels(overview.channels));
-  const channelsSignature = JSON.stringify(overview.channels);
-
-  useEffect(() => {
-    void fetchAgents();
-  }, [fetchAgents]);
-
-  useEffect(() => {
-    setDraft(normalizeChannels(overview.channels));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deploymentId, channelsSignature]);
-
-  if (!overview.deployment) {
-    return (
-      <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
-        <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.noDeployment')}</p>
-        <Button type='button' onClick={() => createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => showError(t('scopeShell.channels.saveError'), { description: parseApiError(error).message }) })} disabled={createDeployment.isPending}>{t('deployment.create')}</Button>
-      </div>
-    );
-  }
-
-  const setChannel = (key: string, patch: Partial<GovernanceChannelConfig>) => setDraft((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-
-  const handleSave = () => updateDeployment.mutate({ channels: draft }, { onError: (error) => showError(t('scopeShell.channels.saveError'), { description: parseApiError(error).message }) });
-
-  const primaryAgent = agents.find((agent) => agent.id === overview.agents.primaryAgentId);
-
-  return (
-    <div className='grid gap-4'>
-      <p className='text-sm text-muted-foreground'>{t('scopeShell.channels.editHint')}</p>
-      <div className='rounded-xl border border-dashed p-3 text-xs text-muted-foreground'>{t('scopeShell.channels.realityHint')}</div>
-      <div className='grid gap-3'>
-        {channelKeys.map((key) => {
-          const config = draft[key] ?? {};
-          const labelKey = channelLabelKeys[key];
-          return (
-            <div key={key} className='rounded-xl border bg-background p-4'>
-              <div className='flex items-center justify-between gap-3'>
-                <div>
-                  <p className='text-sm font-medium'>{t(labelKey)}</p>
-                  <p className='text-xs text-muted-foreground'>{config.status === 'ready' ? t('scopeShell.channels.status.ready') : t('scopeShell.channels.status.not_configured')}</p>
-                </div>
-                <Switch checked={config.enabled ?? false} onCheckedChange={(checked) => setChannel(key, { enabled: checked, status: checked ? config.status : 'not_configured' })} aria-label={t(labelKey)} />
-              </div>
-              {config.enabled && (
-                <div className='mt-3 grid gap-3 border-t pt-3'>
-                  {key === 'widget' && (
-                    <>
-                      <div className='grid gap-1.5'>
-                        <Label htmlFor='governance-widget-origins'>{t('scopeShell.channels.allowedOrigins')}</Label>
-                        <Input
-                          id='governance-widget-origins'
-                          value={(config.allowedOrigins ?? []).join(', ')}
-                          onChange={(event) => {
-                            const origins = event.target.value.split(',').map((origin) => origin.trim()).filter(Boolean);
-                            setChannel(key, { allowedOrigins: origins });
-                          }}
-                          placeholder={t('scopeShell.channels.allowedOriginsPlaceholder')}
-                        />
-                        <p className='text-xs text-muted-foreground'>{t('scopeShell.channels.allowedOriginsHint')}</p>
-                      </div>
-                      <WidgetTokenGenerator agent={primaryAgent} onGenerated={() => setChannel(key, { status: 'ready' })} />
-                    </>
-                  )}
-                  {key !== 'widget' && (
-                    <div className='grid gap-2'>
-                      <label className='flex items-center gap-2 text-sm'>
-                        <Switch checked={config.status === 'ready'} onCheckedChange={(checked) => setChannel(key, { status: checked ? 'ready' : 'not_configured' })} aria-label={t('scopeShell.channels.markReady')} />
-                        <span>{t('scopeShell.channels.markReady')}</span>
-                      </label>
-                      <p className='text-xs text-muted-foreground'>{t('scopeShell.channels.externalIntegrationHint')}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <Button type='button' className='w-fit' onClick={handleSave} disabled={updateDeployment.isPending}>{t('scopeShell.channels.save')}</Button>
-    </div>
-  );
-}
-
-function WidgetTokenGenerator({ agent, onGenerated }: Readonly<{ agent: Agent | undefined; onGenerated: () => void }>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
-
-  const handleGenerate = async () => {
-    if (!agent) return;
-    setIsGenerating(true);
-    try {
-      const result = agent.isDefault ? await createAdminWidgetToken(agent.id) : await createWidgetToken(agent.id);
-      setToken(result.token);
-      onGenerated();
-    } catch (error) {
-      showError(t('scopeShell.channels.widgetTokenError'), { description: parseApiError(error).message });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleCopy = () => {
-    if (token) void navigator.clipboard.writeText(token);
-  };
-
-  if (!agent) {
-    return <p className='rounded-lg border border-dashed p-3 text-xs text-muted-foreground'>{t('scopeShell.channels.widgetTokenNoAgent')}</p>;
-  }
-
-  return (
-    <div className='grid gap-2 rounded-lg border p-3'>
-      <div className='flex items-center justify-between gap-3'>
-        <div>
-          <p className='text-sm font-medium'>{t('scopeShell.channels.widgetTokenTitle')}</p>
-          <p className='text-xs text-muted-foreground'>{t('scopeShell.channels.widgetTokenHint')}</p>
-        </div>
-        <Button type='button' size='sm' variant='outline' onClick={handleGenerate} disabled={isGenerating}>{t('scopeShell.channels.widgetTokenGenerate')}</Button>
-      </div>
-      {token && (
-        <div className='grid gap-1'>
-          <div className='flex items-center gap-2'>
-            <Input readOnly value={token} className='font-mono text-xs' />
-            <Button type='button' size='icon' variant='ghost' className='h-9 w-9 flex-none' aria-label={t('scopeShell.channels.widgetTokenCopy')} onClick={handleCopy}>
-              <Copy className='h-4 w-4' />
-            </Button>
-          </div>
-          <p className='text-xs text-amber-600 dark:text-amber-400'>{t('scopeShell.channels.widgetTokenOnce')}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const deploymentId = overview.deployment?.id ?? null;
@@ -867,17 +791,21 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
   const publishDeployment = usePublishGovernanceDeployment(deploymentId);
   const suspendDeployment = useSuspendGovernanceDeployment(deploymentId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
+  const isAutoProvisioning = createDeployment.isPending || createRevision.isPending;
 
-  const handleCreateDeployment = () => {
-    createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => showError(t('scopeShell.testPublish.deploymentError'), { description: parseApiError(error).message }) });
-  };
-
-  const handleCreateRevision = () => {
-    const agentId = overview.agents.primaryAgentId;
-    if (!agentId) return;
-    const workspaceIds = overview.knowledge.workspaceMappings.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
-    createRevision.mutate({ agentId, workspaceIds }, { onError: (error) => showError(t('scopeShell.testPublish.revisionError'), { description: parseApiError(error).message }) });
-  };
+  useEffect(() => {
+    if (!programId || createDeployment.isPending || createRevision.isPending) return;
+    if (!overview.deployment) {
+      createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => showError(t('scopeShell.testPublish.deploymentError'), { description: parseApiError(error).message }) });
+      return;
+    }
+    if (overview.deployment && !overview.draftRevision) {
+      const agentId = overview.agents.primaryAgentId;
+      if (!agentId) return;
+      const workspaceIds = overview.knowledge.workspaceMappings.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
+      createRevision.mutate({ agentId, workspaceIds }, { onError: (error) => showError(t('scopeShell.testPublish.revisionError'), { description: parseApiError(error).message }) });
+    }
+  }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.workspaceMappings, overview.scope.id, overview.scope.name, programId, scopeId, t]);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
   const hasPassedDraftDryRun = draftDryRuns.some((dryRun) => dryRun.status === 'passed') || (overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed');
@@ -898,17 +826,9 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
 
       {overview.readiness.blockers.length > 0 && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.testPublish.blockedHelp')}</div>}
 
-      {!overview.deployment && (
-        <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
-          <p className='text-sm text-muted-foreground'>{t('scopeShell.testPublish.noDeployment')}</p>
-          <Button type='button' onClick={handleCreateDeployment} disabled={createDeployment.isPending}>{t('deployment.create')}</Button>
-        </div>
-      )}
-
-      {overview.deployment && !overview.draftRevision && (
-        <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
-          <p className='text-sm text-muted-foreground'>{t('scopeShell.testPublish.noDraftRevision')}</p>
-          <Button type='button' onClick={handleCreateRevision} disabled={createRevision.isPending || !overview.agents.primaryAgentId}>{t('deployment.createRevision')}</Button>
+      {(!overview.deployment || !overview.draftRevision) && (
+        <div className='rounded-xl border bg-background p-4 text-sm text-muted-foreground'>
+          {isAutoProvisioning ? t('scopeShell.testPublish.noDraftRevision') : t('scopeShell.testPublish.noDeployment')}
         </div>
       )}
 

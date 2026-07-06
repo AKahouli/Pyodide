@@ -2,9 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
-import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { Permissions } from '@modules/authorization/constants/permissions';
+import { UserGroupService } from '@modules/user-group';
 import { CreateGovernanceMembershipDto, UpdateGovernanceMembershipDto } from '../dto';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
@@ -14,14 +15,22 @@ export interface GovernanceMembershipResponse {
   id: string;
   programId: string;
   scopeId?: string;
-  userId: string;
+  userId?: string;
+  groupId?: string;
   invitedBy: string;
   role: GovernanceMembershipRole;
   status: 'invited' | 'active' | 'disabled';
   permissions: string[];
+  user?: { id: string; email: string; firstName?: string; lastName?: string };
+  group?: { id: string; name: string; memberCount: number };
   createdAt: string;
   updatedAt: string;
 }
+
+const MEMBERSHIP_POPULATE = [
+  { path: 'userId', select: 'email profile.firstName profile.lastName' },
+  { path: 'groupId', select: 'name members' },
+];
 
 const rolePermissions: Record<GovernanceMembershipRole, string[]> = {
   program_owner: [Permissions.GOVERNANCE_ALL],
@@ -39,24 +48,30 @@ export class GovernanceMembershipService {
     private readonly membershipModel: Model<GovernanceMembershipDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
+    private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
     await this.assertProgramAndScope(actorId, programId, dto.scopeId);
-    const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, userId: new Types.ObjectId(dto.userId) }).lean().exec();
+    this.assertSingleTarget(dto);
+    if (dto.groupId) await this.userGroupService.findById(actorId, dto.groupId);
+    const targetFilter = dto.userId ? { userId: new Types.ObjectId(dto.userId) } : { groupId: new Types.ObjectId(dto.groupId) };
+    const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, ...targetFilter }).lean().exec();
     if (duplicate) throw new ConflictException(ErrorCode.GOVERNANCE_MEMBERSHIP_EXISTS);
     const membership = await this.membershipModel.create({
       programId: new Types.ObjectId(programId),
       scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined,
-      userId: new Types.ObjectId(dto.userId),
+      userId: dto.userId ? new Types.ObjectId(dto.userId) : undefined,
+      groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : undefined,
       invitedBy: new Types.ObjectId(actorId),
       role: dto.role,
       status: dto.status ?? 'active',
       permissions: rolePermissions[dto.role as GovernanceMembershipRole],
     });
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.invited', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, role: dto.role } });
-    return this.toResponse(membership);
+    const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
+    return this.toResponse(populated ?? membership);
   }
 
   async list(actorId: string, programId: string): Promise<GovernanceMembershipResponse[]> {
@@ -65,7 +80,7 @@ export class GovernanceMembershipService {
     const filter = accessibleScopeIds.includes('*')
       ? { programId: new Types.ObjectId(programId) }
       : { programId: new Types.ObjectId(programId), scopeId: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
-    const memberships = await this.membershipModel.find(filter).sort({ createdAt: -1 }).lean().exec();
+    const memberships = await this.membershipModel.find(filter).populate(MEMBERSHIP_POPULATE).sort({ createdAt: -1 }).lean().exec();
     return memberships.map((membership) => this.toResponse(membership));
   }
 
@@ -79,7 +94,6 @@ export class GovernanceMembershipService {
     if (!membership) throw new NotFoundException(ErrorCode.GOVERNANCE_MEMBERSHIP_NOT_FOUND);
     await this.assertCanManageMembership(actorId, programId, membership.scopeId?.toString());
     if (dto.scopeId !== undefined) membership.scopeId = dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined;
-    if (dto.userId !== undefined) membership.userId = new Types.ObjectId(dto.userId);
     if (dto.role !== undefined) {
       membership.role = dto.role as GovernanceMembershipRole;
       membership.permissions = rolePermissions[dto.role as GovernanceMembershipRole];
@@ -87,7 +101,8 @@ export class GovernanceMembershipService {
     if (dto.status !== undefined) membership.status = dto.status;
     await membership.save();
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.updated', targetType: 'governance_membership', targetId: membershipId, metadata: { programId, status: membership.status, role: membership.role } });
-    return this.toResponse(membership);
+    const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
+    return this.toResponse(populated ?? membership);
   }
 
   async disable(actorId: string, actorEmail: string, programId: string, membershipId: string): Promise<void> {
@@ -101,7 +116,15 @@ export class GovernanceMembershipService {
   }
 
   async getAccessibleScopeIds(userId: string, programId: string): Promise<string[]> {
-    const memberships = await this.membershipModel.find({ userId: new Types.ObjectId(userId), programId: new Types.ObjectId(programId), status: 'active' }).lean().exec();
+    const groupIds = await this.userGroupService.findGroupIdsForMember(userId);
+    const memberships = await this.membershipModel.find({
+      programId: new Types.ObjectId(programId),
+      status: 'active',
+      $or: [
+        { userId: new Types.ObjectId(userId) },
+        ...(groupIds.length > 0 ? [{ groupId: { $in: groupIds.map((id) => new Types.ObjectId(id)) } }] : []),
+      ],
+    }).lean().exec();
     if (memberships.some((membership) => !membership.scopeId)) return ['*'];
     return memberships.map((membership) => membership.scopeId?.toString()).filter((scopeId): scopeId is string => Boolean(scopeId));
   }
@@ -134,6 +157,10 @@ export class GovernanceMembershipService {
     }
   }
 
+  private assertSingleTarget(dto: CreateGovernanceMembershipDto): void {
+    if (Boolean(dto.userId) === Boolean(dto.groupId)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Provide exactly one membership target: userId or groupId');
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toResponse(doc: GovernanceMembershipDocument | Record<string, unknown>): GovernanceMembershipResponse {
     const value = doc as any;
@@ -141,14 +168,35 @@ export class GovernanceMembershipService {
       id: value._id?.toString() ?? '',
       programId: value.programId?.toString() ?? '',
       scopeId: value.scopeId?.toString(),
-      userId: value.userId?.toString() ?? '',
+      userId: this.objectIdString(value.userId),
+      groupId: this.objectIdString(value.groupId),
       invitedBy: value.invitedBy?.toString() ?? '',
       role: value.role as GovernanceMembershipRole,
       status: value.status as 'invited' | 'active' | 'disabled',
       permissions: (value.permissions as string[]) ?? [],
+      user: this.userSummary(value.userId),
+      group: this.groupSummary(value.groupId),
       createdAt: this.toIso(value.createdAt),
       updatedAt: this.toIso(value.updatedAt),
     };
+  }
+
+  private objectIdString(value: unknown): string | undefined {
+    if (!value) return undefined;
+    if (typeof value === 'object' && '_id' in value) return (value._id as { toString(): string }).toString();
+    return (value as { toString(): string }).toString();
+  }
+
+  private userSummary(value: unknown): GovernanceMembershipResponse['user'] {
+    if (!value || typeof value !== 'object' || !('email' in value)) return undefined;
+    const user = value as { _id?: { toString(): string }; email?: string; profile?: { firstName?: string; lastName?: string } };
+    return { id: user._id?.toString() ?? '', email: user.email ?? '', firstName: user.profile?.firstName, lastName: user.profile?.lastName };
+  }
+
+  private groupSummary(value: unknown): GovernanceMembershipResponse['group'] {
+    if (!value || typeof value !== 'object' || !('name' in value)) return undefined;
+    const group = value as { _id?: { toString(): string }; name?: string; members?: unknown[] };
+    return { id: group._id?.toString() ?? '', name: group.name ?? '', memberCount: group.members?.length ?? 0 };
   }
 
   private toIso(value: unknown): string {

@@ -48,6 +48,7 @@ export const API_ENDPOINTS = {
     me: '/users/me',
     completeProfile: '/users/me/complete-profile',
     search: '/users/search',
+    directory: '/users/directory',
   },
   health: {
     check: '/health',

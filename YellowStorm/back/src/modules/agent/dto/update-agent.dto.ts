@@ -15,7 +15,7 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
-import { AgentGuardrailsDto } from './create-agent.dto';
+import { AgentDeploymentSettingsDto, AgentGuardrailsDto } from './create-agent.dto';
 
 export class UpdateAgentDto {
   @ApiPropertyOptional({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
@@ -130,4 +130,10 @@ export class UpdateAgentDto {
   @ValidateNested()
   @Type(() => AgentGuardrailsDto)
   guardrails?: AgentGuardrailsDto;
+
+  @ApiPropertyOptional({ description: 'Agent deployment channel settings', type: AgentDeploymentSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentDeploymentSettingsDto)
+  deploymentSettings?: AgentDeploymentSettingsDto;
 }

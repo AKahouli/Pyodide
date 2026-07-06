@@ -7,6 +7,7 @@ const checkLabelKeys = {
   deployment_exists: 'scopeShell.checks.deployment_exists',
   draft_revision: 'scopeShell.checks.draft_revision',
   dry_run_passed: 'scopeShell.checks.dry_run_passed',
+  channel_ready: 'scopeShell.checks.channel_ready',
 } as const;
 
 const blockerLabelKeys = {
@@ -16,6 +17,7 @@ const blockerLabelKeys = {
   deployment_exists: 'scopeShell.blockers.deployment_exists',
   draft_revision: 'scopeShell.blockers.draft_revision',
   dry_run_passed: 'scopeShell.blockers.dry_run_passed',
+  channel_ready: 'scopeShell.blockers.channel_ready',
 } as const;
 
 const channelNameKeys = {
@@ -25,18 +27,19 @@ const channelNameKeys = {
   api: 'scopeShell.channels.api',
 } as const;
 
-// Backend emits one real per-channel check per enabled channel, keyed `channel_<name>_ready`
-// (see GovernanceChannelReadinessService) — distinct from the old single cosmetic `channel_ready` key.
-const CHANNEL_CHECK_PATTERN = /^channel_(.+)_ready$/;
+const CHANNEL_OVERVIEW_CHECK_PATTERN = /^channel_(?:(.+):)?([^:]+)_ready$/;
+const CHANNEL_DEPLOYMENT_CHECK_PATTERN = /^[^:]+:([^:]+)_ready$/;
 
 export function useGovernanceCheckLabel() {
   const { t } = useModuleTranslation('governance');
 
   const channelName = (key: string): string | undefined => {
-    const match = key.match(CHANNEL_CHECK_PATTERN);
-    if (!match) return undefined;
-    const nameKey = channelNameKeys[match[1] as keyof typeof channelNameKeys];
-    return nameKey ? t(nameKey) : match[1];
+    const overviewMatch = key.match(CHANNEL_OVERVIEW_CHECK_PATTERN);
+    const deploymentMatch = key.match(CHANNEL_DEPLOYMENT_CHECK_PATTERN);
+    const channel = overviewMatch?.[2] ?? deploymentMatch?.[1];
+    if (!channel) return undefined;
+    const nameKey = channelNameKeys[channel as keyof typeof channelNameKeys];
+    return nameKey ? t(nameKey) : channel;
   };
 
   const translateCheck = (key: string, fallback: string): string => {

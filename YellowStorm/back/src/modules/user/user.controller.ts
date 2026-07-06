@@ -17,6 +17,7 @@ import { UserSearchResultDto } from './dto/user-search-result.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from './schemas/user.schema';
 import { UserResponse } from './interfaces/user.interface';
+import { Permissions, RequirePermissions } from '../authorization';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -92,6 +93,14 @@ export class UserController {
       excludeUserId: currentUser._id.toString(),
       limit: dto.limit,
     });
+  }
+
+  @Get('directory')
+  @RequirePermissions([Permissions.GOVERNANCE_MEMBERSHIPS_MANAGE, Permissions.GOVERNANCE_ALL], 'any')
+  @ApiOperation({ summary: 'List active users for selection' })
+  @ApiResponse({ status: 200, description: 'Active users returned', type: [UserSearchResultDto] })
+  async listDirectory(@CurrentUser() currentUser: UserDocument): Promise<UserSearchResultDto[]> {
+    return this.userService.listActiveUsers(currentUser._id.toString(), 50);
   }
 
   /**

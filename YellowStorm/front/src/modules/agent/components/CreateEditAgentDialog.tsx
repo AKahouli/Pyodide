@@ -96,10 +96,13 @@ const AGENT_FORM_TABS = [
   { value: 'evaluation', labelKey: 'createEdit.tabs.evaluation', tipKey: 'createEdit.tabs.evaluationTip' },
 ] as const;
 
+type AgentFormTab = (typeof AGENT_FORM_TABS)[number]['value'];
+
 interface CreateEditAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent: Agent | null;
+  initialTab?: AgentFormTab;
   onSave: (data: UserAgentFormValues) => void;
   saving: boolean;
 }
@@ -108,6 +111,7 @@ export function CreateEditAgentDialog({
   open,
   onOpenChange,
   agent,
+  initialTab = 'identity',
   onSave,
   saving,
 }: CreateEditAgentDialogProps) {
@@ -176,6 +180,7 @@ export function CreateEditAgentDialog({
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
             guardrails: normalizeGuardrails(agent.guardrails),
+            deploymentSettings: agent.deploymentSettings ?? defaultFormValues.deploymentSettings,
           });
         } else {
           reset(defaultFormValues);
@@ -211,6 +216,7 @@ export function CreateEditAgentDialog({
   const watchedConnectors = watch('connectors');
   const watchedConnectorActionSelections = watch('connectorActionSelections');
   const watchedGuardrails = watch('guardrails.promptInjection');
+  const watchedDeploymentSettings = watch('deploymentSettings');
   const forceGuardrails = adminGuardrails?.forceActivation === true;
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
@@ -269,7 +275,7 @@ export function CreateEditAgentDialog({
             onSubmit={handleSubmit(onSave, scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
-            <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
+            <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
               <TooltipProvider delayDuration={300}>
                 <div className="w-full shrink-0 overflow-x-auto">
                   <TabsList className="inline-flex h-auto w-max max-w-none flex-nowrap justify-start gap-0.5">
@@ -576,7 +582,12 @@ export function CreateEditAgentDialog({
 
                 <TabsContent value="deployment" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
-                    <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                    <AgentDeploymentSection
+                      agentId={agent?.id ?? null}
+                      agentName={watchedName}
+                      value={watchedDeploymentSettings}
+                      onChange={(next) => setValue('deploymentSettings', next, { shouldDirty: true, shouldValidate: true })}
+                    />
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
                     <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>

@@ -15,7 +15,7 @@ interface Props {
 function tabForAttentionItem(targetType?: string, key?: string): TabKey {
   if (targetType === 'source' || targetType === 'workspace' || key === 'knowledge_mapped') return 'knowledge';
   if (targetType === 'agent' || key === 'agents_mapped') return 'agents';
-  if (targetType === 'channel' || key?.startsWith('channel_')) return 'channels';
+  if (targetType === 'channel' || key?.startsWith('channel_')) return 'agents';
   if (targetType === 'dry_run' || key === 'draft_revision' || key === 'draft_revision_publishable' || key === 'deployment_exists' || key === 'deployment_publishable' || key === 'dry_run_passed') return 'testPublish';
   return 'overview';
 }

@@ -4,7 +4,6 @@ import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GovernanceAccessService } from './governance-access.service';
-import { GovernanceChannelReadinessService } from './governance-channel-readiness.service';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
@@ -51,7 +50,6 @@ export class GovernanceScopeOverviewService {
     @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
-    private readonly channelReadinessService: GovernanceChannelReadinessService,
   ) {}
 
   async getOverview(actorId: string, programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
@@ -117,11 +115,6 @@ export class GovernanceScopeOverviewService {
     const publishedRevisionId = deployment?.currentPublishedRevisionId?.toString();
     const isDeploymentPublishable = !deployment || (deploymentStatus !== 'archived' && deploymentStatus !== 'suspended');
     const isDraftRevisionPublishable = !draftRevision || ((draftRevisionStatus !== 'published' && draftRevisionStatus !== 'rejected') && draftRevisionId !== publishedRevisionId);
-    const channelChecks = draftRevision
-      // Mirrors the channel gate GovernanceDeploymentService.publish() enforces: real
-      // widget token / WhatsApp / Telegram connection, not just the cosmetic status flag.
-      ? await this.channelReadinessService.buildChannelChecks(actorId, String(draftRevision.agentId), channels)
-      : [];
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
@@ -131,7 +124,6 @@ export class GovernanceScopeOverviewService {
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
       this.check('draft_revision_publishable', 'Draft revision publishable', isDraftRevisionPublishable, 'blocking', 'rule'),
       this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
-      ...channelChecks.map((channelCheck) => ({ ...channelCheck, key: `channel_${channelCheck.key}` })),
       ...sources.map((source) => this.sourceReviewCheck(source)),
     ];
   }

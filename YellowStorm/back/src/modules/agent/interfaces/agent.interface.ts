@@ -21,6 +21,11 @@ export interface AgentGuardrails {
   promptInjection: PromptInjectionGuardrailsConfig;
 }
 
+export interface AgentDeploymentSettings {
+  embedEnabled: boolean;
+  restEnabled: boolean;
+}
+
 /** A single share entry on an agent (owner's view of who it's shared with). */
 export interface IAgentShareEntry {
   shareId: string;
@@ -62,6 +67,7 @@ export interface IAgentResponse {
   connectors?: string[];
   connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
   guardrails: AgentGuardrails;
+  deploymentSettings: AgentDeploymentSettings;
   /** True when the agent has the "smart-memory" connector (slug === 'smart-memory'). */
   hasSmartMemory?: boolean;
   skills?: string[];

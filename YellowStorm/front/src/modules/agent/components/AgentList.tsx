@@ -57,6 +57,7 @@ export function AgentList() {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });
@@ -76,6 +77,7 @@ export function AgentList() {
           skills: data.skills,
           disabledSkills: data.disabledSkills,
           connectors: data.connectors,
+          deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });

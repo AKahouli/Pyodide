@@ -15,7 +15,7 @@ describe('GovernanceChannelReadinessService', () => {
 
     const checks = await service.buildChannelChecks('user-1', 'agent-1', { widget: { enabled: true } });
 
-    expect(checks).toEqual([expect.objectContaining({ key: 'widget_ready', status: 'passed' })]);
+    expect(checks).toEqual([expect.objectContaining({ key: 'agent-1:widget_ready', status: 'passed' })]);
   });
 
   it('marks missing channel integrations as blocking failures', async () => {
@@ -23,7 +23,7 @@ describe('GovernanceChannelReadinessService', () => {
 
     const checks = await service.buildChannelChecks('user-1', 'agent-1', { telegram: { enabled: true } });
 
-    expect(checks).toEqual([expect.objectContaining({ key: 'telegram_ready', status: 'failed', severity: 'blocking' })]);
+    expect(checks).toEqual([expect.objectContaining({ key: 'agent-1:telegram_ready', status: 'failed', severity: 'blocking' })]);
   });
 
   it('does not create readiness checks for disabled channels', async () => {
@@ -41,7 +41,14 @@ describe('GovernanceChannelReadinessService', () => {
     });
 
     expect(checks).toEqual([
-      expect.objectContaining({ key: 'whatsapp_ready', status: 'failed', severity: 'blocking' }),
+      expect.objectContaining({ key: 'agent-1:whatsapp_ready', status: 'failed', severity: 'blocking' }),
     ]);
+  });
+
+  it('groups legacy and agent-scoped channel configuration by agent', () => {
+    expect(service.groupChannelsByAgent({ widget: { enabled: true }, 'agent-2:telegram': { enabled: true } }, 'agent-1')).toEqual({
+      'agent-1': { widget: { enabled: true } },
+      'agent-2': { telegram: { enabled: true } },
+    });
   });
 });

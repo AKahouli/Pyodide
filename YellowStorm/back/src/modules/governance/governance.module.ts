@@ -6,6 +6,7 @@ import { ConversationModule } from '@modules/conversation/conversation.module';
 import { WidgetChatModule } from '@modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from '@modules/whatsapp';
 import { TelegramModule } from '@modules/telegram';
+import { UserGroupModule } from '@modules/user-group';
 import { GovernanceProgramController } from './controllers/governance-program.controller';
 import { GovernanceScopeController } from './controllers/governance-scope.controller';
 import { GovernanceSourceController } from './controllers/governance-source.controller';
@@ -51,6 +52,7 @@ import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from
     WidgetChatModule,
     WhatsAppModule,
     TelegramModule,
+    UserGroupModule,
     LoggerModule,
   ],
   controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController],

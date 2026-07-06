@@ -109,6 +109,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
+      deploymentSettings: dto.deploymentSettings,
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -384,6 +385,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
+      deploymentSettings: dto.deploymentSettings,
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -1510,6 +1512,10 @@ export class AgentService {
         promptInjection: normalizePromptInjectionGuardrails(
           (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
         ),
+      },
+      deploymentSettings: {
+        embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
+        restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
       },
       hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,

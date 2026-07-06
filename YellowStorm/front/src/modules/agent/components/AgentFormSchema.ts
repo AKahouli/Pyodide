@@ -27,6 +27,11 @@ const agentGuardrailsSchema = z.object({
   promptInjection: promptInjectionGuardrailsSchema,
 });
 
+const agentDeploymentSettingsSchema = z.object({
+  embedEnabled: z.boolean().default(false),
+  restEnabled: z.boolean().default(false),
+});
+
 export const defaultGuardrails = {
   promptInjection: {
     inputGuardrailEnabled: false,
@@ -72,6 +77,7 @@ export const userAgentFormSchema = z.object({
   isActive: z.boolean().default(true),
   isDefaultForType: z.boolean().default(false),
   guardrails: agentGuardrailsSchema.default(defaultGuardrails),
+  deploymentSettings: agentDeploymentSettingsSchema.default({ embedEnabled: false, restEnabled: false }),
 });
 
 export type UserAgentFormValues = z.infer<typeof userAgentFormSchema>;
@@ -95,4 +101,5 @@ export const defaultFormValues: UserAgentFormValues = {
   isActive: true,
   isDefaultForType: false,
   guardrails: defaultGuardrails,
+  deploymentSettings: { embedEnabled: false, restEnabled: false },
 };

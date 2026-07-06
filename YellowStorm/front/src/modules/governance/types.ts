@@ -105,11 +105,14 @@ export interface GovernanceMembership {
   id: string;
   programId: string;
   scopeId?: string;
-  userId: string;
+  userId?: string;
+  groupId?: string;
   invitedBy: string;
   role: GovernanceMembershipRole;
   status: 'invited' | 'active' | 'disabled';
   permissions: string[];
+  user?: GovernanceUserSearchResult;
+  group?: { id: string; name: string; memberCount: number };
   createdAt: string;
   updatedAt: string;
 }
@@ -122,7 +125,8 @@ export interface GovernanceUserSearchResult {
 }
 
 export interface CreateGovernanceMembershipPayload {
-  userId: string;
+  userId?: string;
+  groupId?: string;
   scopeId?: string;
   role: GovernanceMembershipRole;
   status?: GovernanceMembership['status'];

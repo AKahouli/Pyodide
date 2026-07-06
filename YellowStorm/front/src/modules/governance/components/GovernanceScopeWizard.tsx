@@ -6,7 +6,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import {
-  useCreateGovernanceDeployment,
   useCreateGovernanceScope,
   useCreateGovernanceSource,
   useGovernanceScopeOverview,
@@ -47,7 +46,6 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
   const createScope = useCreateGovernanceScope(programId);
   const createSource = useCreateGovernanceSource(programId);
   const updateScope = useUpdateGovernanceScope(programId, scopeId);
-  const createDeployment = useCreateGovernanceDeployment(programId);
 
   useEffect(() => {
     if (open) {
@@ -98,11 +96,6 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     updateScope.mutate({ agentIds });
   };
 
-  const handleCreateDeployment = () => {
-    if (!scopeId || overview?.deployment) return;
-    createDeployment.mutate({ scopeId, name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } });
-  };
-
   const handleNext = () => {
     if (step === 'blueprint') {
       if (scopeId) {
@@ -115,9 +108,6 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     if (step === 'agents' && agentIds.length > 0 && scopeId) {
       updateScope.mutate({ agentIds });
     }
-    if (step === 'channels') {
-      handleCreateDeployment();
-    }
     setStepIndex((index) => index + 1);
   };
 
@@ -129,7 +119,7 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     onOpenChange(false);
   };
 
-  const isPending = createScope.isPending || createSource.isPending || updateScope.isPending || createDeployment.isPending;
+  const isPending = createScope.isPending || createSource.isPending || updateScope.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -217,10 +207,7 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
                 <h3 className='text-base font-semibold'>{t('wizard.channels.title')}</h3>
                 <p className='mt-1 text-sm text-muted-foreground'>{t('wizard.channels.description')}</p>
               </div>
-              <div className='flex items-center justify-between rounded-xl border bg-background p-4'>
-                <span className='text-sm font-medium'>{t('wizard.channels.widgetLabel')}</span>
-                {overview?.deployment ? <span className='text-sm text-emerald-600 dark:text-emerald-400'>{t('wizard.channels.created')}</span> : <Button type='button' size='sm' onClick={handleCreateDeployment} disabled={createDeployment.isPending}>{t('deployment.create')}</Button>}
-              </div>
+              <div className='rounded-xl border bg-background p-4 text-sm text-muted-foreground'>{t('wizard.channels.agentScopedHint')}</div>
             </div>
           )}
 

@@ -23,9 +23,20 @@ export class GovernanceChannelReadinessService {
     return checks;
   }
 
+  groupChannelsByAgent(channels: Record<string, { enabled?: boolean; status?: string }>, defaultAgentId: string): Record<string, Record<string, { enabled?: boolean; status?: string }>> {
+    const grouped: Record<string, Record<string, { enabled?: boolean; status?: string }>> = {};
+    for (const [key, config] of Object.entries(channels)) {
+      const separatorIndex = key.indexOf(':');
+      const agentId = separatorIndex > 0 ? key.slice(0, separatorIndex) : defaultAgentId;
+      const channel = separatorIndex > 0 ? key.slice(separatorIndex + 1) : key;
+      grouped[agentId] = { ...grouped[agentId], [channel]: config };
+    }
+    return grouped;
+  }
+
   private async buildChannelCheck(userId: string, agentId: string, channel: string): Promise<GovernanceReadinessCheck> {
     const isReady = await this.isChannelReady(userId, agentId, channel);
-    return { key: `${channel}_ready`, label: `${channel} ready`, status: isReady ? 'passed' : 'failed', severity: 'blocking', targetType: 'channel', targetId: agentId };
+    return { key: `${agentId}:${channel}_ready`, label: `${channel} ready`, status: isReady ? 'passed' : 'failed', severity: 'blocking', targetType: 'channel', targetId: agentId };
   }
 
   private async isChannelReady(userId: string, agentId: string, channel: string): Promise<boolean> {

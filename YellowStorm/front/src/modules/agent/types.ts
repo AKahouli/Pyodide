@@ -20,6 +20,7 @@ export interface Agent {
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
   /** True when the agent has the "smart-memory" connector. */
   hasSmartMemory?: boolean;
   isDefault: boolean;
@@ -51,6 +52,11 @@ export interface PromptInjectionGuardrailsConfig {
 
 export interface AgentGuardrails {
   promptInjection: PromptInjectionGuardrailsConfig;
+}
+
+export interface AgentDeploymentSettings {
+  embedEnabled: boolean;
+  restEnabled: boolean;
 }
 
 export type AgentPermissionLevel = 'read' | 'write';
@@ -366,6 +372,7 @@ export interface CreateAgentData {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface UpdateAgentData {
@@ -387,4 +394,5 @@ export interface UpdateAgentData {
   isActive?: boolean;
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }

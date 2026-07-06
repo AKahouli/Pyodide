@@ -24,9 +24,8 @@ describe('GovernanceDeploymentService', () => {
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const scopeService = { findById: jest.fn() };
     const accessService = { assertScopeAccess: jest.fn().mockResolvedValue(undefined), getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) };
-    const channelReadinessService = { buildChannelChecks: jest.fn().mockImplementation(async (_actorId, _agentId, channels) => Object.entries(channels).flatMap(([channel, config]) => (config as { enabled?: boolean; status?: string }).enabled ? [{ key: `${channel}_ready`, label: `${channel} ready`, status: (config as { status?: string }).status === 'ready' ? 'passed' : 'failed', severity: 'blocking', targetType: 'channel' }] : [])) };
     const auditLogService = { logSuccess: jest.fn(), logFailure: jest.fn() };
-    const service = new GovernanceDeploymentService(deploymentModel as never, revisionModel as never, sourceModel as never, attemptModel as never, programService as never, scopeService as never, accessService as never, channelReadinessService as never, auditLogService as never);
+    const service = new GovernanceDeploymentService(deploymentModel as never, revisionModel as never, sourceModel as never, attemptModel as never, programService as never, scopeService as never, accessService as never, auditLogService as never);
     return { service, attemptModel, auditLogService };
   }
 
@@ -43,14 +42,14 @@ describe('GovernanceDeploymentService', () => {
     expect(result.currentPublishedRevisionId).toBe(revisionId);
   });
 
-  it('records blocked publication attempts when readiness fails', async () => {
+  it('publishes even when channel configuration is not ready', async () => {
     const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, currentPublishedRevisionId: undefined, channels: { widget: { enabled: true, status: 'not_configured' } }, save: jest.fn() };
     const revision = { _id: revisionId, agentId, status: 'draft', save: jest.fn() };
     const { service, attemptModel, auditLogService } = buildService(deployment, revision);
 
-    await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
-    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', errorCode: 'ERR_3670' }));
-    expect(auditLogService.logFailure).toHaveBeenCalled();
+    await expect(service.publish(actorId, actorEmail, deploymentId, {})).resolves.toMatchObject({ currentPublishedRevisionId: revisionId });
+    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', errorCode: undefined }));
+    expect(auditLogService.logFailure).not.toHaveBeenCalled();
   });
 
   it('blocks publishing suspended deployments', async () => {

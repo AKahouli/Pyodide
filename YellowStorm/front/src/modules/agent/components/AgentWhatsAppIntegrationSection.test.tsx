@@ -78,6 +78,21 @@ describe('AgentWhatsAppIntegrationSection', () => {
     expect(screen.getByText('createEdit.fields.whatsappStatusNotConnected')).toBeInTheDocument();
   });
 
+  it('hides connect until the toggle is switched on for a new integration', async () => {
+    render(<AgentWhatsAppIntegrationSection agentId="a1" />);
+
+    await waitFor(() => {
+      expect(getAgentWhatsAppIntegrationMock).toHaveBeenCalledWith('a1');
+    });
+
+    expect(screen.queryByTestId('whatsapp-connect')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('whatsapp-enabled-switch'));
+
+    expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
+    expect(updateAgentWhatsAppEnabledMock).not.toHaveBeenCalled();
+  });
+
   it('shows pairing UI when status is PAIRING', async () => {
     getAgentWhatsAppIntegrationMock.mockResolvedValue({
       enabled: true,
@@ -106,8 +121,12 @@ describe('AgentWhatsAppIntegrationSection', () => {
     render(<AgentWhatsAppIntegrationSection agentId="a1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
+      expect(getAgentWhatsAppIntegrationMock).toHaveBeenCalledWith('a1');
     });
+
+    fireEvent.click(screen.getByTestId('whatsapp-enabled-switch'));
+
+    expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('whatsapp-connect'));
 

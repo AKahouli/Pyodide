@@ -14,11 +14,12 @@ const checkTabKeys: Record<string, TabKey> = {
   deployment_exists: 'testPublish',
   draft_revision: 'testPublish',
   dry_run_passed: 'testPublish',
-  channel_ready: 'channels',
+  channel_ready: 'agents',
 };
 
 function tabForCheck(key: string): TabKey {
   if (key.startsWith('source_')) return 'knowledge';
+  if (key.startsWith('channel_') || /^[^:]+:[^:]+_ready$/.test(key)) return 'agents';
   return checkTabKeys[key] ?? 'overview';
 }
 
