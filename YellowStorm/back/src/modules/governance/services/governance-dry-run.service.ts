@@ -85,7 +85,7 @@ export class GovernanceDryRunService {
 
   async list(actorId: string, deploymentId: string): Promise<GovernanceDryRunResponse[]> {
     await this.findOwnedDeployment(actorId, deploymentId);
-    const dryRuns = await this.dryRunModel.find({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
+    const dryRuns = await this.dryRunModel.find({ deploymentId: new Types.ObjectId(deploymentId) }).sort({ createdAt: -1 }).lean().exec();
     return dryRuns.map((dryRun) => this.toResponse(dryRun));
   }
 

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConflictException, NotFoundException } from '@modules/exceptions';
+import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceScopeDto, UpdateGovernanceScopeDto } from '../dto';
 import { GovernanceProgramService } from './governance-program.service';
@@ -80,6 +80,7 @@ export class GovernanceScopeService {
 
   async delete(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
     const scope = await this.findOwnedScope(ownerUserId, programId, scopeId);
+    await this.assertCanDeleteScope(ownerUserId, programId, scopeId);
     const [childScopeCount, sourceCount] = await Promise.all([
       this.scopeModel.countDocuments({ programId: new Types.ObjectId(programId), parentScopeId: new Types.ObjectId(scopeId) }),
       this.sourceModel.countDocuments({ programId: new Types.ObjectId(programId), scopeIds: new Types.ObjectId(scopeId) }),
@@ -88,6 +89,21 @@ export class GovernanceScopeService {
       throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_DELETE_BLOCKED);
     }
     await this.scopeModel.deleteOne({ _id: scope._id });
+  }
+
+  private async assertCanDeleteScope(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
+    if (await this.isProgramOwner(ownerUserId, programId)) return;
+    const membership = await this.membershipModel.findOne({
+      userId: new Types.ObjectId(ownerUserId),
+      programId: new Types.ObjectId(programId),
+      status: 'active',
+      $or: [
+        { scopeId: null, role: 'program_admin' },
+        { scopeId: new Types.ObjectId(scopeId), role: 'scope_admin' },
+      ],
+    }).select('_id').lean().exec();
+    if (membership) return;
+    throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
   }
 
   async countProgramScopes(programId: string, scopeIds: string[]): Promise<number> {

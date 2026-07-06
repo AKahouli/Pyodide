@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Copy, Trash2, X } from 'lucide-react';
+import { Copy, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +10,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { createAdminWidgetToken, createWidgetToken, useAgents, useAgentsLoading, useAgentStore, type Agent, type PromptInjectionGuardrailsConfig } from '@/modules/agent';
+import { CreateEditAgentDialog, createAdminWidgetToken, createWidgetToken, useAgents, useAgentsLoading, useAgentStore, type Agent, type PromptInjectionGuardrailsConfig, type UserAgentFormValues } from '@/modules/agent';
 import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/workspace';
 import { governanceApi } from '../api';
 import {
@@ -32,6 +32,7 @@ import {
   useUpdateGovernanceMembership,
   useUpdateGovernanceScope,
   type GovernanceChannelConfig,
+  type GovernanceDryRun,
   type GovernanceDryRunMessage,
   type GovernanceMembership,
   type GovernanceMembershipRole,
@@ -398,8 +399,11 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
   const updateScope = useUpdateGovernanceScope(programId, scopeId);
   const agents = useAgents();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
+  const updateAgent = useAgentStore((state) => state.updateAgent);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
+  const [savingAgent, setSavingAgent] = useState(false);
 
   useEffect(() => {
     void fetchAgents();
@@ -436,6 +440,38 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
     updateScope.mutate({ agentIds: [...mappedAgentIds, agentId] });
   };
 
+  const handleSaveAgent = async (data: UserAgentFormValues) => {
+    if (!editingAgent) return;
+    setSavingAgent(true);
+    try {
+      await updateAgent(editingAgent.id, {
+        name: data.name,
+        slug: data.slug,
+        agentType: data.agentType,
+        role: data.role,
+        description: data.description,
+        temperature: data.temperature,
+        model: data.model || undefined,
+        instruction: data.instruction,
+        ignorePrePrompt: data.ignorePrePrompt,
+        knowledgeBases: data.knowledgeBases,
+        tools: data.tools,
+        skills: data.skills,
+        disabledSkills: data.disabledSkills,
+        connectors: data.connectors,
+        connectorActionSelections: data.connectorActionSelections,
+        isActive: data.isActive,
+        isDefaultForType: data.isDefaultForType,
+        guardrails: data.guardrails,
+      });
+      setEditingAgent(null);
+    } catch (error) {
+      showError(t('scopeShell.agents.editError'), { description: parseApiError(error).message });
+    } finally {
+      setSavingAgent(false);
+    }
+  };
+
   return (
     <div className='grid gap-4'>
       <div className='flex items-center justify-between gap-3'>
@@ -466,6 +502,9 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
                 <Switch checked={isAgentGuardrailsEnabled(agent)} onCheckedChange={(checked) => handleToggleAgent(agent, checked)} aria-label={t('scopeShell.agents.guardrails')} />
                 {t('scopeShell.agents.guardrails')}
               </label>
+              <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-foreground' aria-label={t('scopeShell.agents.edit')} onClick={() => setEditingAgent(agent)}>
+                <Pencil className='h-4 w-4' />
+              </Button>
               <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.agents.remove')} disabled={updateScope.isPending} onClick={() => handleRemove(agent.id)}>
                 <Trash2 className='h-4 w-4' />
               </Button>
@@ -476,6 +515,7 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
       </div>
 
       <AgentPickerDialog open={dialogOpen} onOpenChange={setDialogOpen} mappedAgentIds={mappedAgentIds} onAdd={handleAdd} pending={updateScope.isPending} />
+      <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} onSave={handleSaveAgent} saving={savingAgent} />
     </div>
   );
 }
@@ -840,7 +880,10 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
   };
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
-  const canPublish = overview.draftRevision !== undefined && draftDryRuns.some((dryRun) => dryRun.status === 'passed') && overview.readiness.blockers.length === 0;
+  const hasPassedDraftDryRun = draftDryRuns.some((dryRun) => dryRun.status === 'passed') || (overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed');
+  const isDeploymentPublishable = overview.deployment?.status !== 'archived' && overview.deployment?.status !== 'suspended';
+  const isDraftRevisionPublishable = overview.draftRevision?.status !== 'published' && overview.draftRevision?.status !== 'rejected' && overview.draftRevision?.id !== overview.deployment?.currentPublishedRevisionId;
+  const canPublish = overview.draftRevision !== undefined && isDeploymentPublishable && isDraftRevisionPublishable && hasPassedDraftDryRun && overview.readiness.blockers.length === 0;
 
   const handlePublish = () => publishDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.publishError'), { description: parseApiError(error).message }) });
   const handleSuspend = () => suspendDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.suspendError'), { description: parseApiError(error).message }) });
@@ -870,13 +913,13 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       )}
 
       {overview.draftRevision && deploymentId && (
-        <DryRunChat deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} />
+        <DryRunChat deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} />
       )}
 
       {overview.draftRevision && (
         <div className='flex items-center gap-2'>
           <Button type='button' onClick={handlePublish} disabled={!canPublish || publishDeployment.isPending}>{t('publish.publish')}</Button>
-          {overview.publishedRevision && <Button type='button' variant='outline' onClick={handleSuspend} disabled={suspendDeployment.isPending}>{t('publish.suspend')}</Button>}
+          {overview.publishedRevision && overview.deployment?.status === 'published' && <Button type='button' variant='outline' onClick={handleSuspend} disabled={suspendDeployment.isPending}>{t('publish.suspend')}</Button>}
         </div>
       )}
     </div>
@@ -917,7 +960,7 @@ function DryRunTypingBubble(): JSX.Element {
   );
 }
 
-function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgentId }: Readonly<{ deploymentId: string; draftRevisionId: string; mappedAgentIds: string[]; primaryAgentId?: string }>): JSX.Element {
+function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentIds, primaryAgentId }: Readonly<{ deploymentId: string; draftRevisionId: string; latestDryRun?: GovernanceDryRun; mappedAgentIds: string[]; primaryAgentId?: string }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const agents = useAgents();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
@@ -926,7 +969,7 @@ function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgen
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === draftRevisionId);
-  const latestDraftDryRun = draftDryRuns[0];
+  const latestDraftDryRun = draftDryRuns[0] ?? (latestDryRun?.revisionId === draftRevisionId ? latestDryRun : undefined);
   const conversationId = latestDraftDryRun?.conversationId;
 
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
@@ -934,6 +977,7 @@ function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgen
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingUserText, setPendingUserText] = useState<string | null>(null);
+  const [answeredDryRunId, setAnsweredDryRunId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchAgents();
@@ -944,20 +988,22 @@ function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgen
     if (!mappedAgentIds.includes(selectedAgentId)) setSelectedAgentId(primaryAgentId ?? mappedAgentIds[0] ?? '');
   }, [mappedAgentIds, primaryAgentId, selectedAgentId]);
 
-  const { data: rawMessages = [], isError } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null, { refetchInterval: isStreaming ? 1200 : false });
+  const shouldPollMessages = isStreaming || (latestDraftDryRun?.status === 'running' && answeredDryRunId !== latestDraftDryRun.id);
+  const { data: rawMessages = [], isError } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null, { refetchInterval: shouldPollMessages ? 1200 : false });
   // Drop the empty AI placeholder that exists while the reply is still streaming —
   // the typing indicator stands in for it until real content lands.
   const messages = rawMessages.filter((message) => message.conversationType === 'user' || dryRunMessageText(message).trim().length > 0);
   const lastMessage = messages[messages.length - 1];
 
   useEffect(() => {
-    if (!isStreaming) return;
+    if (!shouldPollMessages) return;
     // The reply has landed once the newest message is an AI message with real content.
     if (lastMessage && lastMessage.conversationType === 'ai' && dryRunMessageText(lastMessage).trim().length > 0) {
       setIsStreaming(false);
       setPendingUserText(null);
+      setAnsweredDryRunId(latestDraftDryRun?.id ?? null);
     }
-  }, [isStreaming, lastMessage]);
+  }, [latestDraftDryRun?.id, shouldPollMessages, lastMessage]);
 
   const serverHasPending = pendingUserText !== null && messages.some((message) => message.conversationType === 'user' && dryRunMessageText(message) === pendingUserText);
 
@@ -967,6 +1013,7 @@ function DryRunChat({ deploymentId, draftRevisionId, mappedAgentIds, primaryAgen
     if (!text || isStreaming || !selectedAgentId) return;
     setPendingUserText(text);
     setIsStreaming(true);
+    setAnsweredDryRunId(null);
     setInput('');
     createDryRun.mutate(
       { input: text, simulatedChannel: 'widget', conversationId, agentId: selectedAgentId },

@@ -53,6 +53,14 @@ describe('GovernanceDeploymentService', () => {
     expect(auditLogService.logFailure).toHaveBeenCalled();
   });
 
+  it('blocks publishing suspended deployments', async () => {
+    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'suspended', currentDraftRevisionId: revisionId, currentPublishedRevisionId: revisionId, channels: {}, save: jest.fn() };
+    const revision = { _id: revisionId, agentId, status: 'published', save: jest.fn() };
+    const { service } = buildService(deployment, revision);
+
+    await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
+  });
+
   it('blocks publishing rejected revisions', async () => {
     const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, channels: {}, save: jest.fn() };
     const revision = { _id: revisionId, agentId, status: 'rejected', save: jest.fn() };

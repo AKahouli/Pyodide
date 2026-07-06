@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GovernanceReadinessPanel } from './GovernanceReadinessPanel';
 import { GovernanceScopeTree } from './GovernanceScopeTree';
 import { GovernanceScopeWorkspace, type TabKey } from './GovernanceScopeWorkspace';
@@ -7,9 +7,10 @@ import { useGovernanceMemberships, useGovernanceMetrics, useGovernanceScopeOverv
 interface Props {
   programId: string | null;
   onCreateScope: () => void;
+  initialTab?: TabKey;
 }
 
-export function GovernanceScopeLifecycleShell({ programId, onCreateScope }: Readonly<Props>): JSX.Element {
+export function GovernanceScopeLifecycleShell({ programId, onCreateScope, initialTab = 'overview' }: Readonly<Props>): JSX.Element {
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const { data: scopes = [] } = useGovernanceScopes(programId);
@@ -18,14 +19,16 @@ export function GovernanceScopeLifecycleShell({ programId, onCreateScope }: Read
   const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
   const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
   const overview = selectedScopeId ? byScopeId[selectedScopeId] : undefined;
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+  const previousScopeId = useRef(selectedScopeId);
 
   useEffect(() => {
     if (selectedScopeId && scopes.length > 0 && !scopes.some((scope) => scope.id === selectedScopeId)) setSelectedScopeId(null);
   }, [scopes, selectedScopeId, setSelectedScopeId]);
 
   useEffect(() => {
-    setActiveTab('overview');
+    if (previousScopeId.current && previousScopeId.current !== selectedScopeId) setActiveTab('overview');
+    previousScopeId.current = selectedScopeId;
   }, [selectedScopeId]);
 
   return (

@@ -10,7 +10,8 @@ export {
   useAgentById,
   useAgentTypes,
 } from './store';
-export { AgentButton, AgentList, AgentCard, AgentHubPage } from './components';
+export { AgentButton, AgentList, AgentCard, AgentHubPage, CreateEditAgentDialog } from './components';
+export type { UserAgentFormValues } from './components/AgentFormSchema';
 export type {
   Agent,
   AgentType,

@@ -113,6 +113,14 @@ export function useCreateGovernanceProgram() {
   });
 }
 
+export function useDeleteGovernanceProgram() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (programId: string) => governanceApi.deleteProgram(programId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: governanceQueryKeys.programs() }),
+  });
+}
+
 export function useCreateGovernanceScope(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

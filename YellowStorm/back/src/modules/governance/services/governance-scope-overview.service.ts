@@ -111,11 +111,15 @@ export class GovernanceScopeOverviewService {
   private async buildChecks(actorId: string, scope: Record<string, unknown>, sources: Record<string, unknown>[], deployment: Record<string, unknown> | null, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): Promise<GovernanceScopeOverviewCheck[]> {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
     const channels = (deployment?.channels ?? {}) as Record<string, { enabled?: boolean; status?: string }>;
-    // Mirrors the exact gate GovernanceDeploymentService.publish() enforces, so a scope
-    // shown as "ready" here can never be silently rejected at publish time for a reason
-    // the admin never saw (real widget token / WhatsApp / Telegram connection, not just
-    // the cosmetic per-channel "status" flag set from the Channels tab).
+    const deploymentStatus = String(deployment?.status ?? '');
+    const draftRevisionStatus = String(draftRevision?.status ?? '');
+    const draftRevisionId = draftRevision?._id?.toString();
+    const publishedRevisionId = deployment?.currentPublishedRevisionId?.toString();
+    const isDeploymentPublishable = !deployment || (deploymentStatus !== 'archived' && deploymentStatus !== 'suspended');
+    const isDraftRevisionPublishable = !draftRevision || ((draftRevisionStatus !== 'published' && draftRevisionStatus !== 'rejected') && draftRevisionId !== publishedRevisionId);
     const channelChecks = draftRevision
+      // Mirrors the channel gate GovernanceDeploymentService.publish() enforces: real
+      // widget token / WhatsApp / Telegram connection, not just the cosmetic status flag.
       ? await this.channelReadinessService.buildChannelChecks(actorId, String(draftRevision.agentId), channels)
       : [];
     return [
@@ -123,7 +127,9 @@ export class GovernanceScopeOverviewService {
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
       this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0, 'blocking', 'source'),
       this.check('deployment_exists', 'Deployment exists', Boolean(deployment), 'blocking', 'rule'),
+      this.check('deployment_publishable', 'Deployment publishable', isDeploymentPublishable, 'blocking', 'rule'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
+      this.check('draft_revision_publishable', 'Draft revision publishable', isDraftRevisionPublishable, 'blocking', 'rule'),
       this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
       ...channelChecks.map((channelCheck) => ({ ...channelCheck, key: `channel_${channelCheck.key}` })),
       ...sources.map((source) => this.sourceReviewCheck(source)),
@@ -182,7 +188,7 @@ export class GovernanceScopeOverviewService {
   }
 
   private dryRunToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), deploymentId: String(doc.deploymentId), revisionId: String(doc.revisionId), testerId: String(doc.testerId), status: doc.status, testCases: doc.testCases ?? [], checks: doc.checks ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), deploymentId: String(doc.deploymentId), revisionId: String(doc.revisionId), conversationId: this.optionalId(doc.conversationId), testerId: String(doc.testerId), status: doc.status, testCases: doc.testCases ?? [], checks: doc.checks ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
   private toStrings(value: unknown): string[] { return Array.isArray(value) ? value.map((id) => id.toString()) : []; }

@@ -1,13 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronLeft, Plus, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { parseApiError } from '@/lib/api-error';
+import { showError } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { useCreateGovernanceProgram, useDeleteGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
 import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
+import type { TabKey } from './GovernanceScopeWorkspace';
 import { GovernanceScopeWizard } from './GovernanceScopeWizard';
 
 export function GovernancePage(): JSX.Element {
@@ -18,9 +22,11 @@ export function GovernancePage(): JSX.Element {
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const createProgram = useCreateGovernanceProgram();
+  const deleteProgram = useDeleteGovernanceProgram();
   const [programDialogOpen, setProgramDialogOpen] = useState(false);
   const [scopeWizardOpen, setScopeWizardOpen] = useState(false);
   const [programName, setProgramName] = useState('');
+  const [initialScopeTab, setInitialScopeTab] = useState<TabKey>('overview');
 
   useEffect(() => {
     if (!selectedProgramId && programs[0]) setSelectedProgramId(programs[0].id);
@@ -38,6 +44,23 @@ export function GovernancePage(): JSX.Element {
   const handleSelectProgram = (programId: string) => {
     setSelectedProgramId(programId);
     setSelectedScopeId(null);
+  };
+
+  const handleSelectScope = (scopeId: string, tab: TabKey = 'overview') => {
+    setInitialScopeTab(tab);
+    setSelectedScopeId(scopeId);
+  };
+
+  const handleDeleteProgram = () => {
+    if (!selectedProgramId) return;
+    deleteProgram.mutate(selectedProgramId, {
+      onSuccess: () => {
+        const nextProgram = programs.find((program) => program.id !== selectedProgramId);
+        setSelectedProgramId(nextProgram?.id ?? null);
+        setSelectedScopeId(null);
+      },
+      onError: (error) => showError(t('programs.deleteError'), { description: parseApiError(error).message }),
+    });
   };
 
   return (
@@ -75,6 +98,25 @@ export function GovernancePage(): JSX.Element {
           <div className='flex-1' />
 
           <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.new')}</Button>
+          {selectedProgram && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button type='button' variant='outline' size='sm' className='text-destructive hover:text-destructive' aria-label={t('programs.delete')}>
+                  <Trash2 className='h-4 w-4' />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t('programs.deleteConfirmTitle')}</AlertDialogTitle>
+                  <AlertDialogDescription>{t('programs.deleteConfirmBody', { name: selectedProgram.name })}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t('scopeShell.settings.deleteCancel')}</AlertDialogCancel>
+                  <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={handleDeleteProgram} disabled={deleteProgram.isPending}>{t('programs.delete')}</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           <Button type='button' size='sm' disabled={!selectedProgramId} onClick={() => setScopeWizardOpen(true)}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>
         </header>
 
@@ -83,10 +125,10 @@ export function GovernancePage(): JSX.Element {
             <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'>
               <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
             </button>
-            <GovernanceScopeLifecycleShell programId={selectedProgramId} onCreateScope={() => setScopeWizardOpen(true)} />
+            <GovernanceScopeLifecycleShell programId={selectedProgramId} onCreateScope={() => setScopeWizardOpen(true)} initialTab={initialScopeTab} />
           </>
         ) : (
-          <GovernanceCockpit programId={selectedProgramId} onSelectScope={setSelectedScopeId} />
+          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} />
         )}
       </div>
 

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConflictException, NotFoundException } from '@modules/exceptions';
+import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GovernanceProgram, GovernanceProgramDocument } from '../schemas/governance-program.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
@@ -89,8 +89,11 @@ export class GovernanceProgramService {
   async delete(ownerUserId: string, programId: string): Promise<void> {
     const ownerId = new Types.ObjectId(ownerUserId);
     const programObjectId = new Types.ObjectId(programId);
-    const program = await this.programModel.findOne({ _id: programObjectId, ownerUserId: ownerId }).exec();
+    const program = await this.programModel.findById(programObjectId).exec();
     if (!program) throw new NotFoundException(ErrorCode.GOVERNANCE_PROGRAM_NOT_FOUND);
+    const isOwner = program.ownerUserId.toString() === ownerUserId;
+    const isProgramAdmin = await this.hasActiveProgramRole(ownerId, programObjectId, 'program_admin');
+    if (!isOwner && !isProgramAdmin) throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
 
     const [scopeCount, sourceCount] = await Promise.all([
       this.scopeModel.countDocuments({ programId: programObjectId }),
@@ -100,6 +103,11 @@ export class GovernanceProgramService {
       throw new ConflictException(ErrorCode.GOVERNANCE_PROGRAM_DELETE_BLOCKED);
     }
     await this.programModel.deleteOne({ _id: program._id });
+  }
+
+  private async hasActiveProgramRole(userId: Types.ObjectId, programId: Types.ObjectId, role: string): Promise<boolean> {
+    const membership = await this.membershipModel.findOne({ programId, userId, scopeId: null, role, status: 'active' }).select('_id').lean().exec();
+    return Boolean(membership);
   }
 
   async assertOwnedProgram(ownerUserId: string, programId: string): Promise<void> {

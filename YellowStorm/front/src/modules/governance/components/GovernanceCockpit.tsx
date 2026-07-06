@@ -1,14 +1,23 @@
 import { useMemo, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 import { ReadinessRing } from './ReadinessRing';
+import type { TabKey } from './GovernanceScopeWorkspace';
 
 interface Props {
   programId: string | null;
-  onSelectScope: (scopeId: string) => void;
+  onSelectScope: (scopeId: string, tab?: TabKey) => void;
+}
+
+function tabForAttentionItem(targetType?: string, key?: string): TabKey {
+  if (targetType === 'source' || targetType === 'workspace' || key === 'knowledge_mapped') return 'knowledge';
+  if (targetType === 'agent' || key === 'agents_mapped') return 'agents';
+  if (targetType === 'channel' || key?.startsWith('channel_')) return 'channels';
+  if (targetType === 'dry_run' || key === 'draft_revision' || key === 'draft_revision_publishable' || key === 'deployment_exists' || key === 'deployment_publishable' || key === 'dry_run_passed') return 'testPublish';
+  return 'overview';
 }
 
 export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>): JSX.Element {
@@ -28,6 +37,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
       scopeId: overview.scope.id,
       scopeName: overview.scope.name,
       label: translateBlocker(blocker.key, blocker.label),
+      tab: tabForAttentionItem(blocker.targetType, blocker.key),
     })),
   );
 
@@ -73,7 +83,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
             ) : (
               <div className='flex flex-col p-2'>
                 {attentionItems.slice(0, 8).map((item, index) => (
-                  <button key={`${item.scopeId}-${index}`} type='button' onClick={() => onSelectScope(item.scopeId)} className='grid grid-cols-[28px_1fr_auto] items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-muted/60'>
+                  <button key={`${item.scopeId}-${index}`} type='button' onClick={() => onSelectScope(item.scopeId, item.tab)} className='grid grid-cols-[28px_1fr_auto] items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-muted/60'>
                     <span className='grid h-7 w-7 place-items-center rounded-lg bg-red-500/15 text-red-600 dark:text-red-400'><AlertTriangle className='h-4 w-4' /></span>
                     <span className='min-w-0'>
                       <span className='block truncate text-sm font-medium'>{item.label}</span>
@@ -86,16 +96,6 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
             )}
           </section>
 
-          <section className='rounded-2xl border bg-card p-4 shadow-sm'>
-            <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('cockpit.guardrails.title')}</p>
-            <div className='mt-3 flex items-center gap-3 rounded-xl border bg-muted/30 p-3'>
-              <span className='grid h-8 w-8 flex-none place-items-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'><ShieldCheck className='h-4 w-4' /></span>
-              <span className='min-w-0 flex-1'>
-                <span className='block text-sm font-medium'>{t('cockpit.guardrails.status')}</span>
-                <span className='block text-xs text-muted-foreground'>{t('cockpit.guardrails.managedIn')}</span>
-              </span>
-            </div>
-          </section>
         </div>
       </div>
     </div>

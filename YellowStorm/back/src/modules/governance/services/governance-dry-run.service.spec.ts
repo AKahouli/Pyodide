@@ -1,5 +1,6 @@
 import { ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { Types } from 'mongoose';
 import { GovernanceDryRunService } from './governance-dry-run.service';
 
 describe('GovernanceDryRunService', () => {
@@ -25,6 +26,7 @@ describe('GovernanceDryRunService', () => {
         lastCreatedDryRun = { _id: { toString: () => 'dry-run-1' }, ...payload, save: jest.fn(), createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') };
         return lastCreatedDryRun;
       }),
+      find: jest.fn().mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }) }) }),
     };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const accessService = { assertScopeAccess: jest.fn().mockImplementation(async () => { if (scopeAccessError) throw scopeAccessError; }) };
@@ -92,6 +94,31 @@ describe('GovernanceDryRunService', () => {
     expect(messageService.markStreamFailed).toHaveBeenCalledWith(aiMessageId);
     expect(lastCreatedDryRun?.status).toBe('failed');
     expect(lastCreatedDryRun?.checks).toEqual(expect.objectContaining({ runtime: 'failed', error: 'grpc down' }));
+  });
+
+  it('lists dry-runs by deployment ObjectId', async () => {
+    const dryRun = {
+      _id: { toString: () => 'dry-run-1' },
+      programId: { toString: () => programId },
+      scopeId: { toString: () => scopeId },
+      deploymentId: { toString: () => deploymentId },
+      revisionId: { toString: () => revisionId },
+      testerId: { toString: () => actorId },
+      status: 'passed',
+      testCases: [],
+      checks: {},
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { service, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId });
+    dryRunModel.find.mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([dryRun]) }) }) });
+
+    const result = await service.list(actorId, deploymentId);
+
+    expect(dryRunModel.find).toHaveBeenCalledWith({ deploymentId: expect.any(Types.ObjectId) });
+    expect(dryRunModel.find.mock.calls[0][0].deploymentId.toString()).toBe(deploymentId);
+    expect(result).toHaveLength(1);
+    expect(result[0].status).toBe('passed');
   });
 
   it('rejects dry-runs outside the actor scope', async () => {
