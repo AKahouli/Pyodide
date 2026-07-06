@@ -14,6 +14,7 @@ import {
   getAllAgents,
   reconnectAgentWhatsApp,
   updateAgent,
+  updateAgentWhatsAppEnabled,
   upsertAgentTelegramIntegration,
 } from './api';
 
@@ -41,6 +42,7 @@ vi.mock('@/lib/api/config', () => ({
       byId: (id: string) => `/agents/${id}`,
       telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
       whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+      whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
       whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
       whatsappPairing: (id: string, sessionId: string) =>
         `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
@@ -172,6 +174,19 @@ describe('agent api', () => {
 
     expect(postMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/connect');
     expect(result).toEqual({ sessionId: 's1', status: 'PAIRING' });
+  });
+
+  it('updates agent whatsapp enabled via PATCH', async () => {
+    patchMock.mockResolvedValue({
+      data: { data: { enabled: false, status: 'CONNECTED' } },
+    });
+
+    const result = await updateAgentWhatsAppEnabled('a1', { enabled: false });
+
+    expect(patchMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/enabled', {
+      enabled: false,
+    });
+    expect(result).toEqual({ enabled: false, status: 'CONNECTED' });
   });
 
   it('gets whatsapp pairing via GET', async () => {

@@ -10,6 +10,7 @@ import type {
   AgentTelegramIntegration,
   AgentTelegramIntegrationInput,
   AgentWhatsAppConnectResponse,
+  AgentWhatsAppEnabledInput,
   AgentWhatsAppIntegration,
   AgentWhatsAppPairingResponse,
   CreateAgentData,
@@ -252,6 +253,17 @@ export async function connectAgentWhatsApp(
 ): Promise<AgentWhatsAppConnectResponse> {
   const response = await apiClient.post<ApiResponse<AgentWhatsAppConnectResponse>>(
     API_ENDPOINTS.agents.whatsappConnect(agentId),
+  );
+  return response.data.data;
+}
+
+export async function updateAgentWhatsAppEnabled(
+  agentId: string,
+  payload: AgentWhatsAppEnabledInput,
+): Promise<AgentWhatsAppIntegration> {
+  const response = await apiClient.patch<ApiResponse<AgentWhatsAppIntegration>>(
+    API_ENDPOINTS.agents.whatsappEnabled(agentId),
+    payload,
   );
   return response.data.data;
 }

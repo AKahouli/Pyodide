@@ -128,6 +128,28 @@ export class WhatsAppIntegrationService {
     await this.integrationModel.deleteOne({ _id: integration._id }).exec();
   }
 
+  async updateEnabled(
+    userId: string,
+    agentId: string,
+    enabled: boolean,
+  ): Promise<WhatsAppIntegrationResponseDto> {
+    await this.assertAgentOwnership(userId, agentId);
+    const integration = await this.integrationModel
+      .findOneAndUpdate(
+        { agentId: new Types.ObjectId(agentId) },
+        { $set: { enabled } },
+        { new: true },
+      )
+      .exec();
+    if (!integration) {
+      throw new NotFoundException(
+        ErrorCode.WHATSAPP_INTEGRATION_NOT_FOUND,
+        'WhatsApp integration not found for this agent',
+      );
+    }
+    return this.toResponse(integration);
+  }
+
   async findConnectedIntegrations(): Promise<AgentWhatsAppIntegrationDocument[]> {
     return this.integrationModel
       .find({
@@ -138,6 +160,7 @@ export class WhatsAppIntegrationService {
   }
 
   toResponse(integration: {
+    enabled?: boolean;
     status: WhatsAppIntegrationStatus;
     sessionId?: string;
     phoneNumber?: string;
@@ -147,6 +170,7 @@ export class WhatsAppIntegrationService {
     updatedAt?: Date;
   }): WhatsAppIntegrationResponseDto {
     return {
+      enabled: integration.enabled !== false,
       status: integration.status,
       sessionId: integration.sessionId,
       phoneNumber: integration.phoneNumber,

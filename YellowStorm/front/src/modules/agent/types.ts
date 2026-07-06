@@ -153,6 +153,7 @@ export type AgentWhatsAppIntegrationStatus =
   | 'FAILED';
 
 export interface AgentWhatsAppIntegration {
+  enabled: boolean;
   status: AgentWhatsAppIntegrationStatus;
   sessionId?: string;
   phoneNumber?: string;
@@ -160,6 +161,10 @@ export interface AgentWhatsAppIntegration {
   lastActivityAt?: string;
   errorMessage?: string;
   updatedAt?: string;
+}
+
+export interface AgentWhatsAppEnabledInput {
+  enabled: boolean;
 }
 
 export interface AgentWhatsAppConnectResponse {

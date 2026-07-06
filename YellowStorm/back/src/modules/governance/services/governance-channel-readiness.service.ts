@@ -33,7 +33,7 @@ export class GovernanceChannelReadinessService {
       if (channel === 'widget') return this.widgetChatService.hasActiveToken(agentId);
       if (channel === 'whatsapp') {
         const integration = await this.whatsappIntegrationService.getByAgentForUser(userId, agentId);
-        return integration?.status === WhatsAppIntegrationStatus.CONNECTED;
+        return integration?.enabled === true && integration.status === WhatsAppIntegrationStatus.CONNECTED;
       }
       if (channel === 'telegram') {
         const integration = await this.telegramIntegrationService.getByAgentForUser(userId, agentId);

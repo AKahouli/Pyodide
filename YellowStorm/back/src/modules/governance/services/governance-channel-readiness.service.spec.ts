@@ -29,4 +29,19 @@ describe('GovernanceChannelReadinessService', () => {
   it('does not create readiness checks for disabled channels', async () => {
     await expect(service.buildChannelChecks('user-1', 'agent-1', { whatsapp: { enabled: false } })).resolves.toEqual([]);
   });
+
+  it('marks disabled whatsapp integrations as blocking failures', async () => {
+    whatsappIntegrationService.getByAgentForUser.mockResolvedValue({
+      enabled: false,
+      status: 'CONNECTED',
+    });
+
+    const checks = await service.buildChannelChecks('user-1', 'agent-1', {
+      whatsapp: { enabled: true },
+    });
+
+    expect(checks).toEqual([
+      expect.objectContaining({ key: 'whatsapp_ready', status: 'failed', severity: 'blocking' }),
+    ]);
+  });
 });

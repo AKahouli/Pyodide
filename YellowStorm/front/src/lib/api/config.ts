@@ -316,6 +316,7 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
     whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+    whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
     whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
     whatsappPairing: (id: string, sessionId: string) =>
       `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,

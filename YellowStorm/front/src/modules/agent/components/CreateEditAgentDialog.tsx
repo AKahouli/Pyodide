@@ -562,8 +562,6 @@ export function CreateEditAgentDialog({
                       onConnectorActionSelectionsChange={(selections) => setValue('connectorActionSelections', selections, { shouldDirty: true, shouldValidate: true })}
                     />
 
-                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
-                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
 
@@ -577,7 +575,11 @@ export function CreateEditAgentDialog({
                 </TabsContent>
 
                 <TabsContent value="deployment" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                  <div className="grid gap-4">
+                    <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
+                  </div>
                 </TabsContent>
 
                   {/* Evaluation Tab */}
