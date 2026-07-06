@@ -220,7 +220,7 @@ interface WorkspaceActions {
   bulkDeleteDocuments: (workspaceId: string, docIds: string[]) => Promise<BulkDeleteResult>;
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
-  reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
+  reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean, mistralIndex?: boolean) => Promise<void>;
   updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
@@ -248,7 +248,7 @@ interface WorkspaceActions {
   addFilesToQueue: (files: File[], workspaceId: string, folderId?: string) => void;
   removeFromQueue: (fileId: string) => void;
   clearQueue: () => void;
-  startUpload: (deepSearch?: boolean, autoIndex?: boolean) => Promise<void>;
+  startUpload: (deepSearch?: boolean, autoIndex?: boolean, mistralIndex?: boolean) => Promise<void>;
   cancelUpload: (fileId: string) => void;
   updateUploadProgress: (fileId: string, progress: number) => void;
   updateUploadStatus: (fileId: string, status: UploadFileStatus, error?: string) => void;
@@ -291,7 +291,7 @@ interface WorkspaceActions {
   deletePageFolder: (id: string) => Promise<void>;
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
-  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
+  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean; mistralIndex?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -881,9 +881,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         return response.url;
       },
 
-      reindexDocument: async (workspaceId, docId, deepSearch) => {
+      reindexDocument: async (workspaceId, docId, deepSearch, mistralIndex) => {
         try {
-          const result = await workspaceApi.reindexDocument(workspaceId, docId, deepSearch);
+          const result = await workspaceApi.reindexDocument(workspaceId, docId, deepSearch, mistralIndex);
 
           // Merge only returned fields into existing document
           const state = get();
@@ -1148,7 +1148,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ uploadQueue: [], uploadSessionId: null });
       },
 
-      startUpload: async (deepSearch?: boolean, autoIndex?: boolean) => {
+      startUpload: async (deepSearch?: boolean, autoIndex?: boolean, mistralIndex?: boolean) => {
         const state = get();
         const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
 
@@ -1180,6 +1180,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                 item.folderId,
                 deepSearch,
                 autoIndex,
+                mistralIndex,
               );
               get().updateUploadStatus(item.id, 'completed');
 
@@ -1241,7 +1242,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
             // Always complete bulk session so backend can finalize
             try {
-              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch, autoIndex);
+              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch, autoIndex, mistralIndex);
 
               if (failCount === 0) {
                 toast.success(tToast('upload.successTitle', 'Upload complete'), {
@@ -1897,7 +1898,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         get().addFilesToQueue(validFiles, workspaceId);
         try {
-          await get().startUpload(options?.deepSearch, options?.autoIndex);
+          await get().startUpload(options?.deepSearch, options?.autoIndex, options?.mistralIndex);
           toast.success(
             validFiles.length === 1
               ? 'Fichier ajouté'

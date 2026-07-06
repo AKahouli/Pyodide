@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'workspace:deep-search-indexation';
 
-function readStoredValue(): boolean {
+export function readDeepSearchIndexationValue(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     return window.localStorage.getItem(STORAGE_KEY) === 'true';
@@ -12,12 +12,12 @@ function readStoredValue(): boolean {
 }
 
 export function useDeepSearchIndexation() {
-  const [enabled, setEnabledState] = useState<boolean>(() => readStoredValue());
+  const [enabled, setEnabledState] = useState<boolean>(() => readDeepSearchIndexationValue());
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key === STORAGE_KEY) {
-        setEnabledState(event.newValue === 'true');
+        setEnabledState(readDeepSearchIndexationValue());
       }
     };
     window.addEventListener('storage', handleStorage);

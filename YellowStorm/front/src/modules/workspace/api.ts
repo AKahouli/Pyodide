@@ -195,12 +195,15 @@ export async function reindexDocument(
   workspaceId: string,
   documentId: string,
   deepSearch?: boolean,
+  mistralIndex?: boolean,
 ): Promise<WorkspaceDocument> {
-  const params = deepSearch ? { deepSearch: 'true' } : undefined;
+  const params: Record<string, string> = {};
+  if (deepSearch) params.deepSearch = 'true';
+  if (mistralIndex) params.mistralIndex = 'true';
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.reindex(workspaceId, documentId),
     undefined,
-    { params },
+    { params: Object.keys(params).length > 0 ? params : undefined },
   );
   return response.data.data;
 }
@@ -452,6 +455,7 @@ export async function uploadSmallFile(
   folderId?: string,
   deepSearch?: boolean,
   autoIndex?: boolean,
+  mistralIndex?: boolean,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
@@ -464,6 +468,9 @@ export async function uploadSmallFile(
   // Only send the flag when explicitly disabling — absence means "index" (back-compat).
   if (autoIndex === false) {
     formData.append('autoIndex', 'false');
+  }
+  if (mistralIndex) {
+    formData.append('mistralIndex', 'true');
   }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
@@ -534,12 +541,14 @@ export async function completeBulkUpload(
   sessionId: string,
   deepSearch?: boolean,
   autoIndex?: boolean,
+  mistralIndex?: boolean,
 ): Promise<BulkUploadSession> {
   const params =
-    deepSearch || autoIndex === false
+    deepSearch || autoIndex === false || mistralIndex
       ? {
           ...(deepSearch ? { deepSearch: 'true' } : {}),
           ...(autoIndex === false ? { autoIndex: 'false' } : {}),
+          ...(mistralIndex ? { mistralIndex: 'true' } : {}),
         }
       : undefined;
   const response = await apiClient.post<ApiResponse<BulkUploadSession>>(

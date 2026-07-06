@@ -6,26 +6,26 @@ import { cn } from '@/lib/utils';
 import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import { MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
 import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
-import { useAutoIndexation } from '../hooks/useAutoIndexation';
-import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
+import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
+import { readMistralIndexationValue } from '../hooks/useMistralIndexation';
 
 export function WorkspaceUploadDropZone() {
   const canWrite = useCanWriteWorkspace();
   const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
-  const { enabled: autoIndex } = useAutoIndexation();
-  const { enabled: deepSearch } = useDeepSearchIndexation();
   const { accept } = useAllowedUploadExtensions();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const pushFiles = useCallback(
-    (list: FileList | null) => {
-      if (!list || list.length === 0) return;
-      void uploadPageFiles(Array.from(list), { autoIndex, deepSearch });
-    },
-    [uploadPageFiles, autoIndex, deepSearch],
-  );
+  const pushFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    void uploadPageFiles(Array.from(list), {
+      autoIndex: readAutoIndexationValue(),
+      deepSearch: readDeepSearchIndexationValue(),
+      mistralIndex: readMistralIndexationValue(),
+    });
+  };
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return;
