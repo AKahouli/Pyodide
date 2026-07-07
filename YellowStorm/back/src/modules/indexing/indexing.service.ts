@@ -55,7 +55,7 @@ export class IndexingService {
    * Queue a document for indexing and process immediately
    * Called after document upload completes
    */
-  async queueDocument(documentId: string, deepSearch?: boolean, mistralIndex?: boolean): Promise<void> {
+  async queueDocument(documentId: string, deepSearch?: boolean): Promise<void> {
     if (!this.enabled) {
       this.logger.debug('Indexing disabled, skipping queue', { documentId });
       return;
@@ -109,7 +109,7 @@ export class IndexingService {
    * Process a single document
    * Called by cron job or manually
    */
-  async processDocument(documentId: string, deepSearch?: boolean, mistralIndex?: boolean): Promise<void> {
+  async processDocument(documentId: string, deepSearch?: boolean): Promise<void> {
     const document = await this.documentModel.findById(documentId);
     if (!document) {
       throw new NotFoundException(
@@ -122,7 +122,6 @@ export class IndexingService {
     // The cron does not pass deepSearch, so without this fallback any retry
     // would silently drop the user's deep-search intent.
     const effectiveDeepSearch = deepSearch ?? document.metadata?.deepSearchRequested === 'true';
-    const effectiveMistralIndex = mistralIndex ?? document.metadata?.mistralIndexRequested === 'true';
 
     const workspaceId = document.workspaceId.toString();
 
@@ -146,10 +145,6 @@ export class IndexingService {
     if (document.metadata?.deepSearchRequested !== undefined) {
       document.metadata = { ...document.metadata };
       delete document.metadata.deepSearchRequested;
-    }
-    if (document.metadata?.mistralIndexRequested !== undefined) {
-      document.metadata = { ...document.metadata };
-      delete document.metadata.mistralIndexRequested;
     }
     document.indexingStartedAt = new Date();
     await document.save();
@@ -209,7 +204,6 @@ export class IndexingService {
         brainTag: settings?.tag,
         user_id: document.createdBy.toString(),
         deepSearch: effectiveDeepSearch,
-        mistralIndex: effectiveMistralIndex,
       });
 
       // Store API response IDs in metadata, keep status as PROCESSING
@@ -259,7 +253,6 @@ export class IndexingService {
     workspaceId: string,
     documentId: string,
     deepSearch?: boolean,
-    mistralIndex?: boolean,
   ): Promise<WorkspaceDocumentDoc> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -295,7 +288,6 @@ export class IndexingService {
     document.metadata = {
       ...restMetadata,
       deepSearchRequested: deepSearch === true ? 'true' : 'false',
-      mistralIndexRequested: mistralIndex === true ? 'true' : 'false',
     };
     await document.save();
 
@@ -305,7 +297,7 @@ export class IndexingService {
     });
 
     // Optionally process immediately (non-blocking)
-    this.processDocument(documentId, deepSearch, mistralIndex).catch((err) => {
+    this.processDocument(documentId, deepSearch).catch((err) => {
       this.logger.warn('Immediate re-indexing failed, will retry in cron', {
         documentId,
         error: err instanceof Error ? err.message : 'Unknown error',
