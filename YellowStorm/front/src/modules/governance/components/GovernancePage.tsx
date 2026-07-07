@@ -127,7 +127,7 @@ export function GovernancePage(): JSX.Element {
             <GovernanceScopeLifecycleShell programId={selectedProgramId} onCreateScope={() => setScopeWizardOpen(true)} initialTab={initialScopeTab} />
           </>
         ) : (
-          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} />
+          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={() => setScopeWizardOpen(true)} />
         )}
       </div>
 

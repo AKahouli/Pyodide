@@ -11,11 +11,14 @@ const checkTabKeys: Record<string, TabKey> = {
   scope_active: 'overview',
   agents_mapped: 'agents',
   knowledge_mapped: 'knowledge',
-  deployment_exists: 'testPublish',
   draft_revision: 'testPublish',
   dry_run_passed: 'testPublish',
   channel_ready: 'agents',
 };
+
+function isUserVisibleCheck(key: string): boolean {
+  return !key.startsWith('source_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable';
+}
 
 function tabForCheck(key: string): TabKey {
   if (key.startsWith('source_')) return 'knowledge';
@@ -40,11 +43,14 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
     );
   }
 
-  const nextAction = overview.readiness.blockers[0] ?? overview.readiness.warnings[0];
+  const visibleBlockers = overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key));
+  const visibleWarnings = overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key));
+  const nextAction = visibleBlockers[0] ?? visibleWarnings[0];
   const nextActionLabel = nextAction ? translateBlocker(nextAction.key, nextAction.label) : undefined;
   const nextActionTab = nextAction ? tabForCheck(nextAction.key) : undefined;
-  const checks = overview.readiness.checks.filter((check) => !check.key.startsWith('source_'));
+  const checks = overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key));
   const firstPendingIndex = checks.findIndex((check) => check.status !== 'passed');
+  const visibleStatus = visibleBlockers.length ? 'blocked' : visibleWarnings.length ? 'warning' : 'ready';
 
   return (
     <aside className='rounded-2xl border bg-card p-5 shadow-sm lg:sticky lg:top-4 lg:self-start'>
@@ -52,7 +58,7 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
       <div className='mt-2 flex items-center gap-3'>
         <ReadinessRing score={overview.readiness.score} size={56} />
         <div className='min-w-0'>
-          <h2 className='text-sm font-medium'>{t(`scopeShell.readiness.status.${overview.readiness.status}`)}</h2>
+          <h2 className='text-sm font-medium'>{t(`scopeShell.readiness.status.${visibleStatus}`)}</h2>
           {nextActionLabel && nextActionTab ? (
             <button type='button' onClick={() => onNavigateTab(nextActionTab)} className='mt-0.5 text-left text-xs text-primary underline-offset-2 hover:underline'>{t('scopeShell.readiness.nextAction', { action: nextActionLabel })}</button>
           ) : (
@@ -63,8 +69,8 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
 
       <div className='mt-4 space-y-1'>
         <h3 className='text-sm font-semibold'>{t('scopeShell.readiness.blockers')}</h3>
-        {overview.readiness.blockers.map((check) => <ReadinessLine key={check.key} icon='warning' label={translateBlocker(check.key, check.label)} onClick={() => onNavigateTab(tabForCheck(check.key))} />)}
-        {overview.readiness.blockers.length === 0 && <ReadinessLine icon='check' label={t('scopeShell.readiness.noBlockers')} />}
+        {visibleBlockers.map((check) => <ReadinessLine key={check.key} icon='warning' label={translateBlocker(check.key, check.label)} onClick={() => onNavigateTab(tabForCheck(check.key))} />)}
+        {visibleBlockers.length === 0 && <ReadinessLine icon='check' label={t('scopeShell.readiness.noBlockers')} />}
       </div>
 
       <div className='mt-4 space-y-1'>

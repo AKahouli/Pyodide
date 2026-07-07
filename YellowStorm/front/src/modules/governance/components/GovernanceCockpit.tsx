@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
@@ -10,17 +11,22 @@ import type { TabKey } from './GovernanceScopeWorkspace';
 interface Props {
   programId: string | null;
   onSelectScope: (scopeId: string, tab?: TabKey) => void;
+  onCreateScope: () => void;
 }
 
 function tabForAttentionItem(targetType?: string, key?: string): TabKey {
   if (targetType === 'source' || targetType === 'workspace' || key === 'knowledge_mapped') return 'knowledge';
   if (targetType === 'agent' || key === 'agents_mapped') return 'agents';
   if (targetType === 'channel' || key?.startsWith('channel_')) return 'agents';
-  if (targetType === 'dry_run' || key === 'draft_revision' || key === 'draft_revision_publishable' || key === 'deployment_exists' || key === 'deployment_publishable' || key === 'dry_run_passed') return 'testPublish';
+  if (targetType === 'dry_run' || key === 'draft_revision' || key === 'draft_revision_publishable' || key === 'dry_run_passed') return 'testPublish';
   return 'overview';
 }
 
-export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>): JSX.Element {
+function isVisibleAttentionItem(key: string): boolean {
+  return !key.startsWith('deployment_') && key !== 'draft_revision_publishable';
+}
+
+export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const { data: scopes = [] } = useGovernanceScopes(programId);
   const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
@@ -33,7 +39,7 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
   const publishedCount = overviews.filter((overview) => Boolean(overview.publishedRevision)).length;
   const readyCount = overviews.filter((overview) => overview.readiness.status === 'ready').length;
   const attentionItems = overviews.flatMap((overview) =>
-    overview.readiness.blockers.map((blocker) => ({
+    overview.readiness.blockers.filter((blocker) => isVisibleAttentionItem(blocker.key)).map((blocker) => ({
       scopeId: overview.scope.id,
       scopeName: overview.scope.name,
       label: translateBlocker(blocker.key, blocker.label),
@@ -62,7 +68,14 @@ export function GovernanceCockpit({ programId, onSelectScope }: Readonly<Props>)
             <span className='rounded-full border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground'>{t('cockpit.scopes.count', { count: scopes.length })}</span>
           </header>
           {scopes.length === 0 ? (
-            <p className='m-4 rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground'>{t('cockpit.scopes.empty')}</p>
+            <div className='m-4 grid justify-items-center gap-3 rounded-xl border border-dashed p-6 text-center'>
+              <p className='text-sm text-muted-foreground'>{t('cockpit.scopes.empty')}</p>
+              {programId && (
+                <Button type='button' variant='outline' size='sm' onClick={onCreateScope}>
+                  <Plus className='h-4 w-4' />{t('cockpit.newScope')}
+                </Button>
+              )}
+            </div>
           ) : (
             <div className='grid gap-3 p-4 sm:grid-cols-2'>
               {scopes.map((scope) => (
@@ -124,7 +137,7 @@ interface ScopeCardProps {
 
 function ScopeCard({ scope, overview, onOpen, translateBlocker, typeLabel, statusReady, statusPublished }: Readonly<ScopeCardProps>): JSX.Element {
   const score = overview?.readiness.score ?? 0;
-  const topBlocker = overview?.readiness.blockers[0];
+  const topBlocker = overview?.readiness.blockers.find((blocker) => isVisibleAttentionItem(blocker.key));
   const isPublished = Boolean(overview?.publishedRevision);
   const isReady = overview?.readiness.status === 'ready';
   return (

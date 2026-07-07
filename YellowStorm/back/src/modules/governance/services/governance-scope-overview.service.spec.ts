@@ -80,7 +80,7 @@ describe('GovernanceScopeOverviewService', () => {
     expect(overview.readiness.blockers.map((blocker) => blocker.key)).not.toContain(`channel_${agentId.toString()}:widget_ready`);
   });
 
-  it.each(['suspended', 'archived'])('surfaces %s already-published deployments as publish blockers', async (status) => {
+  it.each(['suspended', 'archived'])('does not surface %s deployment state as a scope blocker', async (status) => {
     const programId = new Types.ObjectId();
     const scopeId = new Types.ObjectId();
     const deploymentId = new Types.ObjectId();
@@ -108,7 +108,6 @@ describe('GovernanceScopeOverviewService', () => {
 
     const overview = await moduleRef.get(GovernanceScopeOverviewService).getOverview(agentId.toString(), programId.toString(), scopeId.toString());
 
-    expect(overview.readiness.status).toBe('blocked');
-    expect(overview.readiness.blockers.map((blocker) => blocker.key)).toEqual(expect.arrayContaining(['deployment_publishable', 'draft_revision_publishable']));
+    expect(overview.readiness.blockers.map((blocker) => blocker.key)).not.toContain('deployment_publishable');
   });
 });

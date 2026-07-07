@@ -1,10 +1,13 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { parseApiError } from '@/lib/api-error';
+import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import type { Workspace } from '@/modules/workspace';
 import {
   useCreateGovernanceScope,
   useCreateGovernanceSource,
@@ -16,7 +19,7 @@ import {
 import { GovernanceAgentSelector } from './GovernanceAgentSelector';
 import { GovernanceWorkspaceSelector } from './GovernanceWorkspaceSelector';
 
-const wizardSteps = ['blueprint', 'knowledge', 'agents', 'channels', 'publish'] as const;
+const wizardSteps = ['blueprint', 'knowledge', 'agents', 'publish'] as const;
 type WizardStep = (typeof wizardSteps)[number];
 
 const scopeTypes: GovernanceScope['type'][] = ['municipality', 'organization', 'department', 'business_unit', 'country', 'team', 'custom'];
@@ -36,11 +39,9 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
   const [name, setName] = useState('');
   const [type, setType] = useState<GovernanceScope['type']>('municipality');
   const [parentScopeId, setParentScopeId] = useState('');
-  const [sourceTitle, setSourceTitle] = useState('');
-  const [titleTouched, setTitleTouched] = useState(false);
-  const [workspaceId, setWorkspaceId] = useState('');
-  const [workspaceName, setWorkspaceName] = useState('');
+  const [selectedWorkspaces, setSelectedWorkspaces] = useState<Workspace[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
+  const [isSavingStep, setIsSavingStep] = useState(false);
 
   const { data: overview } = useGovernanceScopeOverview(programId, scopeId);
   const createScope = useCreateGovernanceScope(programId);
@@ -54,11 +55,9 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
       setName('');
       setType('municipality');
       setParentScopeId('');
-      setSourceTitle('');
-      setTitleTouched(false);
-      setWorkspaceId('');
-      setWorkspaceName('');
+      setSelectedWorkspaces([]);
       setAgentIds([]);
+      setIsSavingStep(false);
     }
   }, [open]);
 
@@ -73,30 +72,14 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     blueprint: name.trim().length > 0,
     knowledge: true,
     agents: true,
-    channels: true,
     publish: true,
   };
 
-  const handleSelectWorkspace = (id: string, wsName?: string) => {
-    setWorkspaceId(id);
-    setWorkspaceName(wsName ?? '');
-    if (!titleTouched) setSourceTitle(wsName ?? '');
+  const handleSelectWorkspace = (workspace: Workspace) => {
+    setSelectedWorkspaces((current) => current.some((item) => item.id === workspace.id) ? current.filter((item) => item.id !== workspace.id) : [...current, workspace]);
   };
 
-  const handleAddSource = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!workspaceId || !scopeId) return;
-    const finalTitle = (sourceTitle.trim() || workspaceName).trim();
-    if (!finalTitle) return;
-    createSource.mutate({ title: finalTitle, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId }, { onSuccess: () => { setSourceTitle(''); setTitleTouched(false); setWorkspaceId(''); setWorkspaceName(''); } });
-  };
-
-  const handleSaveAgents = () => {
-    if (!scopeId) return;
-    updateScope.mutate({ agentIds });
-  };
-
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 'blueprint') {
       if (scopeId) {
         setStepIndex((index) => index + 1);
@@ -105,8 +88,35 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
       createScope.mutate({ name: name.trim(), type, parentScopeId: parentScopeId || undefined }, { onSuccess: (scope) => { setScopeId(scope.id); setStepIndex((index) => index + 1); } });
       return;
     }
-    if (step === 'agents' && agentIds.length > 0 && scopeId) {
-      updateScope.mutate({ agentIds });
+    if (step === 'knowledge' && scopeId && selectedWorkspaces.length > 0) {
+      setIsSavingStep(true);
+      const results = await Promise.allSettled(selectedWorkspaces.map(async (workspace) => {
+        await createSource.mutateAsync({ title: workspace.name, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId: workspace.id });
+        return workspace.id;
+      }));
+      const savedIds = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      setSelectedWorkspaces((current) => current.filter((workspace) => !savedIds.includes(workspace.id)));
+      setIsSavingStep(false);
+      if (failed) {
+        showError(t('wizard.knowledge.createError'), { description: parseApiError(failed.reason).message });
+        return;
+      }
+      setStepIndex((index) => index + 1);
+      return;
+    }
+    if (step === 'agents' && scopeId && agentIds.length > 0) {
+      setIsSavingStep(true);
+      try {
+        await updateScope.mutateAsync({ agentIds });
+      } catch (error) {
+        showError(t('wizard.agents.saveError'), { description: parseApiError(error).message });
+        return;
+      } finally {
+        setIsSavingStep(false);
+      }
+      setStepIndex((index) => index + 1);
+      return;
     }
     setStepIndex((index) => index + 1);
   };
@@ -119,7 +129,7 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
     onOpenChange(false);
   };
 
-  const isPending = createScope.isPending || createSource.isPending || updateScope.isPending;
+  const isPending = createScope.isPending || createSource.isPending || updateScope.isPending || isSavingStep;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -174,16 +184,7 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
                 <h3 className='text-base font-semibold'>{t('wizard.knowledge.title')}</h3>
                 <p className='mt-1 text-sm text-muted-foreground'>{t('wizard.knowledge.description')}</p>
               </div>
-              <form className='grid gap-3' onSubmit={handleAddSource}>
-                <GovernanceWorkspaceSelector selectedWorkspaceId={workspaceId} onChange={handleSelectWorkspace} />
-                {workspaceId && (
-                  <div className='grid gap-1.5'>
-                    <label className='text-xs font-medium text-muted-foreground' htmlFor='wizard-source-title'>{t('scopeShell.knowledge.titleOptional')}</label>
-                    <Input id='wizard-source-title' value={sourceTitle} onChange={(event) => { setSourceTitle(event.target.value); setTitleTouched(true); }} placeholder={workspaceName || t('scopeShell.knowledge.sourceTitle')} />
-                  </div>
-                )}
-                <Button type='submit' disabled={createSource.isPending || !workspaceId} className='w-fit'>{t('scopeShell.knowledge.map')}</Button>
-              </form>
+              <GovernanceWorkspaceSelector selectedWorkspaceIds={selectedWorkspaces.map((workspace) => workspace.id)} onChange={handleSelectWorkspace} />
               <div className='rounded-xl border border-dashed p-3 text-sm text-muted-foreground'>
                 {knowledgeCount > 0 ? t('wizard.knowledge.mappedCount', { count: knowledgeCount }) : t('wizard.knowledge.empty')}
               </div>
@@ -197,17 +198,6 @@ export function GovernanceScopeWizard({ programId, open, onOpenChange, onComplet
                 <p className='mt-1 text-sm text-muted-foreground'>{t('wizard.agents.description')}</p>
               </div>
               <GovernanceAgentSelector selectedAgentIds={agentIds} onChange={setAgentIds} />
-              <Button type='button' onClick={handleSaveAgents} disabled={updateScope.isPending || agentIds.length === 0} className='w-fit'>{t('scopeShell.agents.save')}</Button>
-            </div>
-          )}
-
-          {step === 'channels' && (
-            <div className='grid gap-3'>
-              <div>
-                <h3 className='text-base font-semibold'>{t('wizard.channels.title')}</h3>
-                <p className='mt-1 text-sm text-muted-foreground'>{t('wizard.channels.description')}</p>
-              </div>
-              <div className='rounded-xl border bg-background p-4 text-sm text-muted-foreground'>{t('wizard.channels.agentScopedHint')}</div>
             </div>
           )}
 

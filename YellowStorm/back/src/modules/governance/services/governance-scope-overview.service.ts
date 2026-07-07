@@ -67,7 +67,7 @@ export class GovernanceScopeOverviewService {
       this.findLatestDryRun(deployment?._id),
       this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
     ]);
-    const checks = await this.buildChecks(actorId, scope, sources, deployment, draftRevision, latestDryRun);
+    const checks = this.buildChecks(scope, sources, draftRevision, latestDryRun);
     const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
     const localSources = sources.filter((source) => source.visibility !== 'program_shared');
     return {
@@ -106,23 +106,13 @@ export class GovernanceScopeOverviewService {
     return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
   }
 
-  private async buildChecks(actorId: string, scope: Record<string, unknown>, sources: Record<string, unknown>[], deployment: Record<string, unknown> | null, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): Promise<GovernanceScopeOverviewCheck[]> {
+  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
-    const channels = (deployment?.channels ?? {}) as Record<string, { enabled?: boolean; status?: string }>;
-    const deploymentStatus = String(deployment?.status ?? '');
-    const draftRevisionStatus = String(draftRevision?.status ?? '');
-    const draftRevisionId = draftRevision?._id?.toString();
-    const publishedRevisionId = deployment?.currentPublishedRevisionId?.toString();
-    const isDeploymentPublishable = !deployment || (deploymentStatus !== 'archived' && deploymentStatus !== 'suspended');
-    const isDraftRevisionPublishable = !draftRevision || ((draftRevisionStatus !== 'published' && draftRevisionStatus !== 'rejected') && draftRevisionId !== publishedRevisionId);
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
       this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0, 'blocking', 'source'),
-      this.check('deployment_exists', 'Deployment exists', Boolean(deployment), 'blocking', 'rule'),
-      this.check('deployment_publishable', 'Deployment publishable', isDeploymentPublishable, 'blocking', 'rule'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
-      this.check('draft_revision_publishable', 'Draft revision publishable', isDraftRevisionPublishable, 'blocking', 'rule'),
       this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
       ...sources.map((source) => this.sourceReviewCheck(source)),
     ];

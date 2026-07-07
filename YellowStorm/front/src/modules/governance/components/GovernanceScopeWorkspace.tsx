@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Pencil, Phone, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -792,20 +792,31 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
   const suspendDeployment = useSuspendGovernanceDeployment(deploymentId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
   const isAutoProvisioning = createDeployment.isPending || createRevision.isPending;
+  const deploymentProvisionScopeRef = useRef<string | null>(null);
+  const revisionProvisionDeploymentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    deploymentProvisionScopeRef.current = overview.deployment ? null : deploymentProvisionScopeRef.current;
+    revisionProvisionDeploymentRef.current = overview.draftRevision ? null : revisionProvisionDeploymentRef.current;
+  }, [overview.deployment, overview.draftRevision, scopeId]);
 
   useEffect(() => {
     if (!programId || createDeployment.isPending || createRevision.isPending) return;
     if (!overview.deployment) {
-      createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => showError(t('scopeShell.testPublish.deploymentError'), { description: parseApiError(error).message }) });
+      if (deploymentProvisionScopeRef.current === scopeId) return;
+      deploymentProvisionScopeRef.current = scopeId;
+      createDeployment.mutate({ scopeId, name: overview.scope.name, channels: { widget: { enabled: true, status: 'not_configured', allowedOrigins: [] } } }, { onError: (error) => { deploymentProvisionScopeRef.current = null; showError(t('scopeShell.testPublish.deploymentError'), { description: parseApiError(error).message }); } });
       return;
     }
     if (overview.deployment && !overview.draftRevision) {
+      if (revisionProvisionDeploymentRef.current === overview.deployment.id) return;
       const agentId = overview.agents.primaryAgentId;
       if (!agentId) return;
       const workspaceIds = overview.knowledge.workspaceMappings.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
-      createRevision.mutate({ agentId, workspaceIds }, { onError: (error) => showError(t('scopeShell.testPublish.revisionError'), { description: parseApiError(error).message }) });
+      revisionProvisionDeploymentRef.current = overview.deployment.id;
+      createRevision.mutate({ agentId, workspaceIds }, { onError: (error) => { revisionProvisionDeploymentRef.current = null; showError(t('scopeShell.testPublish.revisionError'), { description: parseApiError(error).message }); } });
     }
-  }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.workspaceMappings, overview.scope.id, overview.scope.name, programId, scopeId, t]);
+  }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.workspaceMappings, overview.scope.name, programId, scopeId, t]);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
   const hasPassedDraftDryRun = draftDryRuns.some((dryRun) => dryRun.status === 'passed') || (overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed');

@@ -14,6 +14,10 @@ interface Props {
   onCreateScope: () => void;
 }
 
+function isVisibleBlocker(key: string): boolean {
+  return !key.startsWith('deployment_') && key !== 'draft_revision_publishable';
+}
+
 export function GovernanceScopeTree({ scopes, selectedScopeId, overviewsByScopeId, onSelectScope, onCreateScope }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const { translateBlocker } = useGovernanceCheckLabel();
@@ -32,7 +36,7 @@ export function GovernanceScopeTree({ scopes, selectedScopeId, overviewsByScopeI
           const isSelected = scope.id === selectedScopeId;
           const overview = overviewsByScopeId[scope.id];
           const score = overview?.readiness.score;
-          const topBlocker = overview?.readiness.blockers[0];
+          const topBlocker = overview?.readiness.blockers.find((blocker) => isVisibleBlocker(blocker.key));
           return (
             <button key={scope.id} type='button' className={cn('grid grid-cols-[30px_1fr] items-center gap-3 rounded-xl border p-3 text-left transition hover:bg-muted/60', isSelected && 'border-primary bg-primary/5')} onClick={() => onSelectScope(scope.id)}>
               <ReadinessRing score={score ?? 0} size={30} />
