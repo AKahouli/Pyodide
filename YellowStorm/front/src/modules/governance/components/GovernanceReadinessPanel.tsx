@@ -11,6 +11,8 @@ const checkTabKeys: Record<string, TabKey> = {
   scope_active: 'overview',
   agents_mapped: 'agents',
   knowledge_mapped: 'knowledge',
+  ownership_assigned: 'ownership',
+  guardrails_reviewed: 'guardrails',
   draft_revision: 'testPublish',
   dry_run_passed: 'testPublish',
   channel_ready: 'agents',

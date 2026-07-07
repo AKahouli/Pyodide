@@ -32,6 +32,12 @@ export class GovernanceAccessService {
     throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
   }
 
+  async assertScopeRole(userId: string, programId: string, scopeId: string, roles: Parameters<GovernanceMembershipService['hasScopeRole']>[3]): Promise<void> {
+    if (await this.isProgramOwner(userId, programId)) return;
+    if (await this.membershipService.hasScopeRole(userId, programId, scopeId, ['program_admin', ...roles])) return;
+    throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
+  }
+
   private async isProgramOwner(userId: string, programId: string): Promise<boolean> {
     try {
       await this.programService.assertProgramOwner(userId, programId);

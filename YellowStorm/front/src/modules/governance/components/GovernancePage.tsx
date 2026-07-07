@@ -8,11 +8,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { useCreateGovernanceProgram, useDeleteGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { useCreateGovernanceProgram, useCreateGovernanceScope, useDeleteGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
 import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
 import type { TabKey } from './GovernanceScopeWorkspace';
-import { GovernanceScopeWizard } from './GovernanceScopeWizard';
 
 export function GovernancePage(): JSX.Element {
   const { t } = useModuleTranslation('governance');
@@ -24,9 +23,9 @@ export function GovernancePage(): JSX.Element {
   const createProgram = useCreateGovernanceProgram();
   const deleteProgram = useDeleteGovernanceProgram();
   const [programDialogOpen, setProgramDialogOpen] = useState(false);
-  const [scopeWizardOpen, setScopeWizardOpen] = useState(false);
   const [programName, setProgramName] = useState('');
   const [initialScopeTab, setInitialScopeTab] = useState<TabKey>('overview');
+  const createScope = useCreateGovernanceScope(selectedProgramId);
 
   useEffect(() => {
     if (!selectedProgramId && programs[0]) setSelectedProgramId(programs[0].id);
@@ -49,6 +48,14 @@ export function GovernancePage(): JSX.Element {
   const handleSelectScope = (scopeId: string, tab: TabKey = 'overview') => {
     setInitialScopeTab(tab);
     setSelectedScopeId(scopeId);
+  };
+
+  const handleCreateScope = () => {
+    if (!selectedProgramId) return;
+    createScope.mutate(
+      { name: t('scopes.newDefaultName'), type: 'municipality' },
+      { onSuccess: (scope) => handleSelectScope(scope.id, 'overview'), onError: (error) => showError(t('scopes.createError'), { description: parseApiError(error).message }) },
+    );
   };
 
   const handleDeleteProgram = () => {
@@ -124,10 +131,10 @@ export function GovernancePage(): JSX.Element {
             <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'>
               <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
             </button>
-            <GovernanceScopeLifecycleShell programId={selectedProgramId} onCreateScope={() => setScopeWizardOpen(true)} initialTab={initialScopeTab} />
+            <GovernanceScopeLifecycleShell programId={selectedProgramId} initialTab={initialScopeTab} />
           </>
         ) : (
-          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={() => setScopeWizardOpen(true)} />
+          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={handleCreateScope} />
         )}
       </div>
 
@@ -147,8 +154,6 @@ export function GovernancePage(): JSX.Element {
           </form>
         </DialogContent>
       </Dialog>
-
-      <GovernanceScopeWizard programId={selectedProgramId} open={scopeWizardOpen} onOpenChange={setScopeWizardOpen} onComplete={setSelectedScopeId} />
     </main>
   );
 }

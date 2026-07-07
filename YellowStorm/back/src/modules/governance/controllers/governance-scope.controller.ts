@@ -59,7 +59,7 @@ export class GovernanceScopeController {
   }
 
   @Patch(':scopeId')
-  @RequirePermissions([Permissions.GOVERNANCE_SCOPES_MANAGE, Permissions.GOVERNANCE_ALL], 'any')
+  @RequirePermissions([Permissions.GOVERNANCE_SCOPES_MANAGE, Permissions.GOVERNANCE_REVIEWS_MANAGE, Permissions.GOVERNANCE_ALL], 'any')
   @ApiOperation({ summary: 'Update a governance scope' })
   async updateScope(
     @CurrentUser() user: UserDocument,
@@ -67,7 +67,7 @@ export class GovernanceScopeController {
     @Param('scopeId') scopeId: string,
     @Body() dto: UpdateGovernanceScopeDto,
   ): Promise<GovernanceScopeResponse> {
-    return this.scopeService.update(user._id.toString(), programId, scopeId, dto);
+    return this.scopeService.update(user._id.toString(), user.email, programId, scopeId, dto);
   }
 
   @Delete(':scopeId')

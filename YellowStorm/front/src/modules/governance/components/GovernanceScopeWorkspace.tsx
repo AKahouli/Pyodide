@@ -10,6 +10,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAuth } from '@/modules/auth';
 import { CreateEditAgentDialog, useAgents, useAgentsLoading, useAgentStore, type Agent, type PromptInjectionGuardrailsConfig, type UserAgentFormValues } from '@/modules/agent';
 import { useGroups, useGroupsStore, type UserGroup } from '@/modules/groups';
 import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/workspace';
@@ -37,7 +38,9 @@ import {
   type GovernanceMembershipRole,
   type GovernanceMetric,
   type GovernanceScope,
+  type GovernanceScopeMetadata,
   type GovernanceScopeOverview,
+  type GovernanceScopeReviewChecklistItem,
   type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
@@ -57,11 +60,27 @@ const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
 
 const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipality', 'department', 'business_unit', 'country', 'team', 'custom'];
 
-const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'];
+const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_approver', 'scope_reviewer', 'scope_editor', 'scope_viewer'];
 
-export type TabKey = 'overview' | 'knowledge' | 'agents' | 'access' | 'testPublish' | 'monitor';
+export type TabKey = 'overview' | 'knowledge' | 'agents' | 'ownership' | 'guardrails' | 'review' | 'testPublish' | 'monitor';
 
-export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', 'access', 'testPublish', 'monitor'];
+export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', 'ownership', 'guardrails', 'testPublish', 'review', 'monitor'];
+
+const reviewChecklistKeys = ['knowledge_current', 'agents_confirmed', 'channels_ready', 'ownership_assigned', 'guardrails_reviewed', 'dry_run_accepted'] as const;
+
+function scopeClassification(scope: GovernanceScope): Required<NonNullable<GovernanceScopeMetadata['classification']>> {
+  return {
+    audience: scope.metadata?.classification?.audience ?? 'public_facing',
+    riskLevel: scope.metadata?.classification?.riskLevel ?? 'standard',
+    compliance: scope.metadata?.classification?.compliance ?? 'none',
+    stage: scope.metadata?.classification?.stage ?? 'pilot',
+  };
+}
+
+function scopeReviewChecklist(scope: GovernanceScope): GovernanceScopeReviewChecklistItem[] {
+  const existing = scope.metadata?.review?.checklist ?? [];
+  return reviewChecklistKeys.map((key) => existing.find((item) => item.key === key) ?? { key, checked: false });
+}
 
 const channelLabelKeys = {
   widget: 'scopeShell.channels.widget',
@@ -111,7 +130,9 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         {activeTab === 'overview' && <OverviewTab programId={programId} overview={overview} />}
         {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
-        {activeTab === 'access' && <AccessTab programId={programId} memberships={memberships} scopeId={scopeId} />}
+        {activeTab === 'ownership' && <OwnershipTab programId={programId} memberships={memberships} scopeId={scopeId} />}
+        {activeTab === 'guardrails' && <GuardrailsTab overview={overview} />}
+        {activeTab === 'review' && <ReviewTab programId={programId} memberships={memberships} scopeId={scopeId} overview={overview} />}
         {activeTab === 'testPublish' && <TestPublishTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'monitor' && <MonitorTab overview={overview} metrics={metrics} scopeId={scopeId} />}
       </div>
@@ -168,18 +189,24 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
   const deleteScope = useDeleteGovernanceScope(programId);
   const [name, setName] = useState(overview.scope.name);
   const [type, setType] = useState<GovernanceScope['type']>(overview.scope.type);
+  const [status, setStatus] = useState<GovernanceScope['status']>(overview.scope.status);
+  const [classification, setClassification] = useState(scopeClassification(overview.scope));
 
   useEffect(() => {
     setName(overview.scope.name);
     setType(overview.scope.type);
-  }, [overview.scope.id, overview.scope.name, overview.scope.type]);
+    setStatus(overview.scope.status);
+    setClassification(scopeClassification(overview.scope));
+  }, [overview.scope.id, overview.scope.name, overview.scope.type, overview.scope.status, overview.scope.metadata]);
 
-  const isDirty = name.trim() !== overview.scope.name || type !== overview.scope.type;
+  const currentClassification = scopeClassification(overview.scope);
+  const isClassificationDirty = Object.entries(classification).some(([key, value]) => currentClassification[key as keyof typeof currentClassification] !== value);
+  const isDirty = name.trim() !== overview.scope.name || type !== overview.scope.type || status !== overview.scope.status || isClassificationDirty;
 
   const handleSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!name.trim() || !isDirty) return;
-    updateScope.mutate({ name: name.trim(), type });
+    updateScope.mutate({ name: name.trim(), type, status, metadata: { ...overview.scope.metadata, classification } });
   };
 
   const handleDelete = () => {
@@ -189,7 +216,7 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
   return (
     <form onSubmit={handleSave} className='rounded-xl border bg-background p-4'>
       <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('scopeShell.settings.title')}</p>
-      <div className='mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px]'>
+      <div className='mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px_160px]'>
         <div className='grid gap-1.5'>
           <Label htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</Label>
           <Input id='governance-scope-name' value={name} onChange={(event) => setName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
@@ -199,6 +226,22 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
           <select id='governance-scope-type' className='h-10 rounded-md border bg-background px-3 text-sm' value={type} onChange={(event) => setType(event.target.value as GovernanceScope['type'])}>
             {scopeTypeOptions.map((option) => <option key={option} value={option}>{t(`scopeShell.scopeTypes.${option}`)}</option>)}
           </select>
+        </div>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='governance-scope-status'>{t('scopeShell.settings.statusLabel')}</Label>
+          <select id='governance-scope-status' className='h-10 rounded-md border bg-background px-3 text-sm' value={status} onChange={(event) => setStatus(event.target.value as GovernanceScope['status'])}>
+            <option value='active'>{t('scopeShell.settings.status.active')}</option>
+            <option value='inactive'>{t('scopeShell.settings.status.inactive')}</option>
+          </select>
+        </div>
+      </div>
+      <div className='mt-4 rounded-xl border border-dashed p-3'>
+        <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('scopeShell.classification.title')}</p>
+        <div className='mt-3 grid gap-3 md:grid-cols-4'>
+          <ClassificationSelect label={t('scopeShell.classification.audience')} value={classification.audience} options={['public_facing', 'internal_only']} labelPrefix='scopeShell.classification.audienceOptions' onChange={(value) => setClassification((prev) => ({ ...prev, audience: value as typeof prev.audience }))} />
+          <ClassificationSelect label={t('scopeShell.classification.riskLevel')} value={classification.riskLevel} options={['standard', 'high_risk']} labelPrefix='scopeShell.classification.riskOptions' onChange={(value) => setClassification((prev) => ({ ...prev, riskLevel: value as typeof prev.riskLevel }))} />
+          <ClassificationSelect label={t('scopeShell.classification.compliance')} value={classification.compliance} options={['none', 'regulated']} labelPrefix='scopeShell.classification.complianceOptions' onChange={(value) => setClassification((prev) => ({ ...prev, compliance: value as typeof prev.compliance }))} />
+          <ClassificationSelect label={t('scopeShell.classification.stage')} value={classification.stage} options={['pilot', 'production']} labelPrefix='scopeShell.classification.stageOptions' onChange={(value) => setClassification((prev) => ({ ...prev, stage: value as typeof prev.stage }))} />
         </div>
       </div>
       <div className='mt-3 flex items-center gap-2'>
@@ -221,6 +264,19 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
         </AlertDialog>
       </div>
     </form>
+  );
+}
+
+function ClassificationSelect({ label, value, options, labelPrefix, onChange }: Readonly<{ label: string; value: string; options: string[]; labelPrefix: string; onChange: (value: string) => void }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const id = `governance-classification-${labelPrefix.split('.').at(-1) ?? label}`;
+  return (
+    <div className='grid gap-1.5'>
+      <Label htmlFor={id}>{label}</Label>
+      <select id={id} className='h-10 rounded-md border bg-background px-3 text-sm' value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => <option key={option} value={option}>{t(`${labelPrefix}.${option}` as never)}</option>)}
+      </select>
+    </div>
   );
 }
 
@@ -393,7 +449,6 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editingAgentTab, setEditingAgentTab] = useState<'identity' | 'guardrails' | 'deployment'>('identity');
-  const [bulkPending, setBulkPending] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
   const mappedAgentIds = overview.scope.agentIds;
 
@@ -402,34 +457,10 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
   }, [fetchAgents]);
 
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
-  const allGuardrailsEnabled = mappedAgents.length > 0 && mappedAgents.every(isAgentGuardrailsEnabled);
 
   const openAgentModal = (agent: Agent, tab: 'identity' | 'guardrails' | 'deployment') => {
     setEditingAgentTab(tab);
     setEditingAgent(agent);
-  };
-
-  const handleToggleAgent = async (agent: Agent, enabled: boolean) => {
-    if (enabled) {
-      openAgentModal(agent, 'guardrails');
-      return;
-    }
-    try {
-      await setAgentGuardrailsEnabled(agent, enabled);
-    } catch (error) {
-      showError(t('scopeShell.agents.guardrailsError'), { description: parseApiError(error).message });
-    }
-  };
-
-  const handleToggleAll = async (enabled: boolean) => {
-    setBulkPending(true);
-    try {
-      await Promise.all(mappedAgents.map((agent) => setAgentGuardrailsEnabled(agent, enabled)));
-    } catch (error) {
-      showError(t('scopeShell.agents.guardrailsError'), { description: parseApiError(error).message });
-    } finally {
-      setBulkPending(false);
-    }
   };
 
   const handleRemove = (agentId: string) => {
@@ -483,14 +514,6 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
         <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('scopeShell.agents.addAgent')}</Button>
       </div>
 
-      <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
-        <div>
-          <p className='text-sm font-medium'>{t('scopeShell.agents.guardrailsDefaultTitle')}</p>
-          <p className='text-xs text-muted-foreground'>{t('scopeShell.agents.guardrailsDefaultHint')}</p>
-        </div>
-        <Switch checked={allGuardrailsEnabled} disabled={bulkPending || mappedAgents.length === 0} onCheckedChange={handleToggleAll} aria-label={t('scopeShell.agents.guardrailsDefaultTitle')} />
-      </div>
-
       <div className='grid gap-2'>
         {mappedAgents.map((agent, index) => (
           <details key={agent.id} className='group rounded-xl border bg-background p-3' open={index === 0}>
@@ -500,10 +523,6 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
                 <p className='text-xs text-muted-foreground'>{index === 0 ? t('scopeShell.agents.primary') : t('scopeShell.agents.secondary')}</p>
               </div>
               <div className='flex flex-none items-center gap-3'>
-                <label className='flex items-center gap-2 text-xs text-muted-foreground' onClick={(event) => event.stopPropagation()}>
-                  <Switch checked={isAgentGuardrailsEnabled(agent)} onCheckedChange={(checked) => handleToggleAgent(agent, checked)} aria-label={t('scopeShell.agents.guardrails')} />
-                  {t('scopeShell.agents.guardrails')}
-                </label>
                 <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-foreground' aria-label={t('scopeShell.agents.deployment')} onClick={(event) => { event.preventDefault(); openAgentModal(agent, 'deployment'); }}>
                   <Phone className='h-4 w-4' />
                 </Button>
@@ -525,6 +544,111 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
 
       <AgentPickerDialog open={dialogOpen} onOpenChange={setDialogOpen} mappedAgentIds={mappedAgentIds} onAdd={handleAdd} pending={updateScope.isPending} />
       <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} initialTab={editingAgentTab} onSave={handleSaveAgent} saving={savingAgent} />
+    </div>
+  );
+}
+
+function GuardrailsTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const agents = useAgents();
+  const fetchAgents = useAgentStore((state) => state.fetchAgents);
+  const updateAgent = useAgentStore((state) => state.updateAgent);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [savingAgent, setSavingAgent] = useState(false);
+
+  useEffect(() => {
+    void fetchAgents();
+  }, [fetchAgents]);
+
+  const mappedAgents = overview.scope.agentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
+  const allGuardrailsEnabled = mappedAgents.length > 0 && mappedAgents.every(isAgentGuardrailsEnabled);
+
+  const handleToggleAll = async (enabled: boolean) => {
+    setBulkPending(true);
+    try {
+      await Promise.all(mappedAgents.map((agent) => setAgentGuardrailsEnabled(agent, enabled)));
+    } catch (error) {
+      showError(t('scopeShell.agents.guardrailsError'), { description: parseApiError(error).message });
+    } finally {
+      setBulkPending(false);
+    }
+  };
+
+  const handleToggleAgent = async (agent: Agent, enabled: boolean) => {
+    if (enabled) {
+      setEditingAgent(agent);
+      return;
+    }
+    try {
+      await setAgentGuardrailsEnabled(agent, enabled);
+    } catch (error) {
+      showError(t('scopeShell.agents.guardrailsError'), { description: parseApiError(error).message });
+    }
+  };
+
+  const handleSaveAgent = async (data: UserAgentFormValues) => {
+    if (!editingAgent) return;
+    setSavingAgent(true);
+    try {
+      await updateAgent(editingAgent.id, {
+        name: data.name,
+        slug: data.slug,
+        agentType: data.agentType,
+        role: data.role,
+        description: data.description,
+        temperature: data.temperature,
+        model: data.model || undefined,
+        instruction: data.instruction,
+        ignorePrePrompt: data.ignorePrePrompt,
+        knowledgeBases: data.knowledgeBases,
+        tools: data.tools,
+        skills: data.skills,
+        disabledSkills: data.disabledSkills,
+        connectors: data.connectors,
+        connectorActionSelections: data.connectorActionSelections,
+        isActive: data.isActive,
+        isDefaultForType: data.isDefaultForType,
+        guardrails: data.guardrails,
+        deploymentSettings: data.deploymentSettings,
+      });
+      setEditingAgent(null);
+    } catch (error) {
+      showError(t('scopeShell.agents.editError'), { description: parseApiError(error).message });
+    } finally {
+      setSavingAgent(false);
+    }
+  };
+
+  return (
+    <div className='grid gap-4'>
+      <div>
+        <h3 className='text-sm font-semibold'>{t('scopeShell.guardrails.title')}</h3>
+        <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.guardrails.hint')}</p>
+      </div>
+      <div className='flex items-center justify-between gap-3 rounded-xl border bg-background p-4'>
+        <div>
+          <p className='text-sm font-medium'>{t('scopeShell.agents.guardrailsDefaultTitle')}</p>
+          <p className='text-xs text-muted-foreground'>{t('scopeShell.agents.guardrailsDefaultHint')}</p>
+        </div>
+        <Switch checked={allGuardrailsEnabled} disabled={bulkPending || mappedAgents.length === 0} onCheckedChange={handleToggleAll} aria-label={t('scopeShell.agents.guardrailsDefaultTitle')} />
+      </div>
+      <div className='grid gap-2'>
+        {mappedAgents.map((agent) => (
+          <div key={agent.id} className='flex items-center justify-between gap-3 rounded-xl border bg-background p-3'>
+            <div className='min-w-0'>
+              <div className='truncate font-medium'>{agent.name}</div>
+              <p className='text-xs text-muted-foreground'>{isAgentGuardrailsEnabled(agent) ? t('scopeShell.guardrails.enabled') : t('scopeShell.guardrails.disabled')}</p>
+            </div>
+            <div className='flex flex-none items-center gap-3'>
+              <Switch checked={isAgentGuardrailsEnabled(agent)} onCheckedChange={(checked) => handleToggleAgent(agent, checked)} aria-label={t('scopeShell.agents.guardrails')} />
+              <Button type='button' variant='outline' size='sm' onClick={() => setEditingAgent(agent)}>{t('scopeShell.guardrails.configure')}</Button>
+            </div>
+          </div>
+        ))}
+        {mappedAgents.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.guardrails.noAgents')}</p>}
+      </div>
+      <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} initialTab='guardrails' onSave={handleSaveAgent} saving={savingAgent} />
     </div>
   );
 }
@@ -592,7 +716,7 @@ function AgentPickerDialog({ open, onOpenChange, mappedAgentIds, onAdd, pending 
   );
 }
 
-function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string }>): JSX.Element {
+function OwnershipTab({ programId, memberships, scopeId }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const updateMembership = useUpdateGovernanceMembership(programId);
   const deleteMembership = useDeleteGovernanceMembership(programId);
@@ -605,8 +729,8 @@ function AccessTab({ programId, memberships, scopeId }: Readonly<{ programId: st
     <div className='grid gap-4'>
       <div className='flex items-center justify-between gap-3'>
         <div>
-          <h3 className='text-sm font-semibold'>{t('scopeShell.access.inviteTitle')}</h3>
-          <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.access.inviteHint')}</p>
+          <h3 className='text-sm font-semibold'>{t('scopeShell.ownership.title')}</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.ownership.hint')}</p>
         </div>
         <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('access.invite')}</Button>
       </div>
@@ -705,9 +829,16 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
     setSelected((prev) => (prev.some((item) => item.type === 'group' && item.group.id === group.id) ? prev.filter((item) => !(item.type === 'group' && item.group.id === group.id)) : [...prev, { type: 'group', group }]));
   };
 
-  const handleInvite = () => {
-    selected.forEach((item) => createMembership.mutate({ userId: item.type === 'user' ? item.user.id : undefined, groupId: item.type === 'group' ? item.group.id : undefined, scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' }));
-    onOpenChange(false);
+  const handleInvite = async () => {
+    const results = await Promise.allSettled(selected.map((item) => createMembership.mutateAsync({ userId: item.type === 'user' ? item.user.id : undefined, groupId: item.type === 'group' ? item.group.id : undefined, scopeId: level === 'scope' ? scopeId : undefined, role, status: 'active' })));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (!failed) {
+      onOpenChange(false);
+      return;
+    }
+    const successfulTargets = selected.filter((_, index) => results[index].status === 'fulfilled').map((item) => item.type === 'user' ? `user-${item.user.id}` : `group-${item.group.id}`);
+    setSelected((prev) => prev.filter((item) => !successfulTargets.includes(item.type === 'user' ? `user-${item.user.id}` : `group-${item.group.id}`)));
+    showError(t('scopeShell.access.inviteError'), { description: parseApiError(failed.reason).message });
   };
 
   const normalizedSearch = search.trim().toLowerCase();
@@ -783,12 +914,83 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
   );
 }
 
+function ReviewTab({ programId, memberships, scopeId, overview }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const { user } = useAuth();
+  const updateScope = useUpdateGovernanceScope(programId, scopeId);
+  const deploymentId = overview.deployment?.id ?? null;
+  const publishDeployment = usePublishGovernanceDeployment(deploymentId);
+  const checklist = scopeReviewChecklist(overview.scope);
+  const allChecked = checklist.every((item) => item.checked);
+  const activeApprovers = memberships.filter((membership) => membership.status === 'active' && (!membership.scopeId || membership.scopeId === scopeId) && membership.role === 'scope_approver');
+  const isDirectApprover = activeApprovers.some((membership) => membership.userId === user?.id);
+  const mayBeGroupApprover = activeApprovers.some((membership) => Boolean(membership.groupId));
+  const canApprove = isDirectApprover || mayBeGroupApprover;
+  const hasDraft = Boolean(overview.draftRevision && deploymentId);
+  const latestDraftDryRunPassed = overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed';
+  const canPublish = canApprove && hasDraft && allChecked && latestDraftDryRunPassed && overview.readiness.blockers.length === 0 && overview.scope.status === 'active';
+
+  const updateReview = (review: NonNullable<GovernanceScopeMetadata['review']>) => {
+    updateScope.mutate({ metadata: { review: { ...overview.scope.metadata?.review, ...review } } });
+  };
+
+  const toggleChecklistItem = (item: GovernanceScopeReviewChecklistItem, checked: boolean) => {
+    const nextChecklist = checklist.map((current) => current.key === item.key ? { ...current, checked, checkedAt: checked ? new Date().toISOString() : undefined, checkedBy: checked ? user?.id : undefined } : current);
+    updateReview({ checklist: nextChecklist, status: nextChecklist.every((current) => current.checked) ? 'ready_for_approval' : 'in_review' });
+  };
+
+  const handlePublish = () => {
+    publishDeployment.mutate(undefined, {
+      onSuccess: () => updateReview({ checklist, lastReviewedAt: new Date().toISOString() }),
+      onError: (error) => showError(t('scopeShell.testPublish.publishError'), { description: parseApiError(error).message }),
+    });
+  };
+
+  const handleReject = () => updateReview({ status: 'rejected', rejectedAt: new Date().toISOString(), rejectedBy: user?.id });
+
+  return (
+    <div className='grid gap-4'>
+      <div className='grid gap-3 md:grid-cols-3'>
+        <SummaryCard label={t('scopeShell.review.status')} value={t(`scopeShell.review.statusOptions.${overview.scope.metadata?.review?.status ?? 'not_started'}`)} />
+        <SummaryCard label={t('scopeShell.review.approvers')} value={String(activeApprovers.length)} />
+        <SummaryCard label={t('scopeShell.review.nextReview')} value={overview.scope.metadata?.review?.nextReviewAt ? new Date(overview.scope.metadata.review.nextReviewAt).toLocaleDateString() : t('scopeShell.overview.none')} />
+      </div>
+
+      {!canApprove && <p className='rounded-xl border border-dashed p-3 text-sm text-muted-foreground'>{t('scopeShell.review.approverHint')}</p>}
+
+      <div className='rounded-xl border bg-background p-4'>
+        <div className='flex items-center justify-between gap-3'>
+          <div>
+            <p className='text-sm font-semibold'>{t('scopeShell.review.checklistTitle')}</p>
+            <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.review.checklistHint')}</p>
+          </div>
+        </div>
+        <div className='mt-3 grid gap-2'>
+          {checklist.map((item) => (
+            <label key={item.key} className='flex items-center justify-between gap-3 rounded-lg border p-3 text-sm'>
+              <span>{t(`scopeShell.review.checklist.${item.key}` as never)}</span>
+              <Switch checked={item.checked} disabled={updateScope.isPending} onCheckedChange={(checked) => toggleChecklistItem(item, checked)} aria-label={t(`scopeShell.review.checklist.${item.key}` as never)} />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {!latestDraftDryRunPassed && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.review.dryRunRequired')}</div>}
+      {overview.readiness.blockers.length > 0 && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.testPublish.blockedHelp')}</div>}
+
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button type='button' onClick={handlePublish} disabled={!canPublish || publishDeployment.isPending || updateScope.isPending}>{t('scopeShell.review.publish')}</Button>
+        <Button type='button' variant='outline' onClick={handleReject} disabled={updateScope.isPending}>{t('scopeShell.review.reject')}</Button>
+      </div>
+    </div>
+  );
+}
+
 function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const deploymentId = overview.deployment?.id ?? null;
   const createDeployment = useCreateGovernanceDeployment(programId);
   const createRevision = useCreateGovernanceRevision(deploymentId);
-  const publishDeployment = usePublishGovernanceDeployment(deploymentId);
   const suspendDeployment = useSuspendGovernanceDeployment(deploymentId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
   const isAutoProvisioning = createDeployment.isPending || createRevision.isPending;
@@ -818,13 +1020,6 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
     }
   }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.workspaceMappings, overview.scope.name, programId, scopeId, t]);
 
-  const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === overview.draftRevision?.id);
-  const hasPassedDraftDryRun = draftDryRuns.some((dryRun) => dryRun.status === 'passed') || (overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed');
-  const isDeploymentPublishable = overview.deployment?.status !== 'archived' && overview.deployment?.status !== 'suspended';
-  const isDraftRevisionPublishable = overview.draftRevision?.status !== 'published' && overview.draftRevision?.status !== 'rejected' && overview.draftRevision?.id !== overview.deployment?.currentPublishedRevisionId;
-  const canPublish = overview.draftRevision !== undefined && isDeploymentPublishable && isDraftRevisionPublishable && hasPassedDraftDryRun && overview.readiness.blockers.length === 0;
-
-  const handlePublish = () => publishDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.publishError'), { description: parseApiError(error).message }) });
   const handleSuspend = () => suspendDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.suspendError'), { description: parseApiError(error).message }) });
 
   return (
@@ -849,7 +1044,6 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
 
       {overview.draftRevision && (
         <div className='flex items-center gap-2'>
-          <Button type='button' onClick={handlePublish} disabled={!canPublish || publishDeployment.isPending}>{t('publish.publish')}</Button>
           {overview.publishedRevision && overview.deployment?.status === 'published' && <Button type='button' variant='outline' onClick={handleSuspend} disabled={suspendDeployment.isPending}>{t('publish.suspend')}</Button>}
         </div>
       )}
@@ -963,6 +1157,11 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
     markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'passed' }, { onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) });
   };
 
+  const handleMarkFailed = () => {
+    if (!latestDraftDryRun) return;
+    markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'failed' }, { onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) });
+  };
+
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const isEmpty = messages.length === 0 && !pendingUserText && !isStreaming;
 
@@ -1001,7 +1200,12 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
       {latestDraftDryRun && (
         <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
           <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
-          {latestDraftDryRun.status !== 'passed' && !isStreaming && <Button type='button' variant='outline' size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>}
+          {!isStreaming && (
+            <div className='flex gap-2'>
+              <Button type='button' variant={latestDraftDryRun.status === 'passed' ? 'default' : 'outline'} size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>
+              <Button type='button' variant={latestDraftDryRun.status === 'failed' ? 'destructive' : 'outline'} size='sm' onClick={handleMarkFailed} disabled={markDryRun.isPending}>{t('dryRun.fail')}</Button>
+            </div>
+          )}
         </div>
       )}
     </div>

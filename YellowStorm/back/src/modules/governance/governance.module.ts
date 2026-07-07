@@ -33,6 +33,7 @@ import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionSchema } from
 import { GovernanceDryRun, GovernanceDryRunSchema } from './schemas/governance-dry-run.schema';
 import { GovernanceMetric, GovernanceMetricSchema } from './schemas/governance-metric.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
+import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from
       { name: GovernanceDryRun.name, schema: GovernanceDryRunSchema },
       { name: GovernanceMetric.name, schema: GovernanceMetricSchema },
       { name: GovernancePublicationAttempt.name, schema: GovernancePublicationAttemptSchema },
+      { name: Agent.name, schema: AgentSchema },
     ]),
     AuthorizationModule,
     ConversationModule,

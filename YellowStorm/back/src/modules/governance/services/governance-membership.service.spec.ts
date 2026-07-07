@@ -1,5 +1,4 @@
-import { BadRequestException, ConflictException } from '@modules/exceptions';
-import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { BadRequestException } from '@modules/exceptions';
 import { GovernanceMembershipService } from './governance-membership.service';
 
 describe('GovernanceMembershipService', () => {
@@ -13,8 +12,9 @@ describe('GovernanceMembershipService', () => {
     const exec = jest.fn().mockResolvedValue(memberships);
     const lean = jest.fn().mockReturnValue({ exec });
     const populate = jest.fn().mockReturnValue({ lean });
+    const findOneExec = jest.fn().mockResolvedValue(duplicate ?? null);
     const membershipModel = {
-      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(duplicate ?? null) }) }),
+      findOne: jest.fn().mockReturnValue({ exec: findOneExec, lean: jest.fn().mockReturnValue({ exec: findOneExec }) }),
       create: jest.fn().mockImplementation(async (payload) => ({ _id: { toString: () => 'membership-1' }, ...payload, createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') })),
       find: jest.fn().mockReturnValue({ populate, lean }),
       findById: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }) }),
@@ -36,11 +36,17 @@ describe('GovernanceMembershipService', () => {
     expect(membership.permissions).toContain('governance.read');
   });
 
-  it('rejects duplicate memberships for the same program scope and user', async () => {
-    const { service } = buildService({ _id: 'existing' });
+  it('reactivates duplicate memberships for the same program scope and user', async () => {
+    const duplicate = { _id: { toString: () => 'existing' }, userId, role: 'scope_viewer', status: 'disabled', permissions: [], save: jest.fn().mockResolvedValue(undefined) };
+    const { service, membershipModel } = buildService(duplicate);
 
-    await expect(service.create(actorId, actorEmail, programId, { userId, role: 'scope_viewer' })).rejects.toMatchObject({ code: ErrorCode.GOVERNANCE_MEMBERSHIP_EXISTS });
-    await expect(service.create(actorId, actorEmail, programId, { userId, role: 'scope_viewer' })).rejects.toBeInstanceOf(ConflictException);
+    const membership = await service.create(actorId, actorEmail, programId, { userId, role: 'scope_approver' });
+
+    expect(membership.id).toBe('existing');
+    expect(duplicate.role).toBe('scope_approver');
+    expect(duplicate.status).toBe('active');
+    expect(duplicate.save).toHaveBeenCalled();
+    expect(membershipModel.create).not.toHaveBeenCalled();
   });
 
   it('creates group memberships after validating group ownership', async () => {

@@ -10,6 +10,7 @@ import { GovernanceScopeService } from './governance-scope.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
+import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument, GovernancePublicationAttemptStatus } from '../schemas/governance-publication-attempt.schema';
 
@@ -23,6 +24,7 @@ export class GovernanceDeploymentService {
   constructor(
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
     @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
     @InjectModel(GovernancePublicationAttempt.name) private readonly attemptModel: Model<GovernancePublicationAttemptDocument>,
     private readonly programService: GovernanceProgramService,
@@ -117,6 +119,7 @@ export class GovernanceDeploymentService {
 
   async publish(actorId: string, actorEmail: string, deploymentId: string, dto: PublishGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
     const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
+    await this.accessService.assertScopeRole(actorId, deployment.programId.toString(), deployment.scopeId.toString(), ['scope_approver']);
     let readiness: GovernanceReadiness | undefined;
     let revisionId = dto.revisionId ?? deployment.currentDraftRevisionId?.toString();
     try {
@@ -128,6 +131,7 @@ export class GovernanceDeploymentService {
         throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
       }
       if (!revisionId) throw new ConflictException(ErrorCode.GOVERNANCE_NO_DRAFT_REVISION);
+      if (revisionId !== deployment.currentDraftRevisionId?.toString()) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
       if (deployment.currentPublishedRevisionId?.toString() === revisionId) throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
       const revision = await this.revisionModel.findOne({ _id: new Types.ObjectId(revisionId), deploymentId: new Types.ObjectId(deploymentId) }).exec();
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
@@ -207,8 +211,12 @@ export class GovernanceDeploymentService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async buildReadinessChecks(actorId: string, deployment: any): Promise<GovernanceReadinessCheck[]> {
+    const passedDryRun = deployment.currentDraftRevisionId
+      ? await this.dryRunModel.findOne({ deploymentId: deployment._id, revisionId: deployment.currentDraftRevisionId, status: 'passed' }).select('_id').lean().exec()
+      : null;
     const checks: GovernanceReadinessCheck[] = [
       { key: 'draft_revision', label: 'Draft revision', status: deployment.currentDraftRevisionId ? 'passed' : 'failed', severity: 'blocking', targetType: 'rule' },
+      { key: 'dry_run_passed', label: 'Dry-run passed', status: passedDryRun ? 'passed' : 'failed', severity: 'blocking', targetType: 'dry_run' },
       { key: 'published_revision', label: 'Published revision', status: deployment.currentPublishedRevisionId ? 'passed' : 'warning', severity: 'warning', targetType: 'rule' },
     ];
     void actorId;

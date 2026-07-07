@@ -36,6 +36,7 @@ const rolePermissions: Record<GovernanceMembershipRole, string[]> = {
   program_owner: [Permissions.GOVERNANCE_ALL],
   program_admin: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_PROGRAMS_MANAGE, Permissions.GOVERNANCE_SCOPES_MANAGE, Permissions.GOVERNANCE_SOURCES_EDIT, Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_MEMBERSHIPS_MANAGE, Permissions.GOVERNANCE_DEPLOYMENTS_MANAGE, Permissions.GOVERNANCE_DRY_RUNS_EXECUTE, Permissions.GOVERNANCE_PUBLISH, Permissions.GOVERNANCE_METRICS_READ],
   scope_admin: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_SOURCES_EDIT, Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_MEMBERSHIPS_MANAGE, Permissions.GOVERNANCE_DEPLOYMENTS_MANAGE, Permissions.GOVERNANCE_DRY_RUNS_EXECUTE, Permissions.GOVERNANCE_METRICS_READ],
+  scope_approver: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_PUBLISH, Permissions.GOVERNANCE_REVIEWS_MANAGE],
   scope_editor: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_SOURCES_EDIT, Permissions.GOVERNANCE_DRY_RUNS_EXECUTE],
   scope_reviewer: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_DRY_RUNS_EXECUTE, Permissions.GOVERNANCE_REVIEWS_MANAGE],
   scope_viewer: [Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_METRICS_READ],
@@ -57,8 +58,8 @@ export class GovernanceMembershipService {
     this.assertSingleTarget(dto);
     if (dto.groupId) await this.userGroupService.findById(actorId, dto.groupId);
     const targetFilter = dto.userId ? { userId: new Types.ObjectId(dto.userId) } : { groupId: new Types.ObjectId(dto.groupId) };
-    const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, ...targetFilter }).lean().exec();
-    if (duplicate) throw new ConflictException(ErrorCode.GOVERNANCE_MEMBERSHIP_EXISTS);
+    const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, ...targetFilter }).exec();
+    if (duplicate) return this.reactivateMembership(actorId, actorEmail, programId, duplicate, dto);
     const membership = await this.membershipModel.create({
       programId: new Types.ObjectId(programId),
       scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined,
@@ -105,6 +106,17 @@ export class GovernanceMembershipService {
     return this.toResponse(populated ?? membership);
   }
 
+  private async reactivateMembership(actorId: string, actorEmail: string, programId: string, membership: GovernanceMembershipDocument, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
+    membership.role = dto.role as GovernanceMembershipRole;
+    membership.permissions = rolePermissions[dto.role as GovernanceMembershipRole];
+    membership.status = dto.status ?? 'active';
+    membership.invitedBy = new Types.ObjectId(actorId);
+    await membership.save();
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.updated', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, status: membership.status, role: membership.role, reason: 'reactivated_existing' } });
+    const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
+    return this.toResponse(populated ?? membership);
+  }
+
   async disable(actorId: string, actorEmail: string, programId: string, membershipId: string): Promise<void> {
     await this.programService.assertOwnedProgram(actorId, programId);
     const membership = await this.membershipModel.findOne({ _id: new Types.ObjectId(membershipId), programId: new Types.ObjectId(programId) }).exec();
@@ -127,6 +139,26 @@ export class GovernanceMembershipService {
     }).lean().exec();
     if (memberships.some((membership) => !membership.scopeId)) return ['*'];
     return memberships.map((membership) => membership.scopeId?.toString()).filter((scopeId): scopeId is string => Boolean(scopeId));
+  }
+
+  async hasScopeRole(userId: string, programId: string, scopeId: string, roles: GovernanceMembershipRole[]): Promise<boolean> {
+    const groupIds = await this.userGroupService.findGroupIdsForMember(userId);
+    const membership = await this.membershipModel.findOne({
+      programId: new Types.ObjectId(programId),
+      status: 'active',
+      role: { $in: roles },
+      $or: [
+        { scopeId: null },
+        { scopeId: new Types.ObjectId(scopeId) },
+      ],
+      $and: [{
+        $or: [
+          { userId: new Types.ObjectId(userId) },
+          ...(groupIds.length > 0 ? [{ groupId: { $in: groupIds.map((id) => new Types.ObjectId(id)) } }] : []),
+        ],
+      }],
+    }).select('_id').lean().exec();
+    return Boolean(membership);
   }
 
   private async assertProgramAndScope(actorId: string, programId: string, scopeId?: string): Promise<void> {

@@ -8,9 +8,11 @@ import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
+import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
 import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
 
 type ReadinessStatus = 'ready' | 'blocked' | 'warning';
 type CheckStatus = 'passed' | 'warning' | 'failed';
@@ -47,7 +49,9 @@ export class GovernanceScopeOverviewService {
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
     @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
+    @InjectModel(GovernanceMembership.name) private readonly membershipModel: Model<GovernanceMembershipDocument>,
     @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
+    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
   ) {}
@@ -61,13 +65,15 @@ export class GovernanceScopeOverviewService {
       this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).sort({ updatedAt: -1 }).lean().exec(),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
-    const [draftRevision, publishedRevision, latestDryRun, metrics] = await Promise.all([
+    const [draftRevision, publishedRevision, latestDryRun, scopeMemberships, metrics, mappedAgents] = await Promise.all([
       this.findRevision(deployment?.currentDraftRevisionId),
       this.findRevision(deployment?.currentPublishedRevisionId),
       this.findLatestDryRun(deployment?._id),
+      this.findScopeMemberships(programId, scopeId),
       this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
+      this.findMappedAgents(scope.agentIds ?? []),
     ]);
-    const checks = this.buildChecks(scope, sources, draftRevision, latestDryRun);
+    const checks = this.buildChecks(scope, sources, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
     const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
     const localSources = sources.filter((source) => source.visibility !== 'program_shared');
     return {
@@ -106,16 +112,39 @@ export class GovernanceScopeOverviewService {
     return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
   }
 
-  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null): GovernanceScopeOverviewCheck[] {
+  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
+    const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && ['scope_admin', 'scope_approver', 'scope_editor', 'scope_reviewer'].includes(String(membership.role)));
+    const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
       this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0, 'blocking', 'source'),
+      this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
+      this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
       this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed', 'warning', 'dry_run'),
       ...sources.map((source) => this.sourceReviewCheck(source)),
     ];
+  }
+
+  private async findScopeMemberships(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
+    return this.membershipModel.find({
+      programId: new Types.ObjectId(programId),
+      status: 'active',
+      $or: [{ scopeId: null }, { scopeId: new Types.ObjectId(scopeId) }],
+    }).lean().exec();
+  }
+
+  private async findMappedAgents(agentIds: unknown[]): Promise<Record<string, unknown>[]> {
+    const ids = Array.isArray(agentIds) ? agentIds.filter((id): id is Types.ObjectId | string => Boolean(id)) : [];
+    if (ids.length === 0) return [];
+    return this.agentModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(String(id))) } }).lean().exec();
+  }
+
+  private hasAnyGuardrailEnabled(agent: Record<string, unknown>): boolean {
+    const promptInjection = (agent.guardrails as { promptInjection?: Record<string, unknown> } | undefined)?.promptInjection;
+    return Boolean(promptInjection?.inputGuardrailEnabled || promptInjection?.outputGuardrailEnabled || promptInjection?.toolCallGuardrailEnabled);
   }
 
   private check(key: string, label: string, passed: boolean, severity: CheckSeverity, targetType: string): GovernanceScopeOverviewCheck {

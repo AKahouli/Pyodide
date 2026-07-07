@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GovernanceReadinessPanel } from './GovernanceReadinessPanel';
-import { GovernanceScopeTree } from './GovernanceScopeTree';
 import { GovernanceScopeWorkspace, type TabKey } from './GovernanceScopeWorkspace';
 import { useGovernanceMemberships, useGovernanceMetrics, useGovernanceScopeOverviews, useGovernanceScopes, useGovernanceUiStore } from '@/modules/governance';
 
 interface Props {
   programId: string | null;
-  onCreateScope: () => void;
   initialTab?: TabKey;
 }
 
-export function GovernanceScopeLifecycleShell({ programId, onCreateScope, initialTab = 'overview' }: Readonly<Props>): JSX.Element {
+export function GovernanceScopeLifecycleShell({ programId, initialTab = 'overview' }: Readonly<Props>): JSX.Element {
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const { data: scopes = [] } = useGovernanceScopes(programId);
@@ -32,12 +30,11 @@ export function GovernanceScopeLifecycleShell({ programId, onCreateScope, initia
   }, [selectedScopeId]);
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]'>
-      <GovernanceScopeTree scopes={scopes} selectedScopeId={selectedScopeId} overviewsByScopeId={byScopeId} onSelectScope={setSelectedScopeId} onCreateScope={onCreateScope} />
+    <div className='grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]'>
+      <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
       <div className='grid min-w-0 gap-4'>
         <GovernanceScopeWorkspace programId={programId} scopeId={selectedScopeId} overview={overview} memberships={memberships} metrics={metrics} activeTab={activeTab} onTabChange={setActiveTab} />
       </div>
-      <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
     </div>
   );
 }

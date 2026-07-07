@@ -17,8 +17,8 @@ export class CreateGovernanceMembershipDto {
   @IsMongoId()
   groupId?: string;
 
-  @ApiProperty({ enum: ['program_owner', 'program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'] })
-  @IsIn(['program_owner', 'program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'])
+  @ApiProperty({ enum: ['program_owner', 'program_admin', 'scope_admin', 'scope_approver', 'scope_editor', 'scope_reviewer', 'scope_viewer'] })
+  @IsIn(['program_owner', 'program_admin', 'scope_admin', 'scope_approver', 'scope_editor', 'scope_reviewer', 'scope_viewer'])
   role!: string;
 
   @ApiPropertyOptional({ enum: ['invited', 'active', 'disabled'] })

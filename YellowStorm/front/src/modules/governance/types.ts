@@ -20,9 +20,41 @@ export interface GovernanceScope {
   name: string;
   type: 'organization' | 'municipality' | 'department' | 'business_unit' | 'country' | 'team' | 'custom';
   status: 'active' | 'inactive';
-  metadata?: Record<string, unknown>;
+  metadata?: GovernanceScopeMetadata;
   createdAt: string;
   updatedAt: string;
+}
+
+export type GovernanceScopeAudience = 'public_facing' | 'internal_only';
+export type GovernanceScopeRiskLevel = 'standard' | 'high_risk';
+export type GovernanceScopeCompliance = 'none' | 'regulated';
+export type GovernanceScopeStage = 'pilot' | 'production';
+export type GovernanceScopeReviewStatus = 'not_started' | 'in_review' | 'ready_for_approval' | 'approved' | 'rejected';
+
+export interface GovernanceScopeReviewChecklistItem {
+  key: string;
+  checked: boolean;
+  checkedAt?: string;
+  checkedBy?: string;
+}
+
+export interface GovernanceScopeMetadata {
+  classification?: {
+    audience?: GovernanceScopeAudience;
+    riskLevel?: GovernanceScopeRiskLevel;
+    compliance?: GovernanceScopeCompliance;
+    stage?: GovernanceScopeStage;
+  };
+  review?: {
+    status?: GovernanceScopeReviewStatus;
+    checklist?: GovernanceScopeReviewChecklistItem[];
+    reviewFrequencyDays?: number;
+    lastReviewedAt?: string;
+    nextReviewAt?: string;
+    rejectedAt?: string;
+    rejectedBy?: string;
+  };
+  [key: string]: unknown;
 }
 
 export interface GovernanceSource {
@@ -63,6 +95,7 @@ export interface CreateGovernanceScopePayload {
 
 export type UpdateGovernanceScopePayload = Partial<CreateGovernanceScopePayload> & {
   status?: GovernanceScope['status'];
+  metadata?: GovernanceScopeMetadata;
 };
 
 export interface CreateGovernanceSourcePayload {
@@ -99,7 +132,7 @@ export interface GovernanceReadiness {
   checks: GovernanceReadinessCheck[];
 }
 
-export type GovernanceMembershipRole = 'program_owner' | 'program_admin' | 'scope_admin' | 'scope_editor' | 'scope_reviewer' | 'scope_viewer';
+export type GovernanceMembershipRole = 'program_owner' | 'program_admin' | 'scope_admin' | 'scope_approver' | 'scope_editor' | 'scope_reviewer' | 'scope_viewer';
 
 export interface GovernanceMembership {
   id: string;

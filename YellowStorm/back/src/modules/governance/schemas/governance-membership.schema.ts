@@ -7,6 +7,7 @@ export type GovernanceMembershipRole =
   | 'program_owner'
   | 'program_admin'
   | 'scope_admin'
+  | 'scope_approver'
   | 'scope_editor'
   | 'scope_reviewer'
   | 'scope_viewer';
@@ -30,7 +31,7 @@ export class GovernanceMembership extends Document {
 
   @Prop({
     type: String,
-    enum: ['program_owner', 'program_admin', 'scope_admin', 'scope_editor', 'scope_reviewer', 'scope_viewer'],
+    enum: ['program_owner', 'program_admin', 'scope_admin', 'scope_approver', 'scope_editor', 'scope_reviewer', 'scope_viewer'],
     required: true,
     index: true,
   })
