@@ -95,7 +95,10 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     });
     const stream = new ShapeStream({
       url,
-      params: { table, ...(secret ? { secret } : {}) },
+      // replica:'full' so UPDATE rows carry ALL columns, not just changed ones —
+      // our upsert replaces the mapped fields, so partial rows would clobber
+      // title/description/lane/status with defaults (e.g. "Step undefined").
+      params: { table, replica: 'full', ...(secret ? { secret } : {}) },
       handle: cursor?.handle ?? undefined,
       offset: (cursor?.offset as never) ?? undefined,
     });

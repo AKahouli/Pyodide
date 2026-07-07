@@ -33,7 +33,7 @@ describe('worky-electric.mapper', () => {
       expect(set).toMatchObject({ streamId: 'stream-1', externalId: 'pg-msg-1', role: 'manager', content: 'hello' });
       expect(set.emittedAt).toEqual(new Date('2026-07-03T00:00:00Z'));
       expect(set).not.toHaveProperty('createdAt');
-      expect(event).toMatchObject({ type: 'message.appended', payload: { role: 'manager', content: 'hello' } });
+      expect(event).toMatchObject({ type: 'message.appended', payload: { id: 'pg-msg-1', role: 'manager', content: 'hello' } });
     });
 
     it('maps owner role through unchanged', () => {

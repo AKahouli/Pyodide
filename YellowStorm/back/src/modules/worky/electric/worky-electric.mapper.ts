@@ -76,7 +76,7 @@ export function mapMessage(row: PgMessageRow, streamId: string): { set: Record<s
   const role = mapRole(row.role);
   return {
     set: { streamId, externalId: row.id, role, content: row.content, emittedAt: new Date(row.created_at) },
-    event: { type: 'message.appended', emittedAt: now(), payload: { role, content: row.content } },
+    event: { type: 'message.appended', emittedAt: now(), payload: { id: row.id, role, content: row.content } },
   };
 }
 
