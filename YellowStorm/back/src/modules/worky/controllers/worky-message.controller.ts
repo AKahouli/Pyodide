@@ -64,6 +64,12 @@ export class WorkyMessageController {
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
+    this.logger.log('[worky-electric] gRPC kickoff', {
+      streamId,
+      aiSessionId,
+      model,
+      contentLength: dto.content?.length,
+    });
     void this.grpcClient
       .worky(user._id.toString(), aiSessionId, dto.content, model ? { model } : {})
       .catch((err) => this.logger.error('Worky gRPC kickoff failed', { streamId, error: (err as Error).message }));

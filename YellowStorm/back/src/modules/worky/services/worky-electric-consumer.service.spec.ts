@@ -25,17 +25,19 @@ const makeService = () => {
   const logger = {
     setContext: jest.fn(),
     log: jest.fn(),
+    debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
   };
   const config = {
     get: jest.fn((key: string) => {
-      const values: Record<string, string> = {
+      const values: Record<string, unknown> = {
         'worky.electricUrl': 'http://electric:3000/v1/shape',
         'worky.electricMessagesTable': 'messages',
         'worky.electricPlansTable': 'plans',
         'worky.electricPlanStepsTable': 'plan_steps',
         'worky.electricSecret': 'shh',
+        'worky.electricDebug': false,
       };
       return values[key];
     }),

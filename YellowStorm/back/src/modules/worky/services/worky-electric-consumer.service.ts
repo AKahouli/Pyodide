@@ -44,6 +44,11 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     this.logger.setContext(WorkyElectricConsumerService.name);
   }
 
+  /** Gated payload logging (row/control/applied) — content may be PII. */
+  private get debug(): boolean {
+    return !!this.config.get<boolean>('worky.electricDebug');
+  }
+
   async onModuleInit(): Promise<void> {
     await this.subscribe(
       'messages',
@@ -79,18 +84,28 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   ): Promise<void> {
     const cursor = await this.cursorModel.findOne({ shape }).lean<{ handle?: string | null; offset?: string | null }>().exec();
     const secret = this.config.get<string>('worky.electricSecret');
+    const url = this.config.get<string>('worky.electricUrl')!;
+    this.logger.log('[worky-electric] subscribing', {
+      shape,
+      table,
+      url,
+      hasSecret: !!secret,
+      resumeHandle: cursor?.handle ?? null,
+      resumeOffset: cursor?.offset ?? null,
+    });
     const stream = new ShapeStream({
-      url: this.config.get<string>('worky.electricUrl')!,
+      url,
       params: { table, ...(secret ? { secret } : {}) },
       handle: cursor?.handle ?? undefined,
       offset: (cursor?.offset as never) ?? undefined,
     });
     const unsubscribe = stream.subscribe(
       async (messages) => {
+        this.logger.log('[worky-electric] batch', { shape, messageCount: messages.length });
         await handler(messages);
         await this.persistCursor(shape, stream.shapeHandle, String(stream.lastOffset));
       },
-      (err) => this.logger.error('Electric stream error', { shape, error: (err as Error).message }),
+      (err) => this.logger.error('[worky-electric] stream error', { shape, error: (err as Error).message }),
     );
     this.streams.push({ unsubscribe });
   }
@@ -99,17 +114,32 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     await this.cursorModel
       .updateOne({ shape }, { $set: { handle: handle ?? null, offset } }, { upsert: true })
       .exec();
+    this.logger.log('[worky-electric] cursor persisted', { shape, handle: handle ?? null, offset });
   }
 
   async handleMessages(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
-      if (isControlMessage(m) || !isChangeMessage(m)) continue;
+      if (isControlMessage(m)) {
+        if (this.debug) {
+          this.logger.debug('[worky-electric] control', { shape: 'messages', headers: m.headers });
+        }
+        continue;
+      }
+      if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
       try {
         const row = m.value as unknown as PgMessageRow;
+        if (this.debug) {
+          this.logger.debug('[worky-electric] row', {
+            shape: 'messages',
+            op: m.headers.operation,
+            sessionId: row.session_id,
+            payload: row,
+          });
+        }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('Message for unknown session', { session: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sessionId: row.session_id });
           continue;
         }
         const { set, event } = mapMessage(row, target.streamId);
@@ -121,6 +151,16 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           )
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
+        if (this.debug) {
+          this.logger.debug('[worky-electric] applied', {
+            shape: 'messages',
+            streamId: target.streamId,
+            ownerUserId: target.ownerUserId,
+            externalId: row.id,
+            eventType: event.type,
+            set,
+          });
+        }
       } catch (err) {
         this.logger.error('Failed to process message row', { error: (err as Error).message });
         continue;
@@ -130,13 +170,27 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
 
   async handlePlanSteps(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
-      if (isControlMessage(m) || !isChangeMessage(m)) continue;
+      if (isControlMessage(m)) {
+        if (this.debug) {
+          this.logger.debug('[worky-electric] control', { shape: 'plan_steps', headers: m.headers });
+        }
+        continue;
+      }
+      if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
       try {
         const row = m.value as unknown as PgPlanStepRow;
+        if (this.debug) {
+          this.logger.debug('[worky-electric] row', {
+            shape: 'plan_steps',
+            op: m.headers.operation,
+            sessionId: row.session_id,
+            payload: row,
+          });
+        }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('Plan step for unknown session', { session: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plan_steps', sessionId: row.session_id });
           continue;
         }
         if (!isKnownPlanStepStatus(row.status)) {
@@ -151,6 +205,16 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           )
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
+        if (this.debug) {
+          this.logger.debug('[worky-electric] applied', {
+            shape: 'plan_steps',
+            streamId: target.streamId,
+            ownerUserId: target.ownerUserId,
+            externalId: row.step_id,
+            eventType: event.type,
+            set,
+          });
+        }
       } catch (err) {
         this.logger.error('Failed to process plan_step row', { error: (err as Error).message });
         continue;
@@ -160,13 +224,27 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
 
   async handlePlans(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
-      if (isControlMessage(m) || !isChangeMessage(m)) continue;
+      if (isControlMessage(m)) {
+        if (this.debug) {
+          this.logger.debug('[worky-electric] control', { shape: 'plans', headers: m.headers });
+        }
+        continue;
+      }
+      if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
       try {
         const row = m.value as unknown as PgPlanRow;
+        if (this.debug) {
+          this.logger.debug('[worky-electric] row', {
+            shape: 'plans',
+            op: m.headers.operation,
+            sessionId: row.session_id,
+            payload: row,
+          });
+        }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('Plan for unknown session', { session: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sessionId: row.session_id });
           continue;
         }
         const { set, event } = mapPlan(row, target.streamId);
@@ -178,6 +256,15 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           )
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
+        if (this.debug) {
+          this.logger.debug('[worky-electric] applied', {
+            shape: 'plans',
+            streamId: target.streamId,
+            ownerUserId: target.ownerUserId,
+            eventType: event.type,
+            set,
+          });
+        }
       } catch (err) {
         this.logger.error('Failed to process plan row', { error: (err as Error).message });
         continue;

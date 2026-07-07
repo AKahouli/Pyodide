@@ -41,4 +41,7 @@ export default registerAs('worky', () => ({
   electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'messages',
   electricPlansTable: process.env.WORKY_ELECTRIC_PLANS_TABLE || 'plans',
   electricPlanStepsTable: process.env.WORKY_ELECTRIC_PLAN_STEPS_TABLE || 'plan_steps',
+  // Gated payload logging for the Electric consumer (row/control/applied
+  // debug logs include row payloads, which may contain PII) — off by default.
+  electricDebug: process.env.WORKY_ELECTRIC_DEBUG === 'true',
 }));

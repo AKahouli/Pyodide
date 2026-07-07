@@ -6,7 +6,7 @@ describe('WorkyMessageController', () => {
   let streamService: { ensureKickoffContext: jest.Mock };
   let grpcClient: { worky: jest.Mock };
   let models: { getDefaultModel: jest.Mock; getModelIdentifier: jest.Mock };
-  let logger: { setContext: jest.Mock; error: jest.Mock };
+  let logger: { setContext: jest.Mock; log: jest.Mock; error: jest.Mock };
 
   beforeEach(() => {
     planning = {
@@ -25,6 +25,7 @@ describe('WorkyMessageController', () => {
     };
     logger = {
       setContext: jest.fn(),
+      log: jest.fn(),
       error: jest.fn(),
     };
 
