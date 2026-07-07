@@ -66,7 +66,7 @@ export class WorkyMessageController {
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
     this.logger.log('[worky-electric] gRPC kickoff', {
       streamId,
-      aiSessionId,
+      aiSid: aiSessionId,
       model,
       contentLength: dto.content?.length,
     });

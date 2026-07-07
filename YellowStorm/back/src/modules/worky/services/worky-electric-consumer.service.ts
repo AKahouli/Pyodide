@@ -133,13 +133,13 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.debug('[worky-electric] row', {
             shape: 'messages',
             op: m.headers.operation,
-            sessionId: row.session_id,
+            sid: row.session_id,
             payload: row,
           });
         }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sessionId: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sid: row.session_id });
           continue;
         }
         const { set, event } = mapMessage(row, target.streamId);
@@ -184,13 +184,13 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.debug('[worky-electric] row', {
             shape: 'plan_steps',
             op: m.headers.operation,
-            sessionId: row.session_id,
+            sid: row.session_id,
             payload: row,
           });
         }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('[worky-electric] unknown session', { shape: 'plan_steps', sessionId: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plan_steps', sid: row.session_id });
           continue;
         }
         if (!isKnownPlanStepStatus(row.status)) {
@@ -238,13 +238,13 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.debug('[worky-electric] row', {
             shape: 'plans',
             op: m.headers.operation,
-            sessionId: row.session_id,
+            sid: row.session_id,
             payload: row,
           });
         }
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
-          this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sessionId: row.session_id });
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sid: row.session_id });
           continue;
         }
         const { set, event } = mapPlan(row, target.streamId);
