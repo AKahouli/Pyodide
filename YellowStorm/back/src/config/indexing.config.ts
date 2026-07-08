@@ -13,4 +13,6 @@ export default registerAs('indexing', () => ({
   processingIntervalMs: Number.parseInt(process.env.INDEXING_INTERVAL_MS || '30000', 10),
   timeoutMs: Number.parseInt(process.env.INDEXING_TIMEOUT_MS || '3600000', 10), // 1 hour
   enabled: process.env.INDEXING_ENABLED !== 'false',
+  urlToPdfApiUrl: process.env.URL_TO_PDF_API_URL || 'http://localhost:5000',
+  urlToPdfApiKey: process.env.URL_TO_PDF_API_KEY || '',
 }));
