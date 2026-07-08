@@ -95,7 +95,7 @@ fake_step_hitl_handlers.handle_clarification_after = _fake_handle_hitl
 fake_step_hitl_handlers.handle_interrupt_after = _fake_handle_hitl
 sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hitl_handlers)
 
-from src.flow_engine.nodes.step import run_step
+from src.flow_engine.nodes.step import _temporary_child_enabled, run_step
 
 sys.modules.pop("src.flow_engine.nodes.step_hitl", None)
 sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
@@ -107,6 +107,12 @@ from src.flow_engine.nodes.step_result import finalize_step_result
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def test_temporary_child_enabled_uses_explicit_param_only():
+    assert _temporary_child_enabled({"enable_temporary_child_agents": "true"}) is True
+    assert _temporary_child_enabled({"enable_temporary_child_agents": "false"}) is False
+    assert _temporary_child_enabled({"connector_bindings_json": "[{}]"}) is False
 
 
 def _assert_step_events_without_tokens(events: list[dict]) -> None:
@@ -615,6 +621,52 @@ async def test_run_step_executes_bound_tools(monkeypatch):
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
+
+
+@pytest.mark.anyio
+async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        return _ToolCallResponse("Parent answer.")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    result = await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Research",
+            "metadata": {
+                "agent_name": "Research agent",
+                "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+                "agent_params": {
+                    "enable_temporary_child_agents": "true",
+                    "max_temporary_child_agents": "2",
+                },
+            },
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+    )
+
+    tool_names = [tool["function"]["name"] for tool in calls[0]["tools"]]
+    assert "calculator" in tool_names
+    assert "create_temporary_child_agent" in tool_names
+    assert result["task_outputs"][("step-1", 0)]["output"] == "Parent answer."
 
 
 @pytest.mark.anyio

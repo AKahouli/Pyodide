@@ -23,8 +23,21 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
 from google.adk.sessions import InMemorySessionService
+from src.smart_rag.agents.tools.temporary_child_agent import (
+    TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    make_temporary_child_agent_tool,
+    should_enable_temporary_child_agent_tool,
+)
 
 logger = get_logger("api.routers.agentic_rag.AgentDelegationFactory")
+
+
+class _DelegatedTemporaryChildTeam:
+    def __init__(self, delegation_factory: "AgentDelegationFactory"):
+        self.config = delegation_factory.config
+        self.agent_helper = delegation_factory._helper
+        self.delegation_factory = delegation_factory
+        self.citation_manager = delegation_factory.citation_manager
 
 
 class AgentDelegationFactory:
@@ -150,6 +163,24 @@ class AgentDelegationFactory:
             if agent is None:
                 logger.error(f"[DELEGATION] Failed to create agent: {agent_name} - session_id: {self.config.session_id}")
                 return None
+
+            if should_enable_temporary_child_agent_tool(agent_config):
+                agent.instruction = (
+                    f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
+                )
+                agent.tools.append(
+                    make_temporary_child_agent_tool(
+                        _DelegatedTemporaryChildTeam(self),
+                        agent_config,
+                        delegation_span,
+                        image_input=resolved_image_input,
+                    )
+                )
+                logger.info(
+                    "[TEMP CHILD] Delegated tool attached agent=%s session=%s",
+                    agent_config.get("id") or agent_config.get("name"),
+                    self.config.session_id,
+                )
 
             # Execute agent with error handling
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name)

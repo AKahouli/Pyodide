@@ -46,6 +46,11 @@ from src.smart_rag.agents.generators.suggestions_generator import AgentSuggestio
 from src.smart_rag.agents.core.repository import AgentRepository
 from src.smart_rag.agents.factories.delegation_factory import AgentDelegationFactory
 from src.smart_rag.agents.factories.manager_factory import ManagerAgentFactory
+from src.smart_rag.agents.tools.temporary_child_agent import (
+    TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    make_temporary_child_agent_tool,
+    should_enable_temporary_child_agent_tool,
+)
 # Import the decomposed components
 from src.smart_rag.agents.tools.tools_manager import AgentToolsManager
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
@@ -770,6 +775,24 @@ Do not render charts for single values or non-numeric content.
             )
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+
+            if should_enable_temporary_child_agent_tool(agent_config):
+                agent.instruction = (
+                    f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
+                )
+                agent.tools.append(
+                    make_temporary_child_agent_tool(
+                        self,
+                        agent_config,
+                        single_agent_span,
+                        image_input=image_input,
+                    )
+                )
+                logger.info(
+                    "[TEMP CHILD] Tool attached agent=%s session=%s",
+                    agent_config.get("id") or agent_config.get("name"),
+                    session_id,
+                )
 
             session_helper = get_in_memory_session_service()()
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')

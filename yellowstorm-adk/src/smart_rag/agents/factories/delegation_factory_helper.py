@@ -487,6 +487,7 @@ def create_search_agent_with_tools(
         vectorstore_mcp_tool=True if "logical_search" in tools or "deep_search" in tools else False,
         logical_search_only=logical_search_only,
         deep_search=deep_search,
+        skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
     )
 
     # Store toolkit for source handling

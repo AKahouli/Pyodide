@@ -739,6 +739,31 @@ class ChatbotServicer(
         raw_agent_params = (
             dict(pb_agent.agent_params.params) if pb_agent.HasField("agent_params") else {}
         )
+        has_connector_bindings = bool(raw_agent_params.get("connector_bindings_json"))
+        enable_temporary_child_agents = raw_agent_params.get(
+            "enable_temporary_child_agents"
+        )
+        temporary_child_agents_enabled = (
+            str(enable_temporary_child_agents or "false").lower() == "true"
+        )
+        logger.info(
+            "[gRPC IN] Agent params received agent_id=%s agent_name=%s "
+            "has_connector_bindings_json=%s enable_temporary_child_agents=%s "
+            "max_temporary_child_agents=%s enabled=%s agent_param_keys=%s",
+            pb_agent.id if pb_agent.id else "no_id",
+            pb_agent.name,
+            has_connector_bindings,
+            enable_temporary_child_agents,
+            raw_agent_params.get("max_temporary_child_agents"),
+            temporary_child_agents_enabled,
+            sorted(raw_agent_params.keys()),
+        )
+        logger.info(
+            "[TEMP CHILD] gRPC config agent=%s enabled=%s max_temporary_child_agents=%s",
+            pb_agent.id if pb_agent.id else "no_id",
+            temporary_child_agents_enabled,
+            raw_agent_params.get("max_temporary_child_agents"),
+        )
         return AgentSuggestion(
             id=pb_agent.id if pb_agent.id else "no_id",
             name=pb_agent.name,

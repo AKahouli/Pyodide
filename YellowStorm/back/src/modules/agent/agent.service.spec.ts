@@ -181,6 +181,11 @@ describe('AgentService connector skill inheritance', () => {
       'agent-skill',
       'connector-skill',
     ]);
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
+      connector_bindings_json: expect.any(String),
+      enable_temporary_child_agents: 'true',
+      max_temporary_child_agents: '4',
+    }));
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -357,6 +362,11 @@ describe('AgentService connector skill inheritance', () => {
       '111111111111111111111111',
       'connector-skill',
     ]);
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
+      connector_bindings_json: expect.any(String),
+      enable_temporary_child_agents: 'true',
+      max_temporary_child_agents: '4',
+    }));
   });
 
   it('falls back to the admin default model when the agent has no model set', async () => {

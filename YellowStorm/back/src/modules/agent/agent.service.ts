@@ -852,6 +852,8 @@ export class AgentService {
           params: {
             user_id: userId,
             connector_bindings_json: JSON.stringify(connectorBindings),
+            enable_temporary_child_agents: 'true',
+            max_temporary_child_agents: '4',
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
           },
@@ -1026,6 +1028,8 @@ export class AgentService {
             params: {
               user_id: userId,
               connector_bindings_json: JSON.stringify(connectorBindings),
+              enable_temporary_child_agents: 'true',
+              max_temporary_child_agents: '4',
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),

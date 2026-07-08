@@ -553,6 +553,7 @@ class AgentFactory:
         vectorstore_mcp_tool: bool = False,
         logical_search_only: bool = False,
         deep_search: bool = False,
+        skills: Optional[List[Dict]] = None,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
         if logical_search_only:
@@ -599,7 +600,13 @@ class AgentFactory:
         web_search_prompt = self.prompt_processor.get_web_search_prompt(
             web_search_prompt_index
         )
-        instruction = str(search_agent_prompt) + str(web_search_prompt) + str(tree_info)
+        instruction = inject_skill_catalog(
+            str(search_agent_prompt) + str(web_search_prompt) + str(tree_info),
+            skills,
+        )
+        activate_skill_tool = make_activate_skill_tool(skills)
+        if activate_skill_tool:
+            tools.append(activate_skill_tool)
 
         if deep_search:
             instruction += (
