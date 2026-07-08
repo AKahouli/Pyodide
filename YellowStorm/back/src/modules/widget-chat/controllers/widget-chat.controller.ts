@@ -7,7 +7,7 @@ import { RateLimit } from '@modules/rate-limiter';
 import { LoggerService } from '@modules/logger';
 import { WidgetTokenGuard } from '../guards/widget-token.guard';
 import { WidgetChatService } from '../services/widget-chat.service';
-import { WidgetSendMessageDto, WidgetCreateSessionDto } from '../dto/widget-chat.dto';
+import { WidgetSendMessageDto, WidgetCreateSessionDto, WidgetCitationUrlDto } from '../dto/widget-chat.dto';
 
 interface WidgetRequest extends Request {
   widgetTokenHash?: string;
@@ -98,6 +98,26 @@ export class WidgetChatController {
       messageId: result.messageId,
     });
     return result;
+  }
+
+  @Post('citation-url')
+  @Public()
+  @SkipMaintenance()
+  @UseGuards(WidgetTokenGuard)
+  @RateLimit({ limit: 60, windowMs: 60000, keyPrefix: 'widget-citation-url' })
+  async citationUrl(@Body() dto: WidgetCitationUrlDto, @Req() req: WidgetRequest) {
+    this.logger.log('Widget POST /citation-url', {
+      agentId: req.widgetAgentId,
+      source: dto.source,
+      origin: req.headers.origin,
+    });
+
+    return this.widgetChatService.generateCitationUrl({
+      source: dto.source,
+      fileName: dto.fileName,
+      workspaceId: dto.workspaceId,
+      agentKnowledgeBaseIds: (req.widgetAgent?.knowledgeBases || []).map(String),
+    });
   }
 
   @Get('stream')

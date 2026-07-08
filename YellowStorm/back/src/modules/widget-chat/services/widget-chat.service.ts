@@ -6,9 +6,12 @@ import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { Observable } from 'rxjs';
-import { ServiceUnavailableException } from '@modules/exceptions';
+import { ServiceUnavailableException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { StreamService } from '@modules/conversation/services/stream.service';
+import { DocumentService } from '@modules/document/document.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { WidgetSseStreamRegistry } from './widget-sse-stream.registry';
 import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
 import { WidgetSession, WidgetSessionDocument } from '../schemas/widget-session.schema';
@@ -19,6 +22,7 @@ import { IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
 import { extractComponentData, aggregateTextFromComponents } from '@modules/conversation/utils/component-mapper';
 import {
+  normalizeWidgetCitationData,
   normalizeWidgetComponent,
   normalizeWidgetSourcesData,
   sanitizeWidgetTextContent,
@@ -39,6 +43,9 @@ export class WidgetChatService {
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly streamService: StreamService,
+    private readonly documentService: DocumentService,
+    private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly workspaceService: WorkspaceService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
   ) {
@@ -124,6 +131,180 @@ export class WidgetChatService {
 
     const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
     return { sessionId: session.id };
+  }
+
+  // ─── Citation URL ───────────────────────────────────────────
+
+  async generateCitationUrl(params: {
+    source: string;
+    fileName?: string;
+    workspaceId?: string;
+    agentKnowledgeBaseIds: string[];
+  }): Promise<{ downloadUrl: string }> {
+    const { source, fileName, workspaceId, agentKnowledgeBaseIds } = params;
+
+    if (!this.documentService.isAvailable()) {
+      throw new ServiceUnavailableException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Document storage is currently unavailable',
+      );
+    }
+
+    const objectKey = source.trim();
+    if (!objectKey) {
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation has no file identifier',
+      );
+    }
+
+    const workspaceIds = workspaceId
+      ? [workspaceId]
+      : agentKnowledgeBaseIds;
+
+    if (workspaceIds.length === 0) {
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation source document not found in storage',
+      );
+    }
+
+    const displayName = fileName || objectKey.split('/').pop() || 'document';
+    const blobPath = await this.resolveCitationBlobPath(objectKey, displayName, workspaceIds);
+
+    if (!blobPath) {
+      this.logger.warn('Citation source not found in allowed workspaces', {
+        source: objectKey,
+        fileName: displayName,
+        workspaceId,
+        agentKnowledgeBaseIds,
+      });
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation source document not found in storage',
+      );
+    }
+
+    this.logger.log('Citation URL signing', {
+      source: objectKey,
+      blobPath,
+      displayName,
+      workspaceIds,
+    });
+
+    const downloadUrl = await this.workspaceDocumentService.generateReadUrl(blobPath);
+    return { downloadUrl };
+  }
+
+  /**
+   * Resolves a citation to a readable blob path using existing workspace APIs:
+   * storage-prefix ACL via getStorageContext, legacy filename lookup via
+   * findByMultipleWorkspaces, then blob existence via documentService.
+   */
+  private async resolveCitationBlobPath(
+    objectKey: string,
+    displayName: string,
+    workspaceIds: string[],
+  ): Promise<string | null> {
+    if (objectKey.includes('/')) {
+      if (!(await this.isCitationPathAllowed(objectKey, workspaceIds))) {
+        return null;
+      }
+      return this.resolveExistingBlobKey(objectKey, displayName);
+    }
+
+    for (const wsId of workspaceIds) {
+      const { documents } = await this.workspaceDocumentService.findByMultipleWorkspaces(
+        [wsId],
+        { search: displayName, limit: 20, page: 1 },
+      );
+      const doc = documents.find(
+        (item) => item.originalName === displayName || item.originalName === objectKey,
+      );
+      if (!doc?.path) {
+        continue;
+      }
+      if (!(await this.isCitationPathAllowed(doc.path, [wsId]))) {
+        continue;
+      }
+      const blobPath = await this.resolveExistingBlobKey(doc.path, displayName);
+      if (blobPath) {
+        return blobPath;
+      }
+    }
+
+    return null;
+  }
+
+  private async isCitationPathAllowed(
+    objectKey: string,
+    workspaceIds: string[],
+  ): Promise<boolean> {
+    for (const wsId of workspaceIds) {
+      try {
+        const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(wsId);
+        if (objectKey.startsWith(`${ownerUserId}/${storagePrefix}/`)) {
+          return true;
+        }
+      } catch {
+        // Workspace missing from scope — try next candidate.
+      }
+    }
+    return false;
+  }
+
+  private async resolveExistingBlobKey(
+    storedPath: string,
+    displayName: string,
+  ): Promise<string | null> {
+    const normalizedPath = storedPath.trim();
+    if (!normalizedPath) {
+      return null;
+    }
+
+    if (await this.documentService.exists(normalizedPath)) {
+      return normalizedPath;
+    }
+
+    const slashIndex = normalizedPath.lastIndexOf('/');
+    if (slashIndex <= 0) {
+      this.logger.warn('Citation blob missing in object storage', {
+        storedPath: normalizedPath,
+        displayName,
+      });
+      return null;
+    }
+
+    const folder = normalizedPath.substring(0, slashIndex);
+    const fileName = displayName.trim() || normalizedPath.split('/').pop() || '';
+    try {
+      const { documents } = await this.documentService.list({ folder, maxResults: 200 });
+      const match = documents.find(
+        (item) =>
+          item.name === fileName ||
+          item.blobPath === normalizedPath ||
+          item.blobPath.endsWith(`/${fileName}`),
+      );
+
+      if (match?.blobPath && (await this.documentService.exists(match.blobPath))) {
+        this.logger.warn('Citation blob resolved via folder listing', {
+          storedPath: normalizedPath,
+          resolvedPath: match.blobPath,
+        });
+        return match.blobPath;
+      }
+    } catch (error) {
+      this.logger.warn('Citation blob folder listing failed', {
+        folder,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+
+    this.logger.warn('Citation blob missing in object storage', {
+      storedPath: normalizedPath,
+      displayName,
+    });
+    return null;
   }
 
   // ─── Chat ──────────────────────────────────────────────────
@@ -297,6 +478,19 @@ export class WidgetChatService {
         agentDoc,
         channel: 'widget',
         onChunk: (chunkEvent) => {
+          const comp = chunkEvent.component;
+          if (comp?.id && comp.data) {
+            this.logWidgetStreamPayload(
+              'grpc',
+              sessionId,
+              'widget',
+              chunkEvent.action,
+              comp.id,
+              String(comp.type || 'text'),
+              comp.data,
+            );
+          }
+
           const emitEvent = this.buildWidgetStreamChunkEvent(chunkEvent, widgetTextAggregate);
           if (!emitEvent) {
             return;
@@ -306,15 +500,25 @@ export class WidgetChatService {
             widgetTextAggregate = String(emitEvent.component.data.content);
           }
 
-          const comp = emitEvent.component;
-          if (comp.id && comp.data) {
-            stream.buffer.set(comp.id, {
-              id: comp.id,
-              type: (comp.type as ComponentType) || 'text',
-              data: comp.data,
+          const emitted = emitEvent.component;
+          if (emitted.id && emitted.data) {
+            this.logWidgetStreamPayload(
+              'sse',
+              sessionId,
+              'widget',
+              emitEvent.action,
+              emitted.id,
+              emitted.type,
+              emitted.data,
+            );
+
+            stream.buffer.set(emitted.id, {
+              id: emitted.id,
+              type: (emitted.type as ComponentType) || 'text',
+              data: emitted.data,
             });
-          } else if (comp.id && emitEvent.action === 'delete') {
-            stream.buffer.delete(comp.id);
+          } else if (emitted.id && emitEvent.action === 'delete') {
+            stream.buffer.delete(emitted.id);
           }
 
           this.sseRegistry.emit(sessionId, { type: 'stream_chunk', data: emitEvent });
@@ -611,7 +815,64 @@ export class WidgetChatService {
       };
     }
 
+    if (componentType === 'citation') {
+      const citation = normalizeWidgetCitationData(comp.data);
+      if (!citation) {
+        return null;
+      }
+
+      return {
+        action: chunkEvent.action === 'add' ? 'add' : 'update',
+        component: {
+          id: comp.id,
+          type: 'citation',
+          data: { ...citation },
+        },
+      };
+    }
+
     return chunkEvent as { action: string; component: { id: string; type: string; data?: Record<string, unknown> } };
+  }
+
+  /** Structured logs for widget SSE debugging (full payload for citation/sources). */
+  private logWidgetStreamPayload(
+    phase: 'grpc' | 'sse',
+    sessionId: string,
+    channel: string,
+    action: string,
+    componentId: string,
+    type: string,
+    data: Record<string, unknown> | undefined,
+  ): void {
+    if (!data) {
+      this.logger.log('Widget stream chunk', { phase, sessionId, channel, action, componentId, type });
+      return;
+    }
+
+    if (type === 'text') {
+      const content = typeof data.content === 'string' ? data.content : '';
+      this.logger.log('Widget stream text chunk', {
+        phase,
+        sessionId,
+        channel,
+        action,
+        componentId,
+        type,
+        contentLength: content.length,
+        contentPreview: content.slice(0, 200),
+      });
+      return;
+    }
+
+    this.logger.log('Widget stream chunk', {
+      phase,
+      sessionId,
+      channel,
+      action,
+      componentId,
+      type,
+      data,
+    });
   }
 
   /** Resolves the widget's single agent for RunSingleAgent (no manager/delegation). */
