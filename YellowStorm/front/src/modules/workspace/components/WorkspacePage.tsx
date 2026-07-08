@@ -117,7 +117,10 @@ export function WorkspacePage() {
   // While any file is still indexing, poll so its status dot updates to
   // green/red on its own without a manual refresh. Stops once all settle.
   const hasIndexingInFlight = files.some(
-    (f) => f.indexingStatus === 'pending' || f.indexingStatus === 'processing',
+    (f) =>
+      f.indexingStatus === 'pending' ||
+      f.indexingStatus === 'processing' ||
+      (f.type === 'url' && f.status === 'processing'),
   );
   useEffect(() => {
     if (!hasIndexingInFlight) return;
@@ -800,7 +803,7 @@ function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexing
 
 function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
   const Icon = getItemIcon(file);
-  const isConverting = file.type === 'url' && (file.indexingStatus === 'none' || file.indexingStatus == null);
+  const isConverting = file.type === 'url' && file.status === 'processing';
   const canWrite = useCanWriteWorkspace();
   const [isDragging, setIsDragging] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);

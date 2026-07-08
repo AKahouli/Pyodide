@@ -28,6 +28,7 @@ export interface IClassifierFileResponse {
   lastIndexedAt?: string;
   type: 'doc' | 'url';
   sourceUrl?: string;
+  status: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed';
 }
 
 export type ClassificationRunStatusValue =

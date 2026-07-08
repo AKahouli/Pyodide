@@ -145,6 +145,8 @@ export interface WorkspaceFile {
   type?: 'doc' | 'url';
   /** Original website URL when type === 'url'. */
   sourceUrl?: string;
+  /** Upload/processing lifecycle status (url links are 'processing' while converting). */
+  status?: DocumentStatus;
 }
 
 export type ClassifierRuleScope = 'global' | 'local';

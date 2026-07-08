@@ -665,6 +665,17 @@ export class WorkspaceDocumentService {
     userId: string,
     url: string,
   ): Promise<DocumentResponse> {
+    // Nominal size of 0: the converted PDF's size is unknown until conversion
+    // runs, but we can still reject early if the workspace is already over
+    // quota, avoiding a wasted conversion-API call.
+    const quota = await this.workspaceService.checkStorageQuota(workspaceId, 0);
+    if (!quota.allowed) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
+        `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
+      );
+    }
+
     const filename = this.deriveFilenameFromUrl(url);
     const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
     const documentId = new Types.ObjectId();
