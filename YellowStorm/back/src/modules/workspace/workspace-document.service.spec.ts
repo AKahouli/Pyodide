@@ -208,3 +208,74 @@ describe('WorkspaceDocumentService upload validation', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('WorkspaceDocumentService.mapToResponse', () => {
+  let svc: WorkspaceDocumentService;
+
+  beforeEach(async () => {
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        {
+          provide: WorkspaceService,
+          useValue: {
+            findById: jest.fn().mockResolvedValue({
+              id: WS_ID,
+              createdBy: USER_ID,
+            }),
+          },
+        },
+        { provide: DocumentService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: {} },
+        {
+          provide: ConfigService,
+          useValue: { get: (_: string, dflt?: unknown) => dflt },
+        },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            debug: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    svc = mod.get(WorkspaceDocumentService);
+  });
+
+  it('defaults mapToResponse.type to "doc" for legacy documents', () => {
+    // mapToResponse is private; call via any-cast on the service instance.
+    const doc: any = {
+      _id: { toString: () => 'id1' },
+      originalName: 'a.pdf',
+      mimeType: 'application/pdf',
+      size: 1,
+      workspaceId: { toString: () => 'ws1' },
+      createdBy: { toString: () => 'u1' },
+      status: 'completed',
+      indexingStatus: 'ready',
+      isFolder: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const res = (svc as any).mapToResponse(doc);
+    expect(res.type).toBe('doc');
+    expect(res.sourceUrl).toBeUndefined();
+  });
+});

@@ -1,4 +1,4 @@
-import { DocumentStatus, IndexingStatus } from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../schemas/workspace-document.schema';
 
 export interface RequestUploadUrlData {
   filename: string;
@@ -51,6 +51,8 @@ export interface DocumentResponse {
   parentId?: string;
   isFolder: boolean;
   folderName?: string;
+  type: DocumentType;
+  sourceUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -10,6 +10,7 @@ import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
   DocumentStatus,
+  DocumentType,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
 import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
@@ -2062,6 +2063,8 @@ export class WorkspaceDocumentService {
       parentId: document.parentId?.toString(),
       isFolder: document.isFolder || false,
       folderName: document.folderName,
+      type: (document.type as DocumentType) || DocumentType.DOC,
+      sourceUrl: document.sourceUrl,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
     };
