@@ -817,7 +817,11 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const { enabled: deepSearch } = useDeepSearchIndexation();
 
-  const viewable = isViewableFile(file.mimeType) && !!file.path && !isConverting;
+  // A link only has a real, openable blob once conversion completes. Until then
+  // its `path` is an internal `link-pending:` placeholder, so view/download must
+  // be suppressed (otherwise the viewer signs the placeholder and errors).
+  const isStored = file.type !== 'url' || file.status === 'completed';
+  const viewable = isViewableFile(file.mimeType) && !!file.path && !isConverting && isStored;
 
   const handleDragStart = (e: React.DragEvent) => {
     if (!canWrite) return;
@@ -903,10 +907,12 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
                 <Eye className='mr-2 h-4 w-4' /> Voir
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
-              {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
-              Télécharger
-            </DropdownMenuItem>
+            {isStored && (
+              <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
+                {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
+                Télécharger
+              </DropdownMenuItem>
+            )}
             {canWrite && (
               <>
                 <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>

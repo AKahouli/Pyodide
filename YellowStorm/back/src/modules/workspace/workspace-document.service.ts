@@ -692,8 +692,12 @@ export class WorkspaceDocumentService {
       // yet at creation, so assign a unique placeholder (mirroring the folder
       // pattern above) to avoid an E11000 collision on { path: null } between
       // concurrent/successive link adds. convertAndStore overwrites this with
-      // the real Ceph blob path once the PDF is uploaded.
-      path: `link-pending:${documentId}`,
+      // the real Ceph blob path once the PDF is uploaded. The `.pdf` suffix
+      // keeps the placeholder past the "no extension ⇒ folder" heuristic in
+      // DocumentService.generateSasUrl, so a stray read of a not-yet-converted
+      // link fails with an accurate "file not found" rather than a misleading
+      // "cannot download folders" error.
+      path: `link-pending:${documentId}.pdf`,
       workspaceId: new Types.ObjectId(workspaceId),
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.PROCESSING,
