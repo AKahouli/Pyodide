@@ -1,6 +1,7 @@
 import {
   normalizeWidgetComponent,
   normalizeWidgetSourcesData,
+  sanitizeWidgetTextContent,
   shouldEmitWidgetComponent,
 } from './widget-component-normalizer';
 
@@ -50,6 +51,21 @@ describe('widget-component-normalizer', () => {
   it('passes text components through unchanged', () => {
     const normalized = normalizeWidgetComponent('text', { content: 'Reply body' });
     expect(normalized).toEqual({ type: 'text', data: { content: 'Reply body' } });
+  });
+
+  it('strips internal web search query from TextComponent content', () => {
+    const raw =
+      ' 🌐 web search : inflation en Europe récente cause principale\n\nVoici un article récent sur l’inflation.';
+    expect(sanitizeWidgetTextContent(raw)).toBe(
+      ' 🌐 web search :\n\nVoici un article récent sur l’inflation.',
+    );
+  });
+
+  it('normalizes text components with web search marker via normalizeWidgetComponent', () => {
+    const normalized = normalizeWidgetComponent('text', {
+      content: '🌐 web search : query details only on this line',
+    });
+    expect(normalized.data.content).toBe('🌐 web search :');
   });
 
   it('suppresses non-widget components from the public widget stream', () => {

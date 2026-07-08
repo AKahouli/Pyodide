@@ -21,6 +21,7 @@ import { extractComponentData, aggregateTextFromComponents } from '@modules/conv
 import {
   normalizeWidgetComponent,
   normalizeWidgetSourcesData,
+  sanitizeWidgetTextContent,
   shouldEmitWidgetComponent,
   WIDGET_PRIMARY_TEXT_ID,
   WidgetStreamComponentType,
@@ -325,12 +326,14 @@ export class WidgetChatService {
         },
       });
 
+      const sanitizedReply = sanitizeWidgetTextContent(result.reply || '');
+
       await this.widgetMessageModel.create({
         sessionId,
         tokenHash,
         agentId,
         role: 'assistant',
-        content: result.reply || 'No response generated.',
+        content: sanitizedReply || 'No response generated.',
         components: result.components,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
@@ -339,7 +342,7 @@ export class WidgetChatService {
 
       this.sseRegistry.emit(sessionId, {
         type: 'stream_complete',
-        data: { reply: result.reply, usage: result.usage },
+        data: { reply: sanitizedReply, usage: result.usage },
       });
 
       if (!result.reply.trim()) {
@@ -585,12 +588,14 @@ export class WidgetChatService {
         return null;
       }
 
+      const nextContent = sanitizeWidgetTextContent(widgetTextAggregate + part);
+
       return {
         action: 'update',
         component: {
           id: WIDGET_PRIMARY_TEXT_ID,
           type: 'text',
-          data: { content: widgetTextAggregate + part },
+          data: { content: nextContent },
         },
       };
     }

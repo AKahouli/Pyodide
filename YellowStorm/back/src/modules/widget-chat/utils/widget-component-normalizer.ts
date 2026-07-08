@@ -16,6 +16,26 @@ export interface WidgetSourcesData {
 /** Fixed SSE slot id for consolidated assistant text in the widget stream. */
 export const WIDGET_PRIMARY_TEXT_ID = 'widget-primary-text';
 
+/** Shown in widget text when the agent performed a web search (query details are stripped). */
+export const WIDGET_WEB_SEARCH_MARKER = '🌐 web search :';
+
+/**
+ * Removes internal web-search query text from TextComponent content.
+ * Keeps only the marker on its line; assistant reply on following lines is preserved.
+ */
+export function sanitizeWidgetTextContent(content: string): string {
+  if (!content.includes(WIDGET_WEB_SEARCH_MARKER)) {
+    return content;
+  }
+
+  const markerLinePattern = new RegExp(
+    `(^|\\n)([ \\t]*)${WIDGET_WEB_SEARCH_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\\n\\r]*`,
+    'g',
+  );
+
+  return content.replace(markerLinePattern, `$1$2${WIDGET_WEB_SEARCH_MARKER}`);
+}
+
 /**
  * Returns true only for non-empty `text` and `sources` payloads in the widget SSE contract.
  */
@@ -76,6 +96,10 @@ export function normalizeWidgetComponent(
 ): { type: ComponentType; data: Record<string, unknown> } {
   if (type === 'sources') {
     return { type: 'sources', data: { ...normalizeWidgetSourcesData(data) } };
+  }
+
+  if (type === 'text' && typeof data.content === 'string') {
+    return { type, data: { ...data, content: sanitizeWidgetTextContent(data.content) } };
   }
 
   return { type, data };
