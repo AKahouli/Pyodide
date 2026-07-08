@@ -28,7 +28,6 @@ export interface IndexDocumentRequest {
   brainTag?: string;          // from workspace settings `tag`
   user_id: string;            // for logging and passing to indexing API for enrichment
   deepSearch?: boolean;       // when true, sends document to community-graph for deep research ingestion
-  mistralIndex?: boolean;     // when true, uses Mistral embeddings for indexing
 }
 
 export interface IndexDocumentResponse {

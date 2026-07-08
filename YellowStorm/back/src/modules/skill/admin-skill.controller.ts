@@ -27,6 +27,7 @@ import {
 import { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
+import { decodeMultipartFilename } from '../../common/utils';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -112,6 +113,8 @@ export class AdminSkillController {
     @CurrentUser() user: UserDocument,
     @Req() req: Request,
   ): Promise<ISkillResponse> {
+    // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
+    file.originalname = decodeMultipartFilename(file.originalname);
     const skill = await this.skillService.importPackage(user._id.toString(), file);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),

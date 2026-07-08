@@ -8,7 +8,6 @@ import { MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
 import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
-import { readMistralIndexationValue } from '../hooks/useMistralIndexation';
 
 export function WorkspaceUploadDropZone() {
   const canWrite = useCanWriteWorkspace();
@@ -23,7 +22,6 @@ export function WorkspaceUploadDropZone() {
     void uploadPageFiles(Array.from(list), {
       autoIndex: readAutoIndexationValue(),
       deepSearch: readDeepSearchIndexationValue(),
-      mistralIndex: readMistralIndexationValue(),
     });
   };
 
