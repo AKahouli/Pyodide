@@ -6,6 +6,7 @@ import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-render
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import { AgentService } from '@modules/agent/agent.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
+import { TooManyRequestsException } from '@modules/exceptions';
 import { DEFAULT_FLOW_PROMPTS } from './playbook-flow-prompt-seed';
 
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
@@ -606,6 +607,34 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     const listed = service.getIntentTraces('flow-1', 'owner-1');
     expect(listed.designAssessment).toHaveLength(1);
     expect(listed.intentAnalyze).toHaveLength(0);
+  });
+
+  it('maps provider rate limits during design assessment to TooManyRequestsException', async () => {
+    const httpClient = {
+      post: jest.fn().mockRejectedValue({ isAxiosError: true, response: { status: 429 } }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'Custom design assessment prompt' }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({ promptService });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'rate-limited-model',
+      systemPrompt: '',
+      userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    await expect(service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' }))
+      .rejects.toBeInstanceOf(TooManyRequestsException);
   });
 
   it('splits captured clarification answers from the base intent', () => {

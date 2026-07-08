@@ -200,16 +200,18 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
 
   return (
     <section className='min-w-0 rounded-2xl border bg-card shadow-sm'>
-      <div className='border-b p-5'>
-        <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.workspace.kicker')}</p>
-        <h2 className='mt-1 text-2xl font-semibold'>{overview.scope.name}</h2>
-        <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
-      </div>
-      <div className='flex items-center gap-3 border-b p-3'>
-        <div className='flex min-w-0 flex-1 gap-2 overflow-x-auto'>
-          {governanceScopeTabs.map((tab) => <ScopeTabButton key={tab} tab={tab} overview={overview} active={activeTab === tab} onClick={() => onTabChange(tab)} />)}
+      <div className='flex items-start justify-between gap-3 border-b p-5'>
+        <div className='min-w-0'>
+          <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.workspace.kicker')}</p>
+          <h2 className='mt-1 text-2xl font-semibold'>{overview.scope.name}</h2>
+          <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
         </div>
         <Button type='button' size='sm' className='flex-none' onClick={handleNextStep} disabled={isNextDisabled}>{t('scopeShell.nextStep')}</Button>
+      </div>
+      <div className='border-b p-3'>
+        <div className='flex min-w-0 gap-2 overflow-x-auto'>
+          {governanceScopeTabs.map((tab) => <ScopeTabButton key={tab} tab={tab} overview={overview} active={activeTab === tab} onClick={() => onTabChange(tab)} />)}
+        </div>
       </div>
       <div className='p-5'>
         {activeTab === 'overview' && settingsDraft && <OverviewTab programId={programId} overview={overview} settingsDraft={settingsDraft} onSettingsDraftChange={setSettingsDraft} />}
