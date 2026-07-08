@@ -139,6 +139,8 @@ class AgentRunner:
         agent_config: Optional[dict] = None,
         function_call_id_info: Optional[dict] = None,
         image_input: Optional[list] = None,
+        session_id: Optional[str] = None,
+        seed_events: Optional[list] = None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -169,14 +171,35 @@ class AgentRunner:
             if hasattr(agent, "_mcp_search_state"):
                 initial_state.update(agent._mcp_search_state)
 
-            # Create a simple session to examine its properties
-            session_id = f"session-{uuid.uuid4()}"
-            session = await session_helper.create_session(
-                app_name="manager_app",
-                user_id=user_id,
-                session_id=session_id,
-                state=initial_state or None,
-            )
+            # When a session_id is provided, reuse the conversation's session so
+            # history carries across turns; otherwise mint an ephemeral one
+            # (sub-agents / one-shot runs).
+            if session_id is None:
+                session_id = f"session-{uuid.uuid4()}"
+                session = await session_helper.create_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                    state=initial_state or None,
+                )
+            else:
+                session = await session_helper.get_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+                if session is None:
+                    session = await session_helper.create_session(
+                        app_name="manager_app",
+                        user_id=user_id,
+                        session_id=session_id,
+                        state=initial_state or None,
+                    )
+                    # Seed a read-only snapshot of the shared conversation so this
+                    # agent SEES prior history without writing to the shared session.
+                    for seed_event in (seed_events or []):
+                        await session_helper.append_event(session, seed_event)
+            logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
 
         except Exception as e:
             logger.error(
@@ -439,6 +462,21 @@ class AgentRunner:
                         recorder.record_function_call(
                             func_name, dict(part.function_call.args), tool_category
                         )
+
+                        # Emit a checkpoint component naming the tool for every tool call
+                        if q:
+                            checkpoint_chunk = (
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="checkpoint",
+                                    component_data={"label": func_name},
+                                    message_id=session_id,
+                                    component_id=getattr(
+                                        part.function_call, "id", None
+                                    ),
+                                )
+                            )
+                            await q.put(checkpoint_chunk)
 
                         # Send newline chunk for visual separation before any tool execution
                         if q:

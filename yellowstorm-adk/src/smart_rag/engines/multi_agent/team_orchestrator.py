@@ -532,10 +532,10 @@ Do not render charts for single values or non-numeric content.
             logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
 
             get_session_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=Agent_mode_{self.config.user_id}")
+            logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=manager_app, user_id={self.config.user_id}")
             using_database_session = True
             try:
-                exsiting_session=await data_base_session.get_session(app_name=f"Agent_mode_{self.config.user_id}",user_id=self.config.user_id,session_id=session_id)
+                exsiting_session=await data_base_session.get_session(app_name="manager_app",user_id=self.config.user_id,session_id=session_id)
             except OSError as e:
                 using_database_session = False
                 exsiting_session = None
@@ -604,12 +604,12 @@ Do not render charts for single values or non-numeric content.
                 create_session_start = time.time()
                 logger.info(f"[FREEZE DEBUG] Calling create_session() for session {session_id}")
                 try:
-                    await data_base_session.create_session(app_name=f"Agent_mode_{self.config.user_id}", user_id=self.config.user_id,
+                    await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                            session_id=session_id,state=state)
                 except OSError as e:
                     if using_database_session:
                         data_base_session = get_in_memory_session_service()()
-                        await data_base_session.create_session(app_name=f"Agent_mode_{self.config.user_id}", user_id=self.config.user_id,
+                        await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                                session_id=session_id,state=state)
                         logger.warning(
                             "[FREEZE DEBUG] Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
@@ -628,7 +628,7 @@ Do not render charts for single values or non-numeric content.
             logger.info(f"[FREEZE DEBUG] Creating Runner for session {session_id}")
             agent_runner=get_adk_runner()(
                 agent=manager_agent,
-                app_name=f"Agent_mode_{self.config.user_id}",
+                app_name="manager_app",
                 session_service=data_base_session,
                 plugins=[CleanSessionPlugin()],
             )
@@ -771,7 +771,21 @@ Do not render charts for single values or non-numeric content.
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
 
-            session_helper = get_in_memory_session_service()()
+            # Persist the mono conversation so memory carries across turns, keyed
+            # on the conversation's session_id. Fall back to an ephemeral
+            # in-memory session if the database is unavailable.
+            session_id_for_agent = session_id
+            try:
+                session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
+                await session_helper.get_session(
+                    app_name="manager_app", user_id=self.config.user_id, session_id=session_id
+                )
+            except OSError as e:
+                logger.warning(
+                    f"[MONO WORKFLOW] Database session unavailable, using ephemeral in-memory session - session_id={session_id} error={e}"
+                )
+                session_helper = get_in_memory_session_service()()
+                session_id_for_agent = None
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
             result, mcp_used, execution_summary, generated_files = await self.agent_runner.run_agent_tool(
@@ -786,6 +800,7 @@ Do not render charts for single values or non-numeric content.
                 toolkit=toolkit,
                 agent_config=agent_config,
                 image_input=image_input,
+                session_id=session_id_for_agent,
             )
 
             # Stream any files produced by the python_interpreter tool
