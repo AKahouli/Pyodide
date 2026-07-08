@@ -43,6 +43,7 @@ import { InitiateBulkUploadDto } from './dto/initiate-bulk-upload.dto';
 import { ReportProgressDto } from './dto/report-progress.dto';
 import { DocumentQueryDto } from './dto/document-query.dto';
 import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
+import { AddLinkDto } from './dto/add-link.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -92,6 +93,34 @@ export class WorkspaceDocumentController {
       body?.folderId,
       body?.deepSearch === 'true',
       body?.autoIndex !== 'false',
+    );
+  }
+
+  @Post('validate-url')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Check whether a website URL is reachable' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async validateUrl(
+    @Param('workspaceId') _workspaceId: string,
+    @Body() body: AddLinkDto,
+  ) {
+    return this.workspaceDocumentService.checkUrlReachable(body.url);
+  }
+
+  @Post('link')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Add a website link (converted to PDF and indexed)' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiResponse({ status: 201, description: 'Link accepted; conversion in progress' })
+  async addLink(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: AddLinkDto,
+  ) {
+    return this.workspaceDocumentService.addLink(
+      workspaceId,
+      user._id.toString(),
+      body.url,
     );
   }
 
