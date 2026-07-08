@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, MessageCircle } from 'lucide-react';
 
+import { parseApiError } from '@/lib/api-error';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { ErrorCode } from '@/lib/error-codes';
 import { showSuccess, showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWhatsAppPairingSocket } from '../hooks/useWhatsAppPairingSocket';
@@ -157,13 +159,30 @@ export function AgentWhatsAppIntegrationSection({
     }
 
     let cancelled = false;
+    let refreshInFlight = false;
 
     const poll = async () => {
       try {
         const res = await getAgentWhatsAppPairing(agentId, sessionId);
         if (!cancelled) applyPairingPayload(res);
-      } catch {
-        // HTTP polling fallback when Socket.IO misses events
+      } catch (err) {
+        // Polling fallback when Socket.IO misses events:
+        // backend can move from PAIRING -> CONNECTED between polls.
+        if (cancelled || refreshInFlight) return;
+        const apiError = parseApiError(err);
+        if (apiError.code !== ErrorCode.WHATSAPP_SESSION_NOT_PAIRING) return;
+
+        refreshInFlight = true;
+        try {
+          const refreshed = await refreshIntegration(agentId);
+          // Clear pairing visuals when backend has finished pairing.
+          if (!cancelled && refreshed) {
+            setQrCode(undefined);
+            setPairingCode(undefined);
+          }
+        } finally {
+          refreshInFlight = false;
+        }
       }
     };
 
@@ -174,7 +193,7 @@ export function AgentWhatsAppIntegrationSection({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [agentId, sessionId, integration?.status, applyPairingPayload]);
+  }, [agentId, sessionId, integration?.status, applyPairingPayload, refreshIntegration]);
 
   const startPairing = async (id: string) => {
     const res = await connectAgentWhatsApp(id);

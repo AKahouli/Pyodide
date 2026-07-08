@@ -14,6 +14,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { decodeMultipartFilename } from '@common/utils';
 import {
   ApiTags,
   ApiOperation,
@@ -81,8 +82,10 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: MulterFile,
-    @Body() body?: { folderId?: string; deepSearch?: string; autoIndex?: string; mistralIndex?: string },
+    @Body() body?: { folderId?: string; deepSearch?: string; autoIndex?: string },
   ) {
+    // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
+    file.originalname = decodeMultipartFilename(file.originalname);
     return this.workspaceDocumentService.uploadSmallFile(
       workspaceId,
       user._id.toString(),
@@ -92,7 +95,6 @@ export class WorkspaceDocumentController {
       body?.folderId,
       body?.deepSearch === 'true',
       body?.autoIndex !== 'false',
-      body?.mistralIndex === 'true',
     );
   }
 
@@ -134,7 +136,6 @@ export class WorkspaceDocumentController {
       user._id.toString(),
       dto.documentId,
       dto.deepSearch,
-      dto.mistralIndex,
     );
   }
 
@@ -197,7 +198,6 @@ export class WorkspaceDocumentController {
     @Param('sessionId') sessionId: string,
     @Query('deepSearch') deepSearch?: string,
     @Query('autoIndex') autoIndex?: string,
-    @Query('mistralIndex') mistralIndex?: string,
   ) {
     return this.workspaceDocumentService.completeBulkUpload(
       workspaceId,
@@ -205,7 +205,6 @@ export class WorkspaceDocumentController {
       sessionId,
       deepSearch === 'true',
       autoIndex !== 'false',
-      mistralIndex === 'true',
     );
   }
 
