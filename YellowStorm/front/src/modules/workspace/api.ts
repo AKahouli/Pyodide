@@ -2,7 +2,8 @@
  * Workspace API Functions
  */
 
-import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
+import apiClient, { ApiResponse } from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   Workspace,
   CreateWorkspaceData,
@@ -739,6 +740,36 @@ export interface WorkspaceUploadSettings {
 export async function getWorkspaceUploadSettings(): Promise<WorkspaceUploadSettings> {
   const response = await apiClient.get<ApiResponse<WorkspaceUploadSettings>>(
     API_ENDPOINTS.workspaceUploadSettings.current,
+  );
+  return response.data.data;
+}
+
+// ===== Website Link APIs =====
+
+/**
+ * Validate that a URL is reachable before adding it as a website link
+ */
+export async function validateUrl(
+  workspaceId: string,
+  url: string,
+): Promise<{ reachable: boolean; status?: number; error?: string }> {
+  const response = await apiClient.post<ApiResponse<{ reachable: boolean; status?: number; error?: string }>>(
+    API_ENDPOINTS.workspaceDocuments.validateUrl(workspaceId),
+    { url },
+  );
+  return response.data.data;
+}
+
+/**
+ * Add a website link as a workspace document
+ */
+export async function addLink(
+  workspaceId: string,
+  url: string,
+): Promise<WorkspaceDocument> {
+  const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
+    API_ENDPOINTS.workspaceDocuments.link(workspaceId),
+    { url },
   );
   return response.data.data;
 }

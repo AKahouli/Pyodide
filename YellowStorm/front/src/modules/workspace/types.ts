@@ -90,6 +90,8 @@ export interface WorkspaceDocument {
   parentId?: string;
   isFolder: boolean;
   folderName?: string;
+  type?: 'doc' | 'url';
+  sourceUrl?: string;
   detected_language?: string;
   chunk_size?: number;
   createdAt: string;
@@ -139,6 +141,10 @@ export interface WorkspaceFile {
   indexingStatus?: IndexingStatus;
   indexingError?: string;
   lastIndexedAt?: string;
+  /** Discriminates uploaded documents ('doc') from website links ('url'). */
+  type?: 'doc' | 'url';
+  /** Original website URL when type === 'url'. */
+  sourceUrl?: string;
 }
 
 export type ClassifierRuleScope = 'global' | 'local';
