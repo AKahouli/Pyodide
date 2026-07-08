@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { decodeMultipartFilename } from '@common/utils';
 import { ConversationService } from '../services/conversation.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import {
@@ -77,6 +78,8 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @UploadedFile() file: MulterFile,
   ) {
+    // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
+    file.originalname = decodeMultipartFilename(file.originalname);
     const userId = user._id.toString();
     this.logger.log('Direct file upload', {
       conversationId,
