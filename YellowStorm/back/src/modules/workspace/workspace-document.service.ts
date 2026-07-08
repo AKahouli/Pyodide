@@ -51,6 +51,7 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
+import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -73,6 +74,7 @@ export class WorkspaceDocumentService {
     private readonly indexingService: IndexingService,
     private readonly configService: ConfigService,
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
+    private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -651,6 +653,154 @@ export class WorkspaceDocumentService {
     });
 
     return doc;
+  }
+
+  /**
+   * Add a website link as a workspace document. Creates the doc immediately in a
+   * PROCESSING state and returns it; conversion to PDF + indexing runs in the
+   * background (fire-and-forget). The stored artifact is a PDF.
+   */
+  async addLink(
+    workspaceId: string,
+    userId: string,
+    url: string,
+  ): Promise<DocumentResponse> {
+    const filename = this.deriveFilenameFromUrl(url);
+    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
+    const documentId = new Types.ObjectId();
+
+    const document = await this.documentModel.create({
+      _id: documentId,
+      originalName: effectiveName,
+      mimeType: 'application/pdf',
+      size: 0,
+      type: DocumentType.URL,
+      sourceUrl: url,
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(userId),
+      status: DocumentStatus.PROCESSING,
+      indexingStatus: IndexingStatus.NONE,
+    });
+
+    this.convertAndStore(document._id.toString(), workspaceId, url, effectiveName).catch(
+      (err) => {
+        this.logger.error('convertAndStore failed', {
+          documentId: document._id.toString(),
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      },
+    );
+
+    this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+    return this.mapToResponse(document);
+  }
+
+  /**
+   * Background step: convert the website to PDF, store it, mark the doc COMPLETED,
+   * and queue indexing. On failure, mark the doc FAILED and notify the owner.
+   */
+  private async convertAndStore(
+    documentId: string,
+    workspaceId: string,
+    url: string,
+    filename: string,
+  ): Promise<void> {
+    try {
+      const pdf = await this.urlToPdfClient.convert(url, filename);
+      const size = pdf.length;
+
+      const quota = await this.workspaceService.checkStorageQuota(workspaceId, size);
+      if (!quota.allowed) {
+        throw new Error('Insufficient storage for converted PDF');
+      }
+
+      const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
+        workspaceId,
+      );
+      const sanitizedName = this.sanitizeFilename(filename);
+      const uploaded = await this.documentService.upload(pdf, filename, 'application/pdf', {
+        folder: `${ownerUserId}/${storagePrefix}`,
+        generateUniqueName: false,
+        customFileName: sanitizedName,
+      });
+
+      await this.documentModel.findByIdAndUpdate(documentId, {
+        $set: {
+          filename: uploaded.storedName,
+          path: uploaded.blobPath,
+          url: uploaded.url,
+          contentHash: uploaded.contentHash,
+          size,
+          status: DocumentStatus.COMPLETED,
+          uploadedAt: new Date(),
+        },
+      });
+
+      await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
+      await this.indexingService.queueDocument(documentId);
+
+      this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Link conversion failed';
+      const failed = await this.documentModel.findByIdAndUpdate(
+        documentId,
+        {
+          $set: {
+            status: DocumentStatus.FAILED,
+            indexingStatus: IndexingStatus.FAILED,
+            errorMessage: message,
+            indexingError: message,
+          },
+        },
+        { new: true },
+      );
+      if (failed) {
+        await this.indexingService.sendIndexingStatusNotification(failed).catch(() => undefined);
+      }
+      this.logger.error('Link conversion failed', { documentId, workspaceId, error: message });
+    }
+  }
+
+  /**
+   * Derive a filesystem-safe `.pdf` name from a URL (hostname + path).
+   */
+  private deriveFilenameFromUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '');
+      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
+      const base = pathPart ? `${host}-${pathPart}` : host;
+      const sanitized = base
+        .replace(/[^a-zA-Z0-9-_.]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 200);
+      return `${sanitized || 'website'}.pdf`;
+    } catch {
+      return 'website.pdf';
+    }
+  }
+
+  /**
+   * Check that a URL is reachable (HEAD, falling back to GET). Used by the
+   * link modal before the user commits to adding the link.
+   */
+  async checkUrlReachable(
+    url: string,
+  ): Promise<{ reachable: boolean; status?: number; error?: string }> {
+    const opts = { timeout: 5000, maxRedirects: 5, validateStatus: () => true } as const;
+    try {
+      const head = await axios.head(url, opts);
+      if (head.status >= 200 && head.status < 400) {
+        return { reachable: true, status: head.status };
+      }
+      const get = await axios.get(url, { ...opts, responseType: 'stream' });
+      const ok = get.status >= 200 && get.status < 400;
+      return { reachable: ok, status: get.status, error: ok ? undefined : `HTTP ${get.status}` };
+    } catch (error) {
+      const err = error as { message?: string };
+      return { reachable: false, error: err?.message ?? 'unreachable' };
+    }
   }
 
   /**

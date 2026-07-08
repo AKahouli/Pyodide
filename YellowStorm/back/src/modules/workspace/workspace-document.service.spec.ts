@@ -9,6 +9,7 @@ import { WorkspaceService } from './workspace.service';
 import { DocumentService } from '../document/document.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { IndexingService } from '../indexing/indexing.service';
+import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import {
@@ -45,6 +46,7 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -142,6 +144,7 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: DocumentService, useValue: { generateSasUrl: jest.fn().mockResolvedValue('https://example/upload') } },
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -230,6 +233,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -277,5 +281,109 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
     const res = (svc as any).mapToResponse(doc);
     expect(res.type).toBe('doc');
     expect(res.sourceUrl).toBeUndefined();
+  });
+});
+
+describe('WorkspaceDocumentService url document (addLink)', () => {
+  let service: WorkspaceDocumentService;
+  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
+  let workspaceService: {
+    getStorageContext: jest.Mock;
+    checkStorageQuota: jest.Mock;
+    updateStorageUsage: jest.Mock;
+  };
+  let indexingService: { queueDocument: jest.Mock; sendIndexingStatusNotification: jest.Mock };
+  let urlToPdfClient: { convert: jest.Mock };
+  let documentService: { upload: jest.Mock };
+
+  beforeEach(async () => {
+    documentModel = {
+      create: jest.fn().mockResolvedValue({}),
+      findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+    };
+    workspaceService = {
+      getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
+      checkStorageQuota: jest.fn().mockResolvedValue({ allowed: true, available: 999_999 }),
+      updateStorageUsage: jest.fn().mockResolvedValue(undefined),
+    };
+    indexingService = {
+      queueDocument: jest.fn().mockResolvedValue(undefined),
+      sendIndexingStatusNotification: jest.fn().mockResolvedValue(undefined),
+    };
+    urlToPdfClient = { convert: jest.fn() };
+    documentService = { upload: jest.fn() };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: WorkspaceService, useValue: workspaceService },
+        { provide: DocumentService, useValue: documentService },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: indexingService },
+        { provide: UrlToPdfClientService, useValue: urlToPdfClient },
+        {
+          provide: ConfigService,
+          useValue: { get: (_: string, dflt?: unknown) => dflt },
+        },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            debug: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+  });
+
+  it('derives a sanitized .pdf filename from a URL', () => {
+    const d = (service as any).deriveFilenameFromUrl.bind(service);
+    expect(d('https://www.example.com/docs/guide/')).toBe('example.com-docs-guide.pdf');
+    expect(d('https://example.com')).toBe('example.com.pdf');
+    expect(d('not a url')).toBe('website.pdf');
+  });
+
+  it('addLink creates a processing url document and returns it', async () => {
+    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    const created = {
+      _id: { toString: () => 'doc1' },
+      originalName: 'example.com.pdf',
+      mimeType: 'application/pdf',
+      size: 0,
+      type: 'url',
+      sourceUrl: 'https://example.com',
+      workspaceId: { toString: () => 'ws1' },
+      createdBy: { toString: () => 'u1' },
+      status: 'processing',
+      indexingStatus: 'none',
+      isFolder: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    documentModel.create.mockResolvedValue(created);
+    // Prevent the fire-and-forget conversion from doing real work in this test.
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+
+    const res = await service.addLink(WS_ID, USER_ID, 'https://example.com');
+    expect(res.type).toBe('url');
+    expect(res.status).toBe('processing');
+    expect(res.sourceUrl).toBe('https://example.com');
+    expect((service as any).convertAndStore).toHaveBeenCalled();
   });
 });
