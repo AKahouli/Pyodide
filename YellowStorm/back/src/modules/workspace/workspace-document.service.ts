@@ -688,6 +688,12 @@ export class WorkspaceDocumentService {
       size: 0,
       type: DocumentType.URL,
       sourceUrl: url,
+      // The collection enforces a unique index on `path`. A link has no blob
+      // yet at creation, so assign a unique placeholder (mirroring the folder
+      // pattern above) to avoid an E11000 collision on { path: null } between
+      // concurrent/successive link adds. convertAndStore overwrites this with
+      // the real Ceph blob path once the PDF is uploaded.
+      path: `link-pending:${documentId}`,
       workspaceId: new Types.ObjectId(workspaceId),
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.PROCESSING,

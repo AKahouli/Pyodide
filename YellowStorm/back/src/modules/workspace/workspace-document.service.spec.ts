@@ -389,6 +389,39 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     expect(res.sourceUrl).toBe('https://example.com');
     expect((service as any).convertAndStore).toHaveBeenCalled();
   });
+
+  it('addLink inserts a unique non-null path to satisfy the unique path index', async () => {
+    // The workspace_documents collection has a unique index on `path`; a doc
+    // inserted with path=null collides with any other null-path doc (E11000).
+    // Link docs have no blob yet at creation, so addLink must assign a unique
+    // placeholder path (mirroring the folder-creation pattern) that
+    // convertAndStore later overwrites with the real blob path.
+    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    documentModel.create.mockResolvedValue({
+      _id: { toString: () => 'doc1' },
+      originalName: 'example.com.pdf',
+      mimeType: 'application/pdf',
+      size: 0,
+      type: 'url',
+      sourceUrl: 'https://example.com',
+      workspaceId: { toString: () => 'ws1' },
+      createdBy: { toString: () => 'u1' },
+      status: 'processing',
+      indexingStatus: 'none',
+      isFolder: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+
+    await service.addLink(WS_ID, USER_ID, 'https://example.com');
+
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(typeof createArg.path).toBe('string');
+    expect(createArg.path).toContain('link-pending:');
+    // Placeholder must embed the doc's own id so concurrent link adds never collide.
+    expect(createArg.path).toContain(createArg._id.toString());
+  });
 });
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
