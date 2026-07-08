@@ -45,4 +45,18 @@ describe('AddLinkDialog', () => {
     await waitFor(() => expect(addPageLink).toHaveBeenCalledWith('ws1', 'https://example.com'));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
+
+  it('does not double-submit when Enter is triggered twice in quick succession', async () => {
+    validateUrl.mockResolvedValue({ reachable: true, status: 200 });
+    addPageLink.mockResolvedValue(undefined);
+    const onOpenChange = vi.fn();
+    render(<AddLinkDialog open onOpenChange={onOpenChange} workspaceId="ws1" />);
+    await screen.findByRole('dialog');
+    const input = screen.getByRole('textbox', { name: /lien/i });
+    fireEvent.change(input, { target: { value: 'https://example.com' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(addPageLink).toHaveBeenCalledWith('ws1', 'https://example.com'));
+    expect(addPageLink).toHaveBeenCalledTimes(1);
+  });
 });

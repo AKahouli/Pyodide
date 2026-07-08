@@ -44,6 +44,7 @@ export function AddLinkDialog({
   }, [open, initialUrl]);
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
     setError(null);
     if (!isValidUrl(url)) {
       setError('Veuillez saisir une URL valide (http:// ou https://).');
@@ -86,6 +87,7 @@ export function AddLinkDialog({
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); }}
             autoFocus
+            disabled={isSubmitting}
           />
           {error && <p className='text-sm text-destructive'>{error}</p>}
         </div>
