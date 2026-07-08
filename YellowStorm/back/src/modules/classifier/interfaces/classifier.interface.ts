@@ -26,6 +26,8 @@ export interface IClassifierFileResponse {
   indexingStatus: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
   indexingError?: string;
   lastIndexedAt?: string;
+  type: 'doc' | 'url';
+  sourceUrl?: string;
 }
 
 export type ClassificationRunStatusValue =
