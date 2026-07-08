@@ -203,7 +203,6 @@ export const API_ENDPOINTS = {
     readiness: (deploymentId: string) => `/governance/deployments/${deploymentId}/readiness`,
     dryRuns: (deploymentId: string) => `/governance/deployments/${deploymentId}/dry-runs`,
     dryRun: (dryRunId: string) => `/governance/dry-runs/${dryRunId}`,
-    dryRunMessages: (dryRunId: string) => `/governance/dry-runs/${dryRunId}/messages`,
     dryRunResult: (dryRunId: string) => `/governance/dry-runs/${dryRunId}/result`,
     publish: (deploymentId: string) => `/governance/deployments/${deploymentId}/publish`,
     rollback: (deploymentId: string) => `/governance/deployments/${deploymentId}/rollback`,

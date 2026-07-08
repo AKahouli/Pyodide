@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { UserGroupService } from '@modules/user-group';
@@ -60,29 +60,48 @@ export class GovernanceMembershipService {
     const targetFilter = dto.userId ? { userId: new Types.ObjectId(dto.userId) } : { groupId: new Types.ObjectId(dto.groupId) };
     const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, ...targetFilter }).exec();
     if (duplicate) return this.reactivateMembership(actorId, actorEmail, programId, duplicate, dto);
-    const membership = await this.membershipModel.create({
-      programId: new Types.ObjectId(programId),
-      scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined,
-      userId: dto.userId ? new Types.ObjectId(dto.userId) : undefined,
-      groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : undefined,
-      invitedBy: new Types.ObjectId(actorId),
-      role: dto.role,
-      status: dto.status ?? 'active',
-      permissions: rolePermissions[dto.role as GovernanceMembershipRole],
-    });
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.invited', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, role: dto.role } });
+    const { membership, reusedExisting } = await this.createMembershipOrReuseDuplicate(actorId, actorEmail, programId, dto);
+    if (!reusedExisting) this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.invited', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, role: dto.role } });
     const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
     return this.toResponse(populated ?? membership);
   }
 
+  private async createMembershipOrReuseDuplicate(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceMembershipDto): Promise<{ membership: GovernanceMembershipDocument; reusedExisting: boolean }> {
+    try {
+      const membership = await this.membershipModel.create({
+        programId: new Types.ObjectId(programId),
+        scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined,
+        userId: dto.userId ? new Types.ObjectId(dto.userId) : undefined,
+        groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : undefined,
+        invitedBy: new Types.ObjectId(actorId),
+        role: dto.role,
+        status: dto.status ?? 'active',
+        permissions: rolePermissions[dto.role as GovernanceMembershipRole],
+      });
+      return { membership, reusedExisting: false };
+    } catch (error) {
+      if (!this.isDuplicateKeyError(error)) throw error;
+      const targetFilter = dto.userId ? { userId: new Types.ObjectId(dto.userId) } : { groupId: new Types.ObjectId(dto.groupId) };
+      const duplicate = await this.membershipModel.findOne({ programId: new Types.ObjectId(programId), scopeId: dto.scopeId ? new Types.ObjectId(dto.scopeId) : null, ...targetFilter }).exec();
+      if (!duplicate) throw error;
+      const membership = await this.reactivateMembershipDocument(actorId, actorEmail, programId, duplicate, dto);
+      return { membership, reusedExisting: true };
+    }
+  }
+
   async list(actorId: string, programId: string): Promise<GovernanceMembershipResponse[]> {
     await this.programService.assertOwnedProgram(actorId, programId);
-    const accessibleScopeIds = await this.getAccessibleScopeIds(actorId, programId);
-    const filter = accessibleScopeIds.includes('*')
+    const filter = await this.isProgramOwner(actorId, programId)
       ? { programId: new Types.ObjectId(programId) }
-      : { programId: new Types.ObjectId(programId), scopeId: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
+      : this.buildAccessibleMembershipFilter(actorId, programId);
     const memberships = await this.membershipModel.find(filter).populate(MEMBERSHIP_POPULATE).sort({ createdAt: -1 }).lean().exec();
     return memberships.map((membership) => this.toResponse(membership));
+  }
+
+  private async buildAccessibleMembershipFilter(actorId: string, programId: string): Promise<Record<string, unknown>> {
+    const accessibleScopeIds = await this.getAccessibleScopeIds(actorId, programId);
+    if (accessibleScopeIds.includes('*')) return { programId: new Types.ObjectId(programId) };
+    return { programId: new Types.ObjectId(programId), scopeId: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
   }
 
   async update(actorId: string, actorEmail: string, programId: string, membershipId: string, dto: UpdateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
@@ -107,14 +126,19 @@ export class GovernanceMembershipService {
   }
 
   private async reactivateMembership(actorId: string, actorEmail: string, programId: string, membership: GovernanceMembershipDocument, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
+    const reactivated = await this.reactivateMembershipDocument(actorId, actorEmail, programId, membership, dto);
+    const populated = await this.membershipModel.findById(reactivated._id).populate(MEMBERSHIP_POPULATE).lean().exec();
+    return this.toResponse(populated ?? reactivated);
+  }
+
+  private async reactivateMembershipDocument(actorId: string, actorEmail: string, programId: string, membership: GovernanceMembershipDocument, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipDocument> {
     membership.role = dto.role as GovernanceMembershipRole;
     membership.permissions = rolePermissions[dto.role as GovernanceMembershipRole];
     membership.status = dto.status ?? 'active';
     membership.invitedBy = new Types.ObjectId(actorId);
     await membership.save();
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.updated', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, status: membership.status, role: membership.role, reason: 'reactivated_existing' } });
-    const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
-    return this.toResponse(populated ?? membership);
+    return membership;
   }
 
   async disable(actorId: string, actorEmail: string, programId: string, membershipId: string): Promise<void> {
@@ -191,6 +215,10 @@ export class GovernanceMembershipService {
 
   private assertSingleTarget(dto: CreateGovernanceMembershipDto): void {
     if (Boolean(dto.userId) === Boolean(dto.groupId)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Provide exactly one membership target: userId or groupId');
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

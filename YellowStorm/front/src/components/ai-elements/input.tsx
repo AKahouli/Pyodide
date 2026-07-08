@@ -65,6 +65,9 @@ interface InputProps {
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
+  mentionAgents?: Agent[];
+  enableTeamMentions?: boolean;
+  workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
   belowTextarea?: ReactNode;
   /** Rendered inside PromptInputTools, after built-in tools. */
@@ -73,7 +76,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -105,11 +108,11 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   // Fetch agents
   const agents = useAgents();
-  const memoizedAgents = useMemo(() => agents, [agents]);
+  const memoizedAgents = useMemo(() => mentionAgents ?? agents, [agents, mentionAgents]);
 
   // Fetch teams (mentionable as a group; expands into its agents on the backend)
   const teams = useTeams();
-  const memoizedTeams = useMemo(() => teams, [teams]);
+  const memoizedTeams = useMemo(() => enableTeamMentions ? teams : [], [enableTeamMentions, teams]);
 
   useEffect(() => {
     useAgentStore.getState().fetchAgents();
@@ -497,6 +500,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       const agentIds = [...agentIdSet];
       const memberIds = [...memberIdSet];
       const teamIds = [...teamIdSet];
+      const allowedWorkspaceIds = workspaceOptions?.map((workspace) => workspace.id);
+      const submittedWorkspaceIds = allowedWorkspaceIds ? selectedWorkspaceIds.filter((id) => allowedWorkspaceIds.includes(id)) : selectedWorkspaceIds;
 
       if (externalSubmit) {
         externalSubmit(
@@ -504,7 +509,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
           model,
           agentIds.length > 0 ? agentIds : undefined,
           memberIds.length > 0 ? memberIds : undefined,
-          selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined,
+          submittedWorkspaceIds.length > 0 ? submittedWorkspaceIds : undefined,
           selectedConnectorRepo || undefined,
           teamIds.length > 0 ? teamIds : undefined,
         );
@@ -525,7 +530,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
+    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
@@ -568,7 +573,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} />}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} workspaceOptions={workspaceOptions} />}
               {extraTools}
               {/* <PromptInputSpeechButton textareaRef={textareaRef} /> */}
               {/* <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>

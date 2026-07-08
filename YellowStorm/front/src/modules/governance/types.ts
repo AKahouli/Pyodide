@@ -244,14 +244,6 @@ export interface CreateGovernanceDryRunPayload {
   agentId?: string;
 }
 
-export interface GovernanceDryRunMessage {
-  id: string;
-  conversationType: 'user' | 'ai';
-  content?: string;
-  components?: Array<{ type: string; data?: Record<string, unknown> }>;
-  createdAt: string;
-}
-
 export interface GovernanceMetric {
   id: string;
   programId: string;

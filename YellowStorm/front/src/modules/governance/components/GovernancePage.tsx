@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronLeft, ShieldCheck, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, MoreHorizontal, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -88,23 +88,7 @@ export function GovernancePage(): JSX.Element {
 
           <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.create')}</Button>
           {selectedProgram && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button type='button' variant='outline' size='sm' className='text-destructive hover:text-destructive' aria-label={t('programs.delete')}>
-                  <Trash2 className='h-4 w-4' />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t('programs.deleteConfirmTitle')}</AlertDialogTitle>
-                  <AlertDialogDescription>{t('programs.deleteConfirmBody', { name: selectedProgram.name })}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('scopeShell.settings.deleteCancel')}</AlertDialogCancel>
-                  <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={handleDeleteProgram} disabled={deleteProgram.isPending}>{t('programs.delete')}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <ProgramActionsMenu deleteLabel={t('programs.delete')} deleteConfirmTitle={t('programs.deleteConfirmTitle')} deleteConfirmBody={t('programs.deleteConfirmBody', { name: selectedProgram.name })} deleteCancel={t('scopeShell.settings.deleteCancel')} actionsLabel={t('programs.actions')} isDeleting={deleteProgram.isPending} onDelete={handleDeleteProgram} />
           )}
 
           <DropdownMenu>
@@ -155,5 +139,36 @@ export function GovernancePage(): JSX.Element {
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+function ProgramActionsMenu({ deleteLabel, deleteConfirmTitle, deleteConfirmBody, deleteCancel, actionsLabel, isDeleting, onDelete }: Readonly<{ deleteLabel: string; deleteConfirmTitle: string; deleteConfirmBody: string; deleteCancel: string; actionsLabel: string; isDeleting: boolean; onDelete: () => void }>): JSX.Element {
+  return (
+    <AlertDialog>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type='button' variant='outline' size='icon' className='h-9 w-9' aria-label={actionsLabel}>
+            <MoreHorizontal className='h-4 w-4' />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align='end'>
+          <AlertDialogTrigger asChild>
+            <DropdownMenuItem className='text-destructive focus:text-destructive' onSelect={(event) => event.preventDefault()}>
+              <Trash2 className='h-4 w-4' />{deleteLabel}
+            </DropdownMenuItem>
+          </AlertDialogTrigger>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{deleteConfirmTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{deleteConfirmBody}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{deleteCancel}</AlertDialogCancel>
+          <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={onDelete} disabled={isDeleting}>{deleteLabel}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

@@ -18,6 +18,28 @@ const checkTabKeys: Record<string, TabKey> = {
   channel_ready: 'agents',
 };
 
+const actionLabelKeys: Partial<Record<string, string>> = {
+  agents_mapped: 'scopeShell.readiness.actions.mapAgents',
+  knowledge_mapped: 'scopeShell.readiness.actions.mapKnowledge',
+  ownership_assigned: 'scopeShell.readiness.actions.assignOwnership',
+  guardrails_reviewed: 'scopeShell.readiness.actions.reviewGuardrails',
+  draft_revision: 'scopeShell.readiness.actions.createDraft',
+  dry_run_passed: 'scopeShell.readiness.actions.runDryRun',
+  scope_active: 'scopeShell.readiness.actions.activateScope',
+  channel_ready: 'scopeShell.readiness.actions.configureChannel',
+};
+
+const actionHelpKeys: Partial<Record<string, string>> = {
+  agents_mapped: 'scopeShell.readiness.help.mapAgents',
+  knowledge_mapped: 'scopeShell.readiness.help.mapKnowledge',
+  ownership_assigned: 'scopeShell.readiness.help.assignOwnership',
+  guardrails_reviewed: 'scopeShell.readiness.help.reviewGuardrails',
+  draft_revision: 'scopeShell.readiness.help.createDraft',
+  dry_run_passed: 'scopeShell.readiness.help.runDryRun',
+  scope_active: 'scopeShell.readiness.help.activateScope',
+  channel_ready: 'scopeShell.readiness.help.configureChannel',
+};
+
 function isUserVisibleCheck(key: string): boolean {
   return !key.startsWith('source_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable';
 }
@@ -48,7 +70,8 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
   const visibleBlockers = overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key));
   const visibleWarnings = overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key));
   const nextAction = visibleBlockers[0] ?? visibleWarnings[0];
-  const nextActionLabel = nextAction ? translateBlocker(nextAction.key, nextAction.label) : undefined;
+  const nextActionLabel = nextAction ? t((actionLabelKeys[nextAction.key] ?? actionLabelKeys.channel_ready ?? 'scopeShell.readiness.actions.configureChannel') as never) : undefined;
+  const nextActionHelp = nextAction ? t((actionHelpKeys[nextAction.key] ?? actionHelpKeys.channel_ready ?? 'scopeShell.readiness.help.configureChannel') as never) : undefined;
   const nextActionTab = nextAction ? tabForCheck(nextAction.key) : undefined;
   const checks = overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key));
   const firstPendingIndex = checks.findIndex((check) => check.status !== 'passed');
@@ -86,8 +109,9 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
       {nextActionLabel && nextActionTab && (
         <div className='mt-4 rounded-xl border border-primary/30 bg-primary/5 p-4'>
           <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.readiness.bestNextAction')}</p>
-          <p className='mt-1.5 text-sm text-muted-foreground'>{t('scopeShell.readiness.nextAction', { action: nextActionLabel })}</p>
-          <Button type='button' size='sm' className='mt-3 w-full justify-center' onClick={() => onNavigateTab(nextActionTab)}>{t('scopeShell.readiness.goToAction')}</Button>
+          <p className='mt-1.5 text-sm font-medium'>{t('scopeShell.readiness.nextAction', { action: nextActionLabel })}</p>
+          {nextActionHelp && <p className='mt-1 text-xs text-muted-foreground'>{nextActionHelp}</p>}
+          <Button type='button' size='sm' className='mt-3 w-full justify-center' onClick={() => onNavigateTab(nextActionTab)}>{t('scopeShell.readiness.goToTab', { tab: t(`scopeShell.tabs.${nextActionTab}`) })}</Button>
         </div>
       )}
     </aside>

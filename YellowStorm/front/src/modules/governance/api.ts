@@ -12,7 +12,6 @@ import type {
   GovernanceDeployment,
   GovernanceDeploymentRevision,
   GovernanceDryRun,
-  GovernanceDryRunMessage,
   GovernanceMembership,
   GovernanceMetric,
   GovernanceScope,
@@ -145,11 +144,6 @@ export const governanceApi = {
 
   async listDryRuns(deploymentId: string): Promise<GovernanceDryRun[]> {
     const res = await apiClient.get(API_ENDPOINTS.governance.dryRuns(deploymentId));
-    return res.data.data;
-  },
-
-  async getDryRunMessages(dryRunId: string): Promise<GovernanceDryRunMessage[]> {
-    const res = await apiClient.get(API_ENDPOINTS.governance.dryRunMessages(dryRunId));
     return res.data.data;
   },
 

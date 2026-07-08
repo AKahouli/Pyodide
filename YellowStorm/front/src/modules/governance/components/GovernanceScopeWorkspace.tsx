@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Pencil, Phone, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, Circle, Pencil, Phone, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,14 +17,12 @@ import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/work
 import { governanceApi } from '../api';
 import {
   useCreateGovernanceDeployment,
-  useCreateGovernanceDryRun,
   useCreateGovernanceMembership,
   useCreateGovernanceRevision,
   useCreateGovernanceSource,
   useDeleteGovernanceMembership,
   useDeleteGovernanceScope,
   useDeleteGovernanceSource,
-  useGovernanceDryRunMessages,
   useGovernanceDryRuns,
   useGovernanceUiStore,
   useMarkGovernanceDryRun,
@@ -33,7 +31,6 @@ import {
   useUpdateGovernanceMembership,
   useUpdateGovernanceScope,
   type GovernanceDryRun,
-  type GovernanceDryRunMessage,
   type GovernanceMembership,
   type GovernanceMembershipRole,
   type GovernanceMetric,
@@ -44,6 +41,7 @@ import {
   type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
+import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
 
 const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
   inputGuardrailEnabled: false,
@@ -68,6 +66,22 @@ export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents',
 
 const reviewChecklistKeys = ['knowledge_current', 'agents_confirmed', 'channels_ready', 'ownership_assigned', 'guardrails_reviewed', 'dry_run_accepted'] as const;
 
+// channels_ready stays manual in Review because channel setup is summarized, not configured, in this workspace.
+const tabChecklistKeys: Partial<Record<TabKey, (typeof reviewChecklistKeys)[number]>> = {
+  knowledge: 'knowledge_current',
+  agents: 'agents_confirmed',
+  ownership: 'ownership_assigned',
+  guardrails: 'guardrails_reviewed',
+};
+
+const tabReadinessKeys: Partial<Record<TabKey, string>> = {
+  overview: 'scope_active',
+  knowledge: 'knowledge_mapped',
+  agents: 'agents_mapped',
+  ownership: 'ownership_assigned',
+  testPublish: 'dry_run_passed',
+};
+
 function scopeClassification(scope: GovernanceScope): Required<NonNullable<GovernanceScopeMetadata['classification']>> {
   return {
     audience: scope.metadata?.classification?.audience ?? 'public_facing',
@@ -75,6 +89,32 @@ function scopeClassification(scope: GovernanceScope): Required<NonNullable<Gover
     compliance: scope.metadata?.classification?.compliance ?? 'none',
     stage: scope.metadata?.classification?.stage ?? 'pilot',
   };
+}
+
+type ScopeSettingsDraft = {
+  name: string;
+  type: GovernanceScope['type'];
+  status: GovernanceScope['status'];
+  classification: ReturnType<typeof scopeClassification>;
+};
+
+function createScopeSettingsDraft(scope: GovernanceScope): ScopeSettingsDraft {
+  return {
+    name: scope.name,
+    type: scope.type,
+    status: scope.status,
+    classification: scopeClassification(scope),
+  };
+}
+
+function isScopeSettingsDraftDirty(scope: GovernanceScope, draft: ScopeSettingsDraft): boolean {
+  const currentClassification = scopeClassification(scope);
+  const isClassificationDirty = Object.entries(draft.classification).some(([key, value]) => currentClassification[key as keyof typeof currentClassification] !== value);
+  return draft.name.trim() !== scope.name || draft.type !== scope.type || draft.status !== scope.status || isClassificationDirty;
+}
+
+function buildScopeSettingsPayload(scope: GovernanceScope, draft: ScopeSettingsDraft): Parameters<ReturnType<typeof useUpdateGovernanceScope>['mutate']>[0] {
+  return { name: draft.name.trim(), type: draft.type, status: draft.status, metadata: { ...scope.metadata, classification: draft.classification } };
 }
 
 function scopeReviewChecklist(scope: GovernanceScope): GovernanceScopeReviewChecklistItem[] {
@@ -111,6 +151,48 @@ interface Props {
 
 export function GovernanceScopeWorkspace({ programId, scopeId, overview, memberships, metrics, activeTab, onTabChange }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
+  const { user } = useAuth();
+  const updateScope = useUpdateGovernanceScope(programId, scopeId);
+  const [settingsDraft, setSettingsDraft] = useState(() => overview ? createScopeSettingsDraft(overview.scope) : null);
+
+  useEffect(() => {
+    if (!overview) return;
+    setSettingsDraft(createScopeSettingsDraft(overview.scope));
+  }, [overview?.scope.id, overview?.scope.name, overview?.scope.type, overview?.scope.status, overview?.scope.metadata]);
+
+  const handleNextStep = () => {
+    const currentIndex = governanceScopeTabs.indexOf(activeTab);
+    const nextTab = governanceScopeTabs[currentIndex + 1];
+    if (!nextTab || !overview) return;
+
+    if (activeTab === 'overview' && settingsDraft && isScopeSettingsDraftDirty(overview.scope, settingsDraft)) {
+      if (!settingsDraft.name.trim()) return;
+      updateScope.mutate(buildScopeSettingsPayload(overview.scope, settingsDraft), {
+        onSuccess: () => onTabChange(nextTab),
+        onError: (error) => showError(t('scopeShell.nextStepError'), { description: parseApiError(error).message }),
+      });
+      return;
+    }
+
+    const checklistKey = tabChecklistKeys[activeTab];
+    if (!checklistKey) {
+      onTabChange(nextTab);
+      return;
+    }
+
+    const checklist = scopeReviewChecklist(overview.scope);
+    const nextChecklist = checklist.map((item) => item.key === checklistKey ? { ...item, checked: true, checkedAt: new Date().toISOString(), checkedBy: user?.id } : item);
+    updateScope.mutate(
+      { metadata: { review: { ...overview.scope.metadata?.review, checklist: nextChecklist, status: nextChecklist.every((item) => item.checked) ? 'ready_for_approval' : 'in_review' } } },
+      {
+        onSuccess: () => onTabChange(nextTab),
+        onError: (error) => showError(t('scopeShell.nextStepError'), { description: parseApiError(error).message }),
+      },
+    );
+  };
+
+  const hasNextTab = governanceScopeTabs.indexOf(activeTab) < governanceScopeTabs.length - 1;
+  const isNextDisabled = !hasNextTab || updateScope.isPending || (activeTab === 'overview' && Boolean(settingsDraft && !settingsDraft.name.trim()));
 
   if (!overview || !scopeId) {
     return <section className='rounded-2xl border bg-card p-8 text-center shadow-sm'><h2 className='text-xl font-semibold'>{t('scopeShell.workspace.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.emptyDescription')}</p></section>;
@@ -123,16 +205,19 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         <h2 className='mt-1 text-2xl font-semibold'>{overview.scope.name}</h2>
         <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
       </div>
-      <div className='flex gap-2 overflow-x-auto border-b p-3'>
-        {governanceScopeTabs.map((tab) => <button key={tab} type='button' className={cn('rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', activeTab === tab && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={() => onTabChange(tab)}>{t(`scopeShell.tabs.${tab}`)}</button>)}
+      <div className='flex items-center gap-3 border-b p-3'>
+        <div className='flex min-w-0 flex-1 gap-2 overflow-x-auto'>
+          {governanceScopeTabs.map((tab) => <ScopeTabButton key={tab} tab={tab} overview={overview} active={activeTab === tab} onClick={() => onTabChange(tab)} />)}
+        </div>
+        <Button type='button' size='sm' className='flex-none' onClick={handleNextStep} disabled={isNextDisabled}>{t('scopeShell.nextStep')}</Button>
       </div>
       <div className='p-5'>
-        {activeTab === 'overview' && <OverviewTab programId={programId} overview={overview} />}
+        {activeTab === 'overview' && settingsDraft && <OverviewTab programId={programId} overview={overview} settingsDraft={settingsDraft} onSettingsDraftChange={setSettingsDraft} />}
         {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'ownership' && <OwnershipTab programId={programId} memberships={memberships} scopeId={scopeId} />}
         {activeTab === 'guardrails' && <GuardrailsTab overview={overview} />}
-        {activeTab === 'review' && <ReviewTab programId={programId} memberships={memberships} scopeId={scopeId} overview={overview} />}
+        {activeTab === 'review' && <ReviewTab programId={programId} memberships={memberships} scopeId={scopeId} overview={overview} onNavigateTab={onTabChange} />}
         {activeTab === 'testPublish' && <TestPublishTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'monitor' && <MonitorTab overview={overview} metrics={metrics} scopeId={scopeId} />}
       </div>
@@ -140,12 +225,28 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
   );
 }
 
-function OverviewTab({ programId, overview }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview }>): JSX.Element {
+function ScopeTabButton({ tab, overview, active, onClick }: Readonly<{ tab: TabKey; overview: GovernanceScopeOverview; active: boolean; onClick: () => void }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const readinessKey = tabReadinessKeys[tab];
+  const readinessCheck = readinessKey ? overview.readiness.checks.find((check) => check.key === readinessKey) : undefined;
+  const isDone = readinessCheck?.status === 'passed';
+  const isPending = Boolean(readinessCheck && readinessCheck.status !== 'passed');
+  const Icon = isDone ? Check : isPending ? AlertTriangle : Circle;
+
+  return (
+    <button type='button' className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', active && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={onClick}>
+      {readinessCheck && <Icon className='h-3.5 w-3.5' />}
+      {t(`scopeShell.tabs.${tab}`)}
+    </button>
+  );
+}
+
+function OverviewTab({ programId, overview, settingsDraft, onSettingsDraftChange }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview; settingsDraft: ScopeSettingsDraft; onSettingsDraftChange: (draft: ScopeSettingsDraft) => void }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const channelEntries = Object.entries(overview.channels);
   return (
     <div className='grid gap-3'>
-      <ScopeSettingsCard programId={programId} overview={overview} />
+      <ScopeSettingsCard programId={programId} overview={overview} draft={settingsDraft} onDraftChange={onSettingsDraftChange} />
       <div className='grid gap-3 md:grid-cols-2'>
       <OverviewCard title={t('scopeShell.overview.knowledgeCard')}>
         <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedSources.length)} />
@@ -182,31 +283,17 @@ function OverviewTab({ programId, overview }: Readonly<{ programId: string | nul
   );
 }
 
-function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview }>): JSX.Element {
+function ScopeSettingsCard({ programId, overview, draft, onDraftChange }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview; draft: ScopeSettingsDraft; onDraftChange: (draft: ScopeSettingsDraft) => void }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
   const updateScope = useUpdateGovernanceScope(programId, overview.scope.id);
   const deleteScope = useDeleteGovernanceScope(programId);
-  const [name, setName] = useState(overview.scope.name);
-  const [type, setType] = useState<GovernanceScope['type']>(overview.scope.type);
-  const [status, setStatus] = useState<GovernanceScope['status']>(overview.scope.status);
-  const [classification, setClassification] = useState(scopeClassification(overview.scope));
-
-  useEffect(() => {
-    setName(overview.scope.name);
-    setType(overview.scope.type);
-    setStatus(overview.scope.status);
-    setClassification(scopeClassification(overview.scope));
-  }, [overview.scope.id, overview.scope.name, overview.scope.type, overview.scope.status, overview.scope.metadata]);
-
-  const currentClassification = scopeClassification(overview.scope);
-  const isClassificationDirty = Object.entries(classification).some(([key, value]) => currentClassification[key as keyof typeof currentClassification] !== value);
-  const isDirty = name.trim() !== overview.scope.name || type !== overview.scope.type || status !== overview.scope.status || isClassificationDirty;
+  const isDirty = isScopeSettingsDraftDirty(overview.scope, draft);
 
   const handleSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!name.trim() || !isDirty) return;
-    updateScope.mutate({ name: name.trim(), type, status, metadata: { ...overview.scope.metadata, classification } });
+    if (!draft.name.trim() || !isDirty) return;
+    updateScope.mutate(buildScopeSettingsPayload(overview.scope, draft));
   };
 
   const handleDelete = () => {
@@ -219,17 +306,17 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
       <div className='mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px_160px]'>
         <div className='grid gap-1.5'>
           <Label htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</Label>
-          <Input id='governance-scope-name' value={name} onChange={(event) => setName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
+          <Input id='governance-scope-name' value={draft.name} onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} placeholder={t('scopes.namePlaceholder')} />
         </div>
         <div className='grid gap-1.5'>
           <Label htmlFor='governance-scope-type'>{t('scopeShell.settings.typeLabel')}</Label>
-          <select id='governance-scope-type' className='h-10 rounded-md border bg-background px-3 text-sm' value={type} onChange={(event) => setType(event.target.value as GovernanceScope['type'])}>
+          <select id='governance-scope-type' className='h-10 rounded-md border bg-background px-3 text-sm' value={draft.type} onChange={(event) => onDraftChange({ ...draft, type: event.target.value as GovernanceScope['type'] })}>
             {scopeTypeOptions.map((option) => <option key={option} value={option}>{t(`scopeShell.scopeTypes.${option}`)}</option>)}
           </select>
         </div>
         <div className='grid gap-1.5'>
           <Label htmlFor='governance-scope-status'>{t('scopeShell.settings.statusLabel')}</Label>
-          <select id='governance-scope-status' className='h-10 rounded-md border bg-background px-3 text-sm' value={status} onChange={(event) => setStatus(event.target.value as GovernanceScope['status'])}>
+          <select id='governance-scope-status' className='h-10 rounded-md border bg-background px-3 text-sm' value={draft.status} onChange={(event) => onDraftChange({ ...draft, status: event.target.value as GovernanceScope['status'] })}>
             <option value='active'>{t('scopeShell.settings.status.active')}</option>
             <option value='inactive'>{t('scopeShell.settings.status.inactive')}</option>
           </select>
@@ -238,14 +325,14 @@ function ScopeSettingsCard({ programId, overview }: Readonly<{ programId: string
       <div className='mt-4 rounded-xl border border-dashed p-3'>
         <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('scopeShell.classification.title')}</p>
         <div className='mt-3 grid gap-3 md:grid-cols-4'>
-          <ClassificationSelect label={t('scopeShell.classification.audience')} value={classification.audience} options={['public_facing', 'internal_only']} labelPrefix='scopeShell.classification.audienceOptions' onChange={(value) => setClassification((prev) => ({ ...prev, audience: value as typeof prev.audience }))} />
-          <ClassificationSelect label={t('scopeShell.classification.riskLevel')} value={classification.riskLevel} options={['standard', 'high_risk']} labelPrefix='scopeShell.classification.riskOptions' onChange={(value) => setClassification((prev) => ({ ...prev, riskLevel: value as typeof prev.riskLevel }))} />
-          <ClassificationSelect label={t('scopeShell.classification.compliance')} value={classification.compliance} options={['none', 'regulated']} labelPrefix='scopeShell.classification.complianceOptions' onChange={(value) => setClassification((prev) => ({ ...prev, compliance: value as typeof prev.compliance }))} />
-          <ClassificationSelect label={t('scopeShell.classification.stage')} value={classification.stage} options={['pilot', 'production']} labelPrefix='scopeShell.classification.stageOptions' onChange={(value) => setClassification((prev) => ({ ...prev, stage: value as typeof prev.stage }))} />
+          <ClassificationSelect label={t('scopeShell.classification.audience')} value={draft.classification.audience} options={['public_facing', 'internal_only']} labelPrefix='scopeShell.classification.audienceOptions' onChange={(value) => onDraftChange({ ...draft, classification: { ...draft.classification, audience: value as typeof draft.classification.audience } })} />
+          <ClassificationSelect label={t('scopeShell.classification.riskLevel')} value={draft.classification.riskLevel} options={['standard', 'high_risk']} labelPrefix='scopeShell.classification.riskOptions' onChange={(value) => onDraftChange({ ...draft, classification: { ...draft.classification, riskLevel: value as typeof draft.classification.riskLevel } })} />
+          <ClassificationSelect label={t('scopeShell.classification.compliance')} value={draft.classification.compliance} options={['none', 'regulated']} labelPrefix='scopeShell.classification.complianceOptions' onChange={(value) => onDraftChange({ ...draft, classification: { ...draft.classification, compliance: value as typeof draft.classification.compliance } })} />
+          <ClassificationSelect label={t('scopeShell.classification.stage')} value={draft.classification.stage} options={['pilot', 'production']} labelPrefix='scopeShell.classification.stageOptions' onChange={(value) => onDraftChange({ ...draft, classification: { ...draft.classification, stage: value as typeof draft.classification.stage } })} />
         </div>
       </div>
       <div className='mt-3 flex items-center gap-2'>
-        <Button type='submit' size='sm' disabled={!isDirty || !name.trim() || updateScope.isPending}>{t('scopeShell.settings.save')}</Button>
+        <Button type='submit' size='sm' disabled={!isDirty || !draft.name.trim() || updateScope.isPending}>{t('scopeShell.settings.save')}</Button>
         <span className='flex-1' />
         <AlertDialog>
           <AlertDialogTrigger asChild>
@@ -294,6 +381,16 @@ function OverviewRow({ label, value }: Readonly<{ label: ReactNode; value: React
     <div className='flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0'>
       <span className='text-muted-foreground'>{label}</span>
       <span className='font-medium'>{value}</span>
+    </div>
+  );
+}
+
+function GuidedEmptyState({ title, description, actionLabel, onAction }: Readonly<{ title: string; description: string; actionLabel: string; onAction: () => void }>): JSX.Element {
+  return (
+    <div className='rounded-xl border border-dashed p-4'>
+      <p className='text-sm font-medium'>{title}</p>
+      <p className='mt-1 text-sm text-muted-foreground'>{description}</p>
+      <Button type='button' variant='outline' size='sm' className='mt-3' onClick={onAction}>{actionLabel}</Button>
     </div>
   );
 }
@@ -347,7 +444,7 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
             </div>
           );
         })}
-        {allSources.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.knowledge.empty')}</p>}
+        {allSources.length === 0 && <GuidedEmptyState title={t('scopeShell.knowledge.emptyTitle')} description={t('scopeShell.knowledge.empty')} actionLabel={t('scopeShell.knowledge.addWorkspace')} onAction={() => setDialogOpen(true)} />}
       </div>
       <WorkspaceMapDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} mappedWorkspaceIds={mappedWorkspaceIds} />
     </div>
@@ -421,7 +518,8 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
 }
 
 function isAgentGuardrailsEnabled(agent: Agent): boolean {
-  return agent.guardrails?.promptInjection?.inputGuardrailEnabled ?? false;
+  const promptInjection = agent.guardrails?.promptInjection;
+  return Boolean(promptInjection?.inputGuardrailEnabled || promptInjection?.outputGuardrailEnabled || promptInjection?.toolCallGuardrailEnabled);
 }
 
 async function setAgentGuardrailsEnabled(agent: Agent, enabled: boolean): Promise<void> {
@@ -539,7 +637,7 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
             </div>
           </details>
         ))}
-        {mappedAgents.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.agents.empty')}</p>}
+        {mappedAgents.length === 0 && <GuidedEmptyState title={t('scopeShell.agents.emptyTitle')} description={t('scopeShell.agents.empty')} actionLabel={t('scopeShell.agents.addAgent')} onAction={() => setDialogOpen(true)} />}
       </div>
 
       <AgentPickerDialog open={dialogOpen} onOpenChange={setDialogOpen} mappedAgentIds={mappedAgentIds} onAdd={handleAdd} pending={updateScope.isPending} />
@@ -724,6 +822,7 @@ function OwnershipTab({ programId, memberships, scopeId }: Readonly<{ programId:
   const scopeMemberships = memberships.filter((membership) => !membership.scopeId || membership.scopeId === scopeId);
   const existingUserIds = scopeMemberships.map((membership) => membership.userId).filter((id): id is string => Boolean(id));
   const existingGroupIds = scopeMemberships.map((membership) => membership.groupId).filter((id): id is string => Boolean(id));
+  const hasOwnerOrApprover = scopeMemberships.some((membership) => membership.status === 'active' && (membership.role === 'program_owner' || membership.role === 'scope_approver'));
 
   return (
     <div className='grid gap-4'>
@@ -734,6 +833,7 @@ function OwnershipTab({ programId, memberships, scopeId }: Readonly<{ programId:
         </div>
         <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('access.invite')}</Button>
       </div>
+      {scopeMemberships.length > 0 && !hasOwnerOrApprover && <p className='rounded-xl border border-dashed p-3 text-sm text-muted-foreground'>{t('scopeShell.ownership.ownerRequired')}</p>}
       <div className='grid gap-2'>
         {scopeMemberships.map((membership) => (
             <div key={membership.id} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
@@ -759,7 +859,7 @@ function OwnershipTab({ programId, memberships, scopeId }: Readonly<{ programId:
             </div>
           </div>
         ))}
-        {scopeMemberships.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('access.empty')}</p>}
+        {scopeMemberships.length === 0 && <GuidedEmptyState title={t('scopeShell.ownership.emptyTitle')} description={t('scopeShell.ownership.empty')} actionLabel={t('access.invite')} onAction={() => setDialogOpen(true)} />}
       </div>
       <InviteUsersDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} excludeUserIds={existingUserIds} excludeGroupIds={existingGroupIds} />
     </div>
@@ -914,7 +1014,7 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
   );
 }
 
-function ReviewTab({ programId, memberships, scopeId, overview }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
+function ReviewTab({ programId, memberships, scopeId, overview, onNavigateTab }: Readonly<{ programId: string | null; memberships: GovernanceMembership[]; scopeId: string; overview: GovernanceScopeOverview; onNavigateTab: (tab: TabKey) => void }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const { user } = useAuth();
   const updateScope = useUpdateGovernanceScope(programId, scopeId);
@@ -975,7 +1075,7 @@ function ReviewTab({ programId, memberships, scopeId, overview }: Readonly<{ pro
         </div>
       </div>
 
-      {!latestDraftDryRunPassed && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.review.dryRunRequired')}</div>}
+      {!latestDraftDryRunPassed && <GuidedEmptyState title={t('scopeShell.review.dryRunRequiredTitle')} description={t('scopeShell.review.dryRunRequired')} actionLabel={t('scopeShell.review.goToDryRun')} onAction={() => onNavigateTab('testPublish')} />}
       {overview.readiness.blockers.length > 0 && <div className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('scopeShell.testPublish.blockedHelp')}</div>}
 
       <div className='flex flex-wrap items-center gap-2'>
@@ -1039,7 +1139,7 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       )}
 
       {overview.draftRevision && deploymentId && (
-        <DryRunChat deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} />
+        <DryRunConversationPanel deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} mappedWorkspaces={overview.knowledge.workspaceMappings.map((source) => ({ id: source.workspaceId, name: source.title, documentCount: 0 })).filter((workspace): workspace is { id: string; name: string; documentCount: number } => Boolean(workspace.id))} />
       )}
 
       {overview.draftRevision && (
@@ -1057,52 +1157,20 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
   return <div className='grid gap-3 md:grid-cols-2'><SummaryCard label={t('scopeShell.monitor.total')} value={String(overview.metricsSummary.totalEvents)} />{scopeMetrics.map((metric) => <SummaryCard key={metric.id} label={metric.type} value={String(metric.value)} />)}</div>;
 }
 
-function dryRunMessageText(message: GovernanceDryRunMessage): string {
-  if (message.conversationType === 'user') return message.content ?? '';
-  return (message.components?.find((component) => component.type === 'text')?.data?.content as string | undefined) ?? '';
-}
-
-function DryRunBubble({ role, text }: Readonly<{ role: 'user' | 'ai'; text: string }>): JSX.Element {
-  const isUser = role === 'user';
-  return (
-    <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
-      <div className={cn('my-1 max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm', isUser ? 'rounded-br-none bg-primary text-primary-foreground' : 'rounded-bl-none border bg-background')}>
-        {text}
-      </div>
-    </div>
-  );
-}
-
-function DryRunTypingBubble(): JSX.Element {
-  return (
-    <div className='flex w-full justify-start'>
-      <div className='my-1 flex gap-1 rounded-2xl rounded-bl-none border bg-background px-3 py-3'>
-        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s]' />
-        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s]' />
-        <span className='h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground' />
-      </div>
-    </div>
-  );
-}
-
-function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentIds, primaryAgentId }: Readonly<{ deploymentId: string; draftRevisionId: string; latestDryRun?: GovernanceDryRun; mappedAgentIds: string[]; primaryAgentId?: string }>): JSX.Element {
+function DryRunConversationPanel({ deploymentId, draftRevisionId, latestDryRun, mappedAgentIds, primaryAgentId, mappedWorkspaces }: Readonly<{ deploymentId: string; draftRevisionId: string; latestDryRun?: GovernanceDryRun; mappedAgentIds: string[]; primaryAgentId?: string; mappedWorkspaces: Array<{ id: string; name: string; documentCount: number }> }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const agents = useAgents();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
-  const createDryRun = useCreateGovernanceDryRun(deploymentId);
   const markDryRun = useMarkGovernanceDryRun(deploymentId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === draftRevisionId);
   const latestDraftDryRun = draftDryRuns[0] ?? (latestDryRun?.revisionId === draftRevisionId ? latestDryRun : undefined);
-  const conversationId = latestDraftDryRun?.conversationId;
+  const [modalConversationId, setModalConversationId] = useState(latestDraftDryRun?.conversationId);
 
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
   const [selectedAgentId, setSelectedAgentId] = useState(primaryAgentId ?? mappedAgentIds[0] ?? '');
-  const [input, setInput] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [pendingUserText, setPendingUserText] = useState<string | null>(null);
-  const [answeredDryRunId, setAnsweredDryRunId] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     void fetchAgents();
@@ -1113,44 +1181,9 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
     if (!mappedAgentIds.includes(selectedAgentId)) setSelectedAgentId(primaryAgentId ?? mappedAgentIds[0] ?? '');
   }, [mappedAgentIds, primaryAgentId, selectedAgentId]);
 
-  const shouldPollMessages = isStreaming || (latestDraftDryRun?.status === 'running' && answeredDryRunId !== latestDraftDryRun.id);
-  const { data: rawMessages = [], isError } = useGovernanceDryRunMessages(latestDraftDryRun?.id ?? null, { refetchInterval: shouldPollMessages ? 1200 : false });
-  // Drop the empty AI placeholder that exists while the reply is still streaming —
-  // the typing indicator stands in for it until real content lands.
-  const messages = rawMessages.filter((message) => message.conversationType === 'user' || dryRunMessageText(message).trim().length > 0);
-  const lastMessage = messages[messages.length - 1];
-
   useEffect(() => {
-    if (!shouldPollMessages) return;
-    // The reply has landed once the newest message is an AI message with real content.
-    if (lastMessage && lastMessage.conversationType === 'ai' && dryRunMessageText(lastMessage).trim().length > 0) {
-      setIsStreaming(false);
-      setPendingUserText(null);
-      setAnsweredDryRunId(latestDraftDryRun?.id ?? null);
-    }
-  }, [latestDraftDryRun?.id, shouldPollMessages, lastMessage]);
-
-  const serverHasPending = pendingUserText !== null && messages.some((message) => message.conversationType === 'user' && dryRunMessageText(message) === pendingUserText);
-
-  const handleSend = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const text = input.trim();
-    if (!text || isStreaming || !selectedAgentId) return;
-    setPendingUserText(text);
-    setIsStreaming(true);
-    setAnsweredDryRunId(null);
-    setInput('');
-    createDryRun.mutate(
-      { input: text, simulatedChannel: 'widget', conversationId, agentId: selectedAgentId },
-      {
-        onError: (error) => {
-          setIsStreaming(false);
-          setPendingUserText(null);
-          showError(t('dryRun.error'), { description: parseApiError(error).message });
-        },
-      },
-    );
-  };
+    setModalConversationId(latestDraftDryRun?.conversationId);
+  }, [latestDraftDryRun?.conversationId]);
 
   const handleMarkPassed = () => {
     if (!latestDraftDryRun) return;
@@ -1163,7 +1196,6 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
   };
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
-  const isEmpty = messages.length === 0 && !pendingUserText && !isStreaming;
 
   return (
     <div className='rounded-xl border bg-background p-4'>
@@ -1175,7 +1207,7 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
         {mappedAgents.length > 1 ? (
           <label className='flex items-center gap-2 text-xs text-muted-foreground'>
             {t('dryRun.testAgent')}
-            <select className='h-9 rounded-md border bg-background px-2 text-sm text-foreground' value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)} disabled={isStreaming} aria-label={t('dryRun.testAgent')}>
+            <select className='h-9 rounded-md border bg-background px-2 text-sm text-foreground' value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)} aria-label={t('dryRun.testAgent')}>
               {mappedAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
             </select>
           </label>
@@ -1184,30 +1216,21 @@ function DryRunChat({ deploymentId, draftRevisionId, latestDryRun, mappedAgentId
         ) : null}
       </div>
 
-      <div className='mt-3 flex max-h-96 flex-col gap-1 overflow-y-auto rounded-lg border bg-muted/20 p-3'>
-        {isError && <p className='p-2 text-sm text-destructive'>{t('dryRun.loadError')}</p>}
-        {!isError && messages.map((message) => <DryRunBubble key={message.id} role={message.conversationType} text={dryRunMessageText(message)} />)}
-        {!isError && pendingUserText !== null && !serverHasPending && <DryRunBubble role='user' text={pendingUserText} />}
-        {!isError && isStreaming && <DryRunTypingBubble />}
-        {!isError && isEmpty && <p className='p-2 text-sm text-muted-foreground'>{t('dryRun.empty')}</p>}
+      <div className='mt-3 rounded-lg border bg-muted/20 p-4'>
+        <p className='text-sm text-muted-foreground'>{latestDraftDryRun ? t('dryRun.conversationReady') : t('dryRun.empty')}</p>
+        <Button type='button' className='mt-3' onClick={() => setIsModalOpen(true)} disabled={!selectedAgentId}>{latestDraftDryRun ? t('dryRun.openConversation') : t('dryRun.startConversation')}</Button>
       </div>
-
-      <form className='mt-3 flex gap-2' onSubmit={handleSend}>
-        <Input id='governance-test-publish-dry-run-input' name='dryRunInput' aria-label={t('dryRun.inputLabel')} value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('dryRun.inputPlaceholder')} disabled={isStreaming || !selectedAgentId} />
-        <Button type='submit' disabled={isStreaming || !input.trim() || !selectedAgentId}>{t('dryRun.run')}</Button>
-      </form>
 
       {latestDraftDryRun && (
         <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
           <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
-          {!isStreaming && (
-            <div className='flex gap-2'>
-              <Button type='button' variant={latestDraftDryRun.status === 'passed' ? 'default' : 'outline'} size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>
-              <Button type='button' variant={latestDraftDryRun.status === 'failed' ? 'destructive' : 'outline'} size='sm' onClick={handleMarkFailed} disabled={markDryRun.isPending}>{t('dryRun.fail')}</Button>
-            </div>
-          )}
+          <div className='flex gap-2'>
+            <Button type='button' variant={latestDraftDryRun.status === 'passed' ? 'default' : 'outline'} size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>
+            <Button type='button' variant={latestDraftDryRun.status === 'failed' ? 'destructive' : 'outline'} size='sm' onClick={handleMarkFailed} disabled={markDryRun.isPending}>{t('dryRun.fail')}</Button>
+          </div>
         </div>
       )}
+      <GovernanceDryRunConversationModal open={isModalOpen} onOpenChange={setIsModalOpen} deploymentId={deploymentId} conversationId={modalConversationId} agentId={selectedAgentId} scopedAgents={mappedAgents} scopedWorkspaces={mappedWorkspaces} onDryRunCreated={(dryRun) => setModalConversationId(dryRun.conversationId)} />
     </div>
   );
 }

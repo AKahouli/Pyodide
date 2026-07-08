@@ -11,6 +11,10 @@ import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
+import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
+import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
+import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
+import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument } from '../schemas/governance-publication-attempt.schema';
 
 export interface GovernanceScopeResponse {
   id: string;
@@ -36,6 +40,14 @@ export class GovernanceScopeService {
     private readonly membershipModel: Model<GovernanceMembershipDocument>,
     @InjectModel(GovernanceDeployment.name)
     private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
+    @InjectModel(GovernanceDeploymentRevision.name)
+    private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @InjectModel(GovernanceDryRun.name)
+    private readonly dryRunModel: Model<GovernanceDryRunDocument>,
+    @InjectModel(GovernanceMetric.name)
+    private readonly metricModel: Model<GovernanceMetricDocument>,
+    @InjectModel(GovernancePublicationAttempt.name)
+    private readonly publicationAttemptModel: Model<GovernancePublicationAttemptDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
@@ -94,16 +106,31 @@ export class GovernanceScopeService {
   }
 
   async delete(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
-    const scope = await this.findOwnedScope(ownerUserId, programId, scopeId);
+    await this.findOwnedScope(ownerUserId, programId, scopeId);
     await this.assertCanDeleteScope(ownerUserId, programId, scopeId);
-    const [childScopeCount, sourceCount] = await Promise.all([
-      this.scopeModel.countDocuments({ programId: new Types.ObjectId(programId), parentScopeId: new Types.ObjectId(scopeId) }),
-      this.sourceModel.countDocuments({ programId: new Types.ObjectId(programId), scopeIds: new Types.ObjectId(scopeId) }),
+    await this.deleteScopeTree(programId, scopeId);
+  }
+
+  private async deleteScopeTree(programId: string, scopeId: string): Promise<void> {
+    const programObjectId = new Types.ObjectId(programId);
+    const scopeObjectId = new Types.ObjectId(scopeId);
+    const children = await this.scopeModel.find({ programId: programObjectId, parentScopeId: scopeObjectId }).select('_id').lean().exec();
+    await Promise.all(children.map((child) => this.deleteScopeTree(programId, child._id.toString())));
+    const deployments = await this.deploymentModel.find({ programId: programObjectId, scopeId: scopeObjectId }).select('_id').lean().exec();
+    const deploymentIds = deployments.map((deployment) => deployment._id);
+    await this.sourceModel.deleteMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: { $size: 1, $all: [scopeObjectId] } });
+    await Promise.all([
+      this.sourceModel.deleteMany({ programId: programObjectId, visibility: 'scope_specific', scopeIds: scopeObjectId }),
+      this.sourceModel.updateMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: scopeObjectId }, { $pull: { scopeIds: scopeObjectId } }),
+      this.sourceModel.updateMany({ programId: programObjectId, ownerScopeId: scopeObjectId }, { $unset: { ownerScopeId: '' } }),
+      this.membershipModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
+      this.metricModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
+      this.dryRunModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
+      this.publicationAttemptModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
+      deploymentIds.length > 0 ? this.revisionModel.deleteMany({ deploymentId: { $in: deploymentIds } }) : Promise.resolve(),
+      deploymentIds.length > 0 ? this.deploymentModel.deleteMany({ _id: { $in: deploymentIds } }) : Promise.resolve(),
     ]);
-    if (childScopeCount > 0 || sourceCount > 0) {
-      throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_DELETE_BLOCKED);
-    }
-    await this.scopeModel.deleteOne({ _id: scope._id });
+    await this.scopeModel.deleteOne({ _id: scopeObjectId, programId: programObjectId });
   }
 
   private async assertCanDeleteScope(ownerUserId: string, programId: string, scopeId: string): Promise<void> {

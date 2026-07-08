@@ -80,15 +80,6 @@ export function useGovernanceDryRuns(deploymentId: string | null) {
   });
 }
 
-export function useGovernanceDryRunMessages(dryRunId: string | null, options?: { refetchInterval?: number | false }) {
-  return useQuery({
-    queryKey: dryRunId ? governanceQueryKeys.dryRunMessages(dryRunId) : governanceQueryKeys.dryRunMessages('none'),
-    queryFn: () => governanceApi.getDryRunMessages(dryRunId ?? ''),
-    enabled: Boolean(dryRunId),
-    refetchInterval: options?.refetchInterval ?? false,
-  });
-}
-
 export function useGovernanceReadiness(deploymentId: string | null) {
   return useQuery({
     queryKey: deploymentId ? governanceQueryKeys.readiness(deploymentId) : governanceQueryKeys.readiness('none'),
@@ -147,7 +138,10 @@ export function useDeleteGovernanceScope(programId: string | null) {
   return useMutation({
     mutationFn: (scopeId: string) => governanceApi.deleteScope(programId ?? '', scopeId),
     onSuccess: () => {
-      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+      if (programId) {
+        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopes(programId) });
+      }
     },
   });
 }
