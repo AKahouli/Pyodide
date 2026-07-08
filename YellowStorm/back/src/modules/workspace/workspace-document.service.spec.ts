@@ -1,8 +1,11 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { lookup } from 'dns/promises';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
+
+jest.mock('dns/promises');
 import { WorkspaceDoc, DocumentStatus } from './schemas/workspace-document.schema';
 import { UploadSession } from './schemas/upload-session.schema';
 import { WorkspaceService } from './workspace.service';
@@ -385,5 +388,101 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     expect(res.status).toBe('processing');
     expect(res.sourceUrl).toBe('https://example.com');
     expect((service as any).convertAndStore).toHaveBeenCalled();
+  });
+});
+
+describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
+  let service: WorkspaceDocumentService;
+  const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
+
+  beforeEach(async () => {
+    mockLookup.mockReset();
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: WorkspaceService, useValue: {} },
+        { provide: DocumentService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        {
+          provide: ConfigService,
+          useValue: { get: (_: string, dflt?: unknown) => dflt },
+        },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            debug: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+  });
+
+  const assertUrlIsSafe = (url: string): Promise<void> =>
+    (service as any).assertUrlIsSafe(url);
+
+  it('rejects a localhost URL without consulting DNS', async () => {
+    await expect(assertUrlIsSafe('http://localhost:8080/admin')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('rejects an IPv4 loopback literal (127.0.0.1)', async () => {
+    mockLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }] as any);
+    await expect(assertUrlIsSafe('http://127.0.0.1/secret')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('rejects the cloud metadata address (169.254.169.254)', async () => {
+    mockLookup.mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as any);
+    await expect(
+      assertUrlIsSafe('http://169.254.169.254/latest/meta-data/'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a hostname that DNS-resolves to a private address', async () => {
+    mockLookup.mockResolvedValue([{ address: '10.0.0.5', family: 4 }] as any);
+    await expect(assertUrlIsSafe('http://internal.example.com/')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('rejects a non-http(s) protocol', async () => {
+    await expect(assertUrlIsSafe('file:///etc/passwd')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('allows a normal public host that resolves to a public address', async () => {
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+    await expect(assertUrlIsSafe('https://example.com/docs')).resolves.toBeUndefined();
+  });
+
+  it('checkUrlReachable propagates the SSRF guard as a thrown BadRequestException', async () => {
+    await expect(service.checkUrlReachable('http://localhost/')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });
