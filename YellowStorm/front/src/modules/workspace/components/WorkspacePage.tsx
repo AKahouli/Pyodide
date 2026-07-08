@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, Globe, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,6 +62,11 @@ function getFileIcon(mime: string) {
   if (mime.includes('pdf')) return FileText;
   if (mime.includes('sheet') || mime.includes('csv')) return FilePieChart;
   return FileIcon;
+}
+
+function getItemIcon(file: WorkspaceFile) {
+  if (file.type === 'url') return Globe;
+  return getFileIcon(file.mimeType);
 }
 
 export function WorkspacePage() {
@@ -794,7 +799,8 @@ function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexing
 }
 
 function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
-  const Icon = getFileIcon(file.mimeType);
+  const Icon = getItemIcon(file);
+  const isConverting = file.type === 'url' && (file.indexingStatus === 'none' || file.indexingStatus == null);
   const canWrite = useCanWriteWorkspace();
   const [isDragging, setIsDragging] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -808,7 +814,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const { enabled: deepSearch } = useDeepSearchIndexation();
 
-  const viewable = isViewableFile(file.mimeType);
+  const viewable = isViewableFile(file.mimeType) && !!file.path && !isConverting;
 
   const handleDragStart = (e: React.DragEvent) => {
     if (!canWrite) return;
@@ -870,7 +876,13 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
         <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
 
         <div className='min-w-0 flex-1 flex items-center gap-2'>
-          <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
+          {isConverting ? (
+            <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+              <Loader2 className='h-3.5 w-3.5 animate-spin' />
+            </span>
+          ) : (
+            <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
+          )}
           <span className='truncate text-sm'>{file.name}</span>
         </div>
 
