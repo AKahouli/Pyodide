@@ -5,7 +5,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
 import { Types } from 'mongoose';
-import * as grpc from '@grpc/grpc-js';
 import { Observable } from 'rxjs';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -19,6 +18,14 @@ import { ModelsService } from '@modules/models/models.service';
 import { IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
 import { extractComponentData, aggregateTextFromComponents } from '@modules/conversation/utils/component-mapper';
+import {
+  normalizeWidgetComponent,
+  normalizeWidgetSourcesData,
+  shouldEmitWidgetComponent,
+  WIDGET_PRIMARY_TEXT_ID,
+  WidgetStreamComponentType,
+} from '../utils/widget-component-normalizer';
+import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 
 @Injectable()
 export class WidgetChatService {
@@ -279,6 +286,8 @@ export class WidgetChatService {
     this.sseRegistry.resetStreamBuffer(sessionId);
     this.sseRegistry.emit(sessionId, { type: 'stream_start', data: { sessionId } });
 
+    let widgetTextAggregate = '';
+
     try {
       const result = await this.runSingleAgentGrpc({
         sessionId,
@@ -287,17 +296,27 @@ export class WidgetChatService {
         agentDoc,
         channel: 'widget',
         onChunk: (chunkEvent) => {
-          const comp = chunkEvent.component;
+          const emitEvent = this.buildWidgetStreamChunkEvent(chunkEvent, widgetTextAggregate);
+          if (!emitEvent) {
+            return;
+          }
+
+          if (emitEvent.component.type === 'text' && emitEvent.component.data?.content) {
+            widgetTextAggregate = String(emitEvent.component.data.content);
+          }
+
+          const comp = emitEvent.component;
           if (comp.id && comp.data) {
             stream.buffer.set(comp.id, {
               id: comp.id,
               type: (comp.type as ComponentType) || 'text',
               data: comp.data,
             });
-          } else if (comp.id && chunkEvent.action === 'delete') {
+          } else if (comp.id && emitEvent.action === 'delete') {
             stream.buffer.delete(comp.id);
           }
-          this.sseRegistry.emit(sessionId, { type: 'stream_chunk', data: chunkEvent });
+
+          this.sseRegistry.emit(sessionId, { type: 'stream_chunk', data: emitEvent });
         },
         onUsage: (usage) => {
           stream.usage.inputTokens = usage.inputTokens;
@@ -412,9 +431,9 @@ export class WidgetChatService {
     const componentBuffer = new Map<string, MessageComponent>();
 
     return new Promise((resolve, reject) => {
-      const metadata = new grpc.Metadata();
+      const metadata = createGrpcMetadata(this.configService);
       metadata.set('user', username);
-      const call = chatbotClient.RunSingleAgent(grpcRequest, { metadata });
+      const call = chatbotClient.RunSingleAgent(grpcRequest, metadata);
 
       let totalInput = 0;
       let totalOutput = 0;
@@ -444,16 +463,11 @@ export class WidgetChatService {
           } else {
             const { type, data } = this.extractComponent(comp);
             this.mergeComponentBuffer(componentBuffer, comp.id, action, type, data);
-            if (this.isWidgetDisplayChunk(type, data)) {
-              const payload =
-                type === 'error'
-                  ? { content: [data.title, data.content].filter(Boolean).join(': ') || 'Agent error' }
-                  : data;
-              onChunk?.({
-                action,
-                component: { id: comp.id, type: type === 'error' ? 'text' : type, data: payload },
-              });
-            }
+            const normalized = normalizeWidgetComponent(type, data);
+            onChunk?.({
+              action,
+              component: { id: comp.id, type: normalized.type, data: normalized.data },
+            });
           }
         } else if (!chunk.usage) {
           this.logger.warn('RunSingleAgent chunk ignored', {
@@ -534,11 +548,65 @@ export class WidgetChatService {
     existing.data = this.mergeData(type, existing.data, data);
   }
 
-  private isWidgetDisplayChunk(type: ComponentType, data: Record<string, unknown>): boolean {
-    if (type === 'error') {
-      return typeof data.content === 'string' || typeof data.title === 'string';
+  /**
+   * Filters orchestration noise and consolidates incremental text chunks for the widget SSE stream.
+   */
+  private buildWidgetStreamChunkEvent(
+    chunkEvent: {
+      action: string;
+      component: { id: string; type?: string; data?: Record<string, unknown> };
+    },
+    widgetTextAggregate: string,
+  ): {
+    action: string;
+    component: { id: string; type: string; data?: Record<string, unknown> };
+  } | null {
+    const comp = chunkEvent.component;
+    if (!comp?.id) {
+      return null;
     }
-    return type === 'text' && typeof data.content === 'string';
+
+    if (chunkEvent.action === 'delete') {
+      return chunkEvent as { action: string; component: { id: string; type: string; data?: Record<string, unknown> } };
+    }
+
+    if (!comp.data) {
+      return null;
+    }
+
+    const componentType = (comp.type || 'text') as WidgetStreamComponentType;
+    if (!shouldEmitWidgetComponent(componentType, comp.data)) {
+      return null;
+    }
+
+    if (componentType === 'text') {
+      const part = String(comp.data.content || '');
+      if (!part) {
+        return null;
+      }
+
+      return {
+        action: 'update',
+        component: {
+          id: WIDGET_PRIMARY_TEXT_ID,
+          type: 'text',
+          data: { content: widgetTextAggregate + part },
+        },
+      };
+    }
+
+    if (componentType === 'sources') {
+      return {
+        action: chunkEvent.action === 'add' ? 'add' : 'update',
+        component: {
+          id: comp.id,
+          type: 'sources',
+          data: { ...normalizeWidgetSourcesData(comp.data) },
+        },
+      };
+    }
+
+    return chunkEvent as { action: string; component: { id: string; type: string; data?: Record<string, unknown> } };
   }
 
   /** Resolves the widget's single agent for RunSingleAgent (no manager/delegation). */
