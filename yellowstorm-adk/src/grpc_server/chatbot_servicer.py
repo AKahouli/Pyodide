@@ -1966,7 +1966,7 @@ class ChatbotServicer(
                 messages=[{"role": "user", "content": prompt}],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
-                temperature=0.7,
+                temperature=1,
                 max_tokens=50,
             )
 
