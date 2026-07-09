@@ -15,6 +15,7 @@ import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem } from './task';
 import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
 import type { ToolUIPart } from 'ai';
+import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody } from './web-preview';
@@ -180,7 +181,13 @@ export interface ToolInfoPart {
   params?: string;
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
+export interface ChainOfThoughtPart {
+  type: 'chainOfThought';
+  /** Ordered step titles, shown as a collapsed list on top of the response. */
+  steps: string[];
+}
+
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -246,6 +253,8 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
       return <CitationPartRenderer citation={part} />;
     case 'toolInfo':
       return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
+    case 'chainOfThought':
+      return <ChainOfThoughtPartRenderer steps={part.steps} />;
     default:
       return null;
   }
@@ -683,6 +692,24 @@ const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status
         </ToolContent>
       )}
     </Tool>
+  );
+};
+
+// Chain of Thought Part - collapsed list of reasoning step titles, pinned to the
+// top of the response. Closed by default; the user toggles it open/closed.
+const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  if (!steps.length) return null;
+
+  return (
+    <ChainOfThought className='my-2' defaultOpen={false}>
+      <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
+      <ChainOfThoughtContent>
+        {steps.map((step, index) => (
+          <ChainOfThoughtStep key={index} label={step} />
+        ))}
+      </ChainOfThoughtContent>
+    </ChainOfThought>
   );
 };
 

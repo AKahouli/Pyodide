@@ -58,6 +58,7 @@
   "ai.chart.a11yLabel": "Graphique de l'assistant",
   "ai.chart.donutLabel": "Total",
   "ai.chart.scatterSeries": "Points de données",
+  "ai.chainOfThought.label": "Raisonnement",
   "context.cut": "Couper",
   "context.copy": "Copier",
   "context.paste": "Coller",

@@ -321,8 +321,11 @@ class AgentRunner:
         citation_mapping = {}
         # Track current text component ID for citation parent_id
         current_text_component_id = None
-        # tool_info: remember call args by call id for the completed/failed update
-        tool_params_by_id = {}
+        # Chain-of-thought: one growing component that collects a tool title per
+        # tool call, appended in place.
+        cot_steps = []                    # ordered list of tool title strings
+        cot_component_id = str(uuid.uuid4())
+        cot_sent = False
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -451,29 +454,22 @@ class AgentRunner:
                             func_name, dict(part.function_call.args), tool_category
                         )
 
-                        # Tool execution status: running
+                        # Chain-of-thought: append this tool title as a step
                         if q:
-                            call_id = getattr(part.function_call, "id", None)
-                            tool_data = {"title": func_name, "status": "running"}
-                            args_dict = dict(part.function_call.args or {})
-                            if args_dict:
-                                tool_params_json = json.dumps(
-                                    args_dict, default=str, ensure_ascii=False
-                                )
-                                tool_data["params"] = tool_params_json
-                                if call_id is not None:
-                                    tool_params_by_id[call_id] = tool_params_json
+                            cot_steps.append(func_name)
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
-                                    component_type="tool_info",
-                                    component_data=tool_data,
+                                    component_type="chain_of_thought",
+                                    component_data={"steps": list(cot_steps)},
                                     message_id=session_id,
-                                    component_id=call_id,
+                                    component_id=cot_component_id,
+                                    action="update" if cot_sent else "add",
                                 )
                             )
+                            cot_sent = True
                             logger.info(
-                                f"[TOOL_INFO] Sent tool_info component - title: {func_name}, status: running, agent: {agent_name}"
+                                f"[CHAIN_OF_THOUGHT] Appended step - title: {func_name}, steps: {len(cot_steps)}, agent: {agent_name}"
                             )
 
                             if self.streaming_formatter.component_tracker:
@@ -617,31 +613,6 @@ class AgentRunner:
 
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
-
-                        # Tool execution status: completed / failed (updates the
-                        # "running" tool_info emitted when the call started)
-                        if q:
-                            resp_id = getattr(part.function_response, "id", None)
-                            tool_data = {
-                                "title": func_name,
-                                "status": "completed" if success else "failed",
-                            }
-                            params_json = tool_params_by_id.get(resp_id, "")
-                            if params_json:
-                                tool_data["params"] = params_json
-                            await q.put(
-                                self.streaming_formatter.format_component_event(
-                                    agent_id=agent_id,
-                                    component_type="tool_info",
-                                    component_data=tool_data,
-                                    message_id=session_id,
-                                    component_id=resp_id,
-                                    action="update",
-                                )
-                            )
-                            logger.info(
-                                f"[TOOL_INFO] Sent tool_info component - title: {func_name}, status: {'completed' if success else 'failed'}, agent: {agent_name}"
-                            )
 
                         response_payload = part.function_response.response
                         if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):

@@ -1711,6 +1711,10 @@ class ChatbotServicer(
             component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
                 content=component_data.get("content", "")
             )
+        elif component_type == "chain_of_thought":
+            component_kwargs["chain_of_thought"] = chatbot_pb2.ChainOfThoughtComponent(
+                steps=[str(step) for step in component_data.get("steps", [])],
+            )
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []

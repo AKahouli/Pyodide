@@ -205,6 +205,10 @@ message ReasoningComponent {
     string content = 1;          // Internal thought process
 }
 
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles (e.g. tool names)
+}
+
 // Task status enum
 enum TaskStatus {
     PENDING = 0;                 // Task not started yet (default)
@@ -377,6 +381,7 @@ message Component {
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
         ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
+        ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
     }
 }
 

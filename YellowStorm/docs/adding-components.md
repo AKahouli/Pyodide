@@ -426,6 +426,15 @@ Use this checklist when adding a new component:
 - [ ] **Mock**: Added chunk builder function
 - [ ] **Mock**: Added to `allChunks` in `runAgentTeam()`
 
+### Optional: pin a component to the top
+Some components (e.g. `plan`, `chainOfThought`) must render above the rest of the
+message regardless of when they streamed. That order is enforced in two places —
+add a `findIndex(...) + splice + unshift` block to both:
+- `stream.service.ts` `call.on('end')` (persisted order)
+- `store.ts` `handleStreamComplete` (live streaming order)
+
+Later `unshift`es win, so pin the highest-priority component last.
+
 ---
 
 ## Example: Sources Component
@@ -604,6 +613,89 @@ const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status
                 </ToolContent>
             )}
         </Tool>
+    );
+};
+```
+
+</details>
+
+---
+
+## Example: Chain of Thought Component
+
+The `chainOfThought` component renders a **collapsed** list of reasoning step
+titles pinned to the **top** of the response. It shows two extra wrinkles: a
+minimal `repeated string` payload, and top-pinning (see the checklist's
+"pin a component to the top").
+
+<details>
+<summary>Click to expand full example</summary>
+
+### Proto Definition
+```protobuf
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles
+}
+
+// In the Component oneof:
+ChainOfThoughtComponent chain_of_thought = 17;
+```
+
+### Component Mapper (`component-mapper.ts`)
+```typescript
+// ONEOF_FIELD_TYPES
+{ field: 'chain_of_thought', type: 'chainOfThought' },
+
+// LEGACY_TYPE_MAP
+chain_of_thought: 'chainOfThought',
+chainOfThought: 'chainOfThought',
+
+// oneofPayloadHasContent()
+case 'chainOfThought':
+  return Array.isArray(payload.steps) && payload.steps.length > 0;
+
+// extractComponentData()
+case 'chainOfThought':
+  return { type, data: { steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')) } };
+```
+
+### Merge + pin-to-top
+`mergeComponentData()` (Nest) and `mergeStreamingData()` (store) both add
+`case 'chainOfThought': return { ...incoming };` (replace on update). Then pin it
+above everything — after the plan move — in both `stream.service.ts` `on('end')`
+and `store.ts` `handleStreamComplete`:
+```typescript
+const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
+if (cotIndex > 0) {
+  const [cot] = components.splice(cotIndex, 1);
+  components.unshift(cot);
+}
+```
+
+### Frontend Part + Renderer (`ai-message-content.tsx`)
+
+Reuses the ai-elements **`ChainOfThought`** component with `defaultOpen={false}`
+so it's collapsed by default and the user can toggle it.
+```typescript
+import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
+
+export interface ChainOfThoughtPart {
+    type: 'chainOfThought';
+    steps: string[];
+}
+
+const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
+    const { t: tCommon } = useModuleTranslation('common');
+    if (!steps.length) return null;
+    return (
+        <ChainOfThought className="my-2" defaultOpen={false}>
+            <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
+            <ChainOfThoughtContent>
+                {steps.map((step, index) => (
+                    <ChainOfThoughtStep key={index} label={step} />
+                ))}
+            </ChainOfThoughtContent>
+        </ChainOfThought>
     );
 };
 ```

@@ -1070,6 +1070,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             components.unshift(plan);
           }
 
+          // Chain-of-thought sits above everything (including the plan)
+          const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
+          if (cotIndex > 0) {
+            const [cot] = components.splice(cotIndex, 1);
+            components.unshift(cot);
+          }
+
           this.logger.debug(
             'Persisting stream components',
             {
@@ -1424,6 +1431,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
+      case 'chainOfThought':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
       case 'toolInfo':

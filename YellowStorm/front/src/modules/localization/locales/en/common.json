@@ -49,6 +49,7 @@
   "ai.chart.a11yLabel": "Assistant chart",
   "ai.chart.donutLabel": "Total",
   "ai.chart.scatterSeries": "Data points",
+  "ai.chainOfThought.label": "Chain of Thought",
   "context.cut": "Cut",
   "context.copy": "Copy",
   "context.paste": "Paste",
