@@ -68,6 +68,8 @@ export interface IAgentResponse {
   connectorActionSelections?: IAgentConnectorActionSelectionResponse[];
   guardrails: AgentGuardrails;
   deploymentSettings: AgentDeploymentSettings;
+  enable_temporary_child_agents: boolean;
+  max_temporary_child_agents: number;
   /** True when the agent has the "smart-memory" connector (slug === 'smart-memory'). */
   hasSmartMemory?: boolean;
   skills?: string[];
@@ -107,6 +109,8 @@ export interface IAgentForStream {
   skillIds?: string[];
   disabledSkillIds?: string[];
   agentTypeSkillIds?: string[];
+  enable_temporary_child_agents: boolean;
+  max_temporary_child_agents: number;
   isDefault: boolean;
   isDefaultForType: boolean;
 }

@@ -140,6 +140,12 @@ export class Agent extends Document {
   @Prop({ type: AgentDeploymentSettingsSchema, default: () => ({}) })
   deploymentSettings!: AgentDeploymentSettings;
 
+  @Prop({ default: false })
+  enable_temporary_child_agents!: boolean;
+
+  @Prop({ type: Number, default: 4, min: 1, max: 8 })
+  max_temporary_child_agents!: number;
+
   @Prop({ default: false, index: true })
   isDefault!: boolean;
 

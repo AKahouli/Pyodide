@@ -1,8 +1,9 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { useDocumentState } from '@embedpdf/core/react';
 import type { HighlightBBox } from '@/modules/file-viewer/types';
 
 interface CitationBBoxOverlayProps {
+  autoScroll?: boolean;
   bbox?: HighlightBBox;
   documentId: string;
   page?: number;
@@ -23,9 +24,23 @@ function toBoxStyle(bbox: HighlightBBox, pageWidth: number, pageHeight: number):
   };
 }
 
-export function CitationBBoxOverlay({ bbox, documentId, page, pageIndex }: CitationBBoxOverlayProps) {
+export function CitationBBoxOverlay({ autoScroll = false, bbox, documentId, page, pageIndex }: CitationBBoxOverlayProps) {
+  const overlayRef = useRef<HTMLDivElement>(null);
   const documentState = useDocumentState(documentId);
   const pageSize = documentState?.document?.pages[pageIndex]?.size;
+  const pageSizeKey = pageSize ? `${pageSize.width}:${pageSize.height}` : undefined;
+
+  useEffect(() => {
+    if (!autoScroll || !bbox || !pageSizeKey || page !== pageIndex + 1) {
+      return;
+    }
+
+    const frameId = globalThis.requestAnimationFrame(() => {
+      overlayRef.current?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    });
+
+    return () => globalThis.cancelAnimationFrame(frameId);
+  }, [autoScroll, bbox, page, pageIndex, pageSizeKey]);
 
   if (!bbox || page !== pageIndex + 1 || !pageSize) {
     return null;
@@ -37,6 +52,7 @@ export function CitationBBoxOverlay({ bbox, documentId, page, pageIndex }: Citat
         aria-hidden='true'
         className='absolute rounded-sm border border-yellow-500/80 bg-yellow-300/35 shadow-[0_0_0_1px_rgba(234,179,8,0.35)]'
         data-testid='citation-bbox-overlay'
+        ref={overlayRef}
         style={toBoxStyle(bbox, pageSize.width, pageSize.height)}
       />
     </div>

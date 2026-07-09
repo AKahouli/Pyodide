@@ -16,6 +16,8 @@ describe('AgentFormSchema', () => {
     expect(parsed.tools).toEqual([]);
     expect(parsed.knowledgeBases).toEqual([]);
     expect(parsed.connectorActionSelections).toEqual([]);
+    expect(parsed.enable_temporary_child_agents).toBe(false);
+    expect(parsed.max_temporary_child_agents).toBe(4);
   });
 
   it('rejects connector action selections without selected tools', () => {
@@ -49,6 +51,8 @@ describe('AgentFormSchema', () => {
       role: '',
       isActive: true,
       isDefaultForType: false,
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
     });
   });
 });

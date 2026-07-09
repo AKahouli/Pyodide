@@ -537,6 +537,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         connectors: data.connectors,
         isActive: data.isActive,
         isDefaultForType: data.isDefaultForType,
+        enable_temporary_child_agents: data.enable_temporary_child_agents,
+        max_temporary_child_agents: data.max_temporary_child_agents,
       };
 
       if (agent.isDefault) {

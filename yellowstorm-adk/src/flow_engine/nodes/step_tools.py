@@ -17,6 +17,7 @@ from src.flow_engine.nodes.step_hitl import (
     extract_interrupt_message,
     normalize_interrupt_action,
 )
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -194,7 +195,7 @@ async def run_step_with_tools(
         response = await litellm.acompletion(
             model=model_id,
             messages=messages,
-            temperature=0,
+            temperature=normalize_temperature_for_model(model_id, 0),
             max_tokens=32000,
             tools=tool_definitions,
             tool_choice="auto",

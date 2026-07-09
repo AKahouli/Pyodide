@@ -110,6 +110,8 @@ export class AgentService {
       ),
       guardrails: dto.guardrails,
       deploymentSettings: dto.deploymentSettings,
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -386,6 +388,8 @@ export class AgentService {
       ),
       guardrails: dto.guardrails,
       deploymentSettings: dto.deploymentSettings,
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -867,8 +871,8 @@ export class AgentService {
             user_id: userId,
 
             connector_bindings_json: JSON.stringify(connectorBindings),
-            enable_temporary_child_agents: 'true',
-            max_temporary_child_agents: '4',
+            enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
+            max_temporary_child_agents: String(agent.max_temporary_child_agents),
             guardrails_json: JSON.stringify({
               agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
@@ -1051,8 +1055,8 @@ export class AgentService {
           agent_params: {
             params: {
               user_id: userId,
-              enable_temporary_child_agents: 'true',
-              max_temporary_child_agents: '4',
+              enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
+              max_temporary_child_agents: String(agent.max_temporary_child_agents),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
                 agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
@@ -1545,6 +1549,8 @@ export class AgentService {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
       },
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
       hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
@@ -1609,6 +1615,8 @@ export class AgentService {
         ),
       },
       agentTypeSkillIds,
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
     };

@@ -60,6 +60,8 @@ export function AgentList() {
           deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          enable_temporary_child_agents: data.enable_temporary_child_agents,
+          max_temporary_child_agents: data.max_temporary_child_agents,
         });
       } else {
         await createAgent({
@@ -80,6 +82,8 @@ export function AgentList() {
           deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          enable_temporary_child_agents: data.enable_temporary_child_agents,
+          max_temporary_child_agents: data.max_temporary_child_agents,
         });
       }
       setShowDialog(false);

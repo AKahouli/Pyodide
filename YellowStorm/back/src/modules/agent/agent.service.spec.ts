@@ -172,6 +172,8 @@ describe('AgentService connector skill inheritance', () => {
       skillIds: ['agent-skill'],
       disabledSkillIds: ['disabled-skill'],
       agentTypeSkillIds: ['type-skill'],
+      enable_temporary_child_agents: true,
+      max_temporary_child_agents: 6,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -213,7 +215,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
       connector_bindings_json: expect.any(String),
       enable_temporary_child_agents: 'true',
-      max_temporary_child_agents: '4',
+      max_temporary_child_agents: '6',
     }));
   });
 
@@ -251,6 +253,8 @@ describe('AgentService connector skill inheritance', () => {
       skillIds: [],
       disabledSkillIds: [],
       agentTypeSkillIds: [],
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -322,6 +326,8 @@ describe('AgentService connector skill inheritance', () => {
       skillIds: [],
       disabledSkillIds: [],
       agentTypeSkillIds: [],
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -369,6 +375,8 @@ describe('AgentService connector skill inheritance', () => {
               skills: [new Types.ObjectId('111111111111111111111111')],
               disabledSkills: [],
               connectors: [new Types.ObjectId('222222222222222222222222')],
+              enable_temporary_child_agents: true,
+              max_temporary_child_agents: 5,
               isDefault: false,
               isDefaultForType: false,
               agentType: {
@@ -418,7 +426,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
       connector_bindings_json: expect.any(String),
       enable_temporary_child_agents: 'true',
-      max_temporary_child_agents: '4',
+      max_temporary_child_agents: '5',
     }));
   });
 

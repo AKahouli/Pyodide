@@ -105,6 +105,8 @@ export function useAgentOperations(): UseAgentOperationsResult {
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          enable_temporary_child_agents: data.enable_temporary_child_agents,
+          max_temporary_child_agents: data.max_temporary_child_agents,
           deploymentSettings: data.deploymentSettings,
         };
         if (editingAgent) {
@@ -180,6 +182,8 @@ export function useAgentOperations(): UseAgentOperationsResult {
           connectorActionSelections: agent.connectorActionSelections,
           isActive: agent.isActive,
           isDefaultForType: false,
+          enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
+          max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
           deploymentSettings: agent.deploymentSettings,
         });
       } catch (err) {

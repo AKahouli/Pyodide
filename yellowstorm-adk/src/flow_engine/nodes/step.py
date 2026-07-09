@@ -48,6 +48,7 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 from src.temporary_child_summary import (
     record_temporary_child_result,
     record_temporary_child_start,
@@ -869,7 +870,7 @@ async def _execute_step(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
-            temperature=0.7,
+            temperature=normalize_temperature_for_model(model_id, 0.7),
             max_tokens=32000,
             stream=True,
         )

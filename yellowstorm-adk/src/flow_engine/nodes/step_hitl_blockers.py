@@ -22,6 +22,7 @@ from src.flow_engine.nodes.step_hitl import (
     parse_blocker_judge_response,
     should_proceed_without_more_clarification,
 )
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 
 logger = get_logger(__name__)
 
@@ -110,7 +111,7 @@ async def evaluate_llm_judge_blocker(
         base_url=settings.LITELLM_API_BASE_URL,
         api_key=settings.LITELLM_API_SECRET_KEY,
         model=model_id,
-        temperature=0.0,
+        temperature=normalize_temperature_for_model(model_id, 0.0),
         model_kwargs={"user": get_user()},
     )
     try:
