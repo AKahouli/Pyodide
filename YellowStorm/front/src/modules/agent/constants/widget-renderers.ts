@@ -1,7 +1,7 @@
 /**
  * TypeScript reference renderers for the public embed widget SSE contract.
  * Mirror of `_ysRenderers` in `widget-template.ts` (vanilla JS runtime).
- * Supported component types: `text`, `sources` only.
+ * Supported component types: `text`, `sources`, `citation`.
  */
 
 import { widgetMarkdown } from './widget-markdown';
@@ -13,6 +13,21 @@ export interface WidgetSourceItem {
 
 export interface WidgetSourcesData {
   sources: WidgetSourceItem[];
+}
+
+export interface WidgetCitationData {
+  parentId: string;
+  sourceType: 'text' | 'image';
+  type?: string;
+  source?: string;
+  fileName?: string;
+  page?: string;
+  pageContent?: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  path?: string;
+  reference?: string;
+  highlightText?: string;
 }
 
 /** Renders markdown assistant text (`TextComponent.content`). */
@@ -62,9 +77,61 @@ export function renderSources(data: Record<string, unknown>): string {
   );
 }
 
-export const RENDERER_MAP: Record<string, (data: Record<string, unknown>) => string> = {
+/** Builds a clickable href for citation file links in the embed widget. */
+export function buildCitationFileHref(source: string, path: string): string {
+  const raw = source.trim() || path.trim();
+  if (!raw) return '#';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return raw.startsWith('/') ? raw : `/${raw}`;
+}
+
+/** Renders document file links at the end of assistant messages. */
+export function renderCitation(data: Record<string, unknown>): string {
+  const files = Array.isArray(data.files)
+    ? (data.files as Array<{ fileName?: string; url?: string }>)
+    : [];
+
+  const normalizedFiles =
+    files.length > 0
+      ? files
+      : (() => {
+          const file = typeof data.fileName === 'string' ? data.fileName : '';
+          const source = typeof data.source === 'string' ? data.source : '';
+          const path = typeof data.path === 'string' ? data.path : '';
+          const url = source || path;
+          const fileName = file || url.split('/').pop() || '';
+          return fileName || url ? [{ fileName: fileName || url, url }] : [];
+        })();
+
+  if (!normalizedFiles.length) return '';
+
+  const itemsHtml = normalizedFiles
+    .map((entry) => {
+      const fileName = typeof entry.fileName === 'string' ? entry.fileName : '';
+      const url = typeof entry.url === 'string' ? entry.url : '';
+      const label = fileName || url || 'Source';
+      const href = buildCitationFileHref(url, url);
+      return (
+        '<a class="ys-comp-citation-link" href="' +
+        escapeAttr(href) +
+        '" target="_blank" rel="noopener noreferrer" title="' +
+        escapeAttr(label) +
+        '">' +
+        bookIconSvg() +
+        '<span>' +
+        escapeHtml(label) +
+        '</span></a>'
+      );
+    })
+    .join('');
+
+  return '<div class="ys-comp-wrap ys-comp-citations">' + itemsHtml + '</div>';
+}
+
+export const RENDERER_MAP: Record<string, (data: Record<string, unknown>, renderId?: string) => string> = {
   text: renderText,
   sources: renderSources,
+  citation: renderCitation,
 };
 
 function escapeHtml(str: string): string {
