@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { LoggerService } from '../../logger';
 import { assertUrlIsSafe } from './url-safety';
+import { DEFAULT_CRAWL_USER_AGENT } from '../../../config/indexing.config';
 
 export interface DiscoveredPage {
   url: string;
@@ -22,6 +23,7 @@ export class WebsiteCrawlerService {
   private readonly maxDepth: number;
   private readonly timeBudgetMs: number;
   private readonly concurrency: number;
+  private readonly userAgent: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -32,6 +34,7 @@ export class WebsiteCrawlerService {
     this.maxDepth = this.configService.get<number>('indexing.crawlMaxDepth', 2);
     this.timeBudgetMs = this.configService.get<number>('indexing.crawlTimeBudgetMs', 10000);
     this.concurrency = this.configService.get<number>('indexing.crawlConcurrency', 5);
+    this.userAgent = this.configService.get<string>('indexing.crawlUserAgent', DEFAULT_CRAWL_USER_AGENT);
   }
 
   async crawl(seedUrl: string): Promise<CrawlResult> {
@@ -110,6 +113,7 @@ export class WebsiteCrawlerService {
           responseType: 'text',
           validateStatus: (s) => s >= 200 && s < 400,
           transformResponse: (d) => d,
+          headers: { 'User-Agent': this.userAgent },
         });
 
         if (res.status >= 300 && res.status < 400) {

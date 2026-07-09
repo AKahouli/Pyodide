@@ -578,4 +578,23 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
       expect.anything(),
     );
   });
+
+  it('checkUrlReachable sends a descriptive User-Agent header (not axios default)', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.head.mockReset();
+    mockedAxios.get.mockReset();
+
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+    mockedAxios.head.mockResolvedValue({ status: 200, headers: {} } as any);
+
+    const result = await service.checkUrlReachable('https://public.example.com/');
+
+    expect(result).toEqual(expect.objectContaining({ reachable: true }));
+    expect(mockedAxios.head).toHaveBeenCalledTimes(1);
+    const [, headOpts] = mockedAxios.head.mock.calls[0];
+    const userAgent = (headOpts as { headers?: Record<string, string> })?.headers?.['User-Agent'];
+    expect(userAgent).toEqual(expect.any(String));
+    expect(userAgent?.length).toBeGreaterThan(0);
+    expect(userAgent).not.toMatch(/^axios\//);
+  });
 });

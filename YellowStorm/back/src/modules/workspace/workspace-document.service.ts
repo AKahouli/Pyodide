@@ -5,6 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
@@ -63,6 +64,7 @@ export class WorkspaceDocumentService {
   private readonly smallFileThresholdMb: number;
   private readonly uploadSessionTtlMinutes: number;
   private readonly sasUrlExpiryMinutes: number;
+  private readonly crawlUserAgent: string;
 
   constructor(
     @InjectModel(WorkspaceDoc.name)
@@ -88,6 +90,7 @@ export class WorkspaceDocumentService {
     this.smallFileThresholdMb = this.configService.get<number>('workspace.smallFileThresholdMb', 10);
     this.uploadSessionTtlMinutes = this.configService.get<number>('workspace.uploadSessionTtlMinutes', 60);
     this.sasUrlExpiryMinutes = this.configService.get<number>('workspace.sasUrlExpiryMinutes', 60);
+    this.crawlUserAgent = this.configService.get<string>('indexing.crawlUserAgent', DEFAULT_CRAWL_USER_AGENT);
   }
 
   /**
@@ -905,6 +908,7 @@ export class WorkspaceDocumentService {
       timeout: 5000,
       maxRedirects: 0,
       validateStatus: () => true,
+      headers: { 'User-Agent': this.crawlUserAgent },
       ...(method === 'get' ? { responseType: 'stream' as const } : {}),
     };
 

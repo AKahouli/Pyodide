@@ -115,4 +115,22 @@ describe('WebsiteCrawlerService', () => {
     expect(res.pages.some((p) => p.title === 'metadata-secret')).toBe(false);
     expect(res.pages.some((p) => p.url.includes('169.254.169.254'))).toBe(false);
   });
+
+  it('sends a descriptive User-Agent header on outbound fetches (not axios default)', async () => {
+    mockedAxios.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/robots.txt')) return { status: 404, data: '', headers: {} };
+      if (url.endsWith('/sitemap.xml')) return { status: 404, data: '', headers: {} };
+      return ok('<html></html>', { 'content-type': 'text/html' });
+    });
+
+    await makeService().crawl('https://ex.com/');
+
+    expect(mockedAxios.get).toHaveBeenCalled();
+    for (const call of mockedAxios.get.mock.calls) {
+      const options = call[1] as { headers?: Record<string, string> } | undefined;
+      expect(options?.headers?.['User-Agent']).toEqual(expect.any(String));
+      expect(options?.headers?.['User-Agent']?.length).toBeGreaterThan(0);
+      expect(options?.headers?.['User-Agent']).not.toMatch(/^axios\//);
+    }
+  });
 });

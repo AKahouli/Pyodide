@@ -1,5 +1,15 @@
 import { registerAs } from '@nestjs/config';
 
+/**
+ * Descriptive User-Agent sent on our outbound crawl/reachability fetches.
+ * Wikipedia and other sites reject requests carrying axios's default
+ * `axios/<version>` User-Agent (or none) with 403 — a real, descriptive UA
+ * avoids that. Shared as a single constant so the config default, the
+ * crawler, and the reachability service can never drift apart.
+ */
+export const DEFAULT_CRAWL_USER_AGENT =
+  'YellowStormBot/1.0 (+https://yellowsys.fr; workspace website indexer)';
+
 export default registerAs('indexing', () => ({
   apiUrl: process.env.INDEXING_API_URL || 'http://localhost:4000',
   apiKey: process.env.INDEXING_API_KEY || '',
@@ -19,4 +29,5 @@ export default registerAs('indexing', () => ({
   crawlMaxDepth: Number.parseInt(process.env.CRAWL_MAX_DEPTH || '2', 10),
   crawlTimeBudgetMs: Number.parseInt(process.env.CRAWL_TIME_BUDGET_MS || '10000', 10),
   crawlConcurrency: Number.parseInt(process.env.CRAWL_CONCURRENCY || '5', 10),
+  crawlUserAgent: process.env.CRAWL_USER_AGENT || DEFAULT_CRAWL_USER_AGENT,
 }));
