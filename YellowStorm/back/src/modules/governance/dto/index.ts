@@ -1,0 +1,15 @@
+export { CreateGovernanceProgramDto } from './create-governance-program.dto';
+export { UpdateGovernanceProgramDto } from './update-governance-program.dto';
+export { CreateGovernanceScopeDto } from './create-governance-scope.dto';
+export { UpdateGovernanceScopeDto } from './update-governance-scope.dto';
+export { CreateGovernanceSourceDto } from './create-governance-source.dto';
+export { UpdateGovernanceSourceDto } from './update-governance-source.dto';
+export { CreateGovernanceMembershipDto } from './create-governance-membership.dto';
+export { UpdateGovernanceMembershipDto } from './update-governance-membership.dto';
+export { CreateGovernanceDeploymentDto } from './create-governance-deployment.dto';
+export { UpdateGovernanceDeploymentDto } from './update-governance-deployment.dto';
+export { CreateGovernanceRevisionDto } from './create-governance-revision.dto';
+export { UpdateGovernanceRevisionDto } from './update-governance-revision.dto';
+export { CreateGovernanceDryRunDto } from './create-governance-dry-run.dto';
+export { MarkGovernanceDryRunDto } from './mark-governance-dry-run.dto';
+export { PublishGovernanceDeploymentDto } from './publish-governance-deployment.dto';

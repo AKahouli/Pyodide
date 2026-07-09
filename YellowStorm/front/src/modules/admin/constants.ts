@@ -108,6 +108,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.models.description',
   },
   {
+    id: 'guardrails',
+    label: 'Guardrails',
+    labelKey: 'menu.guardrails.label',
+    path: '/admin/guardrails',
+    icon: Shield,
+    permissions: ['admin.*', '*'],
+    description: 'Configure global agent guardrails',
+    descriptionKey: 'menu.guardrails.description',
+  },
+  {
     id: 'agent-types',
     label: 'Agent Types',
     labelKey: 'menu.agentTypes.label',

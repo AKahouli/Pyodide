@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class WhatsAppIntegrationResponseDto {
+  @ApiProperty({ example: true })
+  enabled!: boolean;
+
   @ApiProperty({ enum: ['PAIRING', 'CONNECTED', 'DISCONNECTED', 'FAILED'], example: 'CONNECTED' })
   status!: 'PAIRING' | 'CONNECTED' | 'DISCONNECTED' | 'FAILED';
 

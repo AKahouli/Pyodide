@@ -62,6 +62,35 @@ export class UserGroupService {
     return this.toResponse(group);
   }
 
+  async findOwnedGroupIdsForMember(ownerId: string, memberId: string): Promise<string[]> {
+    const groups = await this.groupModel
+      .find({ createdBy: new Types.ObjectId(ownerId), members: new Types.ObjectId(memberId) })
+      .select('_id')
+      .lean()
+      .exec();
+    return groups.map((group) => group._id.toString());
+  }
+
+  async findGroupIdsForMember(memberId: string): Promise<string[]> {
+    const groups = await this.groupModel
+      .find({ members: new Types.ObjectId(memberId) })
+      .select('_id')
+      .lean()
+      .exec();
+    return groups.map((group) => group._id.toString());
+  }
+
+  async findOwnedGroupsByIds(ownerId: string, ids: string[]): Promise<IUserGroupResponse[]> {
+    const objectIds = [...new Set(ids)].filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id));
+    if (objectIds.length === 0) return [];
+    const groups = await this.groupModel
+      .find({ _id: { $in: objectIds }, createdBy: new Types.ObjectId(ownerId) })
+      .populate(MEMBER_POPULATE)
+      .lean()
+      .exec();
+    return groups.map((group) => this.toResponse(group as unknown as Record<string, unknown>));
+  }
+
   async update(userId: string, id: string, dto: UpdateUserGroupDto): Promise<IUserGroupResponse> {
     const group = await this.loadOwnedDoc(userId, id);
 

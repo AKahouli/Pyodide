@@ -43,8 +43,10 @@ import { TeamButton } from '@/modules/team';
 import { GroupsButton } from '@/modules/groups';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { WorkyButton } from '@/modules/worky/components/WorkyButton';
+import { GovernanceButton } from '@/modules/governance';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useProjectStore } from '@/modules/project';
 import { CreateProjectDialog } from '@/modules/project';
@@ -114,6 +116,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('sidebar');
   const { user } = useAuth();
+  const { hasAnyPermission } = usePermissions();
+  const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
 
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
@@ -277,6 +281,8 @@ export const AppSidebar = memo(function AppSidebar() {
             <WorkspaceButton />
 
             <AgentButton />
+
+            {canOpenGovernance && <GovernanceButton />}
 
             <TeamButton />
 

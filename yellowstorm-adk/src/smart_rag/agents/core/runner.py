@@ -22,6 +22,7 @@ from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.logger.logging import get_logger
+from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -281,6 +282,7 @@ class AgentRunner:
                     mcp_tools_used,
                     agent_id,
                     session,
+                    agent_config,
                 )
             else:
                 return await self._run_html_agent(
@@ -306,6 +308,7 @@ class AgentRunner:
         mcp_tools_used,
         agent_id,
         session=None,
+        agent_config=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -728,6 +731,7 @@ class AgentRunner:
                         q,
                         session_id,
                         citation_mapping,
+                        agent_config,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -945,6 +949,7 @@ class AgentRunner:
         q,
         session_id,
         citation_mapping: Optional[Dict[str, str]] = None,
+        agent_config: Optional[dict] = None,
     ):
         """Handle final response from agent."""
         # Safely handle empty parts list
@@ -1008,7 +1013,12 @@ class AgentRunner:
                 ui_reference,
             )
 
-        return event_text
+        guarded = await PromptInjectionGuardrail().check_output(
+            text=event_text,
+            agent_config=agent_config or {},
+        )
+
+        return guarded.text
 
     async def _replace_diagram_references_during_streaming(
         self, text: str, session_id: str

@@ -14,9 +14,10 @@ type WorkspaceSelectProps = Readonly<{
   onChange: (workspaceIds: string[]) => void;
   disabled?: boolean;
   className?: string;
+  workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
 }>;
 
-export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: WorkspaceSelectProps) {
+export function WorkspaceSelect({ selectedIds, onChange, disabled, className, workspaceOptions }: WorkspaceSelectProps) {
   const { t } = useModuleTranslation('workspace');
   const [open, setOpen] = useState(false);
   const workspaces = useWorkspaces();
@@ -58,7 +59,8 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
     [selectedIds, onChange],
   );
 
-  const selectedCount = selectedIds.length;
+  const visibleSelectedIds = workspaceOptions ? selectedIds.filter((id) => workspaceOptions.some((workspace) => workspace.id === id)) : selectedIds;
+  const selectedCount = visibleSelectedIds.length;
   const hasSelection = selectedCount > 0;
 
   const renderItem = (ws: { id: string; name: string; documentCount: number }, subtitle?: string) => (
@@ -91,6 +93,14 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className }: 
   );
 
   const renderContent = () => {
+    if (workspaceOptions) {
+      return workspaceOptions.length > 0 ? (
+        <CommandGroup heading={t('select.ownGroup')}>
+          {workspaceOptions.map((workspace) => renderItem(workspace))}
+        </CommandGroup>
+      ) : <div className='text-center py-8 text-sm text-muted-foreground'>{t('select.noWorkspaces')}</div>;
+    }
+
     if (isLoadingWorkspaces && workspaces.length === 0 && sharedWorkspaces.length === 0 && publicWorkspaces.length === 0) {
       return (
         <div className='flex items-center justify-center py-8'>

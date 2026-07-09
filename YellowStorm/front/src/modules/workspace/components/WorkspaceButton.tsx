@@ -33,7 +33,7 @@ export const WorkspaceButton = memo(function WorkspaceButton() {
           </SidebarMenuAction>
         </DropdownMenuTrigger>
         <DropdownMenuContent side='right' align='start'>
-          <DropdownMenuItem onClick={openCreateModal} className='cursor-pointer'>
+          <DropdownMenuItem onClick={() => openCreateModal()} className='cursor-pointer'>
             <Plus className='mr-2 h-4 w-4' />
             {t('button.menu.createWorkspace')}
           </DropdownMenuItem>

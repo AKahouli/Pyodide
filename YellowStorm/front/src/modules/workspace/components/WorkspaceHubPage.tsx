@@ -93,7 +93,7 @@ export function WorkspaceHubPage() {
             </p>
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
-            <Button onClick={openCreateModal} className="shadow-sm">
+            <Button onClick={() => openCreateModal()} className="shadow-sm">
               <Plus className="mr-1.5 h-4 w-4" />
               Nouveau workspace
             </Button>
@@ -142,7 +142,7 @@ export function WorkspaceHubPage() {
                   Effacer les filtres
                 </Button>
               ) : (
-                <Button size="sm" onClick={openCreateModal}>
+                <Button size="sm" onClick={() => openCreateModal()}>
                   <Plus className="mr-1.5 h-4 w-4" />
                   Nouveau workspace
                 </Button>

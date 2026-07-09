@@ -1,0 +1,42 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { GovernanceReadinessPanel } from './GovernanceReadinessPanel';
+import { GovernanceScopeWorkspace, type TabKey } from './GovernanceScopeWorkspace';
+import { useGovernanceMemberships, useGovernanceMetrics, useGovernanceScopeOverviews, useGovernanceScopes, useGovernanceUiStore } from '@/modules/governance';
+
+interface Props {
+  programId: string | null;
+  initialTab?: TabKey;
+}
+
+export function GovernanceScopeLifecycleShell({ programId, initialTab = 'overview' }: Readonly<Props>): JSX.Element {
+  const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
+  const setSelectedScopeId = useGovernanceUiStore((state) => state.setSelectedScopeId);
+  const { data: scopes = [] } = useGovernanceScopes(programId);
+  const { data: memberships = [] } = useGovernanceMemberships(programId);
+  const { data: metrics = [] } = useGovernanceMetrics(programId);
+  const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
+  const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
+  const overview = selectedScopeId ? byScopeId[selectedScopeId] : undefined;
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+  const previousScopeId = useRef(selectedScopeId);
+
+  useEffect(() => {
+    if (selectedScopeId && scopes.length > 0 && !scopes.some((scope) => scope.id === selectedScopeId)) setSelectedScopeId(null);
+  }, [scopes, selectedScopeId, setSelectedScopeId]);
+
+  useEffect(() => {
+    if (previousScopeId.current && previousScopeId.current !== selectedScopeId) setActiveTab('overview');
+    previousScopeId.current = selectedScopeId;
+  }, [selectedScopeId]);
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]'>
+      <div className='order-2 xl:order-1'>
+        <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
+      </div>
+      <div className='order-1 grid min-w-0 gap-4 xl:order-2'>
+        <GovernanceScopeWorkspace programId={programId} scopeId={selectedScopeId} overview={overview} memberships={memberships} metrics={metrics} activeTab={activeTab} onTabChange={setActiveTab} />
+      </div>
+    </div>
+  );
+}

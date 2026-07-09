@@ -105,6 +105,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          deploymentSettings: data.deploymentSettings,
         };
         if (editingAgent) {
           await updateAgent(editingAgent.id, payload);
@@ -179,6 +180,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           connectorActionSelections: agent.connectorActionSelections,
           isActive: agent.isActive,
           isDefaultForType: false,
+          deploymentSettings: agent.deploymentSettings,
         });
       } catch (err) {
         toast.error(t('list.errors.createFailed'), {

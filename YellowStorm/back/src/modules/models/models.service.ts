@@ -43,7 +43,7 @@ export class ModelsService implements OnApplicationBootstrap {
     private readonly aiModelModel: Model<AiModelDocument>,
     private readonly litellmClient: LiteLLMClient,
     private readonly logger: LoggerService,
-  ) {}
+  ) { }
 
   async onApplicationBootstrap(): Promise<void> {
     if (!this.litellmClient.isConfigured()) {
@@ -399,6 +399,16 @@ export class ModelsService implements OnApplicationBootstrap {
   async getDefaultModel(): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
       .findOne({ isDefault: true })
+      .lean()
+      .exec();
+
+    return model ? this.toModelResponse(model) : null;
+  }
+
+  async getGuardrailsClassifierModel(): Promise<ModelResponse | null> {
+    const model = await this.aiModelModel
+      .findOne({ type: 'guardrails_classifier', isActive: true })
+      .sort({ updatedAt: -1 })
       .lean()
       .exec();
 
