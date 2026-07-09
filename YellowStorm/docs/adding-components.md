@@ -28,7 +28,8 @@ This guide explains how to add new component types to the AI message system. Com
 | `back/src/modules/conversation/proto/chatbot.proto` | Define the component structure (contract with AI service) |
 | `back/src/modules/conversation/interfaces/message.interface.ts` | TypeScript type for component types |
 | `back/src/modules/conversation/schemas/message.schema.ts` | MongoDB schema validation |
-| `back/src/modules/conversation/services/stream.service.ts` | Process incoming gRPC chunks |
+| `back/src/modules/conversation/utils/component-mapper.ts` | Detect component type + extract data from the proto oneof |
+| `back/src/modules/conversation/services/stream.service.ts` | Process incoming gRPC chunks (merge/streaming behavior) |
 | `front/src/modules/conversation/types.ts` | Frontend MessageComponent type |
 | `front/src/modules/conversation/utils.ts` | Map backend components to frontend parts |
 | `front/src/components/ai-elements/ai-message-content.tsx` | Frontend part types and renderer |
@@ -109,48 +110,51 @@ type!: string;
 components?: MessageComponentSchema[];
 ```
 
-### Step 4: Update Stream Service
+### Step 4: Update the Component Mapper (type detection + extraction)
 
-**File:** `back/src/modules/conversation/services/stream.service.ts`
+**File:** `back/src/modules/conversation/utils/component-mapper.ts`
 
-#### 4a. Add type detection in `getComponentType()`:
+`stream.service.ts` delegates `getComponentType()` and `extractComponentData()` to
+this shared mapper (so widget/telegram/single-agent paths stay in sync). Update it
+in three places.
+
+#### 4a. Register the proto oneof field in `ONEOF_FIELD_TYPES`:
 
 ```typescript
-private getComponentType(comp: any): ComponentType {
-  if (comp.text) return 'text';
-  if (comp.code) return 'code';
-  // ... existing checks ...
-  if (comp.myNew) return 'myNew';  // <-- Add here
-  return 'text';
-}
+const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
+  // ... existing entries ...
+  { field: 'my_new', type: 'myNew' },  // <-- proto field name (keepCase), internal type
+];
 ```
+
+Also add the type to `LEGACY_TYPE_MAP` (for messages persisted in the older
+`{ type, data }` shape) and add a `case 'myNew':` to `oneofPayloadHasContent()`
+so an empty oneof branch isn't mistaken for real content.
 
 #### 4b. Add data extraction in `extractComponentData()`:
 
 ```typescript
-private extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
-  const type = this.getComponentType(comp);
+switch (type) {
+  // ... existing cases ...
 
-  switch (type) {
-    // ... existing cases ...
+  case 'myNew':
+    return {
+      type,
+      data: {
+        title: comp.my_new?.title || '',
+        items: comp.my_new?.items || [],
+        status: comp.my_new?.status || 'pending',
+      },
+    };
 
-    case 'myNew':
-      return {
-        type,
-        data: {
-          title: comp.myNew?.title || '',
-          items: comp.myNew?.items || [],
-          status: comp.myNew?.status || 'pending',
-        },
-      };
-
-    default:
-      return { type: 'text', data: { content: '' } };
-  }
+  default:
+    return { type: 'text', data: { content: '' } };
 }
 ```
 
 #### 4c. Add merge behavior in `mergeComponentData()`:
+
+**File:** `back/src/modules/conversation/services/stream.service.ts`
 
 Choose based on your component's streaming behavior:
 
@@ -406,9 +410,9 @@ Use this checklist when adding a new component:
 - [ ] **Interface**: Added to `ComponentType` union in `message.interface.ts`
 - [ ] **Schema**: Added to enum in `MessageComponentSchema` class (line ~7)
 - [ ] **Schema**: Added to enum in `components` prop (line ~30)
-- [ ] **Stream**: Added detection in `getComponentType()`
-- [ ] **Stream**: Added extraction in `extractComponentData()`
-- [ ] **Stream**: Added merge behavior in `mergeComponentData()`
+- [ ] **Mapper**: Registered oneof field in `ONEOF_FIELD_TYPES` (+ `LEGACY_TYPE_MAP` + `oneofPayloadHasContent()`) in `component-mapper.ts`
+- [ ] **Mapper**: Added extraction case in `extractComponentData()` in `component-mapper.ts`
+- [ ] **Stream**: Added merge behavior in `mergeComponentData()` in `stream.service.ts`
 
 ### Frontend
 - [ ] **Types**: Added to `MessageComponent.type` union in `types.ts`
@@ -493,6 +497,88 @@ const SourcesPartRenderer = ({
         </SourcesContent>
     </Sources>
 );
+```
+
+</details>
+
+---
+
+## Example: Tool Info Component
+
+The `toolInfo` component reports a single tool execution and its status. It is a
+good example of the **add-then-update** flow: the ADK sends `add` with
+`status: "running"` when a tool call starts, then `update` (same component id)
+with `status: "completed"` or `"failed"` when it returns. Because each chunk
+carries the full state, `mergeComponentData()` **replaces** on update.
+
+<details>
+<summary>Click to expand full example</summary>
+
+### Proto Definition
+```protobuf
+message ToolInfoComponent {
+    string title = 1;            // Tool name / label
+    string status = 2;           // running | completed | failed
+}
+
+// In the Component oneof:
+ToolInfoComponent tool_info = 16;
+```
+
+### Component Mapper (`component-mapper.ts`)
+```typescript
+// ONEOF_FIELD_TYPES
+{ field: 'tool_info', type: 'toolInfo' },
+
+// LEGACY_TYPE_MAP
+tool_info: 'toolInfo',
+toolInfo: 'toolInfo',
+
+// oneofPayloadHasContent()
+case 'toolInfo':
+  return (
+    (typeof payload.title === 'string' && payload.title.length > 0) ||
+    (typeof payload.status === 'string' && payload.status.length > 0)
+  );
+
+// extractComponentData()
+case 'toolInfo':
+  return {
+    type,
+    data: {
+      title: comp.tool_info?.title || '',
+      status: comp.tool_info?.status || 'running',
+    },
+  };
+```
+
+### Stream Service merge (`stream.service.ts`)
+```typescript
+case 'toolInfo':
+  // 'update' carries the final status that supersedes the initial 'running'
+  return { ...incoming };
+```
+
+### Frontend Part + Renderer (`ai-message-content.tsx`)
+```typescript
+export interface ToolInfoPart {
+    type: 'toolInfo';
+    title: string;
+    status: 'running' | 'completed' | 'failed';
+}
+
+const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => {
+    const icon =
+        status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
+        : status === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+        : <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />;
+    return (
+        <div className="my-1 inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground">
+            {icon}
+            <span className="truncate font-medium">{formatLabel(title)}</span>
+        </div>
+    );
+};
 ```
 
 </details>

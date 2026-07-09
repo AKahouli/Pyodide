@@ -1424,7 +1424,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
-        // These arrive fully formed - replace with incoming data
+      case 'toolInfo':
+        // These arrive fully formed - replace with incoming data.
+        // toolInfo: the 'update' chunk carries the final status
+        // (completed/failed) that supersedes the initial 'running'.
         return { ...incoming };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update

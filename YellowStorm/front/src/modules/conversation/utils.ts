@@ -233,6 +233,12 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         filePath: (data.filePath as string) || (data.file_path as string) || '',
         filename: (data.filename as string) || '',
       };
+    case 'toolInfo':
+      return {
+        type: 'toolInfo',
+        title: (data.title as string) || '',
+        status: (data.status as 'running' | 'completed' | 'failed') || 'running',
+      };
     default:
       return { type: 'text', content: (data.content as string) || '' };
   }

@@ -170,7 +170,13 @@ export interface CitationPart {
   blockBBox?: CitationBBox;
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart;
+export interface ToolInfoPart {
+  type: 'toolInfo';
+  title: string;
+  status: 'running' | 'completed' | 'failed';
+}
+
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -234,6 +240,8 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
       return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
     case 'citation':
       return <CitationPartRenderer citation={part} />;
+    case 'toolInfo':
+      return <ToolInfoPartRenderer title={part.title} status={part.status} />;
     default:
       return null;
   }
@@ -634,6 +642,25 @@ const CheckpointPartRenderer = ({ label }: { label: string }) => (
     <CheckpointTrigger className='text-md whitespace-nowrap'>{formatLabel(label)}</CheckpointTrigger>
   </Checkpoint>
 );
+
+// Tool Info Part - reports a single tool execution and its status
+const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => {
+  const icon =
+    status === 'completed' ? (
+      <CheckCircle2 className='h-3.5 w-3.5 shrink-0 text-green-500' />
+    ) : status === 'failed' ? (
+      <XCircle className='h-3.5 w-3.5 shrink-0 text-destructive' />
+    ) : (
+      <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin text-blue-500' />
+    );
+
+  return (
+    <div className='my-1 inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground'>
+      {icon}
+      <span className='truncate font-medium'>{formatLabel(title)}</span>
+    </div>
+  );
+};
 
 // Task Part
 const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (
