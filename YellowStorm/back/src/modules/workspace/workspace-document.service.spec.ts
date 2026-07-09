@@ -422,6 +422,28 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // Placeholder must embed the doc's own id so concurrent link adds never collide.
     expect(createArg.path).toContain(createArg._id.toString());
   });
+
+  it('addLinks creates one processing url doc per URL with a unique path', async () => {
+    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws, name) => name);
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    const created: any[] = [];
+    (documentModel.create as jest.Mock).mockImplementation(async (doc: any) => {
+      const d = { ...doc, _id: { toString: () => String(created.length + 1) },
+        workspaceId: { toString: () => 'ws1' }, createdBy: { toString: () => 'u1' },
+        createdAt: new Date(), updatedAt: new Date() };
+      created.push(d);
+      return d;
+    });
+
+    const res = await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://b.com/y']);
+    expect(res).toHaveLength(2);
+    expect(created).toHaveLength(2);
+    // Each doc gets a unique link-pending path.
+    const paths = created.map((d) => d.path);
+    expect(new Set(paths).size).toBe(2);
+    paths.forEach((p) => expect(p).toContain('link-pending:'));
+    expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {

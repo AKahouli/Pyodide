@@ -666,6 +666,21 @@ export class WorkspaceDocumentService {
     userId: string,
     url: string,
   ): Promise<DocumentResponse> {
+    const [doc] = await this.addLinks(workspaceId, userId, [url]);
+    return doc;
+  }
+
+  /**
+   * Add multiple website links as workspace documents. Creates each doc
+   * immediately in a PROCESSING state and returns them all; conversion to
+   * PDF + indexing runs in the background (fire-and-forget) with a bounded
+   * concurrency so we don't hammer the conversion service.
+   */
+  async addLinks(
+    workspaceId: string,
+    userId: string,
+    urls: string[],
+  ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
     // quota, avoiding a wasted conversion-API call.
@@ -677,44 +692,64 @@ export class WorkspaceDocumentService {
       );
     }
 
-    const filename = this.deriveFilenameFromUrl(url);
-    const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
-    const documentId = new Types.ObjectId();
+    // Create all docs first (fast; each PROCESSING with a unique placeholder path).
+    const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
+      [];
+    for (const url of urls) {
+      const filename = this.deriveFilenameFromUrl(url);
+      const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
+      const documentId = new Types.ObjectId();
 
-    const document = await this.documentModel.create({
-      _id: documentId,
-      originalName: effectiveName,
-      mimeType: 'application/pdf',
-      size: 0,
-      type: DocumentType.URL,
-      sourceUrl: url,
-      // The collection enforces a unique index on `path`. A link has no blob
-      // yet at creation, so assign a unique placeholder (mirroring the folder
-      // pattern above) to avoid an E11000 collision on { path: null } between
-      // concurrent/successive link adds. convertAndStore overwrites this with
-      // the real Ceph blob path once the PDF is uploaded. The `.pdf` suffix
-      // keeps the placeholder past the "no extension ⇒ folder" heuristic in
-      // DocumentService.generateSasUrl, so a stray read of a not-yet-converted
-      // link fails with an accurate "file not found" rather than a misleading
-      // "cannot download folders" error.
-      path: `link-pending:${documentId}.pdf`,
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
-      status: DocumentStatus.PROCESSING,
-      indexingStatus: IndexingStatus.NONE,
-    });
+      const document = await this.documentModel.create({
+        _id: documentId,
+        originalName: effectiveName,
+        mimeType: 'application/pdf',
+        size: 0,
+        type: DocumentType.URL,
+        sourceUrl: url,
+        // The collection enforces a unique index on `path`. A link has no blob
+        // yet at creation, so assign a unique placeholder (mirroring the folder
+        // pattern above) to avoid an E11000 collision on { path: null } between
+        // concurrent/successive link adds. convertAndStore overwrites this with
+        // the real Ceph blob path once the PDF is uploaded. The `.pdf` suffix
+        // keeps the placeholder past the "no extension ⇒ folder" heuristic in
+        // DocumentService.generateSasUrl, so a stray read of a not-yet-converted
+        // link fails with an accurate "file not found" rather than a misleading
+        // "cannot download folders" error.
+        path: `link-pending:${documentId}.pdf`,
+        workspaceId: new Types.ObjectId(workspaceId),
+        createdBy: new Types.ObjectId(userId),
+        status: DocumentStatus.PROCESSING,
+        indexingStatus: IndexingStatus.NONE,
+      });
 
-    this.convertAndStore(document._id.toString(), workspaceId, url, effectiveName).catch(
-      (err) => {
-        this.logger.error('convertAndStore failed', {
-          documentId: document._id.toString(),
-          error: err instanceof Error ? err.message : 'Unknown error',
+      this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+      created.push({
+        response: this.mapToResponse(document),
+        id: document._id.toString(),
+        url,
+        name: effectiveName,
+      });
+    }
+
+    // Convert with a concurrency cap so we don't hammer Gotenberg.
+    const CONCURRENCY = 3;
+    let i = 0;
+    const workers = Array.from({ length: Math.min(CONCURRENCY, created.length) }, async () => {
+      while (i < created.length) {
+        const item = created[i++];
+        await this.convertAndStore(item.id, workspaceId, item.url, item.name).catch((err) => {
+          this.logger.error('convertAndStore failed', {
+            documentId: item.id,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         });
-      },
-    );
+      }
+    });
+    // Fire-and-forget the whole conversion batch; respond as soon as docs exist.
+    void Promise.all(workers);
 
-    this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
-    return this.mapToResponse(document);
+    return created.map((c) => c.response);
   }
 
   /**
