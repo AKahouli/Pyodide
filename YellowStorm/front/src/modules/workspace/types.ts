@@ -481,9 +481,12 @@ export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorksp
 // ===== Website Crawl Types =====
 
 export interface PageNode {
+  /** Real page URL, or '' for a synthetic category/group node (not selectable). */
   url: string;
   title?: string;
   path: string;
+  /** Display label: last path segment, or the host for the site root page. */
+  name: string;
   alreadyIndexed: boolean;
   children: PageNode[];
 }

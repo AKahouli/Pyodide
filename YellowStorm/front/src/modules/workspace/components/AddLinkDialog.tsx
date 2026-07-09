@@ -22,9 +22,10 @@ function isValidUrl(value: string): boolean {
 }
 
 function collectPreChecked(nodes: PageNode[]): Set<string> {
-  // Pre-check the root(s) only, skipping already-indexed.
+  // Pre-check the top-level real page(s) only — skip synthetic group nodes
+  // (url === '') and already-indexed pages.
   const s = new Set<string>();
-  nodes.forEach((n) => { if (!n.alreadyIndexed) s.add(n.url); });
+  nodes.forEach((n) => { if (n.url && !n.alreadyIndexed) s.add(n.url); });
   return s;
 }
 
@@ -71,7 +72,8 @@ export function AddLinkDialog({
       setTree(res.tree);
       setTruncated(res.truncated);
       setSelected(collectPreChecked(res.tree));
-      setFocusUrl(res.tree[0]?.url ?? clean);
+      // Focus the first real (selectable) page for the preview, not a group node.
+      setFocusUrl(collectSelectableUrls(res.tree)[0] ?? clean);
       setPhase('tree');
     } catch {
       setError('Une erreur est survenue lors de la cartographie. Réessayez.');
@@ -101,8 +103,14 @@ export function AddLinkDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
-      <DialogContent className={phase === 'tree' ? 'max-w-4xl' : undefined}>
-        <DialogHeader>
+      <DialogContent
+        className={
+          phase === 'tree'
+            ? 'flex h-[92vh] w-[96vw] max-w-[96vw] flex-col gap-3 overflow-hidden'
+            : undefined
+        }
+      >
+        <DialogHeader className={phase === 'tree' ? 'shrink-0' : undefined}>
           <DialogTitle>Ajouter un lien</DialogTitle>
           <DialogDescription>
             {phase === 'input'
@@ -126,40 +134,53 @@ export function AddLinkDialog({
             {error && <p className='text-sm text-destructive'>{error}</p>}
           </div>
         ) : (
-          <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
-            <div className='min-w-0'>
-              <div className='mb-2 flex items-center gap-2 text-xs'>
+          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[260px_1fr]'>
+            <div className='flex min-h-0 min-w-0 flex-col rounded border'>
+              <div className='flex shrink-0 items-center gap-2 border-b px-2 py-1.5 text-xs'>
                 <button type='button' className='underline' onClick={selectAll}>Tout sélectionner</button>
                 <span className='text-muted-foreground'>·</span>
                 <button type='button' className='underline' onClick={selectNone}>Aucun</button>
                 {truncated && <span className='ml-auto text-muted-foreground'>Résultats limités</span>}
               </div>
-              <PageTree nodes={tree} selected={selected} onToggle={toggle} onFocus={setFocusUrl} />
+              <div className='min-h-0 flex-1'>
+                <PageTree nodes={tree} selected={selected} focusUrl={focusUrl} onToggle={toggle} onFocus={setFocusUrl} />
+              </div>
             </div>
-            <div className='min-w-0'>
+            <div className='flex min-h-0 min-w-0 flex-col'>
               {focusUrl ? (
-                <div className='flex h-full flex-col'>
-                  <div className='mb-1 flex items-center gap-2 text-xs text-muted-foreground'>
+                <>
+                  <div className='mb-1 flex shrink-0 items-center gap-2 text-xs text-muted-foreground'>
                     <span className='truncate' title={focusUrl}>{focusUrl}</span>
                     <a href={focusUrl} target='_blank' rel='noreferrer'
-                       className='ml-auto inline-flex items-center gap-1 underline'>
+                       className='ml-auto inline-flex shrink-0 items-center gap-1 underline'>
                       Ouvrir <ExternalLink className='h-3 w-3' />
                     </a>
                   </div>
                   {/* Best-effort preview. Deliberately omit `allow-same-origin`:
                       combined with `allow-scripts` it is a known sandbox-escape
                       anti-pattern, and the framed page (a user-supplied crawl
-                      target) has no need to reach its own origin's cookies here. */}
-                  <iframe
-                    title='Aperçu'
-                    src={focusUrl}
-                    sandbox='allow-scripts'
-                    className='h-[45vh] w-full rounded border'
-                  />
-                  <p className='mt-1 text-[11px] text-muted-foreground'>
+                      target) has no need to reach its own origin's cookies here.
+                      The iframe is scaled to 70% ("zoom out") so more of the page
+                      is visible at once; width/height are enlarged by 1/0.7 so the
+                      scaled frame still fills its container. */}
+                  <div className='min-h-0 flex-1 overflow-hidden rounded border bg-muted/20'>
+                    <iframe
+                      title='Aperçu'
+                      src={focusUrl}
+                      sandbox='allow-scripts'
+                      style={{
+                        width: '142.857%',
+                        height: '142.857%',
+                        transform: 'scale(0.7)',
+                        transformOrigin: '0 0',
+                        border: 0,
+                      }}
+                    />
+                  </div>
+                  <p className='mt-1 shrink-0 text-[11px] text-muted-foreground'>
                     L'aperçu peut être indisponible pour certains sites.
                   </p>
-                </div>
+                </>
               ) : (
                 <p className='text-sm text-muted-foreground'>Sélectionnez une page pour l'aperçu.</p>
               )}

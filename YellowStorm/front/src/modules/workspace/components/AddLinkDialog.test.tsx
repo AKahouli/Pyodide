@@ -35,8 +35,8 @@ describe('AddLinkDialog', () => {
 
   it('crawls, shows the tree, and adds selected pages', async () => {
     crawlUrl.mockResolvedValue({ truncated: false, tree: [
-      { url: 'https://ex.com/', path: '/', alreadyIndexed: false, children: [
-        { url: 'https://ex.com/a', path: '/a', alreadyIndexed: false, children: [] },
+      { url: 'https://ex.com/', path: '/', name: 'ex.com', alreadyIndexed: false, children: [
+        { url: 'https://ex.com/a', path: '/a', name: 'a', alreadyIndexed: false, children: [] },
       ] },
     ] });
     addPageLinks.mockResolvedValue(undefined);
@@ -45,9 +45,9 @@ describe('AddLinkDialog', () => {
     await screen.findByRole('dialog');
     fireEvent.change(screen.getByRole('textbox', { name: /lien/i }), { target: { value: 'https://ex.com' } });
     fireEvent.click(screen.getByRole('button', { name: /cartographier/i }));
-    // Tree appears; root '/' is pre-checked. Add the child too.
-    await screen.findByLabelText('/a');
-    fireEvent.click(screen.getByLabelText('/a'));
+    // Tree appears; rows are labelled by page name. Root (ex.com) is pre-checked; add 'a' too.
+    await screen.findByLabelText('a');
+    fireEvent.click(screen.getByLabelText('a'));
     fireEvent.click(screen.getByRole('button', { name: /ajouter/i }));
     await waitFor(() => expect(addPageLinks).toHaveBeenCalledWith(
       'ws1', expect.arrayContaining(['https://ex.com/', 'https://ex.com/a'])));

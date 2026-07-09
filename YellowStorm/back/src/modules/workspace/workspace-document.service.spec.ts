@@ -362,9 +362,12 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     service = mod.get(WorkspaceDocumentService);
   });
 
-  it('derives a sanitized .pdf filename from a URL', () => {
+  it('derives a page-name .pdf filename from a URL', () => {
     const d = (service as any).deriveFilenameFromUrl.bind(service);
-    expect(d('https://www.example.com/docs/guide/')).toBe('example.com-docs-guide.pdf');
+    // Last path segment only (the "page name"), not the full URL.
+    expect(d('https://www.example.com/docs/guide/')).toBe('guide.pdf');
+    expect(d('https://example.com/page/pagename')).toBe('pagename.pdf');
+    // No path segments -> fall back to host.
     expect(d('https://example.com')).toBe('example.com.pdf');
     expect(d('not a url')).toBe('website.pdf');
   });

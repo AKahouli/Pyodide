@@ -827,20 +827,23 @@ export class WorkspaceDocumentService {
   }
 
   /**
-   * Derive a filesystem-safe `.pdf` name from a URL (hostname + path).
+   * Derive a filesystem-safe `.pdf` name from a URL: the page name (last path
+   * segment), falling back to the host for the site root. Collisions are
+   * resolved upstream by resolveUniqueOriginalName ("page (1).pdf").
    */
   private deriveFilenameFromUrl(url: string): string {
     try {
       const u = new URL(url);
-      const host = u.hostname.replace(/^www\./, '');
-      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
-      const base = pathPart ? `${host}-${pathPart}` : host;
+      const segments = u.pathname.split('/').filter(Boolean);
+      const base = segments.length
+        ? segments[segments.length - 1]
+        : u.hostname.replace(/^www\./, '');
       const sanitized = base
         .replace(/[^a-zA-Z0-9-_.]/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '')
         .slice(0, 200);
-      return `${sanitized || 'website'}.pdf`;
+      return `${sanitized || 'page'}.pdf`;
     } catch {
       return 'website.pdf';
     }
