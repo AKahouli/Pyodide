@@ -41,8 +41,8 @@ export class WebsiteCrawlerService {
     const deadline = Date.now() + this.timeBudgetMs;
 
     // 1. Sitemap-first discovery.
-    const disallow = await this.fetchDisallowRules(seed.origin, deadline);
-    let urls = await this.discoverViaSitemap(seed.origin, host, deadline);
+    const { sitemaps: robotsSitemaps, disallow } = await this.fetchRobots(seed.origin, deadline);
+    let urls = await this.discoverViaSitemap(seed.origin, host, robotsSitemaps, deadline);
 
     let pages: DiscoveredPage[];
     let fallbackTruncated = false;
@@ -105,34 +105,35 @@ export class WebsiteCrawlerService {
     }
   }
 
-  private async fetchDisallowRules(origin: string, deadline: number): Promise<string[]> {
+  /** Fetches robots.txt once and returns both the Sitemap: entries and the Disallow rules (User-agent: * scoped). */
+  private async fetchRobots(origin: string, deadline: number): Promise<{ sitemaps: string[]; disallow: string[] }> {
+    const sitemaps: string[] = [];
+    const disallow: string[] = [];
     const body = await this.safeGet(`${origin}/robots.txt`, deadline);
-    if (!body) return [];
-    const rules: string[] = [];
+    if (!body) return { sitemaps, disallow };
     let appliesToAll = false;
     for (const raw of body.split('\n')) {
       const line = raw.trim();
       const lower = line.toLowerCase();
-      if (lower.startsWith('user-agent:')) appliesToAll = line.split(':')[1].trim() === '*';
-      else if (appliesToAll && lower.startsWith('disallow:')) {
+      if (lower.startsWith('user-agent:')) {
+        appliesToAll = line.split(':')[1].trim() === '*';
+      } else if (appliesToAll && lower.startsWith('disallow:')) {
         const path = line.slice(line.indexOf(':') + 1).trim();
-        if (path) rules.push(path);
+        if (path) disallow.push(path);
+      } else if (lower.startsWith('sitemap:')) {
+        sitemaps.push(line.slice(line.indexOf(':') + 1).trim());
       }
     }
-    return rules;
+    return { sitemaps, disallow };
   }
 
-  private async discoverViaSitemap(origin: string, host: string, deadline: number): Promise<string[]> {
-    // robots Sitemap: lines + default /sitemap.xml
-    const robots = await this.safeGet(`${origin}/robots.txt`, deadline);
+  private async discoverViaSitemap(
+    origin: string, host: string, robotsSitemaps: string[], deadline: number,
+  ): Promise<string[]> {
+    // robots Sitemap: lines (same-host only) + default /sitemap.xml
     const sitemapUrls = new Set<string>();
-    if (robots) {
-      for (const raw of robots.split('\n')) {
-        const line = raw.trim();
-        if (line.toLowerCase().startsWith('sitemap:')) {
-          sitemapUrls.add(line.slice(line.indexOf(':') + 1).trim());
-        }
-      }
+    for (const sm of robotsSitemaps) {
+      if (this.sameHost(sm, host)) sitemapUrls.add(sm);
     }
     sitemapUrls.add(`${origin}/sitemap.xml`);
 
@@ -145,11 +146,14 @@ export class WebsiteCrawlerService {
       const locs = this.extractLocs(xml);
       const isIndex = /<sitemapindex/i.test(xml);
       for (const loc of locs) {
-        if (isIndex) nested.push(loc);
-        else if (this.sameHost(loc, host)) found.add(this.normalize(loc));
+        if (isIndex) {
+          if (this.sameHost(loc, host)) nested.push(loc);
+        } else if (this.sameHost(loc, host)) {
+          found.add(this.normalize(loc));
+        }
       }
     }
-    // Follow nested sitemaps one level.
+    // Follow nested sitemaps one level (same-host only).
     for (const sm of nested) {
       if (Date.now() > deadline || found.size >= this.maxPages) break;
       const xml = await this.safeGet(sm, deadline);
@@ -195,14 +199,23 @@ export class WebsiteCrawlerService {
     let truncated = false;
 
     for (let depth = 0; depth <= this.maxDepth; depth++) {
-      if (frontier.length === 0 || Date.now() > deadline) break;
-      if (visited.size >= this.maxPages || results.length >= this.maxPages) {
+      if (frontier.length === 0) break;
+      if (Date.now() > deadline) {
+        // Time budget stopped the crawl with an unfetched frontier still queued.
+        truncated = true;
+        break;
+      }
+      if (results.length >= this.maxPages) {
         truncated = true;
         break;
       }
       const next: string[] = [];
       await mapWithConcurrency(frontier, this.concurrency, async (pageUrl) => {
-        if (Date.now() > deadline) return;
+        if (Date.now() > deadline) {
+          // Candidate skipped because the time budget ran out mid-depth.
+          truncated = true;
+          return;
+        }
         if (results.length >= this.maxPages) {
           truncated = true;
           return;

@@ -45,7 +45,9 @@ describe('WebsiteCrawlerService', () => {
         '</body></html>', { 'content-type': 'text/html' });
     });
     const res = await makeService({ 'indexing.crawlMaxPages': 3 }).crawl('https://ex.com/');
-    expect(res.pages.length).toBeLessThanOrEqual(3);
+    expect(res.pages.length).toBe(3);
+    const urls = res.pages.map((p) => p.url);
+    expect(urls.some((u) => /\/p[1-5]$/.test(u))).toBe(true);
     expect(res.truncated).toBe(true);
   });
 
