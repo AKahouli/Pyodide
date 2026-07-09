@@ -316,6 +316,7 @@ export enum ErrorCode {
   WIDGET_AI_UNAVAILABLE = 'ERR_3406',
   WIDGET_MESSAGE_LIMIT = 'ERR_3407',
   WIDGET_TOKEN_NOT_FOUND = 'ERR_3408',
+  WIDGET_CITATION_NOT_FOUND = 'ERR_3409',
 
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
@@ -598,6 +599,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WIDGET_AI_UNAVAILABLE]: 'AI service is currently unavailable for the widget.',
   [ErrorCode.WIDGET_MESSAGE_LIMIT]: 'Widget message limit reached for this session.',
   [ErrorCode.WIDGET_TOKEN_NOT_FOUND]: 'Widget token not found.',
+  [ErrorCode.WIDGET_CITATION_NOT_FOUND]: 'Citation source document not found in storage.',
 
   [ErrorCode.CONNECTED_APP_NOT_FOUND]: 'Connected app not found.',
   [ErrorCode.CONNECTED_APP_ALREADY_EXISTS]: 'A connected app with this key already exists.',
