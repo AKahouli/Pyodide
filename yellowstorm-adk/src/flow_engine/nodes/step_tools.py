@@ -237,6 +237,22 @@ async def run_step_with_tools(
                 tool_call_id=tool_call.get("id", ""),
                 args=tool_arguments if isinstance(tool_arguments, dict) else {},
             )
+            if agent_role == "temporary_child" and summary_session_id:
+                request_args = tool_arguments if isinstance(tool_arguments, dict) else {}
+                logger.info(
+                    "[TEMP CHILD] Flow tool call requested",
+                    child=agent_name,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call.get("id", ""),
+                    args=request_args,
+                )
+                record_temporary_child_tool_call(
+                    session_id=summary_session_id,
+                    child=agent_name,
+                    tool_name=tool_name,
+                    args=request_args,
+                    status="requested",
+                )
             skip_content = _resolve_tool_hitl_approval(
                 tool_name=tool_name,
                 tool_arguments=tool_arguments if isinstance(tool_arguments, dict) else {},
@@ -268,6 +284,15 @@ async def run_step_with_tools(
                     result_preview=tool_content[:500],
                 )
                 if agent_role == "temporary_child" and summary_session_id:
+                    logger.info(
+                        "[TEMP CHILD] Flow tool call completed",
+                        child=agent_name,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call.get("id", ""),
+                        duration_ms=duration_ms,
+                        args=actual_args,
+                        result_preview=tool_content[:500],
+                    )
                     record_temporary_child_tool_call(
                         session_id=summary_session_id,
                         child=agent_name,
@@ -282,6 +307,8 @@ async def run_step_with_tools(
                         output_summary=tool_content[:500],
                         status="completed",
                         duration_ms=duration_ms,
+                        agent_name=agent_name,
+                        agent_role=agent_role,
                     )
                     if on_trace_update is not None:
                         on_trace_update()
@@ -300,6 +327,15 @@ async def run_step_with_tools(
                     error=str(exc),
                 )
                 if agent_role == "temporary_child" and summary_session_id:
+                    logger.warning(
+                        "[TEMP CHILD] Flow tool call failed",
+                        child=agent_name,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call.get("id", ""),
+                        duration_ms=duration_ms,
+                        args=actual_args_err,
+                        error=str(exc),
+                    )
                     record_temporary_child_tool_call(
                         session_id=summary_session_id,
                         child=agent_name,
@@ -316,6 +352,8 @@ async def run_step_with_tools(
                         status="failed",
                         duration_ms=duration_ms,
                         error=str(exc),
+                        agent_name=agent_name,
+                        agent_role=agent_role,
                     )
                     if on_trace_update is not None:
                         on_trace_update()

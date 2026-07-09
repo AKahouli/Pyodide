@@ -16,19 +16,75 @@ logger = get_logger("api.smart_rag.temporary_child_agent")
 
 TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION = """
 Temporary child-agent rule:
-You are the evaluator/orchestrator for this delegated task. Because temporary
-child agents are enabled, you must call `create_temporary_child_agent` two
-separate times before final answering. Use two different focused task
-descriptions so the two temporary children can independently retrieve or verify
-evidence. You may create more children with refined task descriptions until the
-evidence is sufficient or the child limit is reached. Evaluate all child results
-and return the best final answer.
+You are the evaluator/orchestrator for this delegated task. Temporary child
+agents are enabled, and the required first temporary child result has already
+been provided in your task context. Call `create_temporary_child_agent` again
+only when you decide more evidence or verification is needed, until the evidence
+is sufficient or the child limit is reached. You may create additional children
+sequentially, or in parallel if supported.
+
+Your role is only to evaluate, compare, and synthesize the temporary child
+results. Do not use skills, MCP connector tools, retrieval tools, code tools, or
+other operational tools directly. The temporary children inherit and use those
+tools. If more tool work is needed, create another temporary child with a focused
+task. Evaluate all child results and return the best final answer.
 """.strip()
 
 
-class _DiscardingQueue:
+_CHILD_RESULT_COMPONENT_TYPES = {
+    "artifact",
+    "chart",
+    "citation",
+    "sandbox",
+    "sources",
+    "web_preview",
+}
+
+
+class _ChildResultQueue:
+    def __init__(self) -> None:
+        self._text_chunks: list[str] = []
+        self._components: list[dict[str, Any]] = []
+
     async def put(self, item: Any) -> None:
-        return None
+        if not isinstance(item, dict):
+            return
+        component = item.get("component")
+        if isinstance(component, dict):
+            self._collect_component(component)
+            return
+        chunk = str(item.get("chunk") or "")
+        content_type = str(item.get("content_type") or "")
+        if content_type in {"chunk", "final_response", "source"} and chunk.strip():
+            self._text_chunks.append(chunk)
+
+    def to_parent_result(self, result: Any) -> str:
+        final_text = str(result or "").strip() or "".join(self._text_chunks).strip()
+        if not self._components:
+            return final_text
+        payload = json.dumps(self._components, ensure_ascii=False, default=str)
+        return (
+            f"{final_text}\n\n"
+            "<child_visible_output_components>\n"
+            f"{payload}\n"
+            "</child_visible_output_components>"
+        )
+
+    def _collect_component(self, component: dict[str, Any]) -> None:
+        component_type = str(component.get("type") or "")
+        component_data = component.get("data")
+        if component_type == "text" and isinstance(component_data, dict):
+            content = str(component_data.get("content") or "")
+            if content.strip():
+                self._text_chunks.append(content)
+            return
+        if component_type in _CHILD_RESULT_COMPONENT_TYPES:
+            self._components.append(
+                {
+                    "type": component_type,
+                    "data": component_data if isinstance(component_data, dict) else {},
+                }
+            )
 
 
 def should_enable_temporary_child_agent_tool(agent_config: Dict[str, Any]) -> bool:
@@ -67,10 +123,10 @@ def make_temporary_child_agent_tool(
     ) -> str:
         """Create a temporary child agent for one focused subtask and return its result.
 
-        Call this for one focused subtask. Temporary child mode currently
-        requires two separate calls before final answering. The child inherits
-        your tools, skills, connectors, MCP config, workspace context, and model
-        settings, but it cannot create more temporary children.
+        Call this for an additional focused subtask when more evidence or
+        verification is needed. The child inherits your tools, skills,
+        connectors, MCP config, workspace context, and model settings, but it
+        cannot create more temporary children.
         """
         if counter["count"] >= max_children:
             logger.info(
@@ -127,7 +183,7 @@ def make_temporary_child_agent_tool(
             )
             return "Temporary child agent could not be created."
 
-        child_queue = _DiscardingQueue()
+        child_queue = _ChildResultQueue()
         resolved_images = image_input if delegate_images and image_input else None
         result = await team.delegation_factory._execute_agent_with_error_handling(
             agent,
@@ -142,7 +198,8 @@ def make_temporary_child_agent_tool(
             toolkit,
             image_input=resolved_images,
         )
-        if not result:
+        parent_result = child_queue.to_parent_result(result)
+        if not parent_result:
             record_temporary_child_result(
                 session_id=team.config.session_id,
                 child=str(child_config.get("id") or child_name),
@@ -158,11 +215,28 @@ def make_temporary_child_agent_tool(
         record_temporary_child_result(
             session_id=team.config.session_id,
             child=str(child_config.get("id") or child_name),
-            result=result,
+            result=parent_result,
         )
-        return str(result)
+        return parent_result
 
     return create_temporary_child_agent
+
+
+def build_required_temporary_child_task(task_description: str) -> str:
+    return (
+        "Run the required first temporary-child pass for this parent task. "
+        "Gather or verify the key evidence the parent should consider.\n\n"
+        f"{task_description}"
+    )
+
+
+def append_required_temporary_child_context(task_description: str, child_result: Any) -> str:
+    return (
+        f"{task_description}\n\n"
+        "<required_temporary_child_result>\n"
+        f"{str(child_result or '')}\n"
+        "</required_temporary_child_result>"
+    )
 
 
 def _parse_child_limit(raw_value: Any) -> int:
@@ -189,9 +263,10 @@ def _build_child_config(parent_config: Dict[str, Any], task_description: str, or
     child_config["prompt"] = (
         f"{parent_config.get('prompt', '')}\n\n"
         "You are a temporary child agent. Complete only the focused subtask "
-        "assigned to you. Use the inherited tools and connectors when retrieval "
-        "is needed. Return concise findings with citations or evidence details "
-        "so the parent agent can synthesize the final answer.\n\n"
+        "assigned to you. Use the inherited skills, MCP connector tools, "
+        "retrieval tools, code tools, and workspace context when needed. Return "
+        "concise findings with citations or evidence details so the parent "
+        "agent can synthesize the final answer.\n\n"
         f"{_build_inherited_context(parent_config)}"
     )
     agent_params = child_config.setdefault("agent_params", {})

@@ -48,6 +48,8 @@ from src.smart_rag.agents.factories.delegation_factory import AgentDelegationFac
 from src.smart_rag.agents.factories.manager_factory import ManagerAgentFactory
 from src.smart_rag.agents.tools.temporary_child_agent import (
     TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    append_required_temporary_child_context,
+    build_required_temporary_child_task,
     make_temporary_child_agent_tool,
     should_enable_temporary_child_agent_tool,
 )
@@ -780,18 +782,26 @@ Do not render charts for single values or non-numeric content.
                 agent.instruction = (
                     f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
                 )
-                agent.tools.append(
-                    make_temporary_child_agent_tool(
-                        self,
-                        agent_config,
-                        single_agent_span,
-                        image_input=image_input,
-                    )
+                temporary_child_tool = make_temporary_child_agent_tool(
+                    self,
+                    agent_config,
+                    single_agent_span,
+                    image_input=image_input,
                 )
+                agent.tools = [temporary_child_tool]
                 logger.info(
                     "[TEMP CHILD] Tool attached agent=%s session=%s",
                     agent_config.get("id") or agent_config.get("name"),
                     session_id,
+                )
+                required_child_result = await temporary_child_tool(
+                    build_required_temporary_child_task(user_prompt),
+                    "",
+                    bool(image_input),
+                )
+                user_prompt = append_required_temporary_child_context(
+                    user_prompt,
+                    required_child_result,
                 )
 
             session_helper = get_in_memory_session_service()()

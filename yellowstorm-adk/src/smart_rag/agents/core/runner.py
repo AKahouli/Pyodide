@@ -457,12 +457,19 @@ class AgentRunner:
                         )
                         if agent_role == "temporary_child":
                             agent_params = agent_config.get("agent_params", {}) if agent_config else {}
+                            child_name = str(agent_id or agent_name)
+                            logger.info(
+                                "[TEMP CHILD] Tool call requested child=%s tool_name=%s args=%s",
+                                child_name,
+                                func_name,
+                                dict(part.function_call.args),
+                            )
                             record_temporary_child_tool_call(
                                 session_id=str(
                                     agent_params.get("temporary_child_summary_session_id")
                                     or session_id
                                 ),
-                                child=str(agent_id or agent_name),
+                                child=child_name,
                                 tool_name=func_name,
                                 args=dict(part.function_call.args),
                                 status="requested",
@@ -626,6 +633,34 @@ class AgentRunner:
 
                         # Check if this is a perform_web_search tool response
                         if func_name == "perform_web_search" and q:
+                            if agent_role == "temporary_child":
+                                agent_params = agent_config.get("agent_params", {}) if agent_config else {}
+                                child_name = str(agent_id or agent_name)
+                                result_preview = str(
+                                    _log_payload(
+                                        _loggable_structured_response(
+                                            func_name,
+                                            part.function_response.response,
+                                        )
+                                    )
+                                )
+                                logger.info(
+                                    "[TEMP CHILD] Tool call completed child=%s tool_name=%s result_preview=%s",
+                                    child_name,
+                                    func_name,
+                                    result_preview[:500],
+                                )
+                                record_temporary_child_tool_call(
+                                    session_id=str(
+                                        agent_params.get("temporary_child_summary_session_id")
+                                        or session_id
+                                    ),
+                                    child=child_name,
+                                    tool_name=func_name,
+                                    args={},
+                                    result_preview=result_preview,
+                                    status="completed",
+                                )
                             await self._handle_web_search_response(
                                 part.function_response, agent_id, session_id, q
                             )
@@ -1302,12 +1337,20 @@ class AgentRunner:
                 _log_payload(_loggable_structured_response(tool_name, response_data)),
             )
             if agent_role == "temporary_child":
+                child_name = str(agent_id or agent_name)
+                result_preview = str(_log_payload(_loggable_structured_response(tool_name, response_data)))
+                logger.info(
+                    "[TEMP CHILD] Tool call completed child=%s tool_name=%s result_preview=%s",
+                    child_name,
+                    tool_name,
+                    result_preview[:500],
+                )
                 record_temporary_child_tool_call(
                     session_id=summary_session_id or session_id,
-                    child=str(agent_id or agent_name),
+                    child=child_name,
                     tool_name=tool_name,
                     args={},
-                    result_preview=str(_log_payload(_loggable_structured_response(tool_name, response_data))),
+                    result_preview=result_preview,
                     status="completed",
                 )
             if not isinstance(response_data, dict):

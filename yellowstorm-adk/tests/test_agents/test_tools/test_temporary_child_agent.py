@@ -1,6 +1,8 @@
 import pytest
 
 from src.smart_rag.agents.tools.temporary_child_agent import (
+    _ChildResultQueue,
+    TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
     make_temporary_child_agent_tool,
     should_enable_temporary_child_agent_tool,
 )
@@ -104,6 +106,57 @@ def test_temporary_child_agent_tool_requires_explicit_enable_flag():
             }
         }
     ) is False
+
+
+def test_temporary_child_parent_instruction_requires_one_child_not_two():
+    instruction = " ".join(TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION.split())
+    assert "required first temporary child result has already been provided" in instruction
+    assert "must call" not in instruction
+    assert "at least once" not in instruction
+    assert "two separate" not in instruction
+    assert "again only when you decide more evidence or verification is needed" in instruction
+    assert "additional children sequentially, or in parallel if supported" in instruction
+    assert "Do not use skills, MCP connector tools" in instruction
+    assert "temporary children inherit and use those tools" in instruction
+
+
+@pytest.mark.asyncio
+async def test_child_result_queue_keeps_visible_citations_without_tool_context():
+    queue = _ChildResultQueue()
+
+    await queue.put({
+        "component": {
+            "type": "text",
+            "data": {"content": "ignored when final result exists"},
+        }
+    })
+    await queue.put({
+        "component": {
+            "type": "sources",
+            "data": {"sources": [{"title": "Contract", "url": "s3://doc"}]},
+        }
+    })
+    await queue.put({
+        "component": {
+            "type": "citation",
+            "data": {"parent_id": "text-1", "text_source": {"reference": "[1]"}},
+        }
+    })
+    await queue.put({
+        "component": {
+            "type": "task",
+            "data": {"items": [{"text": "internal planning"}]},
+        }
+    })
+
+    result = queue.to_parent_result("final answer [1]")
+
+    assert result.startswith("final answer [1]")
+    assert "<child_visible_output_components>" in result
+    assert '"type": "sources"' in result
+    assert '"type": "citation"' in result
+    assert "internal planning" not in result
+    assert "ignored when final result exists" not in result
 
 
 @pytest.mark.asyncio

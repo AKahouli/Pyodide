@@ -26,6 +26,8 @@ from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamC
 from src.smart_rag.playbook_dir.execute_manager import PlaybookManagerExecutor
 from src.smart_rag.agents.tools.temporary_child_agent import (
     TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    append_required_temporary_child_context,
+    build_required_temporary_child_task,
     make_temporary_child_agent_tool,
     should_enable_temporary_child_agent_tool,
 )
@@ -528,17 +530,24 @@ class PlaybookStepExecutor:
                 agent.instruction = (
                     f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
                 )
-                agent.tools.append(
-                    make_temporary_child_agent_tool(
-                        temporary_child_team,
-                        agent_config,
-                        delegation_span,
-                    )
+                temporary_child_tool = make_temporary_child_agent_tool(
+                    temporary_child_team,
+                    agent_config,
+                    delegation_span,
                 )
+                agent.tools = [temporary_child_tool]
                 logger.info(
                     "[TEMP CHILD] Playbook tool attached agent=%s session=%s",
                     agent_config.get("id") or agent_config.get("name"),
                     temp_session_id,
+                )
+                required_child_result = await temporary_child_tool(
+                    build_required_temporary_child_task(task_description),
+                    expected_output,
+                )
+                task_description = append_required_temporary_child_context(
+                    task_description,
+                    required_child_result,
                 )
 
             # Use delegation_factory to execute agent with error handling

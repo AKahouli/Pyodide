@@ -25,6 +25,8 @@ from src.smart_rag.infrastructure.memory.memory_service import MemoryService
 from google.adk.sessions import InMemorySessionService
 from src.smart_rag.agents.tools.temporary_child_agent import (
     TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    append_required_temporary_child_context,
+    build_required_temporary_child_task,
     make_temporary_child_agent_tool,
     should_enable_temporary_child_agent_tool,
 )
@@ -168,18 +170,26 @@ class AgentDelegationFactory:
                 agent.instruction = (
                     f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
                 )
-                agent.tools.append(
-                    make_temporary_child_agent_tool(
-                        _DelegatedTemporaryChildTeam(self),
-                        agent_config,
-                        delegation_span,
-                        image_input=resolved_image_input,
-                    )
+                temporary_child_tool = make_temporary_child_agent_tool(
+                    _DelegatedTemporaryChildTeam(self),
+                    agent_config,
+                    delegation_span,
+                    image_input=resolved_image_input,
                 )
+                agent.tools = [temporary_child_tool]
                 logger.info(
                     "[TEMP CHILD] Delegated tool attached agent=%s session=%s",
                     agent_config.get("id") or agent_config.get("name"),
                     self.config.session_id,
+                )
+                required_child_result = await temporary_child_tool(
+                    build_required_temporary_child_task(task_description),
+                    original_expected_output or expected_output,
+                    delegate_images,
+                )
+                task_description = append_required_temporary_child_context(
+                    task_description,
+                    required_child_result,
                 )
 
             # Execute agent with error handling

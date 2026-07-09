@@ -57,6 +57,7 @@ def record_temporary_child_tool_call(
             tool_calls = item.setdefault("tool_calls", [])
             tool_calls.append(
                 {
+                    "child": child,
                     "tool_name": tool_name,
                     "args": args,
                     "status": status,

@@ -95,7 +95,12 @@ fake_step_hitl_handlers.handle_clarification_after = _fake_handle_hitl
 fake_step_hitl_handlers.handle_interrupt_after = _fake_handle_hitl
 sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hitl_handlers)
 
-from src.flow_engine.nodes.step import _temporary_child_enabled, run_step
+from src.flow_engine.nodes.step import (
+    TEMP_CHILD_PARENT_INSTRUCTION,
+    _TemporaryChildAgentTool,
+    _temporary_child_enabled,
+    run_step,
+)
 
 sys.modules.pop("src.flow_engine.nodes.step_hitl", None)
 sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
@@ -113,6 +118,22 @@ def test_temporary_child_enabled_uses_explicit_param_only():
     assert _temporary_child_enabled({"enable_temporary_child_agents": "true"}) is True
     assert _temporary_child_enabled({"enable_temporary_child_agents": "false"}) is False
     assert _temporary_child_enabled({"connector_bindings_json": "[{}]"}) is False
+
+
+def test_temporary_child_instruction_requires_one_child_not_two():
+    instruction = " ".join(TEMP_CHILD_PARENT_INSTRUCTION.split())
+    assert "required first temporary child result has already been provided" in instruction
+    assert "must call" not in instruction
+    assert "at least once" not in instruction
+    assert "two separate" not in instruction
+    assert "again only when you decide more evidence or verification is needed" in instruction
+    assert "additional children sequentially, or in parallel if supported" in instruction
+    assert "Do not use skills, MCP connector tools" in instruction
+    assert "temporary children inherit and use those tools" in instruction
+    assert "Call this only when more evidence or verification is needed" in (
+        _TemporaryChildAgentTool.description
+    )
+    assert "two separate" not in _TemporaryChildAgentTool.description
 
 
 def _assert_step_events_without_tokens(events: list[dict]) -> None:
@@ -629,6 +650,8 @@ async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
 
     async def _fake_acompletion(*args, **kwargs):
         calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse("Child evidence.")
         return _ToolCallResponse("Parent answer.")
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
@@ -663,9 +686,14 @@ async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
         },
     )
 
-    tool_names = [tool["function"]["name"] for tool in calls[0]["tools"]]
-    assert "calculator" in tool_names
-    assert "create_temporary_child_agent" in tool_names
+    assert len(calls) == 2
+    child_tool_names = [tool["function"]["name"] for tool in calls[0]["tools"]]
+    parent_tool_names = [tool["function"]["name"] for tool in calls[1]["tools"]]
+    assert "calculator" in child_tool_names
+    assert "create_temporary_child_agent" not in child_tool_names
+    assert "calculator" not in parent_tool_names
+    assert "create_temporary_child_agent" in parent_tool_names
+    assert "Child evidence." in str(calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "Parent answer."
 
 

@@ -61,13 +61,18 @@ DEFAULT_MODEL = "gpt-4o-mini"
 
 TEMP_CHILD_PARENT_INSTRUCTION = """
 Temporary child-agent rule:
-Because temporary child agents are enabled, you must call
-`create_temporary_child_agent` two separate times before final answering. Use
-two different focused task descriptions so the two temporary children can
-independently retrieve or verify evidence. After both child results return, you
-may create more children with refined task descriptions until the evidence is
-sufficient or the child limit is reached. Evaluate all child results and return
-the best final answer.
+Temporary child agents are enabled, and the required first temporary child result
+has already been provided in your task context. Call
+`create_temporary_child_agent` again only when you decide more evidence or
+verification is needed, until the evidence is sufficient or the child limit is
+reached. You may create additional children sequentially, or in parallel if
+supported.
+
+Your role is only to evaluate, compare, and synthesize the temporary child
+results. Do not use skills, MCP connector tools, retrieval tools, code tools, or
+other operational tools directly. The temporary children inherit and use those
+tools. If more tool work is needed, create another temporary child with a focused
+task. Evaluate all child results and return the best final answer.
 """.strip()
 
 
@@ -149,8 +154,8 @@ class _TemporaryChildAgentTool:
         "The child inherits this agent's tools/connectors/skills but cannot "
         "create more child agents. The child receives the same file names, "
         "workspace IDs, connector context, headers, and fixed params available "
-        "to this parent. Temporary child mode currently requires two separate "
-        "calls to this tool before final answering."
+        "to this parent. Call this only when more evidence or verification is "
+        "needed after the required first child result."
     )
     args_schema = _TemporaryChildAgentInput
 
@@ -163,6 +168,8 @@ class _TemporaryChildAgentTool:
         session_id: str,
         parent_name: str,
         inherited_context: str,
+        trace_collector: TraceCollector | None = None,
+        on_trace_update: Any = None,
     ):
         self._model_id = model_id
         self._system_prompt = system_prompt
@@ -171,6 +178,8 @@ class _TemporaryChildAgentTool:
         self._session_id = session_id
         self._parent_name = parent_name
         self._inherited_context = inherited_context
+        self._trace_collector = trace_collector
+        self._on_trace_update = on_trace_update
         self._count = 0
 
     async def ainvoke(self, args: dict[str, Any]) -> str:
@@ -189,7 +198,8 @@ class _TemporaryChildAgentTool:
         child_system_prompt = (
             f"{self._system_prompt}\n\n"
             "You are a temporary child agent. Complete only the focused task. "
-            "Use the inherited tools/connectors when needed. Return concise "
+            "Use the inherited skills, MCP connector tools, retrieval tools, "
+            "code tools, and workspace context when needed. Return concise "
             "findings with evidence so the parent can evaluate your result."
         )
         logger.info(
@@ -214,6 +224,8 @@ class _TemporaryChildAgentTool:
             agent_role="temporary_child",
             agent_name=child_id,
             summary_session_id=self._session_id,
+            trace_collector=self._trace_collector,
+            on_trace_update=self._on_trace_update,
         )
         logger.info("[TEMP CHILD] Flow child completed", child_index=self._count)
         record_temporary_child_result(
@@ -763,28 +775,41 @@ async def _execute_step(
         binding_workspace_ids=tool_scope.binding_workspace_ids,
     )
     if _temporary_child_enabled(agent_config["agent_params"]):
-        tools = [
-            *tools,
-            _TemporaryChildAgentTool(
-                model_id=model_id,
-                system_prompt=system_prompt,
-                child_tools=list(tools),
-                max_children=_temporary_child_limit(agent_config["agent_params"]),
-                session_id=str(state.get("execution_id") or ""),
-                parent_name=agent_config.get("name") or node_id,
-                inherited_context=_build_temporary_child_inherited_context(
-                    tool_scope=tool_scope,
-                    tools=tools,
-                    agent_config=agent_config,
-                    output_workspace_id=output_workspace_id,
-                ),
+        temporary_child_tool = _TemporaryChildAgentTool(
+            model_id=model_id,
+            system_prompt=system_prompt,
+            child_tools=list(tools),
+            max_children=_temporary_child_limit(agent_config["agent_params"]),
+            session_id=str(state.get("execution_id") or ""),
+            parent_name=agent_config.get("name") or node_id,
+            inherited_context=_build_temporary_child_inherited_context(
+                tool_scope=tool_scope,
+                tools=tools,
+                agent_config=agent_config,
+                output_workspace_id=output_workspace_id,
             ),
-        ]
+            trace_collector=trace_collector,
+            on_trace_update=emit_trace_update,
+        )
+        tools = [temporary_child_tool]
         system_prompt = f"{system_prompt}\n\n{TEMP_CHILD_PARENT_INSTRUCTION}"
         logger.info(
             "[TEMP CHILD] Flow tool attached",
             node_id=node_id,
             max_temporary_child_agents=_temporary_child_limit(agent_config["agent_params"]),
+        )
+        required_child_result = await temporary_child_tool.ainvoke({
+            "task_description": (
+                "Run the required first temporary-child pass for this parent "
+                f"task. Gather or verify the key evidence the parent should consider.\n\n{user_msg}"
+            ),
+            "expected_output": "Return concise findings with evidence for the parent.",
+        })
+        user_msg = (
+            f"{user_msg}\n\n"
+            "<required_temporary_child_result>\n"
+            f"{required_child_result}\n"
+            "</required_temporary_child_result>"
         )
 
     components: list[dict[str, Any]] = []
