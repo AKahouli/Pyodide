@@ -10,6 +10,7 @@ const getAgentWhatsAppPairingMock = vi.hoisted(() => vi.fn());
 const disconnectAgentWhatsAppSessionMock = vi.hoisted(() => vi.fn());
 const deleteAgentWhatsAppIntegrationMock = vi.hoisted(() => vi.fn());
 const reconnectAgentWhatsAppMock = vi.hoisted(() => vi.fn());
+const updateAgentWhatsAppEnabledMock = vi.hoisted(() => vi.fn());
 const showSuccessMock = vi.hoisted(() => vi.fn());
 const showWarningMock = vi.hoisted(() => vi.fn());
 
@@ -20,6 +21,7 @@ vi.mock('../api', () => ({
   disconnectAgentWhatsAppSession: disconnectAgentWhatsAppSessionMock,
   deleteAgentWhatsAppIntegration: deleteAgentWhatsAppIntegrationMock,
   reconnectAgentWhatsApp: reconnectAgentWhatsAppMock,
+  updateAgentWhatsAppEnabled: updateAgentWhatsAppEnabledMock,
 }));
 
 vi.mock('../hooks/useWhatsAppPairingSocket', () => ({
@@ -66,7 +68,7 @@ describe('AgentWhatsAppIntegrationSection', () => {
   });
 
   it('loads integration and shows connect when disconnected', async () => {
-    getAgentWhatsAppIntegrationMock.mockResolvedValue({ status: 'DISCONNECTED' });
+    getAgentWhatsAppIntegrationMock.mockResolvedValue({ enabled: true, status: 'DISCONNECTED' });
 
     render(<AgentWhatsAppIntegrationSection agentId="a1" />);
 
@@ -78,8 +80,24 @@ describe('AgentWhatsAppIntegrationSection', () => {
     expect(screen.getByText('createEdit.fields.whatsappStatusNotConnected')).toBeInTheDocument();
   });
 
+  it('hides connect until the toggle is switched on for a new integration', async () => {
+    render(<AgentWhatsAppIntegrationSection agentId="a1" />);
+
+    await waitFor(() => {
+      expect(getAgentWhatsAppIntegrationMock).toHaveBeenCalledWith('a1');
+    });
+
+    expect(screen.queryByTestId('whatsapp-connect')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('whatsapp-enabled-switch'));
+
+    expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
+    expect(updateAgentWhatsAppEnabledMock).not.toHaveBeenCalled();
+  });
+
   it('shows pairing UI when status is PAIRING', async () => {
     getAgentWhatsAppIntegrationMock.mockResolvedValue({
+      enabled: true,
       status: 'PAIRING',
       sessionId: 'sess-1',
     });
@@ -146,7 +164,7 @@ describe('AgentWhatsAppIntegrationSection', () => {
     render(<AgentWhatsAppIntegrationSection agentId="a1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
+      expect(getAgentWhatsAppIntegrationMock).toHaveBeenCalledWith('a1');
     });
 
     await waitFor(() => {
@@ -166,6 +184,7 @@ describe('AgentWhatsAppIntegrationSection', () => {
 
   it('shows connected phone and display name', async () => {
     getAgentWhatsAppIntegrationMock.mockResolvedValue({
+      enabled: true,
       status: 'CONNECTED',
       sessionId: 'sess-3',
       phoneNumber: '+216 12 345 678',
@@ -182,5 +201,30 @@ describe('AgentWhatsAppIntegrationSection', () => {
     expect(screen.getByText('John Doe')).toBeInTheDocument();
     expect(screen.getByTestId('whatsapp-disconnect')).toBeInTheDocument();
     expect(screen.getByTestId('whatsapp-reconnect')).toBeInTheDocument();
+  });
+
+  it('toggles whatsapp availability for an existing integration', async () => {
+    getAgentWhatsAppIntegrationMock.mockResolvedValue({
+      enabled: true,
+      status: 'CONNECTED',
+      sessionId: 'sess-4',
+    });
+    updateAgentWhatsAppEnabledMock.mockResolvedValue({
+      enabled: false,
+      status: 'CONNECTED',
+      sessionId: 'sess-4',
+    });
+
+    render(<AgentWhatsAppIntegrationSection agentId="a1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('whatsapp-enabled-switch')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('whatsapp-enabled-switch'));
+
+    await waitFor(() => {
+      expect(updateAgentWhatsAppEnabledMock).toHaveBeenCalledWith('a1', { enabled: false });
+    });
   });
 });

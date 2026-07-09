@@ -36,6 +36,7 @@ export const MODEL_TYPES = [
   'audio_transcription',
   'audio_speech',
   'moderation',
+  'guardrails_classifier',
   'search',
 ] as const;
 

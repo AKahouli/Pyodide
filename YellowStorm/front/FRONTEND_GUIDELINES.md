@@ -12,8 +12,8 @@
 | Bundler | Vite 6 |
 | Routing | `react-router-dom` v6 (hash router) |
 | State & UI State | Zustand 5 (`devtools` middleware) + React Context for auth/theme/settings |
-| Data Fetching | `@tanstack/react-query` v5 (alongside Zustand during staged migration) |
-| Workflow / State Machines | `xstate` v5 + `@xstate/react` v6 (execution lifecycle, autosave) |
+| Data Fetching | `@tanstack/react-query` v5 (playbook, worky, governance; alongside Zustand where migration is staged) |
+| Workflow / State Machines | `xstate` v5 + `@xstate/react` v6 (execution lifecycle, autosave, stream lifecycle) |
 | HTTP | Axios (single shared instance with interceptors) |
 | Forms | `react-hook-form` + `zod` + `@hookform/resolvers` |
 | UI primitives | Radix UI + shadcn/ui wrappers under `src/components/ui/` |
@@ -21,9 +21,13 @@
 | Icons | `lucide-react` + custom `Icons` map in `src/components/icons.tsx` |
 | i18n | `i18next` + `react-i18next` (lazy namespace loading) |
 | Toasts | `sonner` via `@/lib/notifications` wrapper |
-| Streaming | Native `EventSource` SSE — singleton services, BroadcastChannel leader-election, per-session hooks |
+| Streaming | Native `EventSource` SSE, fetch + `ReadableStream` SSE, singleton services, BroadcastChannel leader-election, per-session hooks |
 | Charts / tables / graphs / flow | `recharts`, `@tanstack/react-table`, `@xyflow/react`, `@dagrejs/dagre` |
 | Virtualization | `virtua` |
+| AI / LLM UI | Vercel AI SDK (`ai`), `@anthropic-ai/sdk`, `streamdown`, `react-markdown`, `shiki`, `tokenlens` |
+| Realtime sockets | `socket.io-client` for WhatsApp pairing flows only |
+| Document viewers | `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer`, `@novnc/novnc` |
+| Animation / interaction | `motion`, `cmdk`, `react-resizable-panels`, `embla-carousel-react` |
 | Testing | Vitest 2 + React Testing Library + `jest-dom` |
 
 **Do not add a new library** without confirming nothing already in `package.json` covers it.
@@ -44,6 +48,7 @@ src/
 ├── contexts/               # React Context providers (not Zustand): Theme
 ├── providers/              # CombinedProvider (composes all app-wide providers)
 ├── hooks/                  # Cross-cutting hooks (use-mobile, useTheme)
+├── config/                 # Static app/menu config only (not secrets/runtime env)
 ├── lib/api/                # axios client, config, endpoint registry
 ├── lib/api-error.ts        # parseApiError / handleApiError
 ├── lib/use-api-action.ts   # generic async action hook
@@ -51,7 +56,7 @@ src/
 ├── lib/notifications.ts    # sonner wrapper (showSuccess, showError, …)
 ├── lib/form-utils.ts       # scrollToFirstError, rhf helpers
 ├── lib/utils.ts            # cn() class merger
-├── modules/                # Feature modules: auth, conversation, playbook, workspace, admin, …
+├── modules/                # Feature modules: auth, conversation-v2, playbook, worky, governance, admin, …
 ├── pages/                  # Top-level route pages not owned by a module
 ├── test/                   # Vitest global setup + helpers
 └── utils/                  # App-wide utilities (prefer lib/)
@@ -88,6 +93,8 @@ import { useConversationStore } from '@/modules/conversation';
 
 **Barrel rules:** Export **only** the public surface (pages, store hook, public types). Other modules import from `@/modules/<name>`, never from internals.
 
+Current modules include: `admin`, `agent`, `auth`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `playbook`, `profile`, `project`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. When adding a new module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
+
 ```ts
 export { ConversationPage } from './ConversationPage';
 export { useConversationStore } from './store';
@@ -120,18 +127,18 @@ Single `store.ts` per module — do **not** split into slices. Persist only UI p
 
 ### TanStack Query (server-state cache)
 
-`@tanstack/react-query` v5 is used alongside Zustand for **server-state ownership** — reads, cache invalidation, and mutation integration. Used in modules undergoing staged migration (playbook).
+`@tanstack/react-query` v5 is used alongside Zustand for **server-state ownership** — reads, cache invalidation, and mutation integration. Used in `playbook`, `worky`, and `governance`; do not introduce another server-state cache.
 
 - Query hooks live in `<module>/query/hooks/`
 - Mutation actions live in `<module>/query/mutationActions.ts`
 - Query keys in `<module>/query/queryKeys.ts`
-- The module provides a `QueryClientProvider` via `CombinedProvider.tsx`
+- Module-owned query clients/providers are allowed only when an existing module already owns one (`playbook/query/queryProvider.tsx`). Otherwise prefer the nearest existing query provider pattern and do not add a second global client casually.
 
-Zustand stores remain the UI/orchestration layer; they may read from the Query cache with `queryClient.fetchQuery()` when the matching feature flag is enabled.
+Zustand stores remain the UI/orchestration layer; they may read from the Query cache with `queryClient.fetchQuery()` when the matching feature flag is enabled. If UI-only state grows large, use a sibling `uiStore.ts` (`playbook`, `worky`, `governance`) rather than mixing panel/dialog state into server-state query hooks.
 
 ### XState (lifecycle orchestration)
 
-`xstate` v5 + `@xstate/react` v6 are used for **complex stateful workflows** where Zustand actions become unwieldy — execution lifecycle, autosave coordination. Used in playbook.
+`xstate` v5 + `@xstate/react` v6 are used for **complex stateful workflows** where Zustand actions become unwieldy — execution lifecycle, autosave coordination, and stream lifecycle. Used in `playbook` and `worky`.
 
 - Machines live in `<module>/machines/<domain>/`
 - Actor hooks in `<module>/hooks/` wrap `useSelector` from `@xstate/react`
@@ -151,9 +158,9 @@ export const xstateExecutionEnabled = false; // still rolling out
 
 ### React Context (cross-cutting only)
 
-Used for: `AuthContext`, `ThemeContext`, `SettingsModalProvider`, `UsageProvider`, `NotificationsProvider`, `LocalizationProvider`. Do **not** add new Context unless app-wide and very infrequent updates. Otherwise use Zustand.
+Used for: `AuthProvider`, `ThemeProvider`, `SettingsModalProvider`, `UsageProvider`, `NotificationsProvider`, `LocalizationProvider`, and `PlaybookQueryProvider`. Do **not** add new Context unless app-wide and very infrequent updates. Otherwise use Zustand.
 
-Provider order is fixed in `src/providers/CombinedProvider.tsx`. If adding a provider, place it there with a rationale comment for ordering.
+Provider order is fixed in `src/providers/CombinedProvider.tsx`: localization outermost, then auth, playbook query, notifications, usage, theme, settings. If adding a provider, place it there with a rationale comment for ordering.
 
 ---
 
@@ -205,7 +212,7 @@ Cache invalidation is **explicit**: after mutation, update the store entry immed
 
 ### Migration pattern
 
-During migration a module may run **both paths** — Zustand store reads from the Query cache via `queryClient.fetchQuery()` when a feature flag is enabled, with SSE events updating both layers (controlled by `querySseMirrorZustandEnabled`).
+During migration a module may run **both paths** — Zustand store reads from the Query cache via `queryClient.fetchQuery()` when a feature flag is enabled, with SSE events updating both layers (controlled by `querySseMirrorZustandEnabled`). Avoid mixing Query and Zustand for the same concern unless a feature flag or documented transition explains which layer owns writes.
 
 ### Browser storage
 
@@ -257,11 +264,11 @@ Always go through `@/lib/notifications`: `showSuccess`, `showError`, `showWarnin
 
 ## 12. Streaming (SSE)
 
-Three SSE patterns coexist depending on module requirements:
+Five streaming patterns coexist depending on module requirements:
 
-### Pattern 1: Singleton Service (conversation, notifications)
+### Pattern 1: Singleton EventSource Service (conversation, notifications)
 
-Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `EventSource` per service. Token refresh integration via axios response interceptor calling `reconnectWithNewToken()`. Exponential backoff (base 1s, cap 60s), heartbeat timeout (~30s), eviction handling (`TOO_MANY_TABS`).
+Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `EventSource` per service. Token refresh integration via axios response interceptor calling `reconnectWithNewToken()`. Exponential backoff (base 1s, cap 60s), heartbeat timeout (~30s), eviction handling (`TOO_MANY_TABS`) where applicable.
 
 ### Pattern 2: BroadcastChannel Leader-Election (playbook)
 
@@ -269,14 +276,24 @@ Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `Eve
 
 ### Pattern 3: Per-Session Hook (conversation-v2)
 
-`useStream()` hook — one `EventSource` per active session, scoped to component lifecycle. Closes on `done`/`error`. Supports gap recovery by paging historical events. Zustand store is the state sink; no TanStack Query involvement.
+`useStream()` hook — one `EventSource` per active session, scoped to component lifecycle. Closes on `done`/`error`. Consumes event `sequence` for gap detection and supports gap recovery by paging historical events. Zustand store is the state sink; no TanStack Query involvement.
+
+### Pattern 4: Fetch + ReadableStream SSE (worky)
+
+`worky/stream/sse.ts` uses `fetch` with a `ReadableStream` reader instead of `EventSource` because the stream needs custom headers and tighter retry control. Keep parsing, reconnect, and abort logic in the module stream helper; components subscribe through module hooks.
+
+### Pattern 5: Socket.IO Pairing Channels
+
+`socket.io-client` is used for WhatsApp QR pairing flows in `agent`, `admin`, and `worky`. Do not use Socket.IO for generic app realtime until an event schema and backend gateway contract are agreed.
 
 ### Rules (all patterns)
 
 - Never open ad-hoc `new EventSource` in a component (use the module's service/hook)
+- Never hand-roll SSE parsing in a component; use the module stream helper (`conversation-v2/useStream`, `worky/stream/sse.ts`, or service singleton)
 - Token refresh integration mandatory where applicable
 - Always clean up on unmount / disconnect
 - Cap per-user connections (backend enforces, frontend handles eviction with `TOO_MANY_TABS`)
+- For ordered streams, preserve and store the backend `sequence` cursor so clients can resume without duplicate events.
 
 ---
 
@@ -351,6 +368,12 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 | `virtua` | Long virtualised lists |
 | `ai` (Vercel AI SDK) + `@anthropic-ai/sdk` | LLM streaming UIs |
 | `streamdown`, `shiki`, `react-markdown` | Streaming/static markdown |
+| `socket.io-client` | WhatsApp QR pairing channels only |
+| `motion` | Animation — use instead of `framer-motion` |
+| `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer`, `@novnc/novnc` | PDF/document/VNC viewers |
+| `cmdk` | Command menu primitives |
+| `react-resizable-panels` | Split pane layouts |
+| `d3` | Custom visualisation where `recharts` is insufficient |
 | `exceljs` | Spreadsheet export |
 | `date-fns` | Date formatting — **never** moment/luxon |
 
@@ -364,6 +387,7 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - [ ] API calls in components via `useApiAction` (or justified exception).
 - [ ] Zustand store: `devtools({ name: '…' })`, `initialState` exported.
 - [ ] If using TanStack Query: hooks in `query/hooks/`, mutation actions in `query/mutationActions.ts`, keys in `query/queryKeys.ts`.
+- [ ] If adding or changing streaming: use an existing module pattern (singleton, BroadcastChannel, per-session hook, fetch stream helper, or Socket.IO pairing) and preserve sequence/resume semantics where present.
 - [ ] If using XState: machines in `machines/<domain>/`, feature-flag gated alongside legacy path.
 - [ ] If adding a state migration path (Zustand → Query/XState): gate behind a feature flag in `features.ts`.
 - [ ] No new axios instance, no direct `toast` import, no `new EventSource` in components.
@@ -391,4 +415,5 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - Disabling `strict` rules or `// @ts-ignore` without a linked issue.
 - Mixing Zustand, TanStack Query, and XState for the same concern **without** a feature flag gating the migration.
 - Ad-hoc `new EventSource()` in a component instead of using the module's service/hook.
+- Ad-hoc `fetch` stream readers in components instead of using a module stream helper.
 - Adding a new state management library or pattern without first checking whether an existing pattern (Zustand, Query, XState) fits.

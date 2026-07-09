@@ -17,6 +17,24 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
+export interface PromptInjectionGuardrailsConfig {
+  inputGuardrailEnabled: boolean;
+  outputGuardrailEnabled: boolean;
+  toolCallGuardrailEnabled: boolean;
+  mode: GuardrailMode;
+  inputClassifierPrompt: string;
+  outputClassifierPrompt: string;
+  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export interface AdminGuardrailsSettings {
+  forceActivation: boolean;
+  promptInjection: PromptInjectionGuardrailsConfig;
+}
+
 // Analytics Types
 
 export interface TimeSeriesDataPoint {
@@ -927,6 +945,7 @@ export const MODEL_TYPES = [
   'audio_transcription',
   'audio_speech',
   'moderation',
+  'guardrails_classifier',
   'search',
 ] as const;
 
@@ -1540,7 +1559,7 @@ export interface CreateConnectorRequest {
   isActive?: boolean;
 }
 
-export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> {}
+export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> { }
 
 export interface ConnectorQueryParams {
   page?: number;

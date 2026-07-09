@@ -1,0 +1,93 @@
+from dataclasses import dataclass
+from typing import Any
+
+from src.guardrails.audit import audit_prompt_injection_decision
+from src.guardrails.classifier import classify_prompt_injection
+from src.guardrails.config import resolve_effective_guardrails
+
+
+@dataclass
+class GuardrailResult:
+    decision: str
+    text: str
+    blocked: bool = False
+    sanitized: bool = False
+    reason: str = ""
+    confidence: float = 0.0
+    attack_type: str = "none"
+    target: str = "none"
+
+
+class PromptInjectionGuardrail:
+    async def check_input(self, text: str, agent_config: dict[str, Any], channel: str = "web") -> GuardrailResult:
+        return await self._check("input", text, agent_config, channel)
+
+    async def check_output(self, text: str, agent_config: dict[str, Any], channel: str = "web") -> GuardrailResult:
+        return await self._check("output", text, agent_config, channel)
+
+    async def check_tool_call(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        agent_config: dict[str, Any],
+        channel: str = "web",
+    ) -> GuardrailResult:
+        text = f"Tool: {tool_name}\nArguments: {tool_args}"
+        return await self._check("tool_call", text, agent_config, channel)
+
+    async def _check(
+        self,
+        phase: str,
+        text: str,
+        agent_config: dict[str, Any],
+        channel: str,
+    ) -> GuardrailResult:
+        effective = resolve_effective_guardrails(agent_config)
+        config = effective.prompt_injection
+        enabled = {
+            "input": config.input_guardrail_enabled,
+            "output": config.output_guardrail_enabled,
+            "tool_call": config.tool_call_guardrail_enabled,
+        }.get(phase, False)
+        if not enabled:
+            return GuardrailResult(decision="allow", text=text)
+
+        classifier = await classify_prompt_injection(
+            text=text,
+            classifier_model=effective.classifier_model,
+            classifier_prompt=config.classifier_prompt_for_phase(phase),
+            phase=f"{phase}:{channel}",
+        )
+        audit_prompt_injection_decision(
+            phase=phase,
+            source=config.source,
+            mode=config.mode,
+            decision=classifier.decision,
+            confidence=classifier.confidence,
+            attack_type=classifier.attack_type,
+            target=classifier.target,
+        )
+
+        if config.mode == "monitor":
+            return GuardrailResult(decision="allow", text=text, reason=classifier.reason)
+        if classifier.decision == "block":
+            return GuardrailResult(
+                decision="block",
+                text=config.block_message,
+                blocked=True,
+                reason=classifier.reason,
+                confidence=classifier.confidence,
+                attack_type=classifier.attack_type,
+                target=classifier.target,
+            )
+        if classifier.decision == "sanitize" and classifier.safe_rewrite:
+            return GuardrailResult(
+                decision="sanitize",
+                text=classifier.safe_rewrite,
+                sanitized=True,
+                reason=classifier.reason,
+                confidence=classifier.confidence,
+                attack_type=classifier.attack_type,
+                target=classifier.target,
+            )
+        return GuardrailResult(decision="allow", text=text, reason=classifier.reason)

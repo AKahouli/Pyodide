@@ -17,6 +17,7 @@ export function CreateWorkspaceModal() {
   const setCreateModalStep = useWorkspaceStore((state) => state.setCreateModalStep);
   const createWorkspace = useWorkspaceStore((state) => state.createWorkspace);
   const createSetting = useWorkspaceStore((state) => state.createSetting);
+  const workspaceCreatedCallback = useWorkspaceStore((state) => state.workspaceCreatedCallback);
 
   const [step1Data, setStep1Data] = useState<Step1FormValues | null>(null);
 
@@ -66,8 +67,13 @@ export function CreateWorkspaceModal() {
       });
 
       setStep1Data(null);
+      const onCreated = workspaceCreatedCallback;
       closeCreateModal();
-      window.location.hash = `/workspace/${workspace.id}`;
+      if (onCreated) {
+        onCreated(workspace);
+      } else {
+        window.location.hash = `/workspace/${workspace.id}`;
+      }
     } catch (error) {
       console.error('Failed to create workspace:', error);
     }

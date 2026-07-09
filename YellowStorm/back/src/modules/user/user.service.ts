@@ -465,4 +465,16 @@ export class UserService {
       lastName: user.profile?.lastName,
     }));
   }
+
+  async listActiveUsers(excludeUserId?: string, limit = 50): Promise<UserSearchResult[]> {
+    const filter: Record<string, unknown> = { status: UserStatus.ACTIVE };
+    if (excludeUserId) filter._id = { $ne: new Types.ObjectId(excludeUserId) };
+    const users = await this.userModel
+      .find(filter)
+      .select('email profile.firstName profile.lastName')
+      .sort({ email: 1 })
+      .limit(limit)
+      .exec();
+    return users.map((user) => ({ id: user._id.toString(), email: user.email, firstName: user.profile?.firstName, lastName: user.profile?.lastName }));
+  }
 }

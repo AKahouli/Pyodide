@@ -131,6 +131,20 @@ export const Permissions = {
   WORKY_ADMIN_TRACE: 'worky.admin.trace',
   WORKY_ALL: 'worky.*',
 
+  // Governance
+  GOVERNANCE_READ: 'governance.read',
+  GOVERNANCE_PROGRAMS_MANAGE: 'governance.programs.manage',
+  GOVERNANCE_SCOPES_MANAGE: 'governance.scopes.manage',
+  GOVERNANCE_SOURCES_EDIT: 'governance.sources.edit',
+  GOVERNANCE_SOURCES_REVIEW: 'governance.sources.review',
+  GOVERNANCE_MEMBERSHIPS_MANAGE: 'governance.memberships.manage',
+  GOVERNANCE_DEPLOYMENTS_MANAGE: 'governance.deployments.manage',
+  GOVERNANCE_DRY_RUNS_EXECUTE: 'governance.dry_runs.execute',
+  GOVERNANCE_REVIEWS_MANAGE: 'governance.reviews.manage',
+  GOVERNANCE_PUBLISH: 'governance.publish',
+  GOVERNANCE_METRICS_READ: 'governance.metrics.read',
+  GOVERNANCE_ALL: 'governance.*',
+
   // Super Admin
   SUPER_ADMIN: '*',
 } as const;
@@ -268,6 +282,20 @@ const ALL_PERMISSIONS = new Set<string>([
   'worky.admin.governance',
   'worky.admin.trace',
   'worky.*',
+
+  // Governance
+  'governance.read',
+  'governance.programs.manage',
+  'governance.scopes.manage',
+  'governance.sources.edit',
+  'governance.sources.review',
+  'governance.memberships.manage',
+  'governance.deployments.manage',
+  'governance.dry_runs.execute',
+  'governance.reviews.manage',
+  'governance.publish',
+  'governance.metrics.read',
+  'governance.*',
 
   // Super Admin
   '*',

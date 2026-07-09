@@ -10,6 +10,7 @@ import type {
   AgentTelegramIntegration,
   AgentTelegramIntegrationInput,
   AgentWhatsAppConnectResponse,
+  AgentWhatsAppEnabledInput,
   AgentWhatsAppIntegration,
   AgentWhatsAppPairingResponse,
   CreateAgentData,
@@ -256,6 +257,17 @@ export async function connectAgentWhatsApp(
   return response.data.data;
 }
 
+export async function updateAgentWhatsAppEnabled(
+  agentId: string,
+  payload: AgentWhatsAppEnabledInput,
+): Promise<AgentWhatsAppIntegration> {
+  const response = await apiClient.patch<ApiResponse<AgentWhatsAppIntegration>>(
+    API_ENDPOINTS.agents.whatsappEnabled(agentId),
+    payload,
+  );
+  return response.data.data;
+}
+
 export async function getAgentWhatsAppPairing(
   agentId: string,
   sessionId: string,
@@ -290,6 +302,14 @@ export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<v
 export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
   const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
     API_ENDPOINTS.widgetTokens.create(agentId),
+  );
+  return response.data.data;
+}
+
+/** Default (admin-owned) agents are read-only on the user widget-token endpoint; use the admin one instead. */
+export async function createAdminWidgetToken(agentId: string): Promise<WidgetTokenResponse> {
+  const response = await apiClient.post<ApiResponse<WidgetTokenResponse>>(
+    API_ENDPOINTS.adminWidgetTokens.create(agentId),
   );
   return response.data.data;
 }

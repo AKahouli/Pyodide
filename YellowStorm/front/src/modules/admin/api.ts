@@ -95,6 +95,7 @@ import type {
   UpdateWorkspaceUploadSettingsRequest,
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
+  AdminGuardrailsSettings,
 } from './types';
 import type {
   WorkyWhatsAppConnectResponse,
@@ -113,6 +114,16 @@ function buildQueryString(params: AnalyticsQueryParams): string {
 }
 
 // Analytics API
+
+export async function getAdminGuardrailsSettings(): Promise<AdminGuardrailsSettings> {
+  const response = await apiClient.get<ApiResponse<AdminGuardrailsSettings>>(API_ENDPOINTS.adminGuardrails.base);
+  return response.data.data;
+}
+
+export async function updateAdminGuardrailsSettings(input: AdminGuardrailsSettings): Promise<AdminGuardrailsSettings> {
+  const response = await apiClient.put<ApiResponse<AdminGuardrailsSettings>>(API_ENDPOINTS.adminGuardrails.base, input);
+  return response.data.data;
+}
 
 export async function getUserAnalytics(
   params: AnalyticsQueryParams = {}

@@ -19,3 +19,4 @@ export { WorkspaceSettingsPage } from './WorkspaceSettingsPage';
 export { AuthProvidersPage } from './AuthProvidersPage';
 export { ConnectedAppsAdminPage } from './ConnectedAppsAdminPage';
 export { TeamAutoBuilderPage } from './TeamAutoBuilderPage';
+export { GuardrailsPage } from './GuardrailsPage';

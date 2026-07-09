@@ -147,6 +147,8 @@ interface WorkspaceState {
   // UI State
   isModalOpen: boolean;
   isCreateModalOpen: boolean;
+  /** When set, CreateWorkspaceModal calls this instead of navigating away on success — lets an embedding flow (e.g. governance) stay in place and receive the created workspace. */
+  workspaceCreatedCallback: ((workspace: Workspace) => void) | null;
   isCreateTemplateModalOpen: boolean;
   isSettingsModalOpen: boolean;
   createModalStep: 1 | 2;
@@ -191,7 +193,7 @@ interface WorkspaceActions {
   // Modal controls
   openModal: () => void;
   closeModal: () => void;
-  openCreateModal: () => void;
+  openCreateModal: (onCreated?: (workspace: Workspace) => void) => void;
   closeCreateModal: () => void;
   openCreateTemplateModal: () => void;
   closeCreateTemplateModal: () => void;
@@ -353,6 +355,7 @@ const initialState: WorkspaceState = {
 
   isModalOpen: false,
   isCreateModalOpen: false,
+  workspaceCreatedCallback: null,
   isCreateTemplateModalOpen: false,
   isSettingsModalOpen: false,
   createModalStep: 1,
@@ -418,10 +421,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         });
       },
 
-      openCreateModal: () => {
+      openCreateModal: (onCreated) => {
         set({
           isCreateModalOpen: true,
           createModalStep: 1,
+          workspaceCreatedCallback: onCreated ?? null,
         });
         // Fetch templates when opening create modal
         get().fetchTemplates();
@@ -431,6 +435,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({
           isCreateModalOpen: false,
           createModalStep: 1,
+          workspaceCreatedCallback: null,
         }),
 
       openCreateTemplateModal: () => {

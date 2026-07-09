@@ -23,6 +23,7 @@ from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.logger.logging import get_logger
+from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -140,6 +141,8 @@ class AgentRunner:
         agent_config: Optional[dict] = None,
         function_call_id_info: Optional[dict] = None,
         image_input: Optional[list] = None,
+        session_id: Optional[str] = None,
+        seed_events: Optional[list] = None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -170,14 +173,34 @@ class AgentRunner:
             if hasattr(agent, "_mcp_search_state"):
                 initial_state.update(agent._mcp_search_state)
 
-            # Create a simple session to examine its properties
-            session_id = f"session-{uuid.uuid4()}"
-            session = await session_helper.create_session(
-                app_name="manager_app",
-                user_id=user_id,
-                session_id=session_id,
-                state=initial_state or None,
-            )
+            # When a session_id is provided, reuse the conversation's session so
+            # history carries across turns; otherwise mint an ephemeral one
+            # (sub-agents / one-shot runs).
+            if session_id is None:
+                session_id = f"session-{uuid.uuid4()}"
+                session = await session_helper.create_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                    state=initial_state or None,
+                )
+            else:
+                session = await session_helper.get_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+                if session is None:
+                    session = await session_helper.create_session(
+                        app_name="manager_app",
+                        user_id=user_id,
+                        session_id=session_id,
+                        state=initial_state or None,
+                    )
+                    # Seed a read-only snapshot of the shared conversation so this
+                    for seed_event in (seed_events or []):
+                        await session_helper.append_event(session, seed_event)
+            logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
 
         except Exception as e:
             logger.error(
@@ -286,7 +309,7 @@ class AgentRunner:
         mcp_tools_used,
         agent_id,
         session=None,
-        agent_config: Optional[dict] = None,
+        agent_config=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -776,6 +799,7 @@ class AgentRunner:
                         q,
                         session_id,
                         citation_mapping,
+                        agent_config,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -993,6 +1017,7 @@ class AgentRunner:
         q,
         session_id,
         citation_mapping: Optional[Dict[str, str]] = None,
+        agent_config: Optional[dict] = None,
     ):
         """Handle final response from agent."""
         # Safely handle empty parts list
@@ -1056,7 +1081,12 @@ class AgentRunner:
                 ui_reference,
             )
 
-        return event_text
+        guarded = await PromptInjectionGuardrail().check_output(
+            text=event_text,
+            agent_config=agent_config or {},
+        )
+
+        return guarded.text
 
     async def _replace_diagram_references_during_streaming(
         self, text: str, session_id: str

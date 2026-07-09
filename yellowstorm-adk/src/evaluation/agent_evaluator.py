@@ -482,7 +482,6 @@ async def run_adk_evaluation_streaming(request: RunADKEvalRequest, queue: Queue)
 
         from google.adk.evaluation.local_eval_service import LocalEvalService
         from google.adk.evaluation.in_memory_eval_sets_manager import InMemoryEvalSetsManager
-        from google.adk.evaluation.user_simulator_provider import UserSimulatorProvider
         from google.adk.evaluation.base_eval_service import InferenceRequest, InferenceConfig, InferenceStatus, EvaluateRequest, EvaluateConfig
         from google.adk.utils.context_utils import Aclosing
 
@@ -491,28 +490,11 @@ async def run_adk_evaluation_streaming(request: RunADKEvalRequest, queue: Queue)
         eval_sets_manager.create_eval_set(app_name, eval_set.eval_set_id)
         for c in eval_set.eval_cases: eval_sets_manager.add_eval_case(app_name, eval_set.eval_set_id, c)
 
-        try:
-            _eval_cfg = EvalConfig()
-            _user_sim_cfg = getattr(_eval_cfg, "user_simulator_config", None)
-            if _user_sim_cfg is not None and hasattr(_user_sim_cfg, "model"):
-                _user_sim_cfg.model = judge_model_id
-            elif _user_sim_cfg is None:
-                try:
-                    from google.adk.evaluation.eval_config import UserSimulatorConfig
-                    _user_sim_cfg = UserSimulatorConfig()
-                    if hasattr(_user_sim_cfg, "model"):
-                        _user_sim_cfg.model = judge_model_id
-                except Exception:
-                    _user_sim_cfg = None
-        except Exception as _e_cfg:
-            logger.warning(f"[EvalConfig] user_simulator_config setup failed: {_e_cfg}")
-            _user_sim_cfg = None
-
-        _user_sim_provider = UserSimulatorProvider(user_simulator_config=_user_sim_cfg) if _user_sim_cfg is not None else UserSimulatorProvider(user_simulator_config=EvalConfig().user_simulator_config)
+        # ponytail: ADK 2.x supplies a default user_simulator_provider; the old
+        # judge-model override on it was best-effort only, so let the default stand.
         eval_service = LocalEvalService(
             root_agent=agent_instance,
             eval_sets_manager=eval_sets_manager,
-            user_simulator_provider=_user_sim_provider,
         )
         
         inference_results = []

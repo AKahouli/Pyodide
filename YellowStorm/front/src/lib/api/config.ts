@@ -48,6 +48,7 @@ export const API_ENDPOINTS = {
     me: '/users/me',
     completeProfile: '/users/me/complete-profile',
     search: '/users/search',
+    directory: '/users/directory',
   },
   health: {
     check: '/health',
@@ -70,6 +71,9 @@ export const API_ENDPOINTS = {
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
+  },
+  adminGuardrails: {
+    base: '/admin/guardrails',
   },
   adminWorkyWhatsAppSystemBot: {
     base: '/admin/worky/whatsapp-system-bot',
@@ -181,6 +185,30 @@ export const API_ENDPOINTS = {
     quality: '/experimental/analytics/quality',
     summary: '/experimental/analytics/summary',
   },
+  governance: {
+    programs: '/governance/programs',
+    program: (programId: string) => `/governance/programs/${programId}`,
+    scopes: (programId: string) => `/governance/programs/${programId}/scopes`,
+    scope: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}`,
+    scopeOverview: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}/overview`,
+    sources: (programId: string) => `/governance/programs/${programId}/sources`,
+    source: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}`,
+    memberships: (programId: string) => `/governance/programs/${programId}/memberships`,
+    membership: (programId: string, membershipId: string) => `/governance/programs/${programId}/memberships/${membershipId}`,
+    deployments: (programId: string) => `/governance/programs/${programId}/deployments`,
+    deployment: (deploymentId: string) => `/governance/deployments/${deploymentId}`,
+    revisions: (deploymentId: string) => `/governance/deployments/${deploymentId}/revisions`,
+    revision: (deploymentId: string, revisionId: string) => `/governance/deployments/${deploymentId}/revisions/${revisionId}`,
+    resolveContext: (deploymentId: string) => `/governance/deployments/${deploymentId}/resolve-context`,
+    readiness: (deploymentId: string) => `/governance/deployments/${deploymentId}/readiness`,
+    dryRuns: (deploymentId: string) => `/governance/deployments/${deploymentId}/dry-runs`,
+    dryRun: (dryRunId: string) => `/governance/dry-runs/${dryRunId}`,
+    dryRunResult: (dryRunId: string) => `/governance/dry-runs/${dryRunId}/result`,
+    publish: (deploymentId: string) => `/governance/deployments/${deploymentId}/publish`,
+    rollback: (deploymentId: string) => `/governance/deployments/${deploymentId}/rollback`,
+    suspend: (deploymentId: string) => `/governance/deployments/${deploymentId}/suspend`,
+    metrics: (programId: string) => `/governance/programs/${programId}/metrics`,
+  },
   roles: {
     base: '/admin/roles',
     active: '/admin/roles/active',
@@ -288,6 +316,7 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
     whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+    whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
     whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
     whatsappPairing: (id: string, sessionId: string) =>
       `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
@@ -307,6 +336,9 @@ export const API_ENDPOINTS = {
     list: (agentId: string) => `/agents/${agentId}/widget-tokens`,
     update: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
     revoke: (agentId: string, tokenId: string) => `/agents/${agentId}/widget-tokens/${tokenId}`,
+  },
+  adminWidgetTokens: {
+    create: (agentId: string) => `/admin/agents/${agentId}/widget-tokens`,
   },
   teams: {
     list: '/teams',
