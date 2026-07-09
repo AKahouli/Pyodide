@@ -13,7 +13,7 @@ import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSecti
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem } from './task';
-import { Tool, ToolHeader } from './tool';
+import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
 import type { ToolUIPart } from 'ai';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
@@ -176,6 +176,8 @@ export interface ToolInfoPart {
   type: 'toolInfo';
   title: string;
   status: 'running' | 'completed' | 'failed';
+  /** JSON string of the tool-call arguments, e.g. '{"query":"..."}'. */
+  params?: string;
 }
 
 export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
@@ -243,7 +245,7 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
     case 'citation':
       return <CitationPartRenderer citation={part} />;
     case 'toolInfo':
-      return <ToolInfoPartRenderer title={part.title} status={part.status} />;
+      return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
     default:
       return null;
   }
@@ -654,11 +656,33 @@ const TOOL_INFO_STATE_MAP = {
   failed: 'output-error',
 } satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
 
-const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => (
-  <Tool className='my-2'>
-    <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
-  </Tool>
-);
+/** Parses the tool-call params JSON string; returns undefined when there's nothing to show. */
+function parseToolParams(params: string | undefined): unknown {
+  if (!params || typeof params !== 'string') return undefined;
+  const trimmed = params.trim();
+  if (!trimmed || trimmed === '{}' || trimmed === '[]') return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Not valid JSON — surface the raw string rather than dropping it.
+    return trimmed;
+  }
+}
+
+const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
+  const parsedParams = useMemo(() => parseToolParams(params), [params]);
+
+  return (
+    <Tool className='my-2'>
+      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
+      {parsedParams !== undefined && (
+        <ToolContent>
+          <ToolInput input={parsedParams} />
+        </ToolContent>
+      )}
+    </Tool>
+  );
+};
 
 // Task Part
 const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (

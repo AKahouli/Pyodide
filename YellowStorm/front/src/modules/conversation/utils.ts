@@ -238,6 +238,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         type: 'toolInfo',
         title: (data.title as string) || '',
         status: (data.status as 'running' | 'completed' | 'failed') || 'running',
+        params: (data.params as string) || '',
       };
     default:
       return { type: 'text', content: (data.content as string) || '' };

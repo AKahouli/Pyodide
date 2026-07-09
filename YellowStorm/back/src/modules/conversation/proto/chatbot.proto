@@ -253,6 +253,7 @@ message CheckpointComponent {
 message ToolInfoComponent {
     string title = 1;            // Tool name / label
     string status = 2;           // running | completed | failed
+    string params = 3;           // JSON object of tool-call arguments {name: value}
 }
 
 enum ChartKind {
@@ -899,3 +900,5 @@ message AdvisePlaybookNodeResponse {
     string task_id = 2;
     repeated NodeAdvisorSuggestion suggestions = 3;
 }
+
+ 

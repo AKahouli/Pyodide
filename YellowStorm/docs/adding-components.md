@@ -560,25 +560,34 @@ case 'toolInfo':
 ```
 
 ### Frontend Part + Renderer (`ai-message-content.tsx`)
+
+The renderer reuses the official **ai-elements `Tool`** component
+(`src/components/ai-elements/tool.tsx`, installable via
+`npx ai-elements@latest add tool`) rather than a hand-rolled element. Since the
+proto only carries `title` + `status`, we map the status onto the Tool
+component's UI states and render just the header.
+
 ```typescript
+import { Tool, ToolHeader } from './tool';
+import type { ToolUIPart } from 'ai';
+
 export interface ToolInfoPart {
     type: 'toolInfo';
     title: string;
     status: 'running' | 'completed' | 'failed';
 }
 
-const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => {
-    const icon =
-        status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
-        : status === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-        : <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />;
-    return (
-        <div className="my-1 inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground">
-            {icon}
-            <span className="truncate font-medium">{formatLabel(title)}</span>
-        </div>
-    );
-};
+const TOOL_INFO_STATE_MAP = {
+    running: 'input-available',
+    completed: 'output-available',
+    failed: 'output-error',
+} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
+
+const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => (
+    <Tool className="my-2">
+        <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
+    </Tool>
+);
 ```
 
 </details>

@@ -335,6 +335,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         data: {
           title: comp.tool_info?.title || '',
           status: comp.tool_info?.status || 'running',
+          params: comp.tool_info?.params || '',
         },
       };
     default:

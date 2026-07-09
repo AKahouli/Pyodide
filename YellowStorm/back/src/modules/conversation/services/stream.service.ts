@@ -1424,11 +1424,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
-      case 'toolInfo':
-        // These arrive fully formed - replace with incoming data.
-        // toolInfo: the 'update' chunk carries the final status
-        // (completed/failed) that supersedes the initial 'running'.
+        // These arrive fully formed - replace with incoming data
         return { ...incoming };
+      case 'toolInfo':
+        // The 'update' chunk carries the final status (completed/failed) that
+        // supersedes the initial 'running', but params (the tool-call args) are
+        // only sent on the initial 'add' — preserve them when the update omits them.
+        return {
+          title: (incoming.title as string) || (existing.title as string) || '',
+          status: (incoming.status as string) || (existing.status as string) || 'running',
+          params: (incoming.params as string) || (existing.params as string) || '',
+        };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update
         return {
