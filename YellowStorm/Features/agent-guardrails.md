@@ -3,7 +3,7 @@ project: YellowStorm
 type: feature
 slug: agent-guardrails
 status: active
-updated: 2026-07-09 12:00 UTC
+updated: 2026-07-09 14:00 UTC
 source_paths:
   - YellowStorm/back/src/modules/guardrails/
   - YellowStorm/back/src/modules/agent/interfaces/agent.interface.ts
@@ -65,16 +65,16 @@ Two-tier configuration:
 
 ### Classifier Decision Flow
 1. Enabled guardrail → `classify_prompt_injection()` via LLM
-2. Classifier returns `block` → `GuardrailResult(blocked=True, text=_build_block_message(blockMsg, classifierReason))`
+2. Classifier returns `block` → `GuardrailResult(blocked=True, text=blockMessage)` — visible assistant text is the configured `blockMessage` only, no appended reason
 3. Classifier returns `sanitize` with `safe_rewrite` → `GuardrailResult(sanitized=True, text=safe_rewrite)`
 4. Classifier returns `allow` (or any error) → `GuardrailResult(decision="allow", text=original)`
 
-Block messages append a short sanitized classifier reason: sanitizes reason (240 char max, whitespace-collapsed), appends `"\n\nReason: {safe_reason}"` after the block message.
+Previously block messages appended a sanitized classifier reason (`"\n\nReason: {safe_reason}"`); now they use the exact configured `blockMessage` as-is to avoid leaking classifier internals.
 
 ### Metadata Propagation
 ```
 GuardrailResult.decision_metadata() → {
-  phase, source, decision, confidence, attackType, target, reason
+  phase, source, decision, confidence, attackType, target, reason, safeRewrite
 }
 → ADK formatters attach guardrail_decision to stream event
 → gRPC servicer _guardrail_decision_json() serializes to JSON string
@@ -169,6 +169,7 @@ All failure paths return `decision="allow"` with original text unchanged:
   attackType: string;
   target: string;
   reason?: string;
+  safeRewrite?: string;  // sanitized rewrite text, present when decision === 'sanitize'
 }
 ```
 
@@ -193,7 +194,7 @@ All failure paths return `decision="allow"` with original text unchanged:
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|
 | Boolean toggles per phase (no protection mode) | Simpler UX — enable/disable directly maps to classifier enforcement; no "low/medium/high" abstraction that would need its own decision mapping | Configurable protection mode with block/sanitize/monitor levels (removed — added complexity without clear benefit) |
-| Classifier block messages append sanitized reason | Users see why the guardrail fired without exposing raw classifier output | Raw reason (might leak prompt internals); silent block (no user feedback) |
+| Block decisions use configured blockMessage only (no appended reason) | Avoids leaking classifier internals (reason may contain injection patterns) into user-visible text; blockMessage is admin-curated safe text | Appended sanitized reason (previous behavior — leaked classifier detail); silent block (no user feedback) |
 | GuardrailDecisionMetadata on StreamChunk.metadata | Universal metadata attachment regardless of chunk type (usage, component, legacy) | Separate guardrail event type (more stream complexity) |
 | Text replacement via guardrailDecision detection | Corrects previously streamed unsafe content after guardrail event arrives | Pre-scanning output before streaming (not possible with streaming) |
 | `forceActivation` flag for admins | Override all per-agent guardrail settings for compliance enforcement | Separate admin-only policies (more complex) |
@@ -208,12 +209,19 @@ All failure paths return `decision="allow"` with original text unchanged:
 - **Legacy single `classifierPrompt` fallthrough:** If the per-phase prompts are empty, the legacy `classifierPrompt` field is used as a fallback for all three phases. This means an admin setting only `classifierPrompt` (deprecated) will get the same classifier prompt for input, output, and tool-call phases.
 - **`forceActivation` with missing classifier model:** If admin sets `forceActivation: true` but no `guardrails_classifier` model is configured, the guardrail is enabled but the classifier will fail open (allows everything with WARN log). Users cannot override this — they see "enabled" but no enforcement happens.
 - **Proto field is a raw JSON string:** `guardrail_decision_json` is a proto `string` field, not a structured sub-message. The backend must `JSON.parse()` it. Invalid JSON is silently dropped (`parseGuardrailDecision()` returns `undefined`).
+- **guardrailDecision metadata exposed on message endpoints:** The full `guardrailDecision` metadata (including `attackType`, `confidence`, `reason`, `safeRewrite`, etc.) is persisted on message documents and returned via user-facing message APIs. This may reveal classifier internals or injection pattern details to clients. If unintended for production, access should be restricted (e.g., strip metadata before serving messages to end users, keep only for admin/internal APIs).
 
 ## Recent Changes
 ### 2026-07-09 12:00 UTC
 - **Changed:** Protection level/mode concept fully removed across all layers. Guardrail enforcement now uses direct boolean toggles + classifier decisions (block/sanitize/allow) with no intermediate protection mode abstraction. Removed from: frontend UI (admin GuardrailsPage, AgentGuardrailsTab), frontend types, Zod schemas, backend DTOs, Mongoose schemas, `normalizePromptInjectionGuardrails()`, ADK `PromptInjectionConfig`/`EffectiveGuardrailsConfig`. Enabled input/output guardrails now enforce classifier block/sanitize directly. Classifier block messages append a short sanitized classifier reason (`_build_block_message()`). Guardrail decision metadata propagates via `StreamChunk.metadata.guardrail_decision_json` → parsed by `parseGuardrailDecision()` → attached to component `data.guardrailDecision` → persisted on message documents via `message.service.ts` with component scan fallback. Output block/sanitize text updates replace existing streamed text when `guardrailDecision` is present (both backend `mergeComponentData` and frontend `mergeStreamingData`). Tool-call guardrail remains stored/disabled/not enforced. Classifier fail-open behavior preserved.
 - **Why:** Replace indirect protection mode UX with direct enable/disable per phase. Simplify admin and agent configuration to a single yes/no toggle per guardrail phase. Stream guardrail decisions end-to-end for persistence and correct text replacement.
 - **Impact:** `GuardrailsPage.tsx`, `AgentGuardrailsTab.tsx`, `AgentFormSchema.ts`, `admin/types.ts`, `agent/types.ts`, `admin-guardrails.controller.ts`, `guardrails-settings.service.ts`, `guardrails-settings.schema.ts`, `guardrails-settings.dto.ts`, `agent.interface.ts`, `agent.service.ts`, `agent.schema.ts`, `create-agent.dto.ts`, `update-agent.dto.ts`, `message.interface.ts`, `message.schema.ts`, `message.service.ts`, `stream.service.ts`, `stream.service.spec.ts`, `models.service.ts`, `prompt_injection_guardrail.py`, `config.py`, `classifier.py`, `chatbot_servicer.py`, `runner.py`, `single_agent.py`, `manual_agents.py`, `formatters.py`, `chatbot.proto`, `conversation/store.ts`, `test_prompt_injection_guardrail.py`, `test_guardrails_config.py`. Build/Tests PASS; reviewer PASS.
+
+### 2026-07-09 14:00 UTC
+- **Changed:** Block decisions now keep visible assistant text as the configured `blockMessage` only (no appended classifier reason). `guardrailDecision` metadata includes `safeRewrite` (present when `decision === 'sanitize'`). Backend `GuardrailDecisionMetadata` updated to include `safeRewrite`. ADK tests cover block metadata with `safeRewrite`. Runner tests updated for `agent_id` signature change.
+- **Why:** Prevent leaking classifier internals/injection patterns via appended reason in user-visible block text. Expose `safeRewrite` in metadata for consumers that need the sanitized text. Align runner signature with updated ADK contract.
+- **Impact:** `prompt_injection_guardrail.py` (block text = `blockMessage` only), `classifier.py`, `chatbot_servicer.py`, `runner.py`, `test_prompt_injection_guardrail.py`, `message.interface.ts` (`GuardrailDecisionMetadata.safeRewrite`). ADK tests PASS; reviewer PASS.
+- **Caveat:** Exposing full `guardrailDecision` metadata on user-facing message endpoints may reveal classifier details (attackType, confidence, reason). Future product/security decision should restrict if unintended for production.
 
 ## Related Notes
 - [[flow-engine-tools]] — Peer feature: Python ADK runtime tool factory (same ADK layer)
