@@ -13,6 +13,8 @@ import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSecti
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem } from './task';
+import { Tool, ToolHeader } from './tool';
+import type { ToolUIPart } from 'ai';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody } from './web-preview';
@@ -643,24 +645,20 @@ const CheckpointPartRenderer = ({ label }: { label: string }) => (
   </Checkpoint>
 );
 
-// Tool Info Part - reports a single tool execution and its status
-const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => {
-  const icon =
-    status === 'completed' ? (
-      <CheckCircle2 className='h-3.5 w-3.5 shrink-0 text-green-500' />
-    ) : status === 'failed' ? (
-      <XCircle className='h-3.5 w-3.5 shrink-0 text-destructive' />
-    ) : (
-      <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin text-blue-500' />
-    );
+// Tool Info Part - reports a single tool execution and its status via the
+// ai-elements Tool component. Our proto only carries title + status, so we map
+// the status onto the Tool component's UI states and render the header only.
+const TOOL_INFO_STATE_MAP = {
+  running: 'input-available',
+  completed: 'output-available',
+  failed: 'output-error',
+} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
 
-  return (
-    <div className='my-1 inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground'>
-      {icon}
-      <span className='truncate font-medium'>{formatLabel(title)}</span>
-    </div>
-  );
-};
+const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => (
+  <Tool className='my-2'>
+    <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
+  </Tool>
+);
 
 // Task Part
 const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (
