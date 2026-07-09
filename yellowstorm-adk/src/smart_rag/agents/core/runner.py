@@ -140,7 +140,6 @@ class AgentRunner:
         function_call_id_info: Optional[dict] = None,
         image_input: Optional[list] = None,
         session_id: Optional[str] = None,
-        seed_events: Optional[list] = None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -195,10 +194,6 @@ class AgentRunner:
                         session_id=session_id,
                         state=initial_state or None,
                     )
-                    # Seed a read-only snapshot of the shared conversation so this
-                    # agent SEES prior history without writing to the shared session.
-                    for seed_event in (seed_events or []):
-                        await session_helper.append_event(session, seed_event)
             logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
 
         except Exception as e:

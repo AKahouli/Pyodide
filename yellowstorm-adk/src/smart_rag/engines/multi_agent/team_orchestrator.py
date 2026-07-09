@@ -772,20 +772,9 @@ Do not render charts for single values or non-numeric content.
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
 
             # Persist the mono conversation so memory carries across turns, keyed
-            # on the conversation's session_id. Fall back to an ephemeral
-            # in-memory session if the database is unavailable.
+            # on the conversation's session_id.
             session_id_for_agent = session_id
-            try:
-                session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
-                await session_helper.get_session(
-                    app_name="manager_app", user_id=self.config.user_id, session_id=session_id
-                )
-            except OSError as e:
-                logger.warning(
-                    f"[MONO WORKFLOW] Database session unavailable, using ephemeral in-memory session - session_id={session_id} error={e}"
-                )
-                session_helper = get_in_memory_session_service()()
-                session_id_for_agent = None
+            session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
             result, mcp_used, execution_summary, generated_files = await self.agent_runner.run_agent_tool(
