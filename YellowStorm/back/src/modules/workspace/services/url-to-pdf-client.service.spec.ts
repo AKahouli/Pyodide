@@ -13,18 +13,27 @@ function makeService() {
 describe('UrlToPdfClientService', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('posts convert-url-pdf with hardcoded flags and returns a Buffer', async () => {
+  it('posts convert-url-pdf as url-encoded form data with hardcoded flags and returns a Buffer', async () => {
     const post = jest.fn().mockResolvedValue({ data: Buffer.from('%PDF-1.4 fake') });
     mockedAxios.create.mockReturnValue({ post, interceptors: { request: { use: jest.fn() } } } as any);
     const svc = makeService();
     const out = await svc.convert('https://example.com', 'example-com.pdf');
     expect(Buffer.isBuffer(out)).toBe(true);
-    expect(post).toHaveBeenCalledWith('/convert-url-pdf', {
-      url: 'https://example.com',
-      filename: 'example-com.pdf',
-      print_background: true,
-      prefer_css_page_size: true,
-    }, { responseType: 'arraybuffer' });
+
+    // The Gotenberg-wrapper API consumes application/x-www-form-urlencoded, not JSON.
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+      }),
+    );
+    const [path, body, config] = post.mock.calls[0];
+    expect(path).toBe('/convert-url-pdf');
+    expect(body).toBeInstanceOf(URLSearchParams);
+    expect(body.get('url')).toBe('https://example.com');
+    expect(body.get('filename')).toBe('example-com.pdf');
+    expect(body.get('print_background')).toBe('true');
+    expect(body.get('prefer_css_page_size')).toBe('true');
+    expect(config).toEqual({ responseType: 'arraybuffer' });
   });
 
   it('throws a descriptive error on failure', async () => {

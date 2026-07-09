@@ -17,9 +17,11 @@ export class UrlToPdfClientService {
     this.apiUrl = this.configService.get<string>('indexing.urlToPdfApiUrl', 'http://localhost:5000');
     this.apiKey = this.configService.get<string>('indexing.urlToPdfApiKey', '');
 
+    // The upstream Gotenberg-wrapper endpoint consumes
+    // application/x-www-form-urlencoded, not JSON.
     this.httpClient = axios.create({
       baseURL: this.apiUrl,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 120_000,
     });
 
@@ -32,17 +34,18 @@ export class UrlToPdfClientService {
   }
 
   async convert(url: string, filename: string): Promise<Buffer> {
+    // Sent as x-www-form-urlencoded form fields; booleans are hardcoded true
+    // and serialized as the strings 'true' (which the API parses as booleans).
+    const body = new URLSearchParams();
+    body.append('url', url);
+    body.append('filename', filename);
+    body.append('print_background', 'true');
+    body.append('prefer_css_page_size', 'true');
+
     try {
-      const response = await this.httpClient.post(
-        '/convert-url-pdf',
-        {
-          url,
-          filename,
-          print_background: true,
-          prefer_css_page_size: true,
-        },
-        { responseType: 'arraybuffer' },
-      );
+      const response = await this.httpClient.post('/convert-url-pdf', body, {
+        responseType: 'arraybuffer',
+      });
       return Buffer.from(response.data);
     } catch (error) {
       if (axios.isAxiosError(error)) {
