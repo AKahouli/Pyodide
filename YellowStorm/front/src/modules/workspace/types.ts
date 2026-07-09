@@ -478,6 +478,22 @@ export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorksp
   return 'shareId' in item;
 }
 
+// ===== Website Crawl Types =====
+
+export interface PageNode {
+  url: string;
+  title?: string;
+  path: string;
+  alreadyIndexed: boolean;
+  children: PageNode[];
+}
+
+export interface CrawlResponse {
+  tree: PageNode[];
+  truncated: boolean;
+  unreachable?: boolean;
+}
+
 // Local upload tracking (for UI state)
 export interface UploadQueueItem {
   id: string; // Local unique ID
