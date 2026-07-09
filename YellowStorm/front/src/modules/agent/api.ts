@@ -278,6 +278,15 @@ export async function getAgentWhatsAppPairing(
   return response.data.data;
 }
 
+export async function notifyAgentWhatsAppAutoRecover(
+  agentId: string,
+): Promise<AgentWhatsAppIntegration> {
+  const response = await apiClient.post<ApiResponse<AgentWhatsAppIntegration>>(
+    API_ENDPOINTS.agents.whatsappAutoRecover(agentId),
+  );
+  return response.data.data;
+}
+
 export async function reconnectAgentWhatsApp(
   agentId: string,
   sessionId: string,
