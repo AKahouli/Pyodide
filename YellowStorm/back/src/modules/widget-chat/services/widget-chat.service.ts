@@ -478,19 +478,6 @@ export class WidgetChatService {
         agentDoc,
         channel: 'widget',
         onChunk: (chunkEvent) => {
-          const comp = chunkEvent.component;
-          if (comp?.id && comp.data) {
-            this.logWidgetStreamPayload(
-              'grpc',
-              sessionId,
-              'widget',
-              chunkEvent.action,
-              comp.id,
-              String(comp.type || 'text'),
-              comp.data,
-            );
-          }
-
           const emitEvent = this.buildWidgetStreamChunkEvent(chunkEvent, widgetTextAggregate);
           if (!emitEvent) {
             return;
@@ -502,16 +489,6 @@ export class WidgetChatService {
 
           const emitted = emitEvent.component;
           if (emitted.id && emitted.data) {
-            this.logWidgetStreamPayload(
-              'sse',
-              sessionId,
-              'widget',
-              emitEvent.action,
-              emitted.id,
-              emitted.type,
-              emitted.data,
-            );
-
             stream.buffer.set(emitted.id, {
               id: emitted.id,
               type: (emitted.type as ComponentType) || 'text',
@@ -832,47 +809,6 @@ export class WidgetChatService {
     }
 
     return chunkEvent as { action: string; component: { id: string; type: string; data?: Record<string, unknown> } };
-  }
-
-  /** Structured logs for widget SSE debugging (full payload for citation/sources). */
-  private logWidgetStreamPayload(
-    phase: 'grpc' | 'sse',
-    sessionId: string,
-    channel: string,
-    action: string,
-    componentId: string,
-    type: string,
-    data: Record<string, unknown> | undefined,
-  ): void {
-    if (!data) {
-      this.logger.log('Widget stream chunk', { phase, sessionId, channel, action, componentId, type });
-      return;
-    }
-
-    if (type === 'text') {
-      const content = typeof data.content === 'string' ? data.content : '';
-      this.logger.log('Widget stream text chunk', {
-        phase,
-        sessionId,
-        channel,
-        action,
-        componentId,
-        type,
-        contentLength: content.length,
-        contentPreview: content.slice(0, 200),
-      });
-      return;
-    }
-
-    this.logger.log('Widget stream chunk', {
-      phase,
-      sessionId,
-      channel,
-      action,
-      componentId,
-      type,
-      data,
-    });
   }
 
   /** Resolves the widget's single agent for RunSingleAgent (no manager/delegation). */
