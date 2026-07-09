@@ -39,6 +39,25 @@ export class CreateWidgetTokenDto {
   expiresAt?: string;
 }
 
+export class WidgetCitationUrlDto {
+  @ApiProperty({ description: 'Ceph object key or source path from citation data' })
+  @IsString()
+  @MaxLength(1024)
+  source!: string;
+
+  @ApiPropertyOptional({ description: 'Original filename for workspace lookup fallback' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  fileName?: string;
+
+  @ApiPropertyOptional({ description: 'Workspace ID for document lookup fallback' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  workspaceId?: string;
+}
+
 export class UpdateWidgetTokenDto {
   @ApiPropertyOptional({ maxLength: 200 })
   @IsOptional()
