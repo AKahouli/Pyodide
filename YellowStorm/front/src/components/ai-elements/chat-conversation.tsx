@@ -91,19 +91,10 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
           !isUser &&
           (() => {
             const contentParts = message.content as MessageContentPart[];
-            const chainOfThoughtParts = contentParts.filter((p) => p.type === 'chainOfThought');
             const reasoningParts = contentParts.filter((p) => p.type === 'reasoning');
-            const otherParts = contentParts.filter((p) => p.type !== 'reasoning' && p.type !== 'chainOfThought');
+            const otherParts = contentParts.filter((p) => p.type !== 'reasoning');
             return (
               <>
-                {/* Chain of thought is not part of the bubble: it sits above the response
-                    and sticks to the top of the viewport while the response scrolls. */}
-                {chainOfThoughtParts.length > 0 && (
-                  <div className='sticky top-0 z-10 rounded-lg bg-background/90 px-1 py-1 backdrop-blur-sm'>
-                    <AIMessageContent parts={chainOfThoughtParts} isStreaming={isStreaming} />
-                  </div>
-                )}
-
                 {reasoningParts.length > 0 && (
                   <div className='px-1'>
                     <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} />
