@@ -123,7 +123,85 @@ describe('AgentTelegramIntegrationSection', () => {
     expect(upsertAgentTelegramIntegrationMock).not.toHaveBeenCalled();
   });
 
-  it('upserts integration and shows webhook success feedback when backend registers webhook', async () => {
+  it('hides the save button until telegram is enabled', async () => {
+
+    getAgentTelegramIntegrationMock.mockResolvedValue(null);
+
+
+
+    render(<AgentTelegramIntegrationSection agentId="a1" />);
+
+
+
+    await waitFor(() => expect(getAgentTelegramIntegrationMock).toHaveBeenCalled());
+
+
+
+    expect(screen.queryByText('createEdit.fields.telegramSave')).not.toBeInTheDocument();
+
+
+
+    fireEvent.click(screen.getByTestId('telegram-switch'));
+
+
+
+    expect(screen.getByText('createEdit.fields.telegramSave')).toBeInTheDocument();
+
+  });
+
+
+
+  it('persists disabled state when an existing telegram integration is switched off', async () => {
+
+    getAgentTelegramIntegrationMock.mockResolvedValue({
+
+      enabled: true,
+
+      hasToken: true,
+
+    });
+
+    upsertAgentTelegramIntegrationMock.mockResolvedValue({
+
+      enabled: false,
+
+      hasToken: true,
+
+      messageKey: 'disabled',
+
+    });
+
+
+
+    render(<AgentTelegramIntegrationSection agentId="a1" />);
+
+
+
+    await waitFor(() => expect(screen.getByTestId('telegram-switch')).toBeChecked());
+
+
+
+    fireEvent.click(screen.getByTestId('telegram-switch'));
+
+
+
+    await waitFor(() => {
+
+      expect(upsertAgentTelegramIntegrationMock).toHaveBeenCalledWith('a1', {
+
+        enabled: false,
+
+      });
+
+    });
+
+    expect(screen.queryByText('createEdit.fields.telegramSave')).not.toBeInTheDocument();
+
+  });
+
+
+
+  it('upserts integration and shows webhook success feedback when backend registers webhook', async () => {
     getAgentTelegramIntegrationMock.mockResolvedValue(null);
     upsertAgentTelegramIntegrationMock.mockResolvedValue({
       enabled: true,

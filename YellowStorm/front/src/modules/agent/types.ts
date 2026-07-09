@@ -19,6 +19,8 @@ export interface Agent {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
   /** True when the agent has the "smart-memory" connector. */
   hasSmartMemory?: boolean;
   isDefault: boolean;
@@ -33,6 +35,28 @@ export interface Agent {
   updatedAt: string;
   /** Present when the agent was shared with the current user (non-owner). */
   shareInfo?: SharedAgentInfo;
+}
+
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
+export interface PromptInjectionGuardrailsConfig {
+  inputGuardrailEnabled: boolean;
+  outputGuardrailEnabled: boolean;
+  toolCallGuardrailEnabled: boolean;
+  mode: GuardrailMode;
+  inputClassifierPrompt: string;
+  outputClassifierPrompt: string;
+  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export interface AgentGuardrails {
+  promptInjection: PromptInjectionGuardrailsConfig;
+}
+
+export interface AgentDeploymentSettings {
+  embedEnabled: boolean;
+  restEnabled: boolean;
 }
 
 export type AgentPermissionLevel = 'read' | 'write';
@@ -135,6 +159,7 @@ export type AgentWhatsAppIntegrationStatus =
   | 'FAILED';
 
 export interface AgentWhatsAppIntegration {
+  enabled: boolean;
   status: AgentWhatsAppIntegrationStatus;
   sessionId?: string;
   phoneNumber?: string;
@@ -142,6 +167,10 @@ export interface AgentWhatsAppIntegration {
   lastActivityAt?: string;
   errorMessage?: string;
   updatedAt?: string;
+}
+
+export interface AgentWhatsAppEnabledInput {
+  enabled: boolean;
 }
 
 export interface AgentWhatsAppConnectResponse {
@@ -306,7 +335,7 @@ export interface AgentActions {
   publishAgentToA2A: (id: string) => Promise<A2APublishResult>;
   rotateAgentA2AKey: (id: string) => Promise<A2ARotateKeyResult>;
   revokeAgentA2A: (id: string) => Promise<A2ARevokeResult>;
-  
+
   // Evaluation Actions
   fetchDatasets: () => Promise<void>;
   createDataset: (name: string, items: DatasetItem[]) => Promise<Dataset>;
@@ -343,6 +372,7 @@ export interface CreateAgentData {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface UpdateAgentData {
@@ -363,4 +393,6 @@ export interface UpdateAgentData {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }

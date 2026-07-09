@@ -14,6 +14,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { decodeMultipartFilename } from '@common/utils';
 import {
   ApiTags,
   ApiOperation,
@@ -86,6 +87,8 @@ export class WorkspaceDocumentController {
     @UploadedFile() file: MulterFile,
     @Body() body?: { folderId?: string; deepSearch?: string; autoIndex?: string },
   ) {
+    // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
+    file.originalname = decodeMultipartFilename(file.originalname);
     return this.workspaceDocumentService.uploadSmallFile(
       workspaceId,
       user._id.toString(),

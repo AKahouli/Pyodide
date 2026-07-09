@@ -1,0 +1,15 @@
+export const governanceQueryKeys = {
+  all: ['governance'] as const,
+  programs: () => [...governanceQueryKeys.all, 'programs'] as const,
+  program: (programId: string) => [...governanceQueryKeys.programs(), programId] as const,
+  scopes: (programId: string) => [...governanceQueryKeys.program(programId), 'scopes'] as const,
+  scopeOverview: (programId: string, scopeId: string) => [...governanceQueryKeys.scopes(programId), scopeId, 'overview'] as const,
+  sources: (programId: string) => [...governanceQueryKeys.program(programId), 'sources'] as const,
+  memberships: (programId: string) => [...governanceQueryKeys.program(programId), 'memberships'] as const,
+  deployments: (programId: string) => [...governanceQueryKeys.program(programId), 'deployments'] as const,
+  deployment: (deploymentId: string) => [...governanceQueryKeys.all, 'deployment', deploymentId] as const,
+  revisions: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'revisions'] as const,
+  readiness: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'readiness'] as const,
+  dryRuns: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'dry-runs'] as const,
+  metrics: (programId: string) => [...governanceQueryKeys.program(programId), 'metrics'] as const,
+};

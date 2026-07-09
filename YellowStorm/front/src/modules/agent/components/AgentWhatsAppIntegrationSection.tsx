@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, MessageCircle } from 'lucide-react';
 
+import { parseApiError } from '@/lib/api-error';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { ErrorCode } from '@/lib/error-codes';
 import { showSuccess, showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWhatsAppPairingSocket } from '../hooks/useWhatsAppPairingSocket';
+import { useWhatsAppIntegrationSse } from '../hooks/useWhatsAppIntegrationSse';
 import {
   connectAgentWhatsApp,
   deleteAgentWhatsAppIntegration,
   disconnectAgentWhatsAppSession,
   getAgentWhatsAppIntegration,
   getAgentWhatsAppPairing,
+  notifyAgentWhatsAppAutoRecover,
   reconnectAgentWhatsApp,
+  updateAgentWhatsAppEnabled,
 } from '../api';
+import { Switch } from '@/components/ui/switch';
 import type { AgentWhatsAppIntegration } from '../types';
 import {
   formatPairingCodeDisplay,
@@ -30,25 +36,36 @@ const PAIRING_POLL_MS = 2500;
 
 interface AgentWhatsAppIntegrationSectionProps {
   agentId: string | null;
+  agentName?: string;
 }
 
 export function AgentWhatsAppIntegrationSection({
   agentId,
+  agentName,
 }: AgentWhatsAppIntegrationSectionProps) {
   const { t } = useModuleTranslation('agent');
 
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [enabledBusy, setEnabledBusy] = useState(false);
+  const [enabled, setEnabled] = useState(false);
   const [integration, setIntegration] = useState<AgentWhatsAppIntegration | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | undefined>();
   const [pairingCode, setPairingCode] = useState<string | undefined>();
+  const autoRecoverRequestedRef = useRef<string | null>(null);
+  const recoveryCompleteNotifiedRef = useRef(false);
+  const integrationStatusRef = useRef<AgentWhatsAppIntegration['status'] | undefined>();
 
   const networkErrorLabel = t('createEdit.fields.whatsappNetworkUnreachable');
+  const isFailed = isWhatsAppFailed(integration?.status);
+  const isPairing = isWhatsAppPairing(integration?.status);
+  const listenForRecoveryEvents = Boolean(agentId && sessionId && (isFailed || isPairing));
 
   const refreshIntegration = useCallback(async (id: string) => {
     const res = await getAgentWhatsAppIntegration(id);
     setIntegration(res);
+    setEnabled(res?.enabled ?? false);
     if (res?.sessionId) {
       setSessionId(res.sessionId);
     }
@@ -73,6 +90,7 @@ export function AgentWhatsAppIntegrationSection({
       .then((res) => {
         if (cancelled) return;
         setIntegration(res);
+        setEnabled(res?.enabled ?? false);
         setSessionId(res?.sessionId ?? null);
         setQrCode(undefined);
         setPairingCode(undefined);
@@ -94,40 +112,96 @@ export function AgentWhatsAppIntegrationSection({
     if (payload.pairingCode) setPairingCode(payload.pairingCode);
   }, []);
 
+  const notifyConnectedSuccess = useCallback(() => {
+    if (recoveryCompleteNotifiedRef.current) return;
+    recoveryCompleteNotifiedRef.current = true;
+    showSuccess(t('createEdit.fields.whatsappConnected'));
+  }, [t]);
+
   const handleConnected = useCallback(
-    async (payload: { phoneNumber?: string; displayName?: string }) => {
+    async (payload: { phoneNumber?: string }) => {
       if (!agentId) return;
       const refreshed = await refreshIntegration(agentId);
       setIntegration(
         refreshed ?? {
+          enabled: true,
           status: 'CONNECTED',
           sessionId: sessionId ?? undefined,
           phoneNumber: payload.phoneNumber,
-          displayName: payload.displayName,
         },
       );
       setQrCode(undefined);
       setPairingCode(undefined);
-      showSuccess(t('createEdit.fields.whatsappConnected'));
+      autoRecoverRequestedRef.current = null;
+      notifyConnectedSuccess();
     },
-    [agentId, refreshIntegration, sessionId, t],
+    [agentId, refreshIntegration, sessionId, notifyConnectedSuccess],
   );
+
+  const handleSseStatus = useCallback((status: AgentWhatsAppIntegration) => {
+    const previousStatus = integrationStatusRef.current;
+    if (isWhatsAppFailed(previousStatus) && isWhatsAppConnected(status.status)) {
+      autoRecoverRequestedRef.current = null;
+      notifyConnectedSuccess();
+    }
+    integrationStatusRef.current = status.status;
+    setIntegration(status);
+    setEnabled(status.enabled);
+    if (status.sessionId) {
+      setSessionId(status.sessionId);
+    }
+    if (isWhatsAppConnected(status.status)) {
+      setQrCode(undefined);
+      setPairingCode(undefined);
+    }
+  }, [notifyConnectedSuccess]);
+
+  useEffect(() => {
+    if (!agentId || !sessionId || !isFailed) {
+      if (!isFailed) {
+        autoRecoverRequestedRef.current = null;
+      }
+      return;
+    }
+
+    const recoveryKey = `${sessionId}:FAILED`;
+    if (autoRecoverRequestedRef.current === recoveryKey) {
+      return;
+    }
+    autoRecoverRequestedRef.current = recoveryKey;
+    recoveryCompleteNotifiedRef.current = false;
+
+    console.log('[WhatsApp integration] notify auto-recover (FAILED)', { agentId, sessionId });
+    void notifyAgentWhatsAppAutoRecover(agentId).catch(() => {
+      autoRecoverRequestedRef.current = null;
+    });
+  }, [agentId, sessionId, isFailed]);
+
+  useEffect(() => {
+    integrationStatusRef.current = integration?.status;
+  }, [integration?.status]);
+
+  useWhatsAppIntegrationSse({
+    agentId,
+    enabled: Boolean(agentId && sessionId && isFailed),
+    onStatus: handleSseStatus,
+  });
 
   useWhatsAppPairingSocket({
     agentId,
     sessionId,
-    enabled: Boolean(agentId && sessionId && isWhatsAppPairing(integration?.status)),
+    enabled: listenForRecoveryEvents,
     onQrGenerated: (payload) => applyPairingPayload(payload),
     onConnected: (payload) => {
       void handleConnected(payload);
     },
     onSessionFailed: (payload) => {
       setIntegration((prev) => ({
+        enabled: prev?.enabled ?? true,
         status: 'FAILED',
         sessionId: payload.sessionId,
         errorMessage: payload.errorMessage,
         phoneNumber: prev?.phoneNumber,
-        displayName: prev?.displayName,
       }));
       showWarning(t('createEdit.fields.whatsappStatusFailed'), {
         description: resolveWhatsAppErrorMessage(payload.errorMessage, networkErrorLabel),
@@ -135,7 +209,7 @@ export function AgentWhatsAppIntegrationSection({
     },
     onDisconnected: () => {
       setIntegration((prev) =>
-        prev ? { ...prev, status: 'DISCONNECTED' } : { status: 'DISCONNECTED' },
+        prev ? { ...prev, status: 'DISCONNECTED' } : { enabled: false, status: 'DISCONNECTED' },
       );
       setSessionId(null);
       setQrCode(undefined);
@@ -149,13 +223,30 @@ export function AgentWhatsAppIntegrationSection({
     }
 
     let cancelled = false;
+    let refreshInFlight = false;
 
     const poll = async () => {
       try {
         const res = await getAgentWhatsAppPairing(agentId, sessionId);
         if (!cancelled) applyPairingPayload(res);
-      } catch {
-        // HTTP polling fallback when Socket.IO misses events
+      } catch (err) {
+        // Polling fallback when Socket.IO misses events:
+        // backend can move from PAIRING -> CONNECTED between polls.
+        if (cancelled || refreshInFlight) return;
+        const apiError = parseApiError(err);
+        if (apiError.code !== ErrorCode.WHATSAPP_SESSION_NOT_PAIRING) return;
+
+        refreshInFlight = true;
+        try {
+          const refreshed = await refreshIntegration(agentId);
+          // Clear pairing visuals when backend has finished pairing.
+          if (!cancelled && refreshed) {
+            setQrCode(undefined);
+            setPairingCode(undefined);
+          }
+        } finally {
+          refreshInFlight = false;
+        }
       }
     };
 
@@ -166,12 +257,14 @@ export function AgentWhatsAppIntegrationSection({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [agentId, sessionId, integration?.status, applyPairingPayload]);
+  }, [agentId, sessionId, integration?.status, applyPairingPayload, refreshIntegration]);
 
   const startPairing = async (id: string) => {
     const res = await connectAgentWhatsApp(id);
     setSessionId(res.sessionId);
+    setEnabled(true);
     setIntegration({
+      enabled: true,
       status: 'PAIRING',
       sessionId: res.sessionId,
     });
@@ -193,6 +286,35 @@ export function AgentWhatsAppIntegrationSection({
     }
   };
 
+  const handleEnabledChange = async (nextEnabled: boolean) => {
+    if (!agentId) return;
+    if (!integration) {
+      setEnabled(nextEnabled);
+      return;
+    }
+
+    const previousEnabled = enabled;
+    setEnabled(nextEnabled);
+    setEnabledBusy(true);
+    try {
+      const updated = await updateAgentWhatsAppEnabled(agentId, { enabled: nextEnabled });
+      setIntegration(updated);
+      setEnabled(updated.enabled);
+      showSuccess(
+        nextEnabled
+          ? t('createEdit.fields.whatsappEnabled')
+          : t('createEdit.fields.whatsappDisabled'),
+      );
+    } catch (err) {
+      setEnabled(previousEnabled);
+      showWarning(t('createEdit.fields.whatsappEnabledUpdateFailed'), {
+        description: err instanceof Error ? err.message : t('list.errors.unknownError'),
+      });
+    } finally {
+      setEnabledBusy(false);
+    }
+  };
+
   const handleRefreshPairing = async () => {
     if (!agentId || !sessionId) return;
     setBusy(true);
@@ -211,6 +333,7 @@ export function AgentWhatsAppIntegrationSection({
   const handleCancelPairing = async () => {
     if (!agentId || !sessionId) {
       setIntegration(null);
+      setEnabled(false);
       setSessionId(null);
       setQrCode(undefined);
       setPairingCode(undefined);
@@ -219,7 +342,7 @@ export function AgentWhatsAppIntegrationSection({
     setBusy(true);
     try {
       await disconnectAgentWhatsAppSession(agentId, sessionId);
-      setIntegration({ status: 'DISCONNECTED' });
+      setIntegration({ enabled, status: 'DISCONNECTED' });
       setSessionId(null);
       setQrCode(undefined);
       setPairingCode(undefined);
@@ -243,6 +366,7 @@ export function AgentWhatsAppIntegrationSection({
         await deleteAgentWhatsAppIntegration(agentId);
       }
       setIntegration(null);
+      setEnabled(false);
       setSessionId(null);
       setQrCode(undefined);
       setPairingCode(undefined);
@@ -263,6 +387,7 @@ export function AgentWhatsAppIntegrationSection({
       if (sessionId && integration?.status !== 'DISCONNECTED') {
         const updated = await reconnectAgentWhatsApp(agentId, sessionId);
         setIntegration(updated);
+        setEnabled(updated.enabled);
         if (updated.status === 'PAIRING') {
           setSessionId(updated.sessionId ?? sessionId);
           if (updated.sessionId) {
@@ -301,14 +426,22 @@ export function AgentWhatsAppIntegrationSection({
 
   return (
     <div className="space-y-3 rounded-md border p-4" data-testid="whatsapp-integration-section">
-      <div className="space-y-1">
-        <Label className="flex items-center gap-2">
-          <MessageCircle className="h-4 w-4" />
-          {t('createEdit.fields.whatsappIntegration')}
-        </Label>
-        <p className="text-xs text-muted-foreground">
-          {t('createEdit.fields.whatsappIntegrationDescription')}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Label className="flex items-center gap-2">
+            <MessageCircle className="h-4 w-4" />
+            {t('createEdit.fields.whatsappIntegration')}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {t('createEdit.fields.whatsappIntegrationDescription')}
+          </p>
+        </div>
+        <Switch
+          data-testid="whatsapp-enabled-switch"
+          checked={enabled}
+          disabled={!agentId || loading || busy || enabledBusy}
+          onCheckedChange={(checked) => void handleEnabledChange(checked)}
+        />
       </div>
 
       {!agentId && (
@@ -363,12 +496,12 @@ export function AgentWhatsAppIntegrationSection({
                   {integration.phoneNumber}
                 </p>
               )}
-              {integration?.displayName && (
+              {agentName && (
                 <p>
                   <span className="text-muted-foreground">
-                    {t('createEdit.fields.whatsappDisplayName')}:{' '}
+                    {t('createEdit.fields.whatsappAgentName')}:{' '}
                   </span>
-                  {integration.displayName}
+                  {agentName}
                 </p>
               )}
             </div>
@@ -403,7 +536,7 @@ export function AgentWhatsAppIntegrationSection({
           )}
 
           <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-            {notConnected && !pairing && (
+            {enabled && notConnected && !pairing && (
               <Button
                 type="button"
                 size="sm"

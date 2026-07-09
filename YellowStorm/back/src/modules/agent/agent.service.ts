@@ -24,6 +24,11 @@ import { IConnectorResponse } from '../connector/interfaces/connector.interface'
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
+import {
+  GuardrailsSettingsService,
+  normalizeAdminGuardrailsSettings,
+  normalizePromptInjectionGuardrails,
+} from '../guardrails/services/guardrails-settings.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -48,6 +53,7 @@ export class AgentService {
     @Inject(forwardRef(() => TeamService))
     private readonly teamService: TeamService,
     private readonly agentShareService: AgentShareService,
+    private readonly guardrailsSettingsService: GuardrailsSettingsService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -102,6 +108,8 @@ export class AgentService {
         dto.connectors,
         dto.connectorActionSelections,
       ),
+      guardrails: dto.guardrails,
+      deploymentSettings: dto.deploymentSettings,
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -376,6 +384,8 @@ export class AgentService {
         dto.connectors,
         dto.connectorActionSelections,
       ),
+      guardrails: dto.guardrails,
+      deploymentSettings: dto.deploymentSettings,
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -782,6 +792,10 @@ export class AgentService {
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
+    const adminGuardrailsSettings = await this.guardrailsSettingsService.getSettings();
+    const guardrailsClassifierModel = await this.modelsService.getGuardrailsClassifierModel();
+    const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
+
     const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
@@ -852,6 +866,11 @@ export class AgentService {
           params: {
             user_id: userId,
             connector_bindings_json: JSON.stringify(connectorBindings),
+            guardrails_json: JSON.stringify({
+              agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+              admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+            }),
+            guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
           },
@@ -977,6 +996,10 @@ export class AgentService {
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
+    const adminGuardrailsSettings = await this.guardrailsSettingsService.getSettings();
+    const guardrailsClassifierModel = await this.modelsService.getGuardrailsClassifierModel();
+    const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
+
     const grpcAgents = await Promise.all(
       agentsWithConnectorSkills.map(async (agent) => {
         const agentTools = agent.toolIds
@@ -1026,6 +1049,11 @@ export class AgentService {
             params: {
               user_id: userId,
               connector_bindings_json: JSON.stringify(connectorBindings),
+              guardrails_json: JSON.stringify({
+                agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+                admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+              }),
+              guardrails_classifier_model: guardrailsClassifierModelId,
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
@@ -1503,6 +1531,15 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
+      guardrails: {
+        promptInjection: normalizePromptInjectionGuardrails(
+          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
+        ),
+      },
+      deploymentSettings: {
+        embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
+        restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
+      },
       hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
@@ -1561,6 +1598,11 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
+      guardrails: {
+        promptInjection: normalizePromptInjectionGuardrails(
+          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
+        ),
+      },
       agentTypeSkillIds,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,

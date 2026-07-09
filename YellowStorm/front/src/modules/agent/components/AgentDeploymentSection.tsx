@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 import { Label } from "@/components/ui/label";
 
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 
 import { API_CONFIG } from "@/lib/api/config";
 import { cn } from "@/lib/utils";
@@ -37,10 +37,6 @@ import { IntegrationSnippetPanel } from "./IntegrationSnippetPanel";
 
 
 
-type DeploymentMode = "embed" | "rest";
-
-
-
 function getApiBase(): string {
   return API_CONFIG.baseURL.replace(/\/$/, "");
 }
@@ -53,15 +49,17 @@ interface AgentDeploymentSectionProps {
 
   agentName?: string;
 
+  value: { embedEnabled: boolean; restEnabled: boolean };
+
+  onChange: (value: { embedEnabled: boolean; restEnabled: boolean }) => void;
+
 }
 
 
 
-export function AgentDeploymentSection({ agentId, agentName = "" }: AgentDeploymentSectionProps) {
+export function AgentDeploymentSection({ agentId, agentName = "", value, onChange }: AgentDeploymentSectionProps) {
 
   const { t } = useModuleTranslation("agent");
-
-  const [mode, setMode] = useState<DeploymentMode>("embed");
 
   const [embedSnippet, setEmbedSnippet] = useState("");
 
@@ -70,6 +68,10 @@ export function AgentDeploymentSection({ agentId, agentName = "" }: AgentDeploym
   const [isCopied, setIsCopied] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const isEmbedEnabled = value.embedEnabled;
+
+  const isRestEnabled = value.restEnabled;
 
 
 
@@ -106,6 +108,10 @@ export function AgentDeploymentSection({ agentId, agentName = "" }: AgentDeploym
     }
 
   }, [agentId]);
+
+  const setEmbedEnabled = (embedEnabled: boolean) => onChange({ ...value, embedEnabled });
+
+  const setRestEnabled = (restEnabled: boolean) => onChange({ ...value, restEnabled });
 
 
 
@@ -191,121 +197,90 @@ export function AgentDeploymentSection({ agentId, agentName = "" }: AgentDeploym
 
 
 
-      <RadioGroup
-
-        value={mode}
-
-        onValueChange={(v) => setMode(v as DeploymentMode)}
-
-        className="grid gap-2 sm:grid-cols-2"
-
-      >
-
-        <label
-
-          htmlFor="deploy-embed"
-
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div
           className={cn(
-
-            "flex cursor-pointer items-start gap-3 rounded-lg border p-3",
-
-            mode === "embed" ? "border-primary bg-primary/5" : "border-border",
-
+            "space-y-3 rounded-md border p-4",
+            isEmbedEnabled ? "border-primary bg-primary/5" : "border-border",
           )}
-
         >
-
-          <RadioGroupItem value="embed" id="deploy-embed" className="mt-0.5" />
-
-          <div>
-
-            <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeEmbed")}</p>
-
-            <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeEmbedHint")}</p>
-
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeEmbed")}</p>
+              <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeEmbedHint")}</p>
+            </div>
+            <Switch
+              data-testid="embed-deployment-switch"
+              aria-label={t("createEdit.fields.deploymentModeEmbed")}
+              checked={isEmbedEnabled}
+              disabled={!agentId || isGenerating}
+              onCheckedChange={setEmbedEnabled}
+            />
           </div>
 
-        </label>
-
-        <label
-
-          htmlFor="deploy-rest"
-
-          className={cn(
-
-            "flex cursor-pointer items-start gap-3 rounded-lg border p-3",
-
-            mode === "rest" ? "border-primary bg-primary/5" : "border-border",
-
+          {isEmbedEnabled && !agentId && (
+            <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+              {t("createEdit.fields.deploymentRequiresAgent")}
+            </p>
           )}
 
+          {isEmbedEnabled && agentId && (
+            <Button type="button" size="sm" onClick={() => void handleGenerate()} disabled={isGenerating}>
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              {t("createEdit.actions.generateDeploymentSnippet")}
+            </Button>
+          )}
+        </div>
+
+        <div
+          className={cn(
+            "space-y-3 rounded-md border p-4",
+            isRestEnabled ? "border-primary bg-primary/5" : "border-border",
+          )}
         >
-
-          <RadioGroupItem value="rest" id="deploy-rest" className="mt-0.5" />
-
-          <div>
-
-            <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeRest")}</p>
-
-            <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeRestHint")}</p>
-
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeRest")}</p>
+              <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeRestHint")}</p>
+            </div>
+            <Switch
+              data-testid="rest-deployment-switch"
+              aria-label={t("createEdit.fields.deploymentModeRest")}
+              checked={isRestEnabled}
+              disabled={!agentId || isGenerating}
+              onCheckedChange={setRestEnabled}
+            />
           </div>
 
-        </label>
+          {isRestEnabled && !agentId && (
+            <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+              {t("createEdit.fields.deploymentRequiresAgent")}
+            </p>
+          )}
 
-      </RadioGroup>
+          {isRestEnabled && agentId && (
+            <Button type="button" size="sm" onClick={() => void handleGenerate()} disabled={isGenerating}>
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              {t("createEdit.actions.generateDeploymentSnippet")}
+            </Button>
+          )}
+        </div>
+      </div>
 
-
-
-      {!agentId ? (
-
-        <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-
-          {t("createEdit.fields.deploymentRequiresAgent")}
-
-        </p>
-
-      ) : (
-
-        <Button type="button" size="sm" onClick={() => void handleGenerate()} disabled={isGenerating}>
-
-          <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-
-          {t("createEdit.actions.generateDeploymentSnippet")}
-
-        </Button>
-
-      )}
-
-
-
-      {mode === "embed" && hasEmbed && (
-
+      {isEmbedEnabled && hasEmbed && (
         <IntegrationSnippetPanel
-
           title={t("createEdit.fields.deploymentSnippet")}
-
           hint={t("createEdit.fields.deploymentSnippetHint")}
-
           badge="HTML"
-
           lines={embedLines}
-
           isCopied={isCopied}
-
           copyLabel={t("createEdit.actions.copyDeploymentSnippet")}
-
           copiedLabel={t("createEdit.actions.deploymentSnippetCopiedShort")}
-
           onCopy={() => void handleCopyEmbed()}
-
         />
-
       )}
 
-
-
-      {mode === "rest" && hasRest && restSpec && <WidgetRestApiPanel spec={restSpec} />}
+      {isRestEnabled && hasRest && restSpec && <WidgetRestApiPanel spec={restSpec} />}
 
     </div>
 

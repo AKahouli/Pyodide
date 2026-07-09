@@ -242,6 +242,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'task':
     case 'error':
     case 'citation':
+    case 'chainOfThought':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
     case 'chart': {
@@ -1168,13 +1169,24 @@ export const useConversationStore = create<ConversationState>()(
         streamingBuffer.flush();
         streamingBuffer.clear();
 
-        // Move plan component to the top immediately (before API fetch returns)
+        // Move plan component to the top immediately (before API fetch returns),
+        // then chain-of-thought above it so it sits at the very top.
         set((s) => {
-          const planIndex = s.streamingComponents.findIndex((c) => c.type === 'plan');
-          if (planIndex <= 0) return s;
           const reordered = [...s.streamingComponents];
-          const [plan] = reordered.splice(planIndex, 1);
-          reordered.unshift(plan);
+
+          const planIndex = reordered.findIndex((c) => c.type === 'plan');
+          if (planIndex > 0) {
+            const [plan] = reordered.splice(planIndex, 1);
+            reordered.unshift(plan);
+          }
+
+          const cotIndex = reordered.findIndex((c) => c.type === 'chainOfThought');
+          if (cotIndex > 0) {
+            const [cot] = reordered.splice(cotIndex, 1);
+            reordered.unshift(cot);
+          }
+
+          if (planIndex <= 0 && cotIndex <= 0) return s;
           return { streamingComponents: reordered };
         });
 

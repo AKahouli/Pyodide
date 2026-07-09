@@ -117,7 +117,7 @@ export interface ChartComponentData extends Record<string, unknown> {
 }
 
 export interface MessageComponent {
-  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation';
+  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'chainOfThought';
   data: Record<string, unknown> | ChartComponentData;
 }
 

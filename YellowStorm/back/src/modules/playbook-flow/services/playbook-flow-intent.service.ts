@@ -1,5 +1,6 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
+import axios from 'axios';
+import { NotFoundException, ServiceUnavailableException, TooManyRequestsException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { AgentService } from '@modules/agent/agent.service';
@@ -381,7 +382,7 @@ export class PlaybookFlowIntentService {
 
   async analyze(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookFlowIntentResponse> {
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
-    const response = await context.httpClient.post('/v1/chat/completions', {
+    const responseData = await this.postChatCompletion(context, {
       model: context.model,
       temperature: 0.2,
       response_format: { type: 'json_object' },
@@ -389,8 +390,8 @@ export class PlaybookFlowIntentService {
         { role: 'system', content: context.systemPrompt },
         { role: 'user', content: context.userMessageContent },
       ],
-    }, { timeout: 180000 });
-    const rawOutput = this.extractChatCompletionText(response.data);
+    });
+    const rawOutput = this.extractChatCompletionText(responseData);
     const lastTrace = this.recordTrace(flowId, ownerId, 'intent.analyze', context, rawOutput);
 
     return {
@@ -408,7 +409,7 @@ export class PlaybookFlowIntentService {
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
       : context.userPrompt;
     const systemPrompt = prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt();
-    const response = await context.httpClient.post('/v1/chat/completions', {
+    const responseData = await this.postChatCompletion(context, {
       model: context.model,
       temperature: 0.1,
       response_format: { type: 'json_object' },
@@ -416,8 +417,8 @@ export class PlaybookFlowIntentService {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: this.buildUserMessageContent(userPrompt, dto) },
       ],
-    }, { timeout: 180000 });
-    const rawOutput = this.extractChatCompletionText(response.data);
+    });
+    const rawOutput = this.extractChatCompletionText(responseData);
     const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
       systemPromptOverride: systemPrompt,
       userPromptOverride: userPrompt,
@@ -1027,6 +1028,19 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       incomingBindings: bindings.filter((b) => b.targetNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, sourceNode: b.sourceNode || null, sourcePort: b.sourcePort || null, targetPort: b.targetPort })),
       outgoingBindings: bindings.filter((b) => b.sourceNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, targetNode: b.targetNode, targetPort: b.targetPort, sourcePort: b.sourcePort || null })),
     };
+  }
+
+  private async postChatCompletion(context: PlaybookIntentAnalysisContext, body: Record<string, unknown>): Promise<unknown> {
+    try {
+      const response = await context.httpClient.post('/v1/chat/completions', body, { timeout: 180000 });
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 429) {
+        this.logger.warn(`playbook_intent_llm_rate_limited model=${context.model}`);
+        throw new TooManyRequestsException('AI provider rate limit exceeded. Please retry shortly.');
+      }
+      throw error;
+    }
   }
 
   extractChatCompletionText(responseData: unknown): string {

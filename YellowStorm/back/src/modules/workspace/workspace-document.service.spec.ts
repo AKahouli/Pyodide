@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import axios from 'axios';
+import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
 

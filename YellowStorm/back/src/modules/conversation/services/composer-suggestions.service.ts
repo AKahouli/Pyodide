@@ -192,7 +192,7 @@ export class ComposerSuggestionsService {
     try {
       const { data } = await axios.post<{ status: string; content: string }>(
         `${adkUrl}/chatbots/chat_completion`,
-        { message, model, temperature: 0.4, max_tokens: 768 },
+        { message, model, temperature: 0, max_tokens: 10000 },
         {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
           timeout: 60_000,

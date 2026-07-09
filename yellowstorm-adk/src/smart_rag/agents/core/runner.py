@@ -21,7 +21,9 @@ from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
+from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
+from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -139,6 +141,8 @@ class AgentRunner:
         agent_config: Optional[dict] = None,
         function_call_id_info: Optional[dict] = None,
         image_input: Optional[list] = None,
+        session_id: Optional[str] = None,
+        seed_events: Optional[list] = None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -169,14 +173,34 @@ class AgentRunner:
             if hasattr(agent, "_mcp_search_state"):
                 initial_state.update(agent._mcp_search_state)
 
-            # Create a simple session to examine its properties
-            session_id = f"session-{uuid.uuid4()}"
-            session = await session_helper.create_session(
-                app_name="manager_app",
-                user_id=user_id,
-                session_id=session_id,
-                state=initial_state or None,
-            )
+            # When a session_id is provided, reuse the conversation's session so
+            # history carries across turns; otherwise mint an ephemeral one
+            # (sub-agents / one-shot runs).
+            if session_id is None:
+                session_id = f"session-{uuid.uuid4()}"
+                session = await session_helper.create_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                    state=initial_state or None,
+                )
+            else:
+                session = await session_helper.get_session(
+                    app_name="manager_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+                if session is None:
+                    session = await session_helper.create_session(
+                        app_name="manager_app",
+                        user_id=user_id,
+                        session_id=session_id,
+                        state=initial_state or None,
+                    )
+                    # Seed a read-only snapshot of the shared conversation so this
+                    for seed_event in (seed_events or []):
+                        await session_helper.append_event(session, seed_event)
+            logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
 
         except Exception as e:
             logger.error(
@@ -225,23 +249,6 @@ class AgentRunner:
         )
         await q.put(output)
 
-        # The expected_output contains internal agent instructions (JSON schemas)
-        # that should not be displayed to users. It's only used to guide the agent's response format.
-        # This prevents internal implementation details from leaking into the UI.
-        #
-        # if expected_output:
-        # the client chunks format_streaming_event
-        #     expected_output_event = self.streaming_formatter.format_streaming_event(
-        #         agent_id=agent_id,
-        #         agent_name=agent_name,
-        #         agent_type=agent_type,
-        #         chunk=expected_output,
-        #         message_id=session_id,
-        #         content_type="expected_output"
-        #     )
-        #     logger.info(f"[AGENT RUNNER] Sending expected output to backend - agent_name: {agent_name}, session_id: {session_id}")
-        #  send it to outgoing stream queue
-        #     await q.put(expected_output_event)
 
         try:
             if agent_type != "html":
@@ -259,6 +266,7 @@ class AgentRunner:
                     mcp_tools_used,
                     agent_id,
                     session,
+                    agent_config,
                 )
             else:
                 return await self._run_html_agent(
@@ -284,6 +292,7 @@ class AgentRunner:
         mcp_tools_used,
         agent_id,
         session=None,
+        agent_config=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -312,6 +321,11 @@ class AgentRunner:
         citation_mapping = {}
         # Track current text component ID for citation parent_id
         current_text_component_id = None
+        # Chain-of-thought: one growing component that collects a tool title per
+        # tool call, appended in place.
+        cot_steps = []                    # ordered list of tool title strings
+        cot_component_id = str(uuid.uuid4())
+        cot_sent = False
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -439,6 +453,28 @@ class AgentRunner:
                         recorder.record_function_call(
                             func_name, dict(part.function_call.args), tool_category
                         )
+
+                        # Chain-of-thought: append this tool title as a step
+                        if q:
+                            cot_steps.append(func_name)
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="chain_of_thought",
+                                    component_data={"steps": list(cot_steps)},
+                                    message_id=session_id,
+                                    component_id=cot_component_id,
+                                    action="update" if cot_sent else "add",
+                                )
+                            )
+                            cot_sent = True
+                            logger.info(
+                                f"[CHAIN_OF_THOUGHT] Appended step - title: {func_name}, steps: {len(cot_steps)}, agent: {agent_name}"
+                            )
+
+                            if self.streaming_formatter.component_tracker:
+                                self.streaming_formatter.component_tracker.finish_component(agent_id)
+                            current_text_component_id = None
 
                         # Send newline chunk for visual separation before any tool execution
                         if q:
@@ -577,6 +613,29 @@ class AgentRunner:
 
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
+
+                        response_payload = part.function_response.response
+                        if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):
+                            ceph_path = response_payload.get("ceph_path", "")
+                            filename = (response_payload.get("path") or ceph_path).rstrip("/").split("/")[-1]
+                            artifact_kind = infer_artifact_kind(filename) or "document"
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="artifact",
+                                    component_data={
+                                        "file_path": ceph_path,
+                                        "filename": filename,
+                                        "artifact_kind": artifact_kind,
+                                        "output_port_id": "",
+                                    },
+                                    message_id=session_id,
+                                )
+                            )
+                            logger.info(
+                                f"[ARTIFACT] Ceph file artifact emitted - filename: {filename}, kind: {artifact_kind}, ceph_path: {ceph_path}, agent: {agent_name}"
+                            )
+
                         if func_name == "generate_ui" and q:
                             await self._handle_dataviz_response(
                                 part.function_response,
@@ -706,6 +765,7 @@ class AgentRunner:
                         q,
                         session_id,
                         citation_mapping,
+                        agent_config,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -923,6 +983,7 @@ class AgentRunner:
         q,
         session_id,
         citation_mapping: Optional[Dict[str, str]] = None,
+        agent_config: Optional[dict] = None,
     ):
         """Handle final response from agent."""
         # Safely handle empty parts list
@@ -986,7 +1047,12 @@ class AgentRunner:
                 ui_reference,
             )
 
-        return event_text
+        guarded = await PromptInjectionGuardrail().check_output(
+            text=event_text,
+            agent_config=agent_config or {},
+        )
+
+        return guarded.text
 
     async def _replace_diagram_references_during_streaming(
         self, text: str, session_id: str

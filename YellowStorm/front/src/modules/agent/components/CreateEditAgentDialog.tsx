@@ -41,6 +41,7 @@ import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSecti
 import { AgentDeploymentSection } from "./AgentDeploymentSection";
 import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
 import { AgentConnectorFields } from './AgentConnectorFields';
+import { AgentGuardrailsTab } from './AgentGuardrailsTab';
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -48,8 +49,28 @@ import { getWorkspaces } from "@/modules/workspace";
 import type { Workspace } from "@/modules/workspace/types";
 import type { Agent } from "../types";
 import type { SkillOption } from '../types';
+import { getAdminGuardrailsSettings } from '@/modules/admin/api';
+import type { AdminGuardrailsSettings } from '@/modules/admin/types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
+
+type LegacyPromptInjectionGuardrails = Partial<UserAgentFormValues['guardrails']['promptInjection']> & {
+  classifierPrompt?: string;
+};
+
+function normalizeGuardrails(value?: { promptInjection?: LegacyPromptInjectionGuardrails }): UserAgentFormValues['guardrails'] {
+  const promptInjection = value?.promptInjection || {};
+  const legacyPrompt = promptInjection.classifierPrompt;
+  return {
+    promptInjection: {
+      ...defaultFormValues.guardrails.promptInjection,
+      ...promptInjection,
+      inputClassifierPrompt: promptInjection.inputClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.inputClassifierPrompt,
+      outputClassifierPrompt: promptInjection.outputClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.outputClassifierPrompt,
+      toolCallClassifierPrompt: promptInjection.toolCallClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.toolCallClassifierPrompt,
+    },
+  };
+}
 
 function slugifyAgentName(value: string): string {
   return value
@@ -70,14 +91,18 @@ const AGENT_FORM_TABS = [
   { value: 'tools', labelKey: 'createEdit.tabs.tools', tipKey: 'createEdit.tabs.toolsTip' },
   { value: 'skills', labelKey: 'createEdit.tabs.skills', tipKey: 'createEdit.tabs.skillsTip' },
   { value: 'connectors', labelKey: 'createEdit.tabs.connectors', tipKey: 'createEdit.tabs.connectorsTip' },
+  { value: 'guardrails', labelKey: 'createEdit.tabs.guardrails', tipKey: 'createEdit.tabs.guardrailsTip' },
   { value: 'deployment', labelKey: 'createEdit.tabs.deployment', tipKey: 'createEdit.tabs.deploymentTip' },
   { value: 'evaluation', labelKey: 'createEdit.tabs.evaluation', tipKey: 'createEdit.tabs.evaluationTip' },
 ] as const;
+
+type AgentFormTab = (typeof AGENT_FORM_TABS)[number]['value'];
 
 interface CreateEditAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent: Agent | null;
+  initialTab?: AgentFormTab;
   onSave: (data: UserAgentFormValues) => void;
   saving: boolean;
 }
@@ -86,6 +111,7 @@ export function CreateEditAgentDialog({
   open,
   onOpenChange,
   agent,
+  initialTab = 'identity',
   onSave,
   saving,
 }: CreateEditAgentDialogProps) {
@@ -96,6 +122,7 @@ export function CreateEditAgentDialog({
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorOption[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
+  const [adminGuardrails, setAdminGuardrails] = useState<AdminGuardrailsSettings | null>(null);
   const slugEditedRef = useRef(false);
   const loadedAgentTypeId = useRef<string | null>(null);
   const { t } = useModuleTranslation('agent');
@@ -125,11 +152,13 @@ export function CreateEditAgentDialog({
         getActiveSkills().catch(() => [] as SkillOption[]),
         getActiveConnectors().catch(() => [] as ConnectorOption[]),
         getWorkspaces({ limit: 100 }).then((res) => res.workspaces).catch(() => [] as Workspace[]),
-      ]).then(([, , tools, skills, connectors, ws]) => {
+        getAdminGuardrailsSettings().catch(() => null),
+      ]).then(([, , tools, skills, connectors, ws, guardrailsSettings]) => {
         setAvailableTools(tools || []);
         setAvailableSkills(skills || []);
         setAvailableConnectors(connectors || []);
         setWorkspaces(ws || []);
+        setAdminGuardrails(guardrailsSettings);
 
         if (agent) {
           reset({
@@ -150,6 +179,8 @@ export function CreateEditAgentDialog({
             connectorActionSelections: agent.connectorActionSelections || [],
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
+            guardrails: normalizeGuardrails(agent.guardrails),
+            deploymentSettings: agent.deploymentSettings ?? defaultFormValues.deploymentSettings,
           });
         } else {
           reset(defaultFormValues);
@@ -184,6 +215,9 @@ export function CreateEditAgentDialog({
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
   const watchedConnectorActionSelections = watch('connectorActionSelections');
+  const watchedGuardrails = watch('guardrails.promptInjection');
+  const watchedDeploymentSettings = watch('deploymentSettings');
+  const forceGuardrails = adminGuardrails?.forceActivation === true;
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
@@ -241,7 +275,7 @@ export function CreateEditAgentDialog({
             onSubmit={handleSubmit(onSave, scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
-            <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
+            <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
               <TooltipProvider delayDuration={300}>
                 <div className="w-full shrink-0 overflow-x-auto">
                   <TabsList className="inline-flex h-auto w-max max-w-none flex-nowrap justify-start gap-0.5">
@@ -534,13 +568,32 @@ export function CreateEditAgentDialog({
                       onConnectorActionSelectionsChange={(selections) => setValue('connectorActionSelections', selections, { shouldDirty: true, shouldValidate: true })}
                     />
 
-                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
-                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
                   </div>
                 </TabsContent>
 
+                <TabsContent value="guardrails" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <AgentGuardrailsTab
+                    value={watchedGuardrails}
+                    disabled={forceGuardrails}
+                    forceActivation={forceGuardrails}
+                    onChange={(next) => setValue('guardrails.promptInjection', next, { shouldDirty: true, shouldValidate: true })}
+                  />
+                </TabsContent>
+
                 <TabsContent value="deployment" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <AgentDeploymentSection agentId={agent?.id ?? null} agentName={watchedName} />
+                  <div className="grid gap-4">
+                    <AgentDeploymentSection
+                      agentId={agent?.id ?? null}
+                      agentName={watchedName}
+                      value={watchedDeploymentSettings}
+                      onChange={(next) => setValue('deploymentSettings', next, { shouldDirty: true, shouldValidate: true })}
+                    />
+                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection
+                      agentId={agent?.id ?? null}
+                      agentName={watchedName || agent?.name}
+                    />
+                  </div>
                 </TabsContent>
 
                   {/* Evaluation Tab */}

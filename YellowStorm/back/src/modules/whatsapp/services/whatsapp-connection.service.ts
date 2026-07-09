@@ -81,6 +81,26 @@ export class WhatsAppConnectionService {
     return this.sessionManager.getPairingSnapshot(sessionId) ?? {};
   }
 
+  /**
+   * Trigger automatic reconnect when the frontend reports FAILED (échec).
+   * Idempotent while a recovery is already scheduled or the socket is active.
+   */
+  async autoRecover(userId: string, agentId: string): Promise<WhatsAppIntegrationResponseDto> {
+    this.assertEnabled();
+    const integration = await this.integrationService.getDocumentByAgentForUser(userId, agentId);
+    if (
+      integration.status === WhatsAppIntegrationStatus.FAILED &&
+      integration.sessionId
+    ) {
+      this.sessionManager.requestRecovery(
+        toAgentIntegrationRef(integration),
+        integration.sessionId,
+        'Frontend auto-recover after FAILED',
+      );
+    }
+    return this.integrationService.toResponse(integration);
+  }
+
   async reconnect(
     userId: string,
     agentId: string,

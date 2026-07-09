@@ -41,5 +41,6 @@ import { TelegramWebhookService } from './services/telegram-webhook.service';
     TelegramLinkCodeService,
     TelegramWebhookService,
   ],
+  exports: [TelegramIntegrationService],
 })
 export class TelegramModule {}

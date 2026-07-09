@@ -1711,6 +1711,10 @@ class ChatbotServicer(
             component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
                 content=component_data.get("content", "")
             )
+        elif component_type == "chain_of_thought":
+            component_kwargs["chain_of_thought"] = chatbot_pb2.ChainOfThoughtComponent(
+                steps=[str(step) for step in component_data.get("steps", [])],
+            )
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []
@@ -1795,6 +1799,15 @@ class ChatbotServicer(
                 error=component_data.get("error", ""),
                 output_available=component_data.get("output_available", False),
             )
+        elif component_type == "tool_info":
+            tool_info = chatbot_pb2.ToolInfoComponent(
+                title=component_data.get("title", ""),
+                status=component_data.get("status", ""),
+            )
+            params = component_data.get("params")
+            if params:
+                tool_info.params = params
+            component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
                 content=component_data.get("content", "")
@@ -1952,7 +1965,7 @@ class ChatbotServicer(
                 messages=[{"role": "user", "content": prompt}],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
-                temperature=0.7,
+                temperature=1,
                 max_tokens=50,
             )
 

@@ -166,6 +166,26 @@ export function AgentTelegramIntegrationSection({
     }
   };
 
+  const handleEnabledChange = async (nextEnabled: boolean) => {
+    setEnabled(nextEnabled);
+    if (nextEnabled || !agentId || !integration) return;
+
+    setSaving(true);
+    try {
+      const updated = await upsertAgentTelegramIntegration(agentId, { enabled: false });
+      setIntegration(updated);
+      setBotToken("");
+      showSaveFeedback(updated);
+    } catch (err) {
+      setEnabled(true);
+      showWarning(t("createEdit.fields.telegramSaveFailed"), {
+        description: err instanceof Error ? err.message : t("list.errors.unknownError"),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleRemove = async () => {
     if (!agentId) return;
     setSaving(true);
@@ -218,7 +238,7 @@ export function AgentTelegramIntegrationSection({
           data-testid="telegram-switch"
           checked={enabled}
           disabled={!agentId || saving || loading}
-          onCheckedChange={setEnabled}
+          onCheckedChange={(checked) => void handleEnabledChange(checked)}
         />
       </div>
 
@@ -300,7 +320,7 @@ export function AgentTelegramIntegrationSection({
         </div>
       )}
 
-      {agentId && (
+      {agentId && (enabled || integration) && (
         <div className="flex items-center justify-end gap-2 pt-1">
           {integration && (
             <Button
@@ -313,16 +333,18 @@ export function AgentTelegramIntegrationSection({
               {t("createEdit.fields.telegramRemove")}
             </Button>
           )}
-          <Button type="button" size="sm" onClick={handleSave} disabled={saving || loading}>
-            {saving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {t("createEdit.actions.saving")}
-              </>
-            ) : (
-              t("createEdit.fields.telegramSave")
-            )}
-          </Button>
+          {enabled && (
+            <Button type="button" size="sm" onClick={handleSave} disabled={saving || loading}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t("createEdit.actions.saving")}
+                </>
+              ) : (
+                t("createEdit.fields.telegramSave")
+              )}
+            </Button>
+          )}
         </div>
       )}
     </div>

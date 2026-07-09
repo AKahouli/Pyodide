@@ -28,7 +28,8 @@ This guide explains how to add new component types to the AI message system. Com
 | `back/src/modules/conversation/proto/chatbot.proto` | Define the component structure (contract with AI service) |
 | `back/src/modules/conversation/interfaces/message.interface.ts` | TypeScript type for component types |
 | `back/src/modules/conversation/schemas/message.schema.ts` | MongoDB schema validation |
-| `back/src/modules/conversation/services/stream.service.ts` | Process incoming gRPC chunks |
+| `back/src/modules/conversation/utils/component-mapper.ts` | Detect component type + extract data from the proto oneof |
+| `back/src/modules/conversation/services/stream.service.ts` | Process incoming gRPC chunks (merge/streaming behavior) |
 | `front/src/modules/conversation/types.ts` | Frontend MessageComponent type |
 | `front/src/modules/conversation/utils.ts` | Map backend components to frontend parts |
 | `front/src/components/ai-elements/ai-message-content.tsx` | Frontend part types and renderer |
@@ -109,48 +110,51 @@ type!: string;
 components?: MessageComponentSchema[];
 ```
 
-### Step 4: Update Stream Service
+### Step 4: Update the Component Mapper (type detection + extraction)
 
-**File:** `back/src/modules/conversation/services/stream.service.ts`
+**File:** `back/src/modules/conversation/utils/component-mapper.ts`
 
-#### 4a. Add type detection in `getComponentType()`:
+`stream.service.ts` delegates `getComponentType()` and `extractComponentData()` to
+this shared mapper (so widget/telegram/single-agent paths stay in sync). Update it
+in three places.
+
+#### 4a. Register the proto oneof field in `ONEOF_FIELD_TYPES`:
 
 ```typescript
-private getComponentType(comp: any): ComponentType {
-  if (comp.text) return 'text';
-  if (comp.code) return 'code';
-  // ... existing checks ...
-  if (comp.myNew) return 'myNew';  // <-- Add here
-  return 'text';
-}
+const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
+  // ... existing entries ...
+  { field: 'my_new', type: 'myNew' },  // <-- proto field name (keepCase), internal type
+];
 ```
+
+Also add the type to `LEGACY_TYPE_MAP` (for messages persisted in the older
+`{ type, data }` shape) and add a `case 'myNew':` to `oneofPayloadHasContent()`
+so an empty oneof branch isn't mistaken for real content.
 
 #### 4b. Add data extraction in `extractComponentData()`:
 
 ```typescript
-private extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
-  const type = this.getComponentType(comp);
+switch (type) {
+  // ... existing cases ...
 
-  switch (type) {
-    // ... existing cases ...
+  case 'myNew':
+    return {
+      type,
+      data: {
+        title: comp.my_new?.title || '',
+        items: comp.my_new?.items || [],
+        status: comp.my_new?.status || 'pending',
+      },
+    };
 
-    case 'myNew':
-      return {
-        type,
-        data: {
-          title: comp.myNew?.title || '',
-          items: comp.myNew?.items || [],
-          status: comp.myNew?.status || 'pending',
-        },
-      };
-
-    default:
-      return { type: 'text', data: { content: '' } };
-  }
+  default:
+    return { type: 'text', data: { content: '' } };
 }
 ```
 
 #### 4c. Add merge behavior in `mergeComponentData()`:
+
+**File:** `back/src/modules/conversation/services/stream.service.ts`
 
 Choose based on your component's streaming behavior:
 
@@ -406,9 +410,9 @@ Use this checklist when adding a new component:
 - [ ] **Interface**: Added to `ComponentType` union in `message.interface.ts`
 - [ ] **Schema**: Added to enum in `MessageComponentSchema` class (line ~7)
 - [ ] **Schema**: Added to enum in `components` prop (line ~30)
-- [ ] **Stream**: Added detection in `getComponentType()`
-- [ ] **Stream**: Added extraction in `extractComponentData()`
-- [ ] **Stream**: Added merge behavior in `mergeComponentData()`
+- [ ] **Mapper**: Registered oneof field in `ONEOF_FIELD_TYPES` (+ `LEGACY_TYPE_MAP` + `oneofPayloadHasContent()`) in `component-mapper.ts`
+- [ ] **Mapper**: Added extraction case in `extractComponentData()` in `component-mapper.ts`
+- [ ] **Stream**: Added merge behavior in `mergeComponentData()` in `stream.service.ts`
 
 ### Frontend
 - [ ] **Types**: Added to `MessageComponent.type` union in `types.ts`
@@ -421,6 +425,15 @@ Use this checklist when adding a new component:
 ### Testing
 - [ ] **Mock**: Added chunk builder function
 - [ ] **Mock**: Added to `allChunks` in `runAgentTeam()`
+
+### Optional: pin a component to the top
+Some components (e.g. `plan`, `chainOfThought`) must render above the rest of the
+message regardless of when they streamed. That order is enforced in two places —
+add a `findIndex(...) + splice + unshift` block to both:
+- `stream.service.ts` `call.on('end')` (persisted order)
+- `store.ts` `handleStreamComplete` (live streaming order)
+
+Later `unshift`es win, so pin the highest-priority component last.
 
 ---
 
@@ -493,6 +506,198 @@ const SourcesPartRenderer = ({
         </SourcesContent>
     </Sources>
 );
+```
+
+</details>
+
+---
+
+## Example: Tool Info Component
+
+The `toolInfo` component reports a single tool execution and its status. It is a
+good example of the **add-then-update** flow: the ADK sends `add` with
+`status: "running"` when a tool call starts, then `update` (same component id)
+with `status: "completed"` or `"failed"` when it returns. Because each chunk
+carries the full state, `mergeComponentData()` **replaces** on update.
+
+<details>
+<summary>Click to expand full example</summary>
+
+### Proto Definition
+```protobuf
+message ToolInfoComponent {
+    string title = 1;            // Tool name / label
+    string status = 2;           // running | completed | failed
+    string params = 3;           // JSON object of tool-call arguments {name: value}
+}
+
+// In the Component oneof:
+ToolInfoComponent tool_info = 16;
+```
+
+### Component Mapper (`component-mapper.ts`)
+```typescript
+// ONEOF_FIELD_TYPES
+{ field: 'tool_info', type: 'toolInfo' },
+
+// LEGACY_TYPE_MAP
+tool_info: 'toolInfo',
+toolInfo: 'toolInfo',
+
+// oneofPayloadHasContent()
+case 'toolInfo':
+  return (
+    (typeof payload.title === 'string' && payload.title.length > 0) ||
+    (typeof payload.status === 'string' && payload.status.length > 0)
+  );
+
+// extractComponentData()
+case 'toolInfo':
+  return {
+    type,
+    data: {
+      title: comp.tool_info?.title || '',
+      status: comp.tool_info?.status || 'running',
+      params: comp.tool_info?.params || '',
+    },
+  };
+```
+
+### Stream Service merge (`stream.service.ts`)
+`params` (the tool-call args) only arrives on the initial `add`; the `update`
+chunk carries just the final status. So `toolInfo` can't use the blanket
+replace — it needs its own case that preserves `params`:
+```typescript
+case 'toolInfo':
+  return {
+    title: (incoming.title as string) || (existing.title as string) || '',
+    status: (incoming.status as string) || (existing.status as string) || 'running',
+    params: (incoming.params as string) || (existing.params as string) || '',
+  };
+```
+
+### Frontend Part + Renderer (`ai-message-content.tsx`)
+
+The renderer reuses the official **ai-elements `Tool`** component
+(`src/components/ai-elements/tool.tsx`, installable via
+`npx ai-elements@latest add tool`) rather than a hand-rolled element. Since the
+proto only carries `title` + `status`, we map the status onto the Tool
+component's UI states and render just the header.
+
+```typescript
+import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
+import type { ToolUIPart } from 'ai';
+
+export interface ToolInfoPart {
+    type: 'toolInfo';
+    title: string;
+    status: 'running' | 'completed' | 'failed';
+    params?: string; // JSON string of the tool-call arguments
+}
+
+const TOOL_INFO_STATE_MAP = {
+    running: 'input-available',
+    completed: 'output-available',
+    failed: 'output-error',
+} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
+
+// params is a JSON string — parse it so ToolInput can pretty-print the object.
+const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
+    const parsedParams = useMemo(() => parseToolParams(params), [params]);
+    return (
+        <Tool className="my-2">
+            <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
+            {parsedParams !== undefined && (
+                <ToolContent>
+                    <ToolInput input={parsedParams} />
+                </ToolContent>
+            )}
+        </Tool>
+    );
+};
+```
+
+</details>
+
+---
+
+## Example: Chain of Thought Component
+
+The `chainOfThought` component renders a **collapsed** list of reasoning step
+titles pinned to the **top** of the response. It shows two extra wrinkles: a
+minimal `repeated string` payload, and top-pinning (see the checklist's
+"pin a component to the top").
+
+<details>
+<summary>Click to expand full example</summary>
+
+### Proto Definition
+```protobuf
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles
+}
+
+// In the Component oneof:
+ChainOfThoughtComponent chain_of_thought = 17;
+```
+
+### Component Mapper (`component-mapper.ts`)
+```typescript
+// ONEOF_FIELD_TYPES
+{ field: 'chain_of_thought', type: 'chainOfThought' },
+
+// LEGACY_TYPE_MAP
+chain_of_thought: 'chainOfThought',
+chainOfThought: 'chainOfThought',
+
+// oneofPayloadHasContent()
+case 'chainOfThought':
+  return Array.isArray(payload.steps) && payload.steps.length > 0;
+
+// extractComponentData()
+case 'chainOfThought':
+  return { type, data: { steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')) } };
+```
+
+### Merge + pin-to-top
+`mergeComponentData()` (Nest) and `mergeStreamingData()` (store) both add
+`case 'chainOfThought': return { ...incoming };` (replace on update). Then pin it
+above everything — after the plan move — in both `stream.service.ts` `on('end')`
+and `store.ts` `handleStreamComplete`:
+```typescript
+const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
+if (cotIndex > 0) {
+  const [cot] = components.splice(cotIndex, 1);
+  components.unshift(cot);
+}
+```
+
+### Frontend Part + Renderer (`ai-message-content.tsx`)
+
+Reuses the ai-elements **`ChainOfThought`** component with `defaultOpen={false}`
+so it's collapsed by default and the user can toggle it.
+```typescript
+import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
+
+export interface ChainOfThoughtPart {
+    type: 'chainOfThought';
+    steps: string[];
+}
+
+const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
+    const { t: tCommon } = useModuleTranslation('common');
+    if (!steps.length) return null;
+    return (
+        <ChainOfThought className="my-2" defaultOpen={false}>
+            <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
+            <ChainOfThoughtContent>
+                {steps.map((step, index) => (
+                    <ChainOfThoughtStep key={index} label={step} />
+                ))}
+            </ChainOfThoughtContent>
+        </ChainOfThought>
+    );
+};
 ```
 
 </details>

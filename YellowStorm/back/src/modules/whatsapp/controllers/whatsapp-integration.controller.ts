@@ -1,10 +1,12 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
 } from '@nestjs/common';
 import {
@@ -19,6 +21,7 @@ import { UserDocument } from '@modules/user/schemas/user.schema';
 import { WhatsAppConnectResponseDto } from '../dto/whatsapp-connect-response.dto';
 import { WhatsAppIntegrationResponseDto } from '../dto/whatsapp-integration-response.dto';
 import { WhatsAppPairingResponseDto } from '../dto/whatsapp-pairing-response.dto';
+import { UpdateWhatsAppEnabledDto } from '../dto/update-whatsapp-enabled.dto';
 import { WhatsAppConnectionService } from '../services/whatsapp-connection.service';
 import { WhatsAppIntegrationService } from '../services/whatsapp-integration.service';
 
@@ -42,6 +45,17 @@ export class WhatsAppIntegrationController {
     return this.integrationService.getByAgentForUser(user._id.toString(), agentId);
   }
 
+  @Post('auto-recover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Notify backend to auto-reconnect after FAILED status' })
+  @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
+  async autoRecover(
+    @CurrentUser() user: UserDocument,
+    @Param('agentId') agentId: string,
+  ): Promise<WhatsAppIntegrationResponseDto> {
+    return this.connectionService.autoRecover(user._id.toString(), agentId);
+  }
+
   @Post('connect')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start WhatsApp pairing for this agent' })
@@ -51,6 +65,17 @@ export class WhatsAppIntegrationController {
     @Param('agentId') agentId: string,
   ): Promise<WhatsAppConnectResponseDto> {
     return this.connectionService.connect(user._id.toString(), agentId);
+  }
+
+  @Patch('enabled')
+  @ApiOperation({ summary: 'Enable or disable WhatsApp for this agent deployment' })
+  @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
+  async updateEnabled(
+    @CurrentUser() user: UserDocument,
+    @Param('agentId') agentId: string,
+    @Body() body: UpdateWhatsAppEnabledDto,
+  ): Promise<WhatsAppIntegrationResponseDto> {
+    return this.integrationService.updateEnabled(user._id.toString(), agentId, body.enabled);
   }
 
   @Get(':sessionId/pairing')

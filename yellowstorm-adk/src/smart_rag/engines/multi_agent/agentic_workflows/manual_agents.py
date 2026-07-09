@@ -5,6 +5,7 @@ from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
+from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.routers.agentic_rag.manual_agents")
 
@@ -108,6 +109,26 @@ async def handle_agents_provided_workflow(
             )
 
         logger.info(f"[MANUAL WORKFLOW] Added {len(filtered_agents)} agents to team - session_id: {user_request.session_id}")
+
+        guardrail_agent_config = next(iter(team.agent_repository.get_all_agents()), {})
+        guarded = await PromptInjectionGuardrail().check_input(
+            text=user_request.message,
+            agent_config=guardrail_agent_config,
+            channel=getattr(user_request, "channel", "web"),
+        )
+        if guarded.blocked:
+            agent_provided_span.update(output={"execution_completed": False, "guardrail_blocked": True})
+            await q.put(team.streaming_formatter.format_streaming_event(
+                agent_id=guardrail_agent_config.get("id", "no_id"),
+                agent_name=guardrail_agent_config.get("name", "agent"),
+                agent_type="agent",
+                chunk=guarded.text,
+                message_id=session_id,
+                content_type="text",
+            ))
+            await q.put(None)
+            return
+        user_request.message = guarded.text
 
         # Finalize agent configurations before running
         team.agent_helper.pre_agent_run_config(report_writer_prompt,html_agent_prompt, team.agent_repository.get_all_agents(), fallback_chatbot_name,response_format_for_html_agents)

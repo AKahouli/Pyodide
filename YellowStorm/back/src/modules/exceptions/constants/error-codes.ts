@@ -316,6 +316,7 @@ export enum ErrorCode {
   WIDGET_AI_UNAVAILABLE = 'ERR_3406',
   WIDGET_MESSAGE_LIMIT = 'ERR_3407',
   WIDGET_TOKEN_NOT_FOUND = 'ERR_3408',
+  WIDGET_CITATION_NOT_FOUND = 'ERR_3409',
 
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
@@ -361,6 +362,29 @@ export enum ErrorCode {
   WORKY_OWNER_MEMORY_FORBIDDEN = 'ERR_3528',
   WORKY_REPLAN_REJECTED = 'ERR_3529',
   WORKY_NO_DEFAULT_MODEL = 'ERR_3530',
+
+  // Governance errors (3600-3699)
+  GOVERNANCE_PROGRAM_NOT_FOUND = 'ERR_3600',
+  GOVERNANCE_PROGRAM_NAME_EXISTS = 'ERR_3601',
+  GOVERNANCE_PROGRAM_DELETE_BLOCKED = 'ERR_3602',
+  GOVERNANCE_SCOPE_NOT_FOUND = 'ERR_3610',
+  GOVERNANCE_SCOPE_NAME_EXISTS = 'ERR_3611',
+  GOVERNANCE_SCOPE_PARENT_INVALID = 'ERR_3612',
+  GOVERNANCE_SCOPE_DELETE_BLOCKED = 'ERR_3613',
+  GOVERNANCE_SOURCE_NOT_FOUND = 'ERR_3620',
+  GOVERNANCE_SOURCE_SCOPE_INVALID = 'ERR_3621',
+  GOVERNANCE_MEMBERSHIP_NOT_FOUND = 'ERR_3630',
+  GOVERNANCE_MEMBERSHIP_EXISTS = 'ERR_3631',
+  GOVERNANCE_ACCESS_DENIED = 'ERR_3632',
+  GOVERNANCE_DEPLOYMENT_NOT_FOUND = 'ERR_3640',
+  GOVERNANCE_DEPLOYMENT_EXISTS = 'ERR_3641',
+  GOVERNANCE_REVISION_NOT_FOUND = 'ERR_3650',
+  GOVERNANCE_REVISION_IMMUTABLE = 'ERR_3651',
+  GOVERNANCE_NO_DRAFT_REVISION = 'ERR_3652',
+  GOVERNANCE_NO_PUBLISHED_REVISION = 'ERR_3653',
+  GOVERNANCE_DRY_RUN_NOT_FOUND = 'ERR_3660',
+  GOVERNANCE_PUBLISH_BLOCKED = 'ERR_3670',
+  GOVERNANCE_CHANNEL_NOT_READY = 'ERR_3671',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -598,6 +622,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WIDGET_AI_UNAVAILABLE]: 'AI service is currently unavailable for the widget.',
   [ErrorCode.WIDGET_MESSAGE_LIMIT]: 'Widget message limit reached for this session.',
   [ErrorCode.WIDGET_TOKEN_NOT_FOUND]: 'Widget token not found.',
+  [ErrorCode.WIDGET_CITATION_NOT_FOUND]: 'Citation source document not found in storage.',
 
   [ErrorCode.CONNECTED_APP_NOT_FOUND]: 'Connected app not found.',
   [ErrorCode.CONNECTED_APP_ALREADY_EXISTS]: 'A connected app with this key already exists.',
@@ -640,6 +665,28 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKY_REPLAN_REJECTED]: 'Plan-delta replan was rejected by the auto-apply guard.',
   [ErrorCode.WORKY_NO_DEFAULT_MODEL]:
     'No model is configured for this Worky stream. Select a model in the prompt bar or set a default in Admin > Models.',
+
+  [ErrorCode.GOVERNANCE_PROGRAM_NOT_FOUND]: 'Governance program not found.',
+  [ErrorCode.GOVERNANCE_PROGRAM_NAME_EXISTS]: 'A governance program with this name already exists.',
+  [ErrorCode.GOVERNANCE_PROGRAM_DELETE_BLOCKED]: 'Governance program cannot be deleted while scopes or sources exist.',
+  [ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND]: 'Governance scope not found.',
+  [ErrorCode.GOVERNANCE_SCOPE_NAME_EXISTS]: 'A governance scope with this name already exists in this program.',
+  [ErrorCode.GOVERNANCE_SCOPE_PARENT_INVALID]: 'Parent governance scope must belong to the same program.',
+  [ErrorCode.GOVERNANCE_SCOPE_DELETE_BLOCKED]: 'Governance scope cannot be deleted while child scopes or sources reference it.',
+  [ErrorCode.GOVERNANCE_SOURCE_NOT_FOUND]: 'Governance source not found.',
+  [ErrorCode.GOVERNANCE_SOURCE_SCOPE_INVALID]: 'Governance source scopes must belong to the same program.',
+  [ErrorCode.GOVERNANCE_MEMBERSHIP_NOT_FOUND]: 'Governance membership not found.',
+  [ErrorCode.GOVERNANCE_MEMBERSHIP_EXISTS]: 'A governance membership already exists for this user and scope.',
+  [ErrorCode.GOVERNANCE_ACCESS_DENIED]: 'You do not have access to this governance scope.',
+  [ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND]: 'Governance deployment not found.',
+  [ErrorCode.GOVERNANCE_DEPLOYMENT_EXISTS]: 'A governance deployment already exists for this scope.',
+  [ErrorCode.GOVERNANCE_REVISION_NOT_FOUND]: 'Governance deployment revision not found.',
+  [ErrorCode.GOVERNANCE_REVISION_IMMUTABLE]: 'Published governance revisions cannot be changed.',
+  [ErrorCode.GOVERNANCE_NO_DRAFT_REVISION]: 'This governance deployment has no draft revision.',
+  [ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION]: 'This governance deployment has no published revision.',
+  [ErrorCode.GOVERNANCE_DRY_RUN_NOT_FOUND]: 'Governance dry-run not found.',
+  [ErrorCode.GOVERNANCE_PUBLISH_BLOCKED]: 'Governance publication is blocked by readiness checks.',
+  [ErrorCode.GOVERNANCE_CHANNEL_NOT_READY]: 'One or more governance channels are not ready.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

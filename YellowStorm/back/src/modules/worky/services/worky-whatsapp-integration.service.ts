@@ -170,6 +170,7 @@ export class WorkyWhatsAppIntegrationService {
   }
 
   toResponse(integration: {
+    enabled?: boolean;
     status: WhatsAppIntegrationStatus;
     sessionId?: string;
     phoneNumber?: string;
@@ -179,6 +180,7 @@ export class WorkyWhatsAppIntegrationService {
     updatedAt?: Date;
   }): WhatsAppIntegrationResponseDto {
     return {
+      enabled: integration.enabled !== false,
       status: integration.status,
       sessionId: integration.sessionId,
       phoneNumber: integration.phoneNumber,

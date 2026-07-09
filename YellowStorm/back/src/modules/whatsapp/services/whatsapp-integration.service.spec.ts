@@ -73,6 +73,7 @@ describe('WhatsAppIntegrationService', () => {
       lean: () => ({
         exec: async () => ({
           status: WhatsAppIntegrationStatus.CONNECTED,
+          enabled: false,
           sessionId: 'sess-1',
           phoneNumber: '+123',
           displayName: 'Test',
@@ -84,6 +85,7 @@ describe('WhatsAppIntegrationService', () => {
     const result = await service.getByAgentForUser(userId, agentId);
 
     expect(result).toEqual({
+      enabled: false,
       status: 'CONNECTED',
       sessionId: 'sess-1',
       phoneNumber: '+123',
@@ -217,6 +219,41 @@ describe('WhatsAppIntegrationService', () => {
     });
   });
 
+  it('updates enabled flag for an owned integration', async () => {
+    const doc = {
+      enabled: false,
+      status: WhatsAppIntegrationStatus.CONNECTED,
+      sessionId: 'sess-1',
+    };
+    integrationModel.findOneAndUpdate.mockReturnValue({ exec: async () => doc });
+
+    const result = await service.updateEnabled(userId, agentId, false);
+
+    expect(integrationModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { agentId: new Types.ObjectId(agentId) },
+      { $set: { enabled: false } },
+      { new: true },
+    );
+    expect(result).toEqual({
+      enabled: false,
+      status: WhatsAppIntegrationStatus.CONNECTED,
+      sessionId: 'sess-1',
+      phoneNumber: undefined,
+      displayName: undefined,
+      errorMessage: undefined,
+      lastActivityAt: undefined,
+      updatedAt: undefined,
+    });
+  });
+
+  it('throws NotFoundException when updating enabled without integration', async () => {
+    integrationModel.findOneAndUpdate.mockReturnValue({ exec: async () => null });
+
+    await expect(service.updateEnabled(userId, agentId, false)).rejects.toMatchObject({
+      code: ErrorCode.WHATSAPP_INTEGRATION_NOT_FOUND,
+    });
+  });
+
   it('maps optional date fields in toResponse', () => {
     const lastActivityAt = new Date('2026-06-04T11:00:00.000Z');
     const updatedAt = new Date('2026-06-04T12:00:00.000Z');
@@ -229,6 +266,7 @@ describe('WhatsAppIntegrationService', () => {
     });
 
     expect(result).toEqual({
+      enabled: true,
       status: WhatsAppIntegrationStatus.FAILED,
       sessionId: undefined,
       phoneNumber: undefined,

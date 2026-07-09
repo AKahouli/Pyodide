@@ -30,6 +30,7 @@ export {
   AuthProvidersPage,
   ConnectedAppsAdminPage,
   TeamAutoBuilderPage,
+  GuardrailsPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
 export type {
@@ -92,6 +93,8 @@ export type {
   UpdateAdminPlaybookSettingsRequest,
   WorkspaceUploadSettingsResponse,
   UpdateWorkspaceUploadSettingsRequest,
+  AdminGuardrailsSettings,
+  PromptInjectionGuardrailsConfig,
   PlaybookPromptResponse,
   PlaybookPromptListResponse,
   UpsertPlaybookPromptRequest,
