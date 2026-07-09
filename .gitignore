@@ -44,7 +44,6 @@ coverage/
 */.agents
 YellowStorm/skills-lock.json
 .claude/settings.local.json
-.claude/worktrees/
 .opencode
 tmp_pymongo
 .claude/settings.local.json
