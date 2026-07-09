@@ -260,10 +260,6 @@ message ToolInfoComponent {
     optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
 }
 
-message ChainOfThoughtComponent {
-    repeated string steps = 1;   // Ordered step titles, rendered as a collapsed list on top of the response
-}
-
 enum ChartKind {
     CHART_KIND_UNSPECIFIED = 0;
     CHART_KIND_BAR = 1;
