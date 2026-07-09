@@ -253,6 +253,7 @@ message CheckpointComponent {
 message ToolInfoComponent {
     string title = 1;            // Tool name / label
     string status = 2;           // running | completed | failed
+    optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
 }
 
 enum ChartKind {

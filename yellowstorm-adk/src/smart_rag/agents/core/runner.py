@@ -21,6 +21,7 @@ from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
+from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
@@ -247,23 +248,6 @@ class AgentRunner:
         )
         await q.put(output)
 
-        # The expected_output contains internal agent instructions (JSON schemas)
-        # that should not be displayed to users. It's only used to guide the agent's response format.
-        # This prevents internal implementation details from leaking into the UI.
-        #
-        # if expected_output:
-        # the client chunks format_streaming_event
-        #     expected_output_event = self.streaming_formatter.format_streaming_event(
-        #         agent_id=agent_id,
-        #         agent_name=agent_name,
-        #         agent_type=agent_type,
-        #         chunk=expected_output,
-        #         message_id=session_id,
-        #         content_type="expected_output"
-        #     )
-        #     logger.info(f"[AGENT RUNNER] Sending expected output to backend - agent_name: {agent_name}, session_id: {session_id}")
-        #  send it to outgoing stream queue
-        #     await q.put(expected_output_event)
 
         try:
             if agent_type != "html":
@@ -334,6 +318,8 @@ class AgentRunner:
         citation_mapping = {}
         # Track current text component ID for citation parent_id
         current_text_component_id = None
+        # tool_info: remember call args by call id for the completed/failed update
+        tool_params_by_id = {}
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -464,15 +450,32 @@ class AgentRunner:
 
                         # Tool execution status: running
                         if q:
+                            call_id = getattr(part.function_call, "id", None)
+                            tool_data = {"title": func_name, "status": "running"}
+                            args_dict = dict(part.function_call.args or {})
+                            if args_dict:
+                                tool_params_json = json.dumps(
+                                    args_dict, default=str, ensure_ascii=False
+                                )
+                                tool_data["params"] = tool_params_json
+                                if call_id is not None:
+                                    tool_params_by_id[call_id] = tool_params_json
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
                                     component_type="tool_info",
-                                    component_data={"title": func_name, "status": "running"},
+                                    component_data=tool_data,
                                     message_id=session_id,
-                                    component_id=getattr(part.function_call, "id", None),
+                                    component_id=call_id,
                                 )
                             )
+                            logger.info(
+                                f"[TOOL_INFO] Sent tool_info component - title: {func_name}, status: running, agent: {agent_name}"
+                            )
+
+                            if self.streaming_formatter.component_tracker:
+                                self.streaming_formatter.component_tracker.finish_component(agent_id)
+                            current_text_component_id = None
 
                         # Send newline chunk for visual separation before any tool execution
                         if q:
@@ -615,18 +618,48 @@ class AgentRunner:
                         # Tool execution status: completed / failed (updates the
                         # "running" tool_info emitted when the call started)
                         if q:
+                            resp_id = getattr(part.function_response, "id", None)
+                            tool_data = {
+                                "title": func_name,
+                                "status": "completed" if success else "failed",
+                            }
+                            params_json = tool_params_by_id.get(resp_id, "")
+                            if params_json:
+                                tool_data["params"] = params_json
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
                                     component_type="tool_info",
-                                    component_data={
-                                        "title": func_name,
-                                        "status": "completed" if success else "failed",
-                                    },
+                                    component_data=tool_data,
                                     message_id=session_id,
-                                    component_id=getattr(part.function_response, "id", None),
+                                    component_id=resp_id,
                                     action="update",
                                 )
+                            )
+                            logger.info(
+                                f"[TOOL_INFO] Sent tool_info component - title: {func_name}, status: {'completed' if success else 'failed'}, agent: {agent_name}"
+                            )
+
+                        response_payload = part.function_response.response
+                        if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):
+                            ceph_path = response_payload.get("ceph_path", "")
+                            filename = (response_payload.get("path") or ceph_path).rstrip("/").split("/")[-1]
+                            artifact_kind = infer_artifact_kind(filename) or "document"
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="artifact",
+                                    component_data={
+                                        "file_path": ceph_path,
+                                        "filename": filename,
+                                        "artifact_kind": artifact_kind,
+                                        "output_port_id": "",
+                                    },
+                                    message_id=session_id,
+                                )
+                            )
+                            logger.info(
+                                f"[ARTIFACT] Ceph file artifact emitted - filename: {filename}, kind: {artifact_kind}, ceph_path: {ceph_path}, agent: {agent_name}"
                             )
 
                         if func_name == "generate_ui" and q:

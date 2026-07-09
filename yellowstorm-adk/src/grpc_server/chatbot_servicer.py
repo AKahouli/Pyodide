@@ -1796,10 +1796,14 @@ class ChatbotServicer(
                 output_available=component_data.get("output_available", False),
             )
         elif component_type == "tool_info":
-            component_kwargs["tool_info"] = chatbot_pb2.ToolInfoComponent(
+            tool_info = chatbot_pb2.ToolInfoComponent(
                 title=component_data.get("title", ""),
                 status=component_data.get("status", ""),
             )
+            params = component_data.get("params")
+            if params:
+                tool_info.params = params
+            component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
                 content=component_data.get("content", "")
