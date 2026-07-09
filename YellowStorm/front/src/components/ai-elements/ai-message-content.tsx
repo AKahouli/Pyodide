@@ -702,7 +702,7 @@ const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
   if (!steps.length) return null;
 
   return (
-    <ChainOfThought defaultOpen={false}>
+    <ChainOfThought className='my-2' defaultOpen={false}>
       <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
       <ChainOfThoughtContent>
         {steps.map((step, index) => (
