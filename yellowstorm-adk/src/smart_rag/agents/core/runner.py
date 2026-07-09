@@ -462,21 +462,6 @@ class AgentRunner:
                             func_name, dict(part.function_call.args), tool_category
                         )
 
-                        # Emit a checkpoint component naming the tool for every tool call
-                        if q:
-                            checkpoint_chunk = (
-                                self.streaming_formatter.format_component_event(
-                                    agent_id=agent_id,
-                                    component_type="checkpoint",
-                                    component_data={"label": func_name},
-                                    message_id=session_id,
-                                    component_id=getattr(
-                                        part.function_call, "id", None
-                                    ),
-                                )
-                            )
-                            await q.put(checkpoint_chunk)
-
                         # Send newline chunk for visual separation before any tool execution
                         if q:
                             # If we have a current text component, update it; otherwise create new one

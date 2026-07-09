@@ -313,7 +313,7 @@ class AgentDelegationFactory:
                 )
                 if shared_session and shared_session.events:
                     seed_events = list(shared_session.events)
-            except OSError as e:
+            except Exception as e:
                 logger.warning(
                     f"[DELEGATION] Could not load shared conversation for {agent_name}, running without history - error={e}"
                 )
