@@ -6,7 +6,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminGuardrailsSettings, getAllModels, updateAdminGuardrailsSettings } from '../api';
@@ -22,7 +21,6 @@ const defaultSettings: AdminGuardrailsSettings = {
     inputGuardrailEnabled: false,
     outputGuardrailEnabled: false,
     toolCallGuardrailEnabled: false,
-    mode: 'balanced',
     inputClassifierPrompt: defaultInputClassifierPrompt,
     outputClassifierPrompt: defaultOutputClassifierPrompt,
     toolCallClassifierPrompt: defaultToolCallClassifierPrompt,
@@ -119,18 +117,6 @@ export function GuardrailsPage() {
           <ProtectionCard title={t('guardrails.inputGuardrail')} description={t('guardrails.inputGuardrailDescription')} checked={settings.promptInjection.inputGuardrailEnabled} onCheckedChange={(checked) => setPromptInjection('inputGuardrailEnabled', checked)} />
           <ProtectionCard title={t('guardrails.outputGuardrail')} description={t('guardrails.outputGuardrailDescription')} checked={settings.promptInjection.outputGuardrailEnabled} onCheckedChange={(checked) => setPromptInjection('outputGuardrailEnabled', checked)} />
           <ProtectionCard title={t('guardrails.toolCallGuardrail')} description={t('guardrails.toolCallGuardrailDescription')} badge={t('guardrails.toolCallGuardrailBadge')} checked={settings.promptInjection.toolCallGuardrailEnabled} disabled onCheckedChange={(checked) => setPromptInjection('toolCallGuardrailEnabled', checked)} />
-        </div>
-        <div className="space-y-2">
-          <Label>{t('guardrails.mode')}</Label>
-          <p className="text-xs text-muted-foreground">{t('guardrails.modeDescription')}</p>
-          <Select value={settings.promptInjection.mode} onValueChange={(mode) => setPromptInjection('mode', mode as PromptInjectionGuardrailsConfig['mode'])}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="monitor">{t('guardrails.modeMonitor')}</SelectItem>
-              <SelectItem value="balanced">{t('guardrails.modeBalanced')}</SelectItem>
-              <SelectItem value="strict">{t('guardrails.modeStrict')}</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
         <div className="space-y-2"><Label htmlFor="admin-guardrails-block-message">{t('guardrails.blockMessage')}</Label><p className="text-xs text-muted-foreground">{t('guardrails.blockMessageDescription')}</p><Textarea id="admin-guardrails-block-message" rows={3} value={settings.promptInjection.blockMessage} onChange={(event) => setPromptInjection('blockMessage', event.target.value)} /></div>
         <Collapsible className="rounded-lg border p-4">

@@ -13,9 +13,24 @@ class GuardrailResult:
     blocked: bool = False
     sanitized: bool = False
     reason: str = ""
+    safe_rewrite: str | None = None
     confidence: float = 0.0
     attack_type: str = "none"
     target: str = "none"
+    phase: str = "unknown"
+    source: str = "unknown"
+
+    def decision_metadata(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "source": self.source,
+            "decision": self.decision,
+            "confidence": self.confidence,
+            "attackType": self.attack_type,
+            "target": self.target,
+            "reason": self.reason,
+            "safeRewrite": self.safe_rewrite,
+        }
 
 
 class PromptInjectionGuardrail:
@@ -50,7 +65,7 @@ class PromptInjectionGuardrail:
             "tool_call": config.tool_call_guardrail_enabled,
         }.get(phase, False)
         if not enabled:
-            return GuardrailResult(decision="allow", text=text)
+            return GuardrailResult(decision="allow", text=text, phase=phase, source=config.source)
 
         classifier = await classify_prompt_injection(
             text=text,
@@ -61,24 +76,24 @@ class PromptInjectionGuardrail:
         audit_prompt_injection_decision(
             phase=phase,
             source=config.source,
-            mode=config.mode,
             decision=classifier.decision,
             confidence=classifier.confidence,
             attack_type=classifier.attack_type,
             target=classifier.target,
         )
 
-        if config.mode == "monitor":
-            return GuardrailResult(decision="allow", text=text, reason=classifier.reason)
         if classifier.decision == "block":
             return GuardrailResult(
                 decision="block",
                 text=config.block_message,
                 blocked=True,
                 reason=classifier.reason,
+                safe_rewrite=classifier.safe_rewrite,
                 confidence=classifier.confidence,
                 attack_type=classifier.attack_type,
                 target=classifier.target,
+                phase=phase,
+                source=config.source,
             )
         if classifier.decision == "sanitize" and classifier.safe_rewrite:
             return GuardrailResult(
@@ -86,8 +101,11 @@ class PromptInjectionGuardrail:
                 text=classifier.safe_rewrite,
                 sanitized=True,
                 reason=classifier.reason,
+                safe_rewrite=classifier.safe_rewrite,
                 confidence=classifier.confidence,
                 attack_type=classifier.attack_type,
                 target=classifier.target,
+                phase=phase,
+                source=config.source,
             )
-        return GuardrailResult(decision="allow", text=text, reason=classifier.reason)
+        return GuardrailResult(decision="allow", text=text, reason=classifier.reason, phase=phase, source=config.source)

@@ -146,8 +146,9 @@ class StreamingFormatter:
         }
 
     def format_streaming_event(self, agent_name: str, agent_type: str, chunk: str,
-                               message_id: str, content_type: str = "chunk",
-                               agent_id: str = "no_id",chunk_order=0) -> Dict[str, Any]:
+                                message_id: str, content_type: str = "chunk",
+                                agent_id: str = "no_id", chunk_order=0,
+                                guardrail_decision: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Format the streaming event into a dictionary.
 
         This method provides backward compatibility with the old format while
@@ -178,12 +179,15 @@ class StreamingFormatter:
                 component_data = {"content": chunk}
 
             # Use new format
-            return self.format_component_event(
+            event = self.format_component_event(
                 agent_id=agent_id,
                 component_type=component_type,
                 component_data=component_data,
                 message_id=message_id
             )
+            if guardrail_decision:
+                event.setdefault("metadata", {})["guardrail_decision"] = guardrail_decision
+            return event
 
         # Fallback to old format for backward compatibility
         agent_name_stream = self.agent_name_stream(agent_name)
@@ -199,6 +203,8 @@ class StreamingFormatter:
             "chunk_order": chunk_order,
             "chunk_id": str(uuid.uuid4())
         }
+        if guardrail_decision:
+            formatted_event["guardrail_decision"] = guardrail_decision
         return formatted_event
 
     @staticmethod

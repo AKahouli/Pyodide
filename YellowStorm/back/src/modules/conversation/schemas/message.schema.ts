@@ -113,6 +113,9 @@ export class Message extends Document {
   @Prop({ type: String })
   requestId?: string;
 
+  @Prop({ type: Object, default: undefined })
+  guardrailDecision?: Record<string, unknown>;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

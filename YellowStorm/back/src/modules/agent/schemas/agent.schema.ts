@@ -4,9 +4,6 @@ import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } fr
 
 export type AgentDocument = HydratedDocument<Agent>;
 
-export const GUARDRAIL_MODES = ['monitor', 'balanced', 'strict'] as const;
-export type GuardrailMode = (typeof GUARDRAIL_MODES)[number];
-
 @Schema({ _id: false })
 export class AgentPromptInjectionGuardrails {
   @Prop({ type: Boolean, default: false })
@@ -17,9 +14,6 @@ export class AgentPromptInjectionGuardrails {
 
   @Prop({ type: Boolean, default: false })
   toolCallGuardrailEnabled!: boolean;
-
-  @Prop({ type: String, enum: GUARDRAIL_MODES, default: 'balanced' })
-  mode!: GuardrailMode;
 
   @Prop({ type: String, default: '' })
   inputClassifierPrompt!: string;

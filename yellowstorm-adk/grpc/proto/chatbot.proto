@@ -376,6 +376,7 @@ message Component {
 message Metadata {
     string message_id = 1;       // Message/session ID
     string agent_id = 2;         // Agent ID
+    string guardrail_decision_json = 3;  // JSON guardrail decision metadata for persistence
 }
 
 message Usage {

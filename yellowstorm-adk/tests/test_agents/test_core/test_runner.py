@@ -504,6 +504,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="SearchAgent",
                 toolkit=mock_toolkit,
                 task_order="1",
@@ -548,6 +549,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="ReportWriterAgent",
                 toolkit=None,
                 task_order="1",
@@ -584,6 +586,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="TestAgent",
                 toolkit=None,
                 task_order="1",

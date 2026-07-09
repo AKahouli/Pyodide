@@ -703,6 +703,7 @@ class AgentRunner:
 
                     final_result = await self._handle_final_response(
                         event,
+                        agent_id,
                         agent_name,
                         toolkit,
                         task_order,
@@ -921,6 +922,7 @@ class AgentRunner:
     async def _handle_final_response(
         self,
         event,
+        agent_id,
         agent_name,
         toolkit,
         task_order,
@@ -995,6 +997,17 @@ class AgentRunner:
             text=event_text,
             agent_config=agent_config or {},
         )
+
+        if q and (guarded.blocked or guarded.sanitized):
+            await q.put(self.streaming_formatter.format_streaming_event(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                agent_type="agent",
+                chunk=guarded.text,
+                message_id=session_id,
+                content_type="final_response",
+                guardrail_decision=guarded.decision_metadata(),
+            ))
 
         return guarded.text
 

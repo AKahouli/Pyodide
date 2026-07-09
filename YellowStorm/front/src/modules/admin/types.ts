@@ -17,13 +17,10 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
-export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
-
 export interface PromptInjectionGuardrailsConfig {
   inputGuardrailEnabled: boolean;
   outputGuardrailEnabled: boolean;
   toolCallGuardrailEnabled: boolean;
-  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
   toolCallClassifierPrompt: string;

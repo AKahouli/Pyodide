@@ -10,7 +10,6 @@ def test_resolve_effective_guardrails_uses_flat_agent_params() -> None:
                 "inputGuardrailEnabled": True,
                 "outputGuardrailEnabled": False,
                 "toolCallGuardrailEnabled": True,
-                "mode": "strict",
                 "inputClassifierPrompt": "input policy",
                 "outputClassifierPrompt": "output policy",
                 "toolCallClassifierPrompt": "tool policy",
@@ -23,7 +22,6 @@ def test_resolve_effective_guardrails_uses_flat_agent_params() -> None:
                 "inputGuardrailEnabled": False,
                 "outputGuardrailEnabled": True,
                 "toolCallGuardrailEnabled": False,
-                "mode": "monitor",
                 "classifierPrompt": "admin policy",
                 "blockMessage": "admin blocked",
             },
@@ -42,7 +40,6 @@ def test_resolve_effective_guardrails_uses_flat_agent_params() -> None:
     assert config.prompt_injection.input_guardrail_enabled is True
     assert config.prompt_injection.output_guardrail_enabled is False
     assert config.prompt_injection.tool_call_guardrail_enabled is True
-    assert config.prompt_injection.mode == "strict"
     assert config.prompt_injection.classifier_prompt_for_phase("input") == "input policy"
     assert config.prompt_injection.classifier_prompt_for_phase("output") == "output policy"
     assert config.prompt_injection.classifier_prompt_for_phase("tool_call") == "tool policy"
@@ -56,7 +53,6 @@ def test_resolve_effective_guardrails_uses_admin_when_forced() -> None:
             "forceActivation": True,
             "promptInjection": {
                 "inputGuardrailEnabled": True,
-                "mode": "monitor",
                 "classifierPrompt": "admin policy",
             },
         },
@@ -66,7 +62,6 @@ def test_resolve_effective_guardrails_uses_admin_when_forced() -> None:
 
     assert config.prompt_injection.source == "admin_forced"
     assert config.prompt_injection.input_guardrail_enabled is True
-    assert config.prompt_injection.mode == "monitor"
     assert config.prompt_injection.classifier_prompt_for_phase("input") == "admin policy"
 
 

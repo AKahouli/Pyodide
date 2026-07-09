@@ -934,6 +934,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         try {
           const action = chunk.action;
           const comp = chunk.component;
+          const guardrailDecision = this.parseGuardrailDecision(chunk.metadata?.guardrail_decision_json);
 
           // Sample logging to avoid overwhelming logs
           if (chunkCount - lastLoggedChunk >= CHUNK_LOG_INTERVAL) {
@@ -970,11 +971,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             } else {
               const buffer = this.componentBuffers.get(streamKey);
               if (buffer) {
-                this.applyChunkToBuffer(buffer, action, comp);
+                this.applyChunkToBuffer(buffer, action, comp, guardrailDecision);
               }
 
               // Extract component type and data from oneof structure
               const { type, data } = this.extractComponentData(comp);
+              if (guardrailDecision) {
+                data.guardrailDecision = guardrailDecision;
+              }
 
               // Debug logging for chart components
               if (type === 'chart') {
@@ -1319,6 +1323,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private parseGuardrailDecision(value?: string): Record<string, unknown> | undefined {
+    if (!value) return undefined;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined;
+    } catch (error) {
+      this.logger.warn('Invalid guardrail decision metadata from stream', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return undefined;
+    }
+  }
+
   private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
     const memberIds = await this.resolveMemberIds(conversationId);
     await this.streamGateway.broadcastToConversation(
@@ -1366,9 +1383,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     buffer: Map<string, MessageComponent>,
     action: string,
     comp: any,
+    guardrailDecision?: Record<string, unknown>,
   ): void {
     const componentId = comp.id;
     const { type, data } = this.extractComponentData(comp);
+    if (guardrailDecision) {
+      data.guardrailDecision = guardrailDecision;
+    }
 
     if (action === 'add') {
       buffer.set(componentId, {
@@ -1380,6 +1401,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const existing = buffer.get(componentId);
       if (existing) {
         existing.data = this.mergeComponentData(type, existing.data, data);
+        if (guardrailDecision) {
+          existing.data.guardrailDecision = guardrailDecision;
+        }
       }
     }
   }
@@ -1395,6 +1419,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     switch (type) {
       case 'text':
       case 'reasoning': {
+        if (incoming.guardrailDecision) {
+          return { ...existing, ...incoming };
+        }
         // Append content for streaming text types
         const existingContent = (existing.content as string) || '';
         const newContent = (incoming.content as string) || '';

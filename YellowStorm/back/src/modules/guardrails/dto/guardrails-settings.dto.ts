@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
 export class UpdatePromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ default: false })
@@ -17,11 +17,6 @@ export class UpdatePromptInjectionGuardrailsDto {
   @IsOptional()
   @IsBoolean()
   toolCallGuardrailEnabled?: boolean;
-
-  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
-  @IsOptional()
-  @IsIn(['monitor', 'balanced', 'strict'])
-  mode?: 'monitor' | 'balanced' | 'strict';
 
   @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()

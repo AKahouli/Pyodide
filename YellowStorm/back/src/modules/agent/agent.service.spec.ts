@@ -27,6 +27,18 @@ describe('AgentService connector skill inheritance', () => {
     updatedAt: new Date(),
   });
 
+  const defaultGuardrails = {
+    promptInjection: {
+      inputGuardrailEnabled: false,
+      outputGuardrailEnabled: false,
+      toolCallGuardrailEnabled: false,
+      inputClassifierPrompt: 'input policy',
+      outputClassifierPrompt: 'output policy',
+      toolCallClassifierPrompt: 'tool policy',
+      blockMessage: 'I cannot follow this instruction.',
+    },
+  };
+
   const createService = () => {
     const agentModel = {
       find: jest.fn(),
@@ -89,7 +101,6 @@ describe('AgentService connector skill inheritance', () => {
           inputGuardrailEnabled: false,
           outputGuardrailEnabled: false,
           toolCallGuardrailEnabled: false,
-          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
           toolCallClassifierPrompt: 'tool policy',
@@ -155,18 +166,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],
@@ -229,6 +229,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
@@ -288,6 +289,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],

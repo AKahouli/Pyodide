@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import grpc
 import asyncio
-import uuid
 import json
+import uuid
 import base64
 import os
 import mimetypes
@@ -1622,6 +1622,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
                 usage=chatbot_pb2.Usage(
                     input_tokens=usage_data.get("input_tokens", 0),
@@ -1654,6 +1655,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
             )
         else:
@@ -1675,8 +1677,20 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=chunk_dict.get("message_id", ""),
                     agent_id=chunk_dict.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(chunk_dict),
                 ),
             )
+
+    @staticmethod
+    def _guardrail_decision_json(payload: Dict[str, Any]) -> str:
+        decision = payload.get("guardrail_decision")
+        if not decision:
+            return ""
+        try:
+            return json.dumps(decision, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[GUARDRAIL] Failed to serialize guardrail decision metadata: {exc}")
+            return ""
 
     def _build_component(
         self, component_id: str, component_type: str, component_data: Dict[str, Any]

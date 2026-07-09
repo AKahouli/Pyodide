@@ -216,6 +216,9 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
   switch (type) {
     case 'text':
     case 'reasoning': {
+      if (incoming.guardrailDecision) {
+        return { ...existing, ...incoming };
+      }
       // Append content for streaming text types
       const existingContent = (existing.content as string) || '';
       const newContent = (incoming.content as string) || '';

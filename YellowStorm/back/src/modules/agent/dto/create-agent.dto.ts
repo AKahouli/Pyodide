@@ -10,7 +10,6 @@ import {
   MaxLength,
   Min,
   Max,
-  IsIn,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -32,11 +31,6 @@ export class PromptInjectionGuardrailsDto {
   @IsOptional()
   @IsBoolean()
   toolCallGuardrailEnabled?: boolean;
-
-  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
-  @IsOptional()
-  @IsIn(['monitor', 'balanced', 'strict'])
-  mode?: 'monitor' | 'balanced' | 'strict';
 
   @ApiPropertyOptional({ description: 'Input classifier policy prompt', maxLength: 20000 })
   @IsOptional()

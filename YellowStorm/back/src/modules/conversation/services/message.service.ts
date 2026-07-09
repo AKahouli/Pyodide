@@ -12,6 +12,7 @@ import {
   PaginatedMessages,
   FeedbackType,
   AttachedFileResponse,
+  MessageComponent,
 } from '../interfaces/message.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -218,6 +219,7 @@ export class MessageService {
     message.durationMs = data.durationMs;
     message.timeToFirstChunk = data.timeToFirstChunk;
     message.timeToFirstToken = data.timeToFirstToken;
+    message.guardrailDecision = (data.guardrailDecision ?? this.findGuardrailDecision(data.components)) as Record<string, unknown> | undefined;
 
     await message.save();
 
@@ -657,6 +659,7 @@ export class MessageService {
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
       requestId: message.requestId,
+      guardrailDecision: message.guardrailDecision as any,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),
@@ -664,6 +667,16 @@ export class MessageService {
       createdAt: toISO(message.createdAt),
       updatedAt: toISO(message.updatedAt),
     };
+  }
+
+  private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {
+    for (const component of components) {
+      const decision = component.data?.guardrailDecision;
+      if (decision && typeof decision === 'object') {
+        return decision as CompleteAIMessageData['guardrailDecision'];
+      }
+    }
+    return undefined;
   }
 
   private async broadcastMessage(conversationId: string, event: StreamEvent): Promise<void> {
