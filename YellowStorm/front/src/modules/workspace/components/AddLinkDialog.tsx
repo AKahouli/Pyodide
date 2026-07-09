@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,8 +52,6 @@ export function AddLinkDialog({
       setTree([]); setTruncated(false); setSelected(new Set()); setFocusUrl(null);
     }
   }, [open, initialUrl]);
-
-  const selectableCount = useMemo(() => collectSelectableUrls(tree).length, [tree]);
 
   const handleCrawl = async () => {
     if (busy) return;
@@ -148,10 +146,14 @@ export function AddLinkDialog({
                       Ouvrir <ExternalLink className='h-3 w-3' />
                     </a>
                   </div>
+                  {/* Best-effort preview. Deliberately omit `allow-same-origin`:
+                      combined with `allow-scripts` it is a known sandbox-escape
+                      anti-pattern, and the framed page (a user-supplied crawl
+                      target) has no need to reach its own origin's cookies here. */}
                   <iframe
                     title='Aperçu'
                     src={focusUrl}
-                    sandbox='allow-scripts allow-same-origin'
+                    sandbox='allow-scripts'
                     className='h-[45vh] w-full rounded border'
                   />
                   <p className='mt-1 text-[11px] text-muted-foreground'>
