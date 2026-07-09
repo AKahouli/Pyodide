@@ -33,6 +33,8 @@ import { WorkspaceSettingService } from './workspace-setting.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { WorkspaceInitializerService } from './workspace-initializer.service';
 import { WorkspaceShareService } from './workspace-share.service';
+import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   WorkspaceOwnerGuard,
   WorkspaceAccessGuard,
@@ -88,6 +90,8 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceAccessGuard,
     WritePermissionGuard,
     InternalServiceGuard,
+    UrlToPdfClientService,
+    WebsiteCrawlerService,
   ],
   exports: [
     WorkspaceService,

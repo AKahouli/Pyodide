@@ -90,6 +90,8 @@ export interface WorkspaceDocument {
   parentId?: string;
   isFolder: boolean;
   folderName?: string;
+  type?: 'doc' | 'url';
+  sourceUrl?: string;
   detected_language?: string;
   chunk_size?: number;
   createdAt: string;
@@ -139,6 +141,12 @@ export interface WorkspaceFile {
   indexingStatus?: IndexingStatus;
   indexingError?: string;
   lastIndexedAt?: string;
+  /** Discriminates uploaded documents ('doc') from website links ('url'). */
+  type?: 'doc' | 'url';
+  /** Original website URL when type === 'url'. */
+  sourceUrl?: string;
+  /** Upload/processing lifecycle status (url links are 'processing' while converting). */
+  status?: DocumentStatus;
 }
 
 export type ClassifierRuleScope = 'global' | 'local';
@@ -468,6 +476,25 @@ export function isWorkspace(item: WorkspaceListItem): item is Workspace {
 
 export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorkspaceResponse {
   return 'shareId' in item;
+}
+
+// ===== Website Crawl Types =====
+
+export interface PageNode {
+  /** Real page URL, or '' for a synthetic category/group node (not selectable). */
+  url: string;
+  title?: string;
+  path: string;
+  /** Display label: last path segment, or the host for the site root page. */
+  name: string;
+  alreadyIndexed: boolean;
+  children: PageNode[];
+}
+
+export interface CrawlResponse {
+  tree: PageNode[];
+  truncated: boolean;
+  unreachable?: boolean;
 }
 
 // Local upload tracking (for UI state)

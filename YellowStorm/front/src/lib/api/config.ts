@@ -138,6 +138,11 @@ export const API_ENDPOINTS = {
       `/workspaces/${workspaceId}/documents/bulk/${sessionId}/complete`,
     bulkSession: (workspaceId: string, sessionId: string) =>
       `/workspaces/${workspaceId}/documents/bulk/${sessionId}`,
+    // Link (website URL) endpoints
+    link: (workspaceId: string) => `/workspaces/${workspaceId}/documents/link`,
+    validateUrl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/validate-url`,
+    crawl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/crawl`,
+    links: (workspaceId: string) => `/workspaces/${workspaceId}/documents/links`,
   },
   workspaceSettings: {
     list: '/workspace-settings',

@@ -294,6 +294,8 @@ interface WorkspaceActions {
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
+  addPageLink: (workspaceId: string, url: string) => Promise<void>;
+  addPageLinks: (workspaceId: string, urls: string[]) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -1934,6 +1936,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         } catch (err) {
           toast.error(getApiErrorMessage(err, "Échec de l'upload"));
         }
+      },
+
+      addPageLink: async (workspaceId, url) => {
+        await workspaceApi.addLink(workspaceId, url);
+        // The link doc is created server-side in a "processing" state; reload so
+        // it appears immediately. Live status flows via the existing indexing SSE.
+        await get().refreshPageData();
+      },
+
+      addPageLinks: async (workspaceId, urls) => {
+        await workspaceApi.addLinks(workspaceId, urls);
+        await get().refreshPageData();
       },
 
       runClassification: async ({ playbookId, hint, overwrite }) => {
