@@ -15,6 +15,7 @@ from typing import Optional, Tuple, Any, List, Dict
 from google.adk import Agent, Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
+from src.temporary_child_summary import record_temporary_child_tool_call
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
@@ -259,6 +260,7 @@ class AgentRunner:
                     mcp_tools_used,
                     agent_id,
                     session,
+                    agent_config,
                 )
             else:
                 return await self._run_html_agent(
@@ -284,6 +286,7 @@ class AgentRunner:
         mcp_tools_used,
         agent_id,
         session=None,
+        agent_config: Optional[dict] = None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -305,6 +308,11 @@ class AgentRunner:
             Tuple containing final result, list of MCP tools used, and execution summary (for langfuse tracing).
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
+        agent_role = (
+            "temporary_child"
+            if agent_config and agent_config.get("_is_temporary_child_agent")
+            else "parent"
+        )
         accumulated_text = ""
         # Citation buffering using MessageTransformer
         citation_buffer = ""
@@ -439,6 +447,26 @@ class AgentRunner:
                         recorder.record_function_call(
                             func_name, dict(part.function_call.args), tool_category
                         )
+                        logger.info(
+                            "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s args=%s",
+                            agent_role,
+                            agent_name,
+                            agent_id,
+                            func_name,
+                            dict(part.function_call.args),
+                        )
+                        if agent_role == "temporary_child":
+                            agent_params = agent_config.get("agent_params", {}) if agent_config else {}
+                            record_temporary_child_tool_call(
+                                session_id=str(
+                                    agent_params.get("temporary_child_summary_session_id")
+                                    or session_id
+                                ),
+                                child=str(agent_id or agent_name),
+                                tool_name=func_name,
+                                args=dict(part.function_call.args),
+                                status="requested",
+                            )
 
                         # Send newline chunk for visual separation before any tool execution
                         if q:
@@ -608,6 +636,13 @@ class AgentRunner:
                                 session_id,
                                 q,
                                 getattr(session, "state", {}),
+                                agent_role,
+                                agent_name,
+                                str(
+                                    agent_config.get("agent_params", {}).get("temporary_child_summary_session_id")
+                                    if agent_config
+                                    else session_id
+                                ),
                             )
 
                         # Check if this is a python_interpreter tool response
@@ -1250,17 +1285,31 @@ class AgentRunner:
         session_id: str,
         q: asyncio.Queue,
         session_state: Optional[Dict[str, Any]] = None,
+        agent_role: str = "parent",
+        agent_name: str = "",
+        summary_session_id: str = "",
     ) -> None:
         """Emit supported source components from structured tool responses."""
         try:
             response_data = function_response.response
             tool_name = getattr(function_response, "name", "unknown")
             logger.info(
-                "[STRUCTURED TOOL RESPONSE] tool=%s response_type=%s full_response=%s",
+                "[STRUCTURED TOOL RESPONSE] agent_role=%s agent_name=%s tool=%s response_type=%s full_response=%s",
+                agent_role,
+                agent_name,
                 tool_name,
                 type(response_data).__name__,
                 _log_payload(_loggable_structured_response(tool_name, response_data)),
             )
+            if agent_role == "temporary_child":
+                record_temporary_child_tool_call(
+                    session_id=summary_session_id or session_id,
+                    child=str(agent_id or agent_name),
+                    tool_name=tool_name,
+                    args={},
+                    result_preview=str(_log_payload(_loggable_structured_response(tool_name, response_data))),
+                    status="completed",
+                )
             if not isinstance(response_data, dict):
                 return
 

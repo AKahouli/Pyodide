@@ -10,6 +10,7 @@ Output is stored into task_outputs[(node_id, iteration)].
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import litellm
@@ -47,6 +48,10 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.temporary_child_summary import (
+    record_temporary_child_result,
+    record_temporary_child_start,
+)
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
@@ -57,8 +62,10 @@ DEFAULT_MODEL = "gpt-4o-mini"
 TEMP_CHILD_PARENT_INSTRUCTION = """
 Temporary child-agent rule:
 Because temporary child agents are enabled, you must call
-`create_temporary_child_agent` at least once before final answering. You may
-create more children with refined task descriptions until the evidence is
+`create_temporary_child_agent` two separate times before final answering. Use
+two different focused task descriptions so the two temporary children can
+independently retrieve or verify evidence. After both child results return, you
+may create more children with refined task descriptions until the evidence is
 sufficient or the child limit is reached. Evaluate all child results and return
 the best final answer.
 """.strip()
@@ -140,8 +147,10 @@ class _TemporaryChildAgentTool:
     description = (
         "Create one temporary cloned child agent for a focused subtask. "
         "The child inherits this agent's tools/connectors/skills but cannot "
-        "create more child agents. Call this before final answering when "
-        "temporary child agents are enabled."
+        "create more child agents. The child receives the same file names, "
+        "workspace IDs, connector context, headers, and fixed params available "
+        "to this parent. Temporary child mode currently requires two separate "
+        "calls to this tool before final answering."
     )
     args_schema = _TemporaryChildAgentInput
 
@@ -151,11 +160,17 @@ class _TemporaryChildAgentTool:
         system_prompt: str,
         child_tools: list[Any],
         max_children: int,
+        session_id: str,
+        parent_name: str,
+        inherited_context: str,
     ):
         self._model_id = model_id
         self._system_prompt = system_prompt
         self._child_tools = child_tools
         self._max_children = max_children
+        self._session_id = session_id
+        self._parent_name = parent_name
+        self._inherited_context = inherited_context
         self._count = 0
 
     async def ainvoke(self, args: dict[str, Any]) -> str:
@@ -168,7 +183,8 @@ class _TemporaryChildAgentTool:
         expected_output = str(args.get("expected_output") or "").strip()
         child_prompt = (
             f"Focused child task:\n{task_description}\n\n"
-            f"Expected output:\n{expected_output or 'Return concise findings with evidence.'}"
+            f"Expected output:\n{expected_output or 'Return concise findings with evidence.'}\n\n"
+            f"{self._inherited_context}"
         )
         child_system_prompt = (
             f"{self._system_prompt}\n\n"
@@ -181,14 +197,56 @@ class _TemporaryChildAgentTool:
             child_index=self._count,
             max=self._max_children,
         )
+        child_id = f"{self._parent_name}:flow_tmp_{self._count}"
+        record_temporary_child_start(
+            session_id=self._session_id,
+            parent=self._parent_name,
+            child=child_id,
+            task_description=task_description,
+            expected_output=expected_output,
+            execution_mode="model_tool_call_sequential",
+        )
         result = await run_step_with_tools(
             model_id=self._model_id,
             system_prompt=child_system_prompt,
             user_msg=child_prompt,
             tools=self._child_tools,
+            agent_role="temporary_child",
+            agent_name=child_id,
+            summary_session_id=self._session_id,
         )
         logger.info("[TEMP CHILD] Flow child completed", child_index=self._count)
+        record_temporary_child_result(
+            session_id=self._session_id,
+            child=child_id,
+            result=result,
+        )
         return result
+
+
+def _build_temporary_child_inherited_context(
+    tool_scope: Any,
+    tools: list[Any],
+    agent_config: dict[str, Any],
+    output_workspace_id: str,
+) -> str:
+    payload = {
+        "available_tool_names": [str(getattr(tool, "name", "")) for tool in tools],
+        "file_names": tool_scope.file_names,
+        "workspace_ids": tool_scope.binding_workspace_ids,
+        "documents_by_port": tool_scope.documents_by_port,
+        "workspace_context": tool_scope.workspace_context,
+        "output_workspace_id": output_workspace_id,
+        "agent_params_keys": sorted((agent_config.get("agent_params") or {}).keys()),
+    }
+    return (
+        "<inherited_parent_context>\n"
+        "You are a clone of the parent agent. Use these exact inherited context "
+        "values when calling connector/MCP tools. Do not ask the user for "
+        "workspace_id, file_name, headers, or document identifiers if they appear here.\n"
+        f"{json.dumps(payload, ensure_ascii=False, default=str)}\n"
+        "</inherited_parent_context>"
+    )
 
 
 def _collect_workspace_ceph_paths(
@@ -712,6 +770,14 @@ async def _execute_step(
                 system_prompt=system_prompt,
                 child_tools=list(tools),
                 max_children=_temporary_child_limit(agent_config["agent_params"]),
+                session_id=str(state.get("execution_id") or ""),
+                parent_name=agent_config.get("name") or node_id,
+                inherited_context=_build_temporary_child_inherited_context(
+                    tool_scope=tool_scope,
+                    tools=tools,
+                    agent_config=agent_config,
+                    output_workspace_id=output_workspace_id,
+                ),
             ),
         ]
         system_prompt = f"{system_prompt}\n\n{TEMP_CHILD_PARENT_INSTRUCTION}"
@@ -758,6 +824,9 @@ async def _execute_step(
                 iteration=iteration,
                 writer=writer,
             ),
+            agent_role="parent",
+            agent_name=agent_config.get("name") or node_id,
+            summary_session_id=str(state.get("execution_id") or ""),
         )
         if full_output and should_stream_tokens:
             writer({

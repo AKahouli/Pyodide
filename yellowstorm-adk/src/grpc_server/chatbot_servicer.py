@@ -36,6 +36,7 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
 
@@ -231,6 +232,20 @@ class ChatbotServicer(
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
         return _message_to_dict(request)
 
+    @staticmethod
+    def _log_temporary_child_summary(session_id: str, label: str) -> None:
+        summary = pop_temporary_child_summary(session_id)
+        if not summary["created_count"]:
+            return
+        logger.info(
+            "[TEMP CHILD] Summary before stream completion",
+            label=label,
+            session_id=session_id,
+            created_count=summary["created_count"],
+            execution_modes=summary["execution_modes"],
+            children=summary["children"],
+        )
+
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -406,6 +421,10 @@ class ChatbotServicer(
                 yield chunk_pb
 
             # Explicitly return after breaking to ensure stream ends
+            self._log_temporary_child_summary(
+                request.conversation_id,
+                "RunAgentTeam",
+            )
             logger.info(
                 f"[gRPC] RunAgentTeam stream completed successfully - "
                 f"conversation_id: {request.conversation_id}, user_id: {request.user_context.user_id}"
@@ -614,6 +633,10 @@ class ChatbotServicer(
 
                 yield self._dict_to_stream_chunk(chunk_dict)
 
+            self._log_temporary_child_summary(
+                request.conversation_id,
+                "RunSingleAgent",
+            )
             logger.info(
                 f"[gRPC] RunSingleAgent stream completed successfully - "
                 f"conversation_id: {request.conversation_id}, user_id: {request.user_context.user_id}"

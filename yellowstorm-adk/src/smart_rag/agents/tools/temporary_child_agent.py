@@ -1,10 +1,15 @@
 """Runtime-only temporary child-agent tool for delegated agents."""
 
 import copy
+import json
 import uuid
 from typing import Any, Dict, Optional
 
 from src.logger.logging import get_logger
+from src.temporary_child_summary import (
+    record_temporary_child_result,
+    record_temporary_child_start,
+)
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 
 logger = get_logger("api.smart_rag.temporary_child_agent")
@@ -12,10 +17,12 @@ logger = get_logger("api.smart_rag.temporary_child_agent")
 TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION = """
 Temporary child-agent rule:
 You are the evaluator/orchestrator for this delegated task. Because temporary
-child agents are enabled, you must call `create_temporary_child_agent` at least
-once before final answering. You may create more children with refined task
-descriptions until the evidence is sufficient or the child limit is reached.
-Evaluate all child results and return the best final answer.
+child agents are enabled, you must call `create_temporary_child_agent` two
+separate times before final answering. Use two different focused task
+descriptions so the two temporary children can independently retrieve or verify
+evidence. You may create more children with refined task descriptions until the
+evidence is sufficient or the child limit is reached. Evaluate all child results
+and return the best final answer.
 """.strip()
 
 
@@ -60,9 +67,10 @@ def make_temporary_child_agent_tool(
     ) -> str:
         """Create a temporary child agent for one focused subtask and return its result.
 
-        Call this for one focused subtask before final answering. The child
-        inherits your tools, skills, connectors, MCP config, workspace context,
-        and model settings, but it cannot create more temporary children.
+        Call this for one focused subtask. Temporary child mode currently
+        requires two separate calls before final answering. The child inherits
+        your tools, skills, connectors, MCP config, workspace context, and model
+        settings, but it cannot create more temporary children.
         """
         if counter["count"] >= max_children:
             logger.info(
@@ -91,6 +99,15 @@ def make_temporary_child_agent_tool(
             max_children,
             team.config.session_id,
         )
+        record_temporary_child_start(
+            session_id=team.config.session_id,
+            parent=str(parent_agent_config.get("id") or parent_agent_config.get("name") or ""),
+            child=str(child_config.get("id") or child_name),
+            task_description=task_description,
+            expected_output=expected_output,
+            execution_mode="model_tool_call_sequential",
+        )
+        child_config["agent_params"]["temporary_child_summary_session_id"] = team.config.session_id
         agent, toolkit = await team.delegation_factory._create_agent_with_error_handling(
             child_config,
             child_name,
@@ -102,6 +119,12 @@ def make_temporary_child_agent_tool(
         )
         if agent is None:
             logger.warning("[TEMP CHILD] Child agent creation failed child=%s", child_config.get("id"))
+            record_temporary_child_result(
+                session_id=team.config.session_id,
+                child=str(child_config.get("id") or child_name),
+                result="Temporary child agent could not be created.",
+                status="failed",
+            )
             return "Temporary child agent could not be created."
 
         child_queue = _DiscardingQueue()
@@ -120,11 +143,22 @@ def make_temporary_child_agent_tool(
             image_input=resolved_images,
         )
         if not result:
+            record_temporary_child_result(
+                session_id=team.config.session_id,
+                child=str(child_config.get("id") or child_name),
+                result="Temporary child agent returned no result.",
+                status="empty",
+            )
             return "Temporary child agent returned no result."
         logger.info(
             "[TEMP CHILD] Child completed parent=%s child=%s",
             parent_agent_config.get("id"),
             child_config.get("id"),
+        )
+        record_temporary_child_result(
+            session_id=team.config.session_id,
+            child=str(child_config.get("id") or child_name),
+            result=result,
         )
         return str(result)
 
@@ -157,9 +191,37 @@ def _build_child_config(parent_config: Dict[str, Any], task_description: str, or
         "You are a temporary child agent. Complete only the focused subtask "
         "assigned to you. Use the inherited tools and connectors when retrieval "
         "is needed. Return concise findings with citations or evidence details "
-        "so the parent agent can synthesize the final answer."
+        "so the parent agent can synthesize the final answer.\n\n"
+        f"{_build_inherited_context(parent_config)}"
     )
     agent_params = child_config.setdefault("agent_params", {})
     agent_params["session_id"] = f"{parent_id}:temporary_child:{child_id}"
     agent_params["enable_temporary_child_agents"] = "false"
     return child_config
+
+
+def _build_inherited_context(parent_config: Dict[str, Any]) -> str:
+    agent_params = parent_config.get("agent_params") or {}
+    payload = {
+        "tool_names": [
+            tool.get("name") if isinstance(tool, dict) else str(tool)
+            for tool in parent_config.get("tools", [])
+        ],
+        "skill_names": [
+            skill.get("name") if isinstance(skill, dict) else str(skill)
+            for skill in parent_config.get("skills", [])
+        ],
+        "agent_params_keys": sorted(agent_params.keys()),
+        "has_connector_bindings_json": bool(agent_params.get("connector_bindings_json")),
+        "brain_ids": parent_config.get("brain_ids", []),
+        "brain_documents": parent_config.get("brain_documents", []),
+    }
+    return (
+        "<inherited_parent_context>\n"
+        "You are a clone of the parent agent. Use the inherited tools, skills, "
+        "connectors, headers, workspace/document context, and fixed params. "
+        "Do not ask the user for identifiers that are available in this context "
+        "or in tool fixed params.\n"
+        f"{json.dumps(payload, ensure_ascii=False, default=str)}\n"
+        "</inherited_parent_context>"
+    )

@@ -9,6 +9,7 @@ import litellm
 from langgraph.types import interrupt
 from structlog import get_logger
 from src.flow_engine.tools.langchain_factory import _last_mcp_actual_args
+from src.temporary_child_summary import record_temporary_child_tool_call
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_hitl import (
@@ -170,6 +171,9 @@ async def run_step_with_tools(
     on_trace_update: Any = None,
     trace_collector: Any = None,
     hitl_approval: ToolHitlApprovalContext | None = None,
+    agent_role: str = "parent",
+    agent_name: str = "",
+    summary_session_id: str = "",
 ) -> str:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -225,6 +229,14 @@ async def run_step_with_tools(
 
             raw_arguments = function_payload.get("arguments") or "{}"
             tool_arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            logger.info(
+                "[TOOL CALL] Requested",
+                agent_role=agent_role,
+                agent_name=agent_name,
+                tool_name=tool_name,
+                tool_call_id=tool_call.get("id", ""),
+                args=tool_arguments if isinstance(tool_arguments, dict) else {},
+            )
             skip_content = _resolve_tool_hitl_approval(
                 tool_name=tool_name,
                 tool_arguments=tool_arguments if isinstance(tool_arguments, dict) else {},
@@ -245,6 +257,24 @@ async def run_step_with_tools(
                 tool_content = _build_tool_text_content(tool_result)
                 actual_args = _last_mcp_actual_args.get() or (tool_arguments if isinstance(tool_arguments, dict) else {})
                 _last_mcp_actual_args.set({})
+                logger.info(
+                    "[TOOL CALL] Completed",
+                    agent_role=agent_role,
+                    agent_name=agent_name,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call.get("id", ""),
+                    duration_ms=duration_ms,
+                    args=actual_args,
+                    result_preview=tool_content[:500],
+                )
+                if agent_role == "temporary_child" and summary_session_id:
+                    record_temporary_child_tool_call(
+                        session_id=summary_session_id,
+                        child=agent_name,
+                        tool_name=tool_name,
+                        args=actual_args,
+                        result_preview=tool_content,
+                    )
                 if trace_collector is not None:
                     trace_collector.record_tool_call(
                         tool_name=tool_name,
@@ -259,6 +289,25 @@ async def run_step_with_tools(
                 duration_ms = int((time.perf_counter() - started_at) * 1000)
                 actual_args_err = _last_mcp_actual_args.get() or (tool_arguments if isinstance(tool_arguments, dict) else {})
                 _last_mcp_actual_args.set({})
+                logger.warning(
+                    "[TOOL CALL] Failed",
+                    agent_role=agent_role,
+                    agent_name=agent_name,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call.get("id", ""),
+                    duration_ms=duration_ms,
+                    args=actual_args_err,
+                    error=str(exc),
+                )
+                if agent_role == "temporary_child" and summary_session_id:
+                    record_temporary_child_tool_call(
+                        session_id=summary_session_id,
+                        child=agent_name,
+                        tool_name=tool_name,
+                        args=actual_args_err,
+                        result_preview=str(exc),
+                        status="failed",
+                    )
                 if trace_collector is not None:
                     trace_collector.record_tool_call(
                         tool_name=tool_name,
