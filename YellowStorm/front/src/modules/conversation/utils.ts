@@ -240,6 +240,11 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         status: (data.status as 'running' | 'completed' | 'failed') || 'running',
         params: (data.params as string) || '',
       };
+    case 'chainOfThought':
+      return {
+        type: 'chainOfThought',
+        steps: (data.steps as string[]) || [],
+      };
     default:
       return { type: 'text', content: (data.content as string) || '' };
   }

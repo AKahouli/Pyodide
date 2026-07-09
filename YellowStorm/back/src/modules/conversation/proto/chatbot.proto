@@ -205,6 +205,10 @@ message ReasoningComponent {
     string content = 1;          // Internal thought process
 }
 
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles (e.g. tool names)
+}
+
 // Task status enum
 enum TaskStatus {
     PENDING = 0;                 // Task not started yet (default)
@@ -254,6 +258,10 @@ message ToolInfoComponent {
     string title = 1;            // Tool name / label
     string status = 2;           // running | completed | failed
     optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
+}
+
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles, rendered as a collapsed list on top of the response
 }
 
 enum ChartKind {
@@ -377,6 +385,7 @@ message Component {
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
         ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
+        ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
     }
 }
 
@@ -900,12 +909,5 @@ message AdvisePlaybookNodeResponse {
     string task_id = 2;
     repeated NodeAdvisorSuggestion suggestions = 3;
 }
-
- 
-
-
-
-
-
 
  
