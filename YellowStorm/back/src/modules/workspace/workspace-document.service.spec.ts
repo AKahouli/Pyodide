@@ -2,10 +2,12 @@ import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
+import axios from 'axios';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
 
 jest.mock('dns/promises');
+jest.mock('axios');
 import { WorkspaceDoc, DocumentStatus } from './schemas/workspace-document.schema';
 import { UploadSession } from './schemas/upload-session.schema';
 import { WorkspaceService } from './workspace.service';
@@ -544,6 +546,36 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
   it('checkUrlReachable propagates the SSRF guard as a thrown BadRequestException', async () => {
     await expect(service.checkUrlReachable('http://localhost/')).rejects.toBeInstanceOf(
       BadRequestException,
+    );
+  });
+
+  it('checkUrlReachable does not follow a redirect to a private host (redirect SSRF guard)', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.head.mockReset();
+    mockedAxios.get.mockReset();
+
+    // Initial seed URL is public; the redirect target is a private host.
+    mockLookup.mockImplementation((hostname: unknown) => {
+      if (hostname === 'internal.example.com') {
+        return Promise.resolve([{ address: '10.0.0.5', family: 4 }] as any);
+      }
+      return Promise.resolve([{ address: '93.184.216.34', family: 4 }] as any);
+    });
+
+    mockedAxios.head.mockResolvedValue({
+      status: 302,
+      headers: { location: 'http://internal.example.com/secret' },
+    } as any);
+
+    const result = await service.checkUrlReachable('https://public.example.com/');
+
+    expect(result).toEqual(
+      expect.objectContaining({ reachable: false }),
+    );
+    // The GET fallback must never reach the disallowed redirect target.
+    expect(mockedAxios.get).not.toHaveBeenCalledWith(
+      'http://internal.example.com/secret',
+      expect.anything(),
     );
   });
 });

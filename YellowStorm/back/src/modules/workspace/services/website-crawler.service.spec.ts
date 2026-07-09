@@ -56,4 +56,63 @@ describe('WebsiteCrawlerService', () => {
     dns.lookup.mockResolvedValueOnce([{ address: '10.0.0.1', family: 4 }]);
     await expect(makeService().crawl('http://internal.test/')).rejects.toThrow(/disallowed/i);
   });
+
+  it('does not follow a redirect to an internal host (redirect SSRF guard)', async () => {
+    const dns = require('dns/promises');
+    dns.lookup.mockImplementation((hostname: string) => {
+      if (hostname === '169.254.169.254') {
+        return Promise.resolve([{ address: '169.254.169.254', family: 4 }]);
+      }
+      return Promise.resolve([{ address: '93.184.216.34', family: 4 }]);
+    });
+
+    // A fake "server": seed page links to /redirect-me, which 302s to a
+    // cloud-metadata address whose response body carries a secret marker.
+    const pageMap: Record<string, { status: number; data: string; headers: Record<string, string> }> = {
+      'https://ex.com/robots.txt': { status: 404, data: '', headers: {} },
+      'https://ex.com/sitemap.xml': { status: 404, data: '', headers: {} },
+      'https://ex.com/': {
+        status: 200,
+        data: '<html><body><a href="https://ex.com/redirect-me">link</a></body></html>',
+        headers: { 'content-type': 'text/html' },
+      },
+      'https://ex.com/redirect-me': {
+        status: 302,
+        data: '',
+        headers: { location: 'http://169.254.169.254/secret' },
+      },
+      'http://169.254.169.254/secret': {
+        status: 200,
+        data: '<html><title>metadata-secret</title></html>',
+        headers: { 'content-type': 'text/html' },
+      },
+    };
+
+    // Mimics real axios: when maxRedirects > 0, transparently follows 3xx
+    // hops server-side (as the un-guarded old implementation relied on);
+    // when maxRedirects === 0 (the fixed implementation), returns the raw
+    // 3xx response so the caller must re-validate and follow it manually.
+    mockedAxios.get.mockImplementation(async (url: string, config?: { maxRedirects?: number }) => {
+      const maxRedirects = config?.maxRedirects ?? 5;
+      let currentUrl = url;
+      let hops = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const res = pageMap[currentUrl] ?? { status: 404, data: '', headers: {} };
+        if (res.status >= 300 && res.status < 400 && hops < maxRedirects) {
+          currentUrl = new URL(res.headers.location, currentUrl).toString();
+          hops++;
+          continue;
+        }
+        return res;
+      }
+    });
+
+    const res = await makeService().crawl('https://ex.com/');
+
+    // The internal redirect target's content must never leak into the
+    // crawl result, and the internal address itself must never appear.
+    expect(res.pages.some((p) => p.title === 'metadata-secret')).toBe(false);
+    expect(res.pages.some((p) => p.url.includes('169.254.169.254'))).toBe(false);
+  });
 });

@@ -855,23 +855,84 @@ export class WorkspaceDocumentService {
     // client, rather than being swallowed into a generic {reachable:false}.
     await this.assertUrlIsSafe(url);
 
-    const opts = { timeout: 5000, maxRedirects: 5, validateStatus: () => true } as const;
     try {
-      const head = await axios.head(url, opts);
+      const head = await this.followGuardedRedirects('head', url);
+      if (head === null) {
+        // A redirect hop pointed at a disallowed (private/internal) host.
+        // Unlike the initial URL above, a mid-redirect block is reported,
+        // not thrown.
+        return { reachable: false, error: 'Redirect target is not allowed' };
+      }
       if (head.status >= 200 && head.status < 400) {
         return { reachable: true, status: head.status };
       }
-      const get = await axios.get(url, { ...opts, responseType: 'stream' });
+
+      const get = await this.followGuardedRedirects('get', url);
+      if (get === null) {
+        return { reachable: false, error: 'Redirect target is not allowed' };
+      }
       const ok = get.status >= 200 && get.status < 400;
       // Consume/destroy the response stream — we only need the status code,
       // and axios won't release the underlying socket until the stream is
       // drained or destroyed.
-      get.data?.destroy?.();
+      (get.data as { destroy?: () => void } | undefined)?.destroy?.();
       return { reachable: ok, status: get.status, error: ok ? undefined : `HTTP ${get.status}` };
     } catch (error) {
       const err = error as { message?: string };
       return { reachable: false, error: err?.message ?? 'unreachable' };
     }
+  }
+
+  /**
+   * Follows redirects for a HEAD/GET reachability probe manually (max 5
+   * hops), re-validating each hop with assertUrlIsSafe before requesting
+   * it. axios's built-in `maxRedirects` would follow a redirect chain
+   * WITHOUT re-checking the SSRF guard, letting an attacker-controlled URL
+   * 302/301 to an internal address (e.g. cloud metadata) and bypass the
+   * guard entirely — so auto-redirects are disabled here and each hop is
+   * resolved + guarded one at a time instead. Returns null (never throws)
+   * if a hop is blocked, so the caller can report `{ reachable: false }`
+   * instead of surfacing a 400 for what is a redirect target, not the
+   * user-supplied URL itself.
+   */
+  private async followGuardedRedirects(
+    method: 'head' | 'get',
+    url: string,
+  ): Promise<{ status: number; data?: unknown } | null> {
+    const MAX_HOPS = 5;
+    let currentUrl = url;
+    const opts = {
+      timeout: 5000,
+      maxRedirects: 0,
+      validateStatus: () => true,
+      ...(method === 'get' ? { responseType: 'stream' as const } : {}),
+    };
+
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      if (hop > 0) {
+        try {
+          await this.assertUrlIsSafe(currentUrl);
+        } catch {
+          return null;
+        }
+      }
+
+      const res =
+        method === 'head'
+          ? await axios.head(currentUrl, opts)
+          : await axios.get(currentUrl, opts);
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers?.location as string | undefined;
+        (res.data as { destroy?: () => void } | undefined)?.destroy?.();
+        if (!location) return null;
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+
+      return res;
+    }
+    return null;
   }
 
   /**

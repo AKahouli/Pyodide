@@ -87,19 +87,42 @@ export class WebsiteCrawlerService {
     }
   }
 
+  /**
+   * Fetches a URL, manually following redirects (max 5 hops) so that each
+   * hop is re-validated with assertUrlIsSafe before being requested. axios's
+   * built-in `maxRedirects` would follow a redirect chain WITHOUT
+   * re-checking the SSRF guard, letting an attacker-controlled seed URL
+   * 302/301 to an internal address (e.g. cloud metadata) and bypass the
+   * guard entirely — so auto-redirects are disabled here and each hop is
+   * resolved + guarded one at a time instead.
+   */
   private async safeGet(url: string, deadline: number): Promise<string | null> {
-    if (Date.now() > deadline) return null;
+    const MAX_HOPS = 5;
+    let currentUrl = url;
     try {
-      await assertUrlIsSafe(url);
-      const res = await axios.get(url, {
-        timeout: Math.min(FETCH_TIMEOUT_MS, Math.max(0, deadline - Date.now())),
-        maxContentLength: MAX_BYTES,
-        maxRedirects: 5,
-        responseType: 'text',
-        validateStatus: (s) => s >= 200 && s < 300,
-        transformResponse: (d) => d,
-      });
-      return typeof res.data === 'string' ? res.data : String(res.data);
+      for (let hop = 0; hop <= MAX_HOPS; hop++) {
+        if (Date.now() > deadline) return null;
+        await assertUrlIsSafe(currentUrl);
+        const res = await axios.get(currentUrl, {
+          timeout: Math.min(FETCH_TIMEOUT_MS, Math.max(0, deadline - Date.now())),
+          maxContentLength: MAX_BYTES,
+          maxRedirects: 0,
+          responseType: 'text',
+          validateStatus: (s) => s >= 200 && s < 400,
+          transformResponse: (d) => d,
+        });
+
+        if (res.status >= 300 && res.status < 400) {
+          const location = res.headers?.location as string | undefined;
+          (res.data as { destroy?: () => void })?.destroy?.();
+          if (!location) return null;
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+
+        return typeof res.data === 'string' ? res.data : String(res.data);
+      }
+      return null;
     } catch {
       return null;
     }
