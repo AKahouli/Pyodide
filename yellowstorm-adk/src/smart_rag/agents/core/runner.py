@@ -462,6 +462,18 @@ class AgentRunner:
                             func_name, dict(part.function_call.args), tool_category
                         )
 
+                        # Tool execution status: running
+                        if q:
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="tool_info",
+                                    component_data={"title": func_name, "status": "running"},
+                                    message_id=session_id,
+                                    component_id=getattr(part.function_call, "id", None),
+                                )
+                            )
+
                         # Send newline chunk for visual separation before any tool execution
                         if q:
                             # If we have a current text component, update it; otherwise create new one
@@ -599,6 +611,24 @@ class AgentRunner:
 
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
+
+                        # Tool execution status: completed / failed (updates the
+                        # "running" tool_info emitted when the call started)
+                        if q:
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="tool_info",
+                                    component_data={
+                                        "title": func_name,
+                                        "status": "completed" if success else "failed",
+                                    },
+                                    message_id=session_id,
+                                    component_id=getattr(part.function_response, "id", None),
+                                    action="update",
+                                )
+                            )
+
                         if func_name == "generate_ui" and q:
                             await self._handle_dataviz_response(
                                 part.function_response,

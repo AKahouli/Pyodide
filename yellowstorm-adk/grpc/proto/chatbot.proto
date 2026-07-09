@@ -250,6 +250,11 @@ message CheckpointComponent {
     string label = 1;            // Checkpoint label
 }
 
+message ToolInfoComponent {
+    string title = 1;            // Tool name / label
+    string status = 2;           // running | completed | failed
+}
+
 enum ChartKind {
     CHART_KIND_UNSPECIFIED = 0;
     CHART_KIND_BAR = 1;
@@ -370,6 +375,7 @@ message Component {
         WebPreviewComponent web_preview = 13;  // HTML/CSS/JS web preview
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
+        ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
     }
 }
 
