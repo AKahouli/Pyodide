@@ -34,10 +34,12 @@ const PAIRING_POLL_MS = 2500;
 
 interface AgentWhatsAppIntegrationSectionProps {
   agentId: string | null;
+  agentName?: string;
 }
 
 export function AgentWhatsAppIntegrationSection({
   agentId,
+  agentName,
 }: AgentWhatsAppIntegrationSectionProps) {
   const { t } = useModuleTranslation('agent');
 
@@ -103,7 +105,7 @@ export function AgentWhatsAppIntegrationSection({
   }, []);
 
   const handleConnected = useCallback(
-    async (payload: { phoneNumber?: string; displayName?: string }) => {
+    async (payload: { phoneNumber?: string }) => {
       if (!agentId) return;
       const refreshed = await refreshIntegration(agentId);
       setIntegration(
@@ -112,7 +114,6 @@ export function AgentWhatsAppIntegrationSection({
           status: 'CONNECTED',
           sessionId: sessionId ?? undefined,
           phoneNumber: payload.phoneNumber,
-          displayName: payload.displayName,
         },
       );
       setQrCode(undefined);
@@ -137,7 +138,6 @@ export function AgentWhatsAppIntegrationSection({
         sessionId: payload.sessionId,
         errorMessage: payload.errorMessage,
         phoneNumber: prev?.phoneNumber,
-        displayName: prev?.displayName,
       }));
       showWarning(t('createEdit.fields.whatsappStatusFailed'), {
         description: resolveWhatsAppErrorMessage(payload.errorMessage, networkErrorLabel),
@@ -432,12 +432,12 @@ export function AgentWhatsAppIntegrationSection({
                   {integration.phoneNumber}
                 </p>
               )}
-              {integration?.displayName && (
+              {agentName && (
                 <p>
                   <span className="text-muted-foreground">
-                    {t('createEdit.fields.whatsappDisplayName')}:{' '}
+                    {t('createEdit.fields.whatsappAgentName')}:{' '}
                   </span>
-                  {integration.displayName}
+                  {agentName}
                 </p>
               )}
             </div>

@@ -182,7 +182,7 @@ describe('AgentWhatsAppIntegrationSection', () => {
     });
   });
 
-  it('shows connected phone and display name', async () => {
+  it('shows connected phone and agent name', async () => {
     getAgentWhatsAppIntegrationMock.mockResolvedValue({
       enabled: true,
       status: 'CONNECTED',
@@ -191,14 +191,15 @@ describe('AgentWhatsAppIntegrationSection', () => {
       displayName: 'John Doe',
     });
 
-    render(<AgentWhatsAppIntegrationSection agentId="a1" />);
+    render(<AgentWhatsAppIntegrationSection agentId="a1" agentName="Support Bot" />);
 
     await waitFor(() => {
       expect(screen.getByText('createEdit.fields.whatsappStatusConnected')).toBeInTheDocument();
     });
 
     expect(screen.getByText('+216 12 345 678')).toBeInTheDocument();
-    expect(screen.getByText('John Doe')).toBeInTheDocument();
+    expect(screen.getByText('Support Bot')).toBeInTheDocument();
+    expect(screen.queryByText('John Doe')).not.toBeInTheDocument();
     expect(screen.getByTestId('whatsapp-disconnect')).toBeInTheDocument();
     expect(screen.getByTestId('whatsapp-reconnect')).toBeInTheDocument();
   });
