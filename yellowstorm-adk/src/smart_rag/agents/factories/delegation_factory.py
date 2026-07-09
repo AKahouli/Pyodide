@@ -22,7 +22,7 @@ from src.smart_rag.infrastructure.session import SessionHelper
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
-from google.adk.sessions import DatabaseSessionService
+from google.adk.sessions import InMemorySessionService, DatabaseSessionService
 from src.config.settings import get_settings
 
 logger = get_logger("api.routers.agentic_rag.AgentDelegationFactory")
@@ -304,10 +304,20 @@ class AgentDelegationFactory:
         try:
             logger.info(f"[DELEGATION] Creating session helper for agent: {agent_name}")
 
-            # Sub-agent shares the conversation's DB session so it sees the full history.
-            sub_session_id = self.config.session_id
-            session_helper = DatabaseSessionService(db_url=get_settings().DATABASE_URL)
-            logger.debug(f"[DELEGATION] Session helper created: {type(session_helper)}")
+            session_helper = InMemorySessionService()
+            seed_events = []
+            try:
+                shared = DatabaseSessionService(db_url=get_settings().DATABASE_URL)
+                shared_session = await shared.get_session(
+                    app_name="manager_app", user_id=self.config.user_id, session_id=self.config.session_id
+                )
+                if shared_session and shared_session.events:
+                    seed_events = list(shared_session.events)
+            except OSError as e:
+                logger.warning(
+                    f"[DELEGATION] Could not load shared conversation for {agent_name}, running without history - error={e}"
+                )
+            logger.debug(f"[DELEGATION] Session helper created: {type(session_helper)}, seeded_events={len(seed_events)}")
 
             toolkit = getattr(agent, '_toolkit', toolkit)
             logger.debug(f"[DELEGATION] Agent {agent_name} toolkit: {type(toolkit) if toolkit else None}")
@@ -332,7 +342,8 @@ class AgentDelegationFactory:
                 expected_output=expected_output,
                 function_call_id_info=call_id_info,
                 image_input=image_input,
-                session_id=sub_session_id,
+                session_id=self.config.session_id,
+                seed_events=seed_events,
             )
 
             logger.info(f"[DELEGATION] run_agent_tool completed for agent: {agent_name}")
