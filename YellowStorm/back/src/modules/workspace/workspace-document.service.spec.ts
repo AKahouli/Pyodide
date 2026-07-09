@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
 import { WorkspaceDoc, DocumentStatus } from './schemas/workspace-document.schema';
