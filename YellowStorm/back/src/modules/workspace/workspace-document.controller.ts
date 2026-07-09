@@ -44,6 +44,8 @@ import { ReportProgressDto } from './dto/report-progress.dto';
 import { DocumentQueryDto } from './dto/document-query.dto';
 import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 import { AddLinkDto } from './dto/add-link.dto';
+import { CrawlUrlDto } from './dto/crawl-url.dto';
+import { AddLinksDto } from './dto/add-links.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -121,6 +123,38 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.url,
+    );
+  }
+
+  @Post('crawl')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Discover a website's sub-pages for selective indexing" })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async crawl(
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: CrawlUrlDto,
+  ) {
+    // Reachability first (clear error), then discover.
+    const reach = await this.workspaceDocumentService.checkUrlReachable(body.url);
+    if (!reach.reachable) {
+      return { tree: [], truncated: false, unreachable: true };
+    }
+    return this.workspaceDocumentService.crawlSite(workspaceId, body.url);
+  }
+
+  @Post('links')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Add multiple website links (each converted to PDF and indexed)' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async addLinks(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: AddLinksDto,
+  ) {
+    return this.workspaceDocumentService.addLinks(
+      workspaceId,
+      user._id.toString(),
+      body.urls,
     );
   }
 
