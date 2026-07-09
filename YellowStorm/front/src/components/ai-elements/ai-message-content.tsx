@@ -13,6 +13,8 @@ import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSecti
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem } from './task';
+import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
+import type { ToolUIPart } from 'ai';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody } from './web-preview';
@@ -170,7 +172,15 @@ export interface CitationPart {
   blockBBox?: CitationBBox;
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart;
+export interface ToolInfoPart {
+  type: 'toolInfo';
+  title: string;
+  status: 'running' | 'completed' | 'failed';
+  /** JSON string of the tool-call arguments, e.g. '{"query":"..."}'. */
+  params?: string;
+}
+
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -234,6 +244,8 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
       return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
     case 'citation':
       return <CitationPartRenderer citation={part} />;
+    case 'toolInfo':
+      return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
     default:
       return null;
   }
@@ -634,6 +646,45 @@ const CheckpointPartRenderer = ({ label }: { label: string }) => (
     <CheckpointTrigger className='text-md whitespace-nowrap'>{formatLabel(label)}</CheckpointTrigger>
   </Checkpoint>
 );
+
+// Tool Info Part - reports a single tool execution and its status via the
+// ai-elements Tool component. Our proto only carries title + status, so we map
+// the status onto the Tool component's UI states and render the header only.
+const TOOL_INFO_STATE_MAP = {
+  running: 'input-available',
+  completed: 'output-available',
+  failed: 'output-error',
+} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
+
+/** Parses the tool-call params JSON string; returns undefined when there's nothing to show. */
+function parseToolParams(params: string | undefined): unknown {
+  if (!params || typeof params !== 'string') return undefined;
+  const trimmed = params.trim();
+  if (!trimmed || trimmed === '{}' || trimmed === '[]') return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Not valid JSON — surface the raw string rather than dropping it.
+    return trimmed;
+  }
+}
+
+const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
+  const parsedParams = useMemo(() => parseToolParams(params), [params]);
+  const hasParams = parsedParams !== undefined;
+
+  return (
+    <Tool className='my-2'>
+      {/* No params → nothing to expand: drop the chevron and the toggle affordance. */}
+      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} className={cn(!hasParams && 'cursor-default [&>svg]:hidden')} />
+      {hasParams && (
+        <ToolContent>
+          <ToolInput className='space-y-1 p-2 [&_pre]:p-2! [&_pre]:text-xs! [&_code]:text-xs!' input={parsedParams} />
+        </ToolContent>
+      )}
+    </Tool>
+  );
+};
 
 // Task Part
 const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (

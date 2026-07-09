@@ -344,6 +344,49 @@ function buildSandboxChunks(componentId, code, output, options = {}) {
 }
 
 /**
+ * Builds chunks for a tool_info component (single tool execution + status).
+ * First chunk: status 'running' (add). Second chunk: final status (update on
+ * the same id), mirroring the ADK add-then-update flow.
+ */
+function buildToolInfoChunks(componentId, title, options = {}) {
+  const { delay = 100, executionDelay = 800, status = 'completed', params = '', metadata } = options;
+
+  // 'add' carries the tool-call args (params); the 'update' only flips status.
+  const addChunk = {
+    delay,
+    chunk: {
+      action: 'add',
+      component: {
+        id: componentId,
+        tool_info: {
+          title,
+          status: 'running',
+          params,
+        },
+      },
+      metadata,
+    },
+  };
+
+  const updateChunk = {
+    delay: executionDelay,
+    chunk: {
+      action: 'update',
+      component: {
+        id: componentId,
+        tool_info: {
+          title,
+          status,
+        },
+      },
+      metadata,
+    },
+  };
+
+  return [addChunk, updateChunk];
+}
+
+/**
  * Builds a single chunk for a web preview component.
  * WebPreview arrives fully formed in one chunk with HTML content.
  */
@@ -541,6 +584,7 @@ function runAgentTeam(call) {
   const planId = randomUUID();
   const taskId = randomUUID();
   const sandboxId = randomUUID();
+  const toolInfoId = randomUUID();
   const sourcesId = randomUUID();
   const webPreviewId = randomUUID();
   const artifactId = randomUUID();
@@ -690,6 +734,14 @@ print(f"First 10 Fibonacci numbers: {result}")`;
   const sandboxOutput = `First 10 Fibonacci numbers: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]`;
   const sandboxChunks = buildSandboxChunks(sandboxId, sandboxCode, sandboxOutput, {
     executionDelay: 2000,
+    metadata,
+  });
+
+  // --- Tool info component (tool execution status: running -> completed) ---
+  const toolInfoChunks = buildToolInfoChunks(toolInfoId, 'web_search', {
+    executionDelay: 1000,
+    status: 'completed',
+    params: JSON.stringify({ query: 'fibonacci sequence', top_k: 3 }),
     metadata,
   });
 
@@ -1093,6 +1145,8 @@ console.log(fibonacci(10)); // 55`;
     ...codeChunks,
     { delay: 1, chunk: null },
     ...sandboxChunks,
+    { delay: 1, chunk: null },
+    ...toolInfoChunks,
     { delay: 1, chunk: null },
     webPreviewChunk,
     { delay: 1, chunk: null },
