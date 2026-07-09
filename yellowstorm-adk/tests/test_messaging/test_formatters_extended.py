@@ -171,7 +171,9 @@ class TestStreamingFormatterExtended:
       "unknown_fn", {}, "agent", "msg-8"
     )
 
-    assert "annual report" in doc_event["chunk"]
+    # Search notifications are intentionally suppressed (tool progress is shown
+    # via the tool_info component instead), so search functions return None.
+    assert doc_event is None
     assert "Calculating" in calc_event["chunk"]
     assert none_event is None
 
