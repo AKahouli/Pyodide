@@ -349,8 +349,9 @@ function buildSandboxChunks(componentId, code, output, options = {}) {
  * the same id), mirroring the ADK add-then-update flow.
  */
 function buildToolInfoChunks(componentId, title, options = {}) {
-  const { delay = 100, executionDelay = 800, status = 'completed', metadata } = options;
+  const { delay = 100, executionDelay = 800, status = 'completed', params = '', metadata } = options;
 
+  // 'add' carries the tool-call args (params); the 'update' only flips status.
   const addChunk = {
     delay,
     chunk: {
@@ -360,6 +361,7 @@ function buildToolInfoChunks(componentId, title, options = {}) {
         tool_info: {
           title,
           status: 'running',
+          params,
         },
       },
       metadata,
@@ -739,6 +741,7 @@ print(f"First 10 Fibonacci numbers: {result}")`;
   const toolInfoChunks = buildToolInfoChunks(toolInfoId, 'web_search', {
     executionDelay: 1000,
     status: 'completed',
+    params: JSON.stringify({ query: 'fibonacci sequence', top_k: 3 }),
     metadata,
   });
 

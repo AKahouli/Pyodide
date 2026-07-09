@@ -671,13 +671,15 @@ function parseToolParams(params: string | undefined): unknown {
 
 const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
   const parsedParams = useMemo(() => parseToolParams(params), [params]);
+  const hasParams = parsedParams !== undefined;
 
   return (
     <Tool className='my-2'>
-      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
-      {parsedParams !== undefined && (
+      {/* No params → nothing to expand: drop the chevron and the toggle affordance. */}
+      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} className={cn(!hasParams && 'cursor-default [&>svg]:hidden')} />
+      {hasParams && (
         <ToolContent>
-          <ToolInput input={parsedParams} />
+          <ToolInput className='space-y-1 p-2 [&_pre]:p-2! [&_pre]:text-xs! [&_code]:text-xs!' input={parsedParams} />
         </ToolContent>
       )}
     </Tool>

@@ -519,6 +519,7 @@ carries the full state, `mergeComponentData()` **replaces** on update.
 message ToolInfoComponent {
     string title = 1;            // Tool name / label
     string status = 2;           // running | completed | failed
+    string params = 3;           // JSON object of tool-call arguments {name: value}
 }
 
 // In the Component oneof:
@@ -548,15 +549,22 @@ case 'toolInfo':
     data: {
       title: comp.tool_info?.title || '',
       status: comp.tool_info?.status || 'running',
+      params: comp.tool_info?.params || '',
     },
   };
 ```
 
 ### Stream Service merge (`stream.service.ts`)
+`params` (the tool-call args) only arrives on the initial `add`; the `update`
+chunk carries just the final status. So `toolInfo` can't use the blanket
+replace — it needs its own case that preserves `params`:
 ```typescript
 case 'toolInfo':
-  // 'update' carries the final status that supersedes the initial 'running'
-  return { ...incoming };
+  return {
+    title: (incoming.title as string) || (existing.title as string) || '',
+    status: (incoming.status as string) || (existing.status as string) || 'running',
+    params: (incoming.params as string) || (existing.params as string) || '',
+  };
 ```
 
 ### Frontend Part + Renderer (`ai-message-content.tsx`)
@@ -568,13 +576,14 @@ proto only carries `title` + `status`, we map the status onto the Tool
 component's UI states and render just the header.
 
 ```typescript
-import { Tool, ToolHeader } from './tool';
+import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
 import type { ToolUIPart } from 'ai';
 
 export interface ToolInfoPart {
     type: 'toolInfo';
     title: string;
     status: 'running' | 'completed' | 'failed';
+    params?: string; // JSON string of the tool-call arguments
 }
 
 const TOOL_INFO_STATE_MAP = {
@@ -583,11 +592,20 @@ const TOOL_INFO_STATE_MAP = {
     failed: 'output-error',
 } satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
 
-const ToolInfoPartRenderer = ({ title, status }: { title: string; status: 'running' | 'completed' | 'failed' }) => (
-    <Tool className="my-2">
-        <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
-    </Tool>
-);
+// params is a JSON string — parse it so ToolInput can pretty-print the object.
+const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
+    const parsedParams = useMemo(() => parseToolParams(params), [params]);
+    return (
+        <Tool className="my-2">
+            <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} />
+            {parsedParams !== undefined && (
+                <ToolContent>
+                    <ToolInput input={parsedParams} />
+                </ToolContent>
+            )}
+        </Tool>
+    );
+};
 ```
 
 </details>
