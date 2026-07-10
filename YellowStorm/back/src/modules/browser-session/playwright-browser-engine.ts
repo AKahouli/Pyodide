@@ -33,6 +33,7 @@ const KEY_TO_BUTTON = { left: 'left', right: 'right', middle: 'middle' } as cons
 class PlaywrightSession implements EngineSession {
   private frameCb?: (f: string) => void;
   private navCb?: (n: NavigatedEvent) => void;
+  private lastNav: NavigatedEvent | undefined;
 
   constructor(
     private readonly context: BrowserContext,
@@ -47,12 +48,18 @@ class PlaywrightSession implements EngineSession {
     });
     this.page.on('framenavigated', async (frame) => {
       if (frame !== this.page.mainFrame()) return; // main frame only
-      this.navCb?.({ url: frame.url(), title: await this.page.title().catch(() => '') });
+      const nav = { url: frame.url(), title: await this.page.title().catch(() => '') };
+      this.lastNav = nav;
+      this.navCb?.(nav);
     });
   }
 
   onFrame(cb: (f: string) => void) { this.frameCb = cb; }
-  onNavigated(cb: (n: NavigatedEvent) => void) { this.navCb = cb; }
+
+  onNavigated(cb: (n: NavigatedEvent) => void) {
+    this.navCb = cb;
+    if (this.lastNav) cb(this.lastNav);
+  }
 
   async dispatchInput(e: InputEvent): Promise<void> {
     if (e.kind === 'mouse') {
@@ -119,7 +126,10 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     const page = await context.newPage();
 
     // SSRF: abort any top-level document navigation to a disallowed host.
-    await page.route('**/*', async (route, request) => {
+    // Registered on the context (not the page) so it also covers popups/new
+    // tabs opened via window.open() / target="_blank", which page-scoped
+    // routes do not intercept.
+    await context.route('**/*', async (route, request) => {
       if (await isNavigationRequestBlocked(this.assertSafe, request.resourceType(), request.url())) {
         await route.abort('blockedbyclient');
         return;
