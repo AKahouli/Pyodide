@@ -159,6 +159,18 @@ export class WhatsAppIntegrationService {
       .exec();
   }
 
+  async findRecoverableIntegrations(): Promise<AgentWhatsAppIntegrationDocument[]> {
+    return this.integrationModel
+      .find({
+        enabled: true,
+        sessionId: { $exists: true, $ne: null },
+        status: {
+          $in: [WhatsAppIntegrationStatus.FAILED, WhatsAppIntegrationStatus.DISCONNECTED],
+        },
+      })
+      .exec();
+  }
+
   toResponse(integration: {
     enabled?: boolean;
     status: WhatsAppIntegrationStatus;

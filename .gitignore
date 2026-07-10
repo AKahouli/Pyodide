@@ -39,20 +39,17 @@ coverage/
 .env.development.local
 .env.example
 
-*/.claude
+.claude/
 *cwd*
 */.agents
 YellowStorm/skills-lock.json
-.claude/settings.local.json
 .opencode
 tmp_pymongo
-.claude/settings.local.json
 # Added by code-review-graph
 .code-review-graph/
 .understand-anything/intermediate/
 .understand-anything/diff-overlay.json
 .history
-.claude/settings.local.json
 .venv/
 __pycache__/
 

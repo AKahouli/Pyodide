@@ -428,60 +428,8 @@ class StreamingFormatter:
                     message_id=message_id,
                     agent_id=agent_id
                 )
-            if function_name == "perform_document_search":
-                search_filter = ""
-                for arg_key, arg_value in args.items():
-                    if arg_key not in ["query", "id"]:
-                        search_filter += f"{arg_value}, "
 
-                query = args.get('query', '')
-                if isinstance(query, list):
-                    query = ' '.join(str(item) for item in query)
-                else:
-                    query = str(query)
-
-                return cls.format_search_event(
-                    agent_name=agent_name_stream,
-                    search_type="internal",
-                    query=query + search_filter,
-                    message_id=message_id,
-                    agent_id=agent_id,
-                    component_id=component_id
-                )
-
-            elif function_name == "perform_web_search":
-                query = args.get('query', '')
-                if isinstance(query, list):
-                    query = ' '.join(str(item) for item in query)
-                else:
-                    query = str(query)
-
-                return cls.format_search_event(
-                    agent_name=agent_name_stream,
-                    search_type="web",
-                    query=query,
-                    message_id=message_id,
-                    agent_id=agent_id,
-                    component_id=component_id
-                )
-
-            elif function_name == "perform_standard_search":
-                query = args.get('query', '')
-                if isinstance(query, list):
-                    query = ' '.join(str(item) for item in query)
-                else:
-                    query = str(query)
-
-                return cls.format_search_event(
-                    agent_name=agent_name_stream,
-                    search_type="internal",
-                    query=f"(all) {query}",
-                    message_id=message_id,
-                    agent_id=agent_id,
-                    component_id=component_id
-                )
-
-            elif function_name == "calculator":
+            if function_name == "calculator":
                 expression = args.get('expression', '')
                 return cls.format_calculation_event(
                     agent_name=agent_name_stream,

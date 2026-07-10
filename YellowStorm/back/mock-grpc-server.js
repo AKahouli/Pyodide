@@ -344,6 +344,70 @@ function buildSandboxChunks(componentId, code, output, options = {}) {
 }
 
 /**
+ * Builds chunks for a tool_info component (single tool execution + status).
+ * First chunk: status 'running' (add). Second chunk: final status (update on
+ * the same id), mirroring the ADK add-then-update flow.
+ */
+function buildToolInfoChunks(componentId, title, options = {}) {
+  const { delay = 100, executionDelay = 800, status = 'completed', params = '', metadata } = options;
+
+  // 'add' carries the tool-call args (params); the 'update' only flips status.
+  const addChunk = {
+    delay,
+    chunk: {
+      action: 'add',
+      component: {
+        id: componentId,
+        tool_info: {
+          title,
+          status: 'running',
+          params,
+        },
+      },
+      metadata,
+    },
+  };
+
+  const updateChunk = {
+    delay: executionDelay,
+    chunk: {
+      action: 'update',
+      component: {
+        id: componentId,
+        tool_info: {
+          title,
+          status,
+        },
+      },
+      metadata,
+    },
+  };
+
+  return [addChunk, updateChunk];
+}
+
+/**
+ * Builds a single chunk for a chain-of-thought component.
+ * Arrives fully formed in one chunk; rendered as a collapsed list on top.
+ */
+function buildChainOfThoughtChunk(componentId, steps, options = {}) {
+  const { delay = 100, metadata } = options;
+  return {
+    delay,
+    chunk: {
+      action: 'add',
+      component: {
+        id: componentId,
+        chain_of_thought: {
+          steps,
+        },
+      },
+      metadata,
+    },
+  };
+}
+
+/**
  * Builds a single chunk for a web preview component.
  * WebPreview arrives fully formed in one chunk with HTML content.
  */
@@ -541,6 +605,8 @@ function runAgentTeam(call) {
   const planId = randomUUID();
   const taskId = randomUUID();
   const sandboxId = randomUUID();
+  const toolInfoId = randomUUID();
+  const chainOfThoughtId = randomUUID();
   const sourcesId = randomUUID();
   const webPreviewId = randomUUID();
   const artifactId = randomUUID();
@@ -692,6 +758,26 @@ print(f"First 10 Fibonacci numbers: {result}")`;
     executionDelay: 2000,
     metadata,
   });
+
+  // --- Tool info component (tool execution status: running -> completed) ---
+  const toolInfoChunks = buildToolInfoChunks(toolInfoId, 'web_search', {
+    executionDelay: 1000,
+    status: 'completed',
+    params: JSON.stringify({ query: 'fibonacci sequence', top_k: 3 }),
+    metadata,
+  });
+
+  // --- Chain of thought component (collapsed step titles, pinned on top) ---
+  const chainOfThoughtChunk = buildChainOfThoughtChunk(
+    chainOfThoughtId,
+    [
+      'Understand the request',
+      'Recall the Fibonacci definition',
+      'Compare recursive vs iterative approaches',
+      'Draft a TypeScript implementation',
+    ],
+    { metadata },
+  );
 
   // --- Checkpoint 1 ---
   const checkpoint1 = buildCheckpointChunk(checkpoint1Id, 'Starting Implementation', { metadata });
@@ -1074,6 +1160,8 @@ console.log(fibonacci(10)); // 55`;
 
   // Combine all chunks in order
   const allChunks = [
+    chainOfThoughtChunk,
+    { delay: 2, chunk: null },
     ...reasoningChunks,
     { delay: 2, chunk: null },
     queueChunk,
@@ -1093,6 +1181,8 @@ console.log(fibonacci(10)); // 55`;
     ...codeChunks,
     { delay: 1, chunk: null },
     ...sandboxChunks,
+    { delay: 1, chunk: null },
+    ...toolInfoChunks,
     { delay: 1, chunk: null },
     webPreviewChunk,
     { delay: 1, chunk: null },

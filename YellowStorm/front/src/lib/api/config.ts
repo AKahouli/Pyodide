@@ -138,6 +138,11 @@ export const API_ENDPOINTS = {
       `/workspaces/${workspaceId}/documents/bulk/${sessionId}/complete`,
     bulkSession: (workspaceId: string, sessionId: string) =>
       `/workspaces/${workspaceId}/documents/bulk/${sessionId}`,
+    // Link (website URL) endpoints
+    link: (workspaceId: string) => `/workspaces/${workspaceId}/documents/link`,
+    validateUrl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/validate-url`,
+    crawl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/crawl`,
+    links: (workspaceId: string) => `/workspaces/${workspaceId}/documents/links`,
   },
   workspaceSettings: {
     list: '/workspace-settings',
@@ -316,6 +321,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
     whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
+    whatsappEvents: (id: string) => `/agents/${id}/whatsapp-integration/events`,
+    whatsappAutoRecover: (id: string) => `/agents/${id}/whatsapp-integration/auto-recover`,
     whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
     whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
     whatsappPairing: (id: string, sessionId: string) =>

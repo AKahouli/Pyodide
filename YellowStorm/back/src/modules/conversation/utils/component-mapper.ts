@@ -15,6 +15,8 @@ const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> =
   { field: 'web_preview', type: 'webPreview' },
   { field: 'artifact', type: 'artifact' },
   { field: 'citation', type: 'citation' },
+  { field: 'tool_info', type: 'toolInfo' },
+  { field: 'chain_of_thought', type: 'chainOfThought' },
 ];
 
 const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
@@ -33,6 +35,10 @@ const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   webPreview: 'webPreview',
   artifact: 'artifact',
   citation: 'citation',
+  tool_info: 'toolInfo',
+  toolInfo: 'toolInfo',
+  chain_of_thought: 'chainOfThought',
+  chainOfThought: 'chainOfThought',
 };
 
 function normalizeLegacyType(raw: string): ComponentType {
@@ -75,6 +81,13 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
       );
     case 'citation':
       return Boolean(payload.text_source || payload.image_source);
+    case 'toolInfo':
+      return (
+        (typeof payload.title === 'string' && payload.title.length > 0) ||
+        (typeof payload.status === 'string' && payload.status.length > 0)
+      );
+    case 'chainOfThought':
+      return Array.isArray(payload.steps) && payload.steps.length > 0;
     default:
       return false;
   }
@@ -321,6 +334,22 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
 
       return { type: 'citation' as ComponentType, data: sourceData };
     }
+    case 'toolInfo':
+      return {
+        type,
+        data: {
+          title: comp.tool_info?.title || '',
+          status: comp.tool_info?.status || 'running',
+          params: comp.tool_info?.params || '',
+        },
+      };
+    case 'chainOfThought':
+      return {
+        type,
+        data: {
+          steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')),
+        },
+      };
     default:
       return { type: 'text', data: { content: '' } };
   }

@@ -95,6 +95,35 @@ function buildWidgetHtml(agentDisplayName: string, avatarInitials: string): stri
   ].join('\n');
 }
 
+const WIDGET_ISOLATION_STYLES = [
+  ':host{',
+  'display:block;',
+  'position:fixed;',
+  'right:20px;',
+  'bottom:20px;',
+  'z-index:2147483647;',
+  'font-family:"Inter",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;',
+  'font-size:16px;',
+  'font-weight:400;',
+  'font-style:normal;',
+  'line-height:1.5;',
+  'color:#0f172a;',
+  'text-align:left;',
+  'letter-spacing:normal;',
+  'word-spacing:normal;',
+  'text-transform:none;',
+  'direction:ltr;',
+  'pointer-events:none;',
+  'isolation:isolate;',
+  '-webkit-font-smoothing:antialiased;',
+  '-moz-osx-font-smoothing:grayscale;',
+  '}',
+  '#ys-widget-root{position:relative;font-family:inherit;font-size:inherit;line-height:inherit;color:inherit;pointer-events:none;}',
+  '#ys-widget-root *,#ys-widget-root *::before,#ys-widget-root *::after{box-sizing:border-box;pointer-events:auto;}',
+  '#ys-widget-root button,#ys-widget-root input,#ys-widget-root textarea,#ys-widget-root select{font-family:inherit;font-size:inherit;line-height:inherit;margin:0;}',
+  '#ys-widget-root p,#ys-widget-root h1,#ys-widget-root h2,#ys-widget-root h3,#ys-widget-root ul,#ys-widget-root ol,#ys-widget-root li{margin:0;padding:0;}',
+].join('');
+
 const WIDGET_STYLES = [
   '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");',
   '',
@@ -412,13 +441,13 @@ export function buildWidgetSnippet(
   const params = typeof first === 'string'
     ? { agentId: first, agentName, embedHandle, chatApiUrl, streamApiUrl, apiBaseUrl: chatApiUrl.replace(/\/widget\/chat\/?$/, '') }
     : {
-        agentId: first.agentId,
-        agentName: 'AI Assistant',
-        embedHandle: first.embedHandle,
-        chatApiUrl: `${first.apiBaseUrl.replace(/\/$/, '')}/widget/chat`,
-        streamApiUrl: `${first.apiBaseUrl.replace(/\/$/, '')}/widget/stream`,
-        apiBaseUrl: first.apiBaseUrl.replace(/\/$/, ''),
-      };
+      agentId: first.agentId,
+      agentName: 'AI Assistant',
+      embedHandle: first.embedHandle,
+      chatApiUrl: `${first.apiBaseUrl.replace(/\/$/, '')}/widget/chat`,
+      streamApiUrl: `${first.apiBaseUrl.replace(/\/$/, '')}/widget/stream`,
+      apiBaseUrl: first.apiBaseUrl.replace(/\/$/, ''),
+    };
   const displayName = params.agentName.trim() || 'AI Assistant';
   const avatarInitials = buildAvatarInitials(displayName);
   const widgetHtml = buildWidgetHtml(displayName, avatarInitials);

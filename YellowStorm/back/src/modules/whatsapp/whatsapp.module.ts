@@ -12,6 +12,7 @@ import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { BaileysClientFactory } from './baileys/baileys-client.factory';
 import { MongoBaileysAuthStore } from './baileys/mongo-auth-state';
 import { WhatsAppIntegrationController } from './controllers/whatsapp-integration.controller';
+import { WhatsAppIntegrationEventsController } from './controllers/whatsapp-integration-events.controller';
 import { WhatsAppGateway } from './gateways/whatsapp.gateway';
 import {
   AgentWhatsAppIntegration,
@@ -28,6 +29,7 @@ import { WhatsAppIntegrationService } from './services/whatsapp-integration.serv
 import { WhatsAppMessageService } from './services/whatsapp-message.service';
 import { WhatsAppStreamService } from './services/whatsapp-stream.service';
 import { WhatsAppPairingCacheService } from './services/whatsapp-pairing-cache.service';
+import { WhatsAppIntegrationSseService } from './services/whatsapp-integration-sse.service';
 import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
 
 @Module({
@@ -45,7 +47,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     ConversationModule,
     forwardRef(() => WorkyModule),
   ],
-  controllers: [WhatsAppIntegrationController],
+  controllers: [WhatsAppIntegrationEventsController, WhatsAppIntegrationController],
   providers: [
     CryptoService,
     WhatsAppConnectivityService,
@@ -56,6 +58,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     WorkyWhatsAppConnectionService,
     WorkyWhatsAppSystemBotConnectionService,
     WorkyWhatsAppGroupService,
+    WhatsAppIntegrationSseService,
     WhatsAppSessionManager,
     WhatsAppStreamService,
     WhatsAppMessageService,

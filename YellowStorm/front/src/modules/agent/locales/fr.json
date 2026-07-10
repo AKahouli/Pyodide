@@ -230,7 +230,7 @@
   "createEdit.fields.whatsappDisconnect": "Déconnecter",
   "createEdit.fields.whatsappReconnect": "Reconnecter",
   "createEdit.fields.whatsappPhoneNumber": "Numéro de téléphone",
-  "createEdit.fields.whatsappDisplayName": "Nom affiché",
+  "createEdit.fields.whatsappAgentName": "Nom de l'agent",
   "createEdit.fields.whatsappPairingCodeLabel": "Code d'appairage : {{code}}",
   "createEdit.fields.whatsappQrAlt": "Code QR WhatsApp pour l'appairage",
   "createEdit.fields.whatsappWaitingPairingData": "Génération du code QR ou du code d'appairage…",

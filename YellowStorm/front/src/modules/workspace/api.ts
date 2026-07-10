@@ -2,7 +2,8 @@
  * Workspace API Functions
  */
 
-import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
+import apiClient, { ApiResponse } from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   Workspace,
   CreateWorkspaceData,
@@ -32,6 +33,7 @@ import type {
   WorkspaceShareResponse,
   UserSearchResult,
   PaginatedPublicWorkspaces,
+  CrawlResponse,
 } from './types';
 
 // ===== Workspace APIs =====
@@ -739,6 +741,58 @@ export interface WorkspaceUploadSettings {
 export async function getWorkspaceUploadSettings(): Promise<WorkspaceUploadSettings> {
   const response = await apiClient.get<ApiResponse<WorkspaceUploadSettings>>(
     API_ENDPOINTS.workspaceUploadSettings.current,
+  );
+  return response.data.data;
+}
+
+// ===== Website Link APIs =====
+
+/**
+ * Validate that a URL is reachable before adding it as a website link
+ */
+export async function validateUrl(
+  workspaceId: string,
+  url: string,
+): Promise<{ reachable: boolean; status?: number; error?: string }> {
+  const response = await apiClient.post<ApiResponse<{ reachable: boolean; status?: number; error?: string }>>(
+    API_ENDPOINTS.workspaceDocuments.validateUrl(workspaceId),
+    { url },
+  );
+  return response.data.data;
+}
+
+/**
+ * Add a website link as a workspace document
+ */
+export async function addLink(
+  workspaceId: string,
+  url: string,
+): Promise<WorkspaceDocument> {
+  const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
+    API_ENDPOINTS.workspaceDocuments.link(workspaceId),
+    { url },
+  );
+  return response.data.data;
+}
+
+/**
+ * Crawl a website URL and return the discovered page tree
+ */
+export async function crawlUrl(workspaceId: string, url: string): Promise<CrawlResponse> {
+  const response = await apiClient.post<ApiResponse<CrawlResponse>>(
+    API_ENDPOINTS.workspaceDocuments.crawl(workspaceId),
+    { url },
+  );
+  return response.data.data;
+}
+
+/**
+ * Add multiple website links as workspace documents
+ */
+export async function addLinks(workspaceId: string, urls: string[]): Promise<WorkspaceDocument[]> {
+  const response = await apiClient.post<ApiResponse<WorkspaceDocument[]>>(
+    API_ENDPOINTS.workspaceDocuments.links(workspaceId),
+    { urls },
   );
   return response.data.data;
 }
