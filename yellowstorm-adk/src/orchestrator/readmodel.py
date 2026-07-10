@@ -134,3 +134,19 @@ class ReadModel:
                 INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content)
                 VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
             """, message_id, session_id, role, content)
+
+    async def snapshot(self, session_id: str) -> Optional[dict]:
+        """Session + plan + ordered steps, for GetSession. None if unknown."""
+        async with self._pool.acquire() as con:
+            sess = await con.fetchrow(
+                f"SELECT * FROM {_q(self._schema,'sessions')} WHERE id=$1", session_id)
+            if not sess:
+                return None
+            plan = await con.fetchrow(
+                f"SELECT * FROM {_q(self._schema,'plans')} WHERE session_id=$1", session_id)
+            steps = await con.fetch(
+                f"SELECT * FROM {_q(self._schema,'plan_steps')} WHERE session_id=$1 ORDER BY ordinal",
+                session_id)
+        return {"session": dict(sess),
+                "plan": dict(plan) if plan else None,
+                "steps": [dict(s) for s in steps]}

@@ -17,3 +17,13 @@ services:
    env_file:
       - .env
    entrypoint: bash -c "celery -A src.infrastructure.celery_app.celery_app worker --loglevel=info --queues=attribute_extraction --pool=threads --concurrency=4 -n attribute-extraction@%h"
+
+  electric:
+    image: electricsql/electric:latest
+    container_name: yellowstorm-electric
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${ELECTRIC_DATABASE_URL}
+      ELECTRIC_SECRET: ${ELECTRIC_SECRET:-dev-only-change-me}
+    ports:
+      - "3100:3000"

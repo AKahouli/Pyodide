@@ -119,6 +119,22 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
         logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
 
+    # Agent Orchestrator (parallel multi-agent). Gated by ORCHESTRATOR_ENABLED.
+    orchestrator_runtime = None
+    from src.orchestrator.config import get_orchestrator_settings
+    if get_orchestrator_settings().ORCHESTRATOR_ENABLED:
+        try:
+            from src.grpc_generated import orchestrator_pb2_grpc as orch_grpc
+            from src.orchestrator.bootstrap import OrchestratorRuntime
+
+            orchestrator_runtime = await OrchestratorRuntime().start()
+            orch_grpc.add_AgentOrchestratorServicer_to_server(
+                orchestrator_runtime.servicer, server)
+            logger.info("[gRPC] AgentOrchestratorServicer registered")
+        except Exception as e:
+            logger.error(f"[gRPC] Failed to start Agent Orchestrator: {e}", exc_info=True)
+            orchestrator_runtime = None
+
     # Bind the server to port. Secure by default (TLS); plaintext only under the
     # explicit GRPC_ALLOW_INSECURE opt-out (server_credentials is None then).
     if server_credentials is None:
@@ -143,6 +159,9 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeApproval (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeFromStep (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
+    if orchestrator_runtime is not None:
+        logger.info("  - yellowstorm.orchestrator.v1.AgentOrchestrator "
+                    "(CreateSession / RunTask / GetSession / StopSession)")
 
     # Keep the server running until terminated
     try:
@@ -150,6 +169,8 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     except asyncio.CancelledError:
         logger.info("[gRPC] Server shutdown requested")
         await server.stop(grace=5)
+        if orchestrator_runtime is not None:
+            await orchestrator_runtime.stop()
         await close_checkpointer()
         logger.info("✅ [gRPC] Server stopped gracefully")
         raise

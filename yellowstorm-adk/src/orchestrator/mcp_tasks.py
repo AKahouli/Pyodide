@@ -38,6 +38,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 step_id      TEXT,
                 tool_call_id TEXT,
                 server_name  TEXT,
+                server_url   TEXT,          -- reconnect target (streamable-http)
+                auth_headers JSONB,         -- per-user connector auth captured at call time
                 task_id      TEXT NOT NULL,
                 status       TEXT NOT NULL DEFAULT 'pending',
                 worker_id    TEXT,
@@ -54,15 +56,18 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
 
 
 async def enqueue(pool: asyncpg.Pool, *, session_id: str, user_id: str, task_id: str,
-                  server_name: str, step_id: str = "", tool_call_id: str = "",
+                  server_name: str, server_url: str = "", auth_headers: Optional[dict] = None,
+                  step_id: str = "", tool_call_id: str = "",
                   run_id: str = "", schema: str = "public") -> int:
+    import json
     t = _table(schema)
     async with pool.acquire() as con:
         return await con.fetchval(
             f"""INSERT INTO {t} (session_id,user_id,run_id,step_id,tool_call_id,
-                                 server_name,task_id)
-                VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id""",
-            session_id, user_id, run_id, step_id, tool_call_id, server_name, task_id,
+                                 server_name,server_url,auth_headers,task_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id""",
+            session_id, user_id, run_id, step_id, tool_call_id, server_name,
+            server_url, json.dumps(auth_headers or {}), task_id,
         )
 
 
