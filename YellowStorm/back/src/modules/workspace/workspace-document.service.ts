@@ -54,8 +54,6 @@ import { WorkspaceUploadSettingsService } from '../system/workspace-upload-setti
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
-import { WebsiteCrawlerService } from './services/website-crawler.service';
-import { buildPageTree, PageNode } from './services/page-tree';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -80,7 +78,6 @@ export class WorkspaceDocumentService {
     private readonly configService: ConfigService,
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly urlToPdfClient: UrlToPdfClientService,
-    private readonly websiteCrawler: WebsiteCrawlerService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -942,27 +939,6 @@ export class WorkspaceDocumentService {
       return res;
     }
     return null;
-  }
-
-  /**
-   * Crawl a website to discover its sub-pages for selective indexing, and mark
-   * which of those pages are already indexed in this workspace (by sourceUrl).
-   */
-  async crawlSite(
-    workspaceId: string,
-    url: string,
-  ): Promise<{ tree: PageNode[]; truncated: boolean }> {
-    const { pages, truncated } = await this.websiteCrawler.crawl(url);
-    // Mark pages already indexed in this workspace (by sourceUrl).
-    const existing = await this.documentModel
-      .find({ workspaceId: new Types.ObjectId(workspaceId), type: DocumentType.URL })
-      .select({ sourceUrl: 1 })
-      .lean()
-      .exec();
-    const indexed = new Set<string>(
-      existing.map((d) => (d as { sourceUrl?: string }).sourceUrl).filter(Boolean) as string[],
-    );
-    return { tree: buildPageTree(pages, indexed), truncated };
   }
 
   /**

@@ -25,10 +25,6 @@ export default registerAs('indexing', () => ({
   enabled: process.env.INDEXING_ENABLED !== 'false',
   urlToPdfApiUrl: process.env.URL_TO_PDF_API_URL || 'http://localhost:5000',
   urlToPdfApiKey: process.env.URL_TO_PDF_API_KEY || '',
-  crawlMaxPages: Number.parseInt(process.env.CRAWL_MAX_PAGES || '50', 10),
-  crawlMaxDepth: Number.parseInt(process.env.CRAWL_MAX_DEPTH || '2', 10),
-  crawlTimeBudgetMs: Number.parseInt(process.env.CRAWL_TIME_BUDGET_MS || '10000', 10),
-  crawlConcurrency: Number.parseInt(process.env.CRAWL_CONCURRENCY || '5', 10),
   crawlUserAgent: process.env.CRAWL_USER_AGENT || DEFAULT_CRAWL_USER_AGENT,
   sequentialDelayMs: Number.parseInt(process.env.INDEXING_SEQUENTIAL_DELAY_MS || '2000', 10),
 }));

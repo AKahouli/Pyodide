@@ -17,7 +17,6 @@ import { DocumentService } from '../document/document.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { IndexingService } from '../indexing/indexing.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
-import { WebsiteCrawlerService } from './services/website-crawler.service';
 import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import {
@@ -55,7 +54,6 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -154,7 +152,6 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -244,7 +241,6 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -334,7 +330,6 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: indexingService },
         { provide: UrlToPdfClientService, useValue: urlToPdfClient },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           // addLinks reads 'indexing.sequentialDelayMs' directly (no default
@@ -489,7 +484,6 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -707,7 +701,6 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: indexingService },
         { provide: UrlToPdfClientService, useValue: { convert } },
-        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
           useValue: {
