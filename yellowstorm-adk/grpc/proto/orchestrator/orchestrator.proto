@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+// Agent Orchestrator — production multi-agent planning/execution service.
+//
+// CQRS by design:
+//   * COMMANDS (this gRPC surface): CreateSession / RunTask / StopSession — write side.
+//   * READS: the live plan, per-step status and messages are projected into
+//     Postgres and synced to the client via ElectricSQL. Nothing is streamed
+//     back over gRPC. `GetSession` returns a one-shot snapshot for initial load.
+//
+// A single RunTask drives the whole hierarchy server-side:
+//   planner (LLM) -> orchestrator (deterministic wave scheduler) ->
+//   executor sub-agents run in PARALLEL when independent, SEQUENTIAL when a
+//   step depends on another (see Step.depends_on). Blocking (ask-the-user or a
+//   long-running MCP task) suspends the session; the user resumes with another
+//   RunTask on the same session_id.
+package yellowstorm.orchestrator.v1;
+
+service AgentOrchestrator {
+  // Create an empty session for a user. Returns its id.
+  rpc CreateSession (CreateSessionRequest) returns (CreateSessionResponse);
+
+  // Submit a message (new turn OR a reply that resumes a blocked plan).
+  // Runs in the background and acks immediately; progress is read via Electric.
+  rpc RunTask (RunRequest) returns (RunResponse);
+
+  // One-shot snapshot (title, status, current plan) for initial load / catch-up.
+  // Steady-state progress comes from Electric, not this call.
+  rpc GetSession (GetSessionRequest) returns (GetSessionResponse);
+
+  // Cancel a running/blocked session.
+  rpc StopSession (StopSessionRequest) returns (StopSessionResponse);
+}
+
+// ===================== Commands =====================
+
+message CreateSessionRequest  { string user_id = 1; }
+message CreateSessionResponse { string session_id = 1; }
+
+message RunRequest {
+  string user_id    = 1;
+  string session_id = 2;
+  string message    = 3;
+  // Full LiteLLM model id, e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5".
+  string model      = 4;
+  // Skills injected into the agent prompts (same field shape as chatbot.proto
+  // so YellowMind reuses its existing mappers).
+  repeated Skill skills = 5;
+  // Per-user MCP servers exposed as tools; auth already resolved upstream.
+  // These are also the source of long-running MCP tasks.
+  repeated ConnectorBinding connectors = 6;
+  // Dedupe retried commands: the server runs a given key at most once per
+  // session. REQUIRED in production so a client retry can't double-start a turn.
+  string idempotency_key = 7;
+}
+
+message RunResponse {
+  string session_id = 1;
+  bool   accepted   = 2;
+  // Id of this turn (for tracing / correlating with the idempotency_key).
+  string run_id     = 3;
+}
+
+message GetSessionRequest  { string user_id = 1; string session_id = 2; }
+message GetSessionResponse {
+  string session_id = 1;
+  string title      = 2;
+  // Session status: "pending" | "running" | "waiting" | "completed" | "failed".
+  string status     = 3;
+  Plan   plan       = 4;  // current plan snapshot (may be empty before planning)
+}
+
+message StopSessionRequest  { string user_id = 1; string session_id = 2; }
+message StopSessionResponse { bool stopped = 1; }
+
+// ===================== Plan (the core UX object) =====================
+
+message Plan {
+  string id     = 1;
+  string title  = 2;
+  string goal   = 3;
+  // "pending" | "running" | "blocked" | "completed" | "failed".
+  string status = 4;
+  repeated Step steps = 5;
+}
+
+message Step {
+  string id          = 1;
+  string description = 2;
+  // "pending" | "running" | "blocked" | "completed" | "failed".
+  string status      = 3;
+  // Ids of steps that must complete before this one can start. Empty = ready.
+  // Independent steps (disjoint dependency sets) run in parallel.
+  repeated string depends_on = 4;
+  // Parallel wave index assigned by the orchestrator (0-based). Steps sharing a
+  // wave run concurrently; the client can group by this.
+  int32  wave           = 5;
+  // Which executor sub-agent is handling this step (for display/tracing).
+  string agent          = 6;
+  // Short result/summary when completed.
+  string result         = 7;
+  string error          = 8;
+  // Why the step is blocked (e.g. "awaiting user input", "long-running task").
+  string blocked_reason = 9;
+}
+
+// ===================== Skills (progressive-disclosure prompt injection) =====================
+// Field shape mirrors chatbot.proto so the existing client mapping is reused.
+
+message Skill {
+  string id            = 1;
+  string name          = 2;
+  string description   = 3;
+  string instructions  = 4;
+  string license       = 5;
+  string compatibility = 6;
+  map<string, string> metadata = 7;
+  repeated string allowed_tools = 8;
+  repeated SkillFile files = 9;
+}
+
+message SkillFile {
+  string path      = 1;
+  string kind      = 2;
+  string mime_type = 3;
+  string content   = 4;
+}
+
+// ===================== Connectors (per-user MCP servers as tools) =====================
+
+message ConnectorBinding {
+  string connector_id      = 1;
+  string connector_name    = 2;
+  string mcp_transport_type = 3;           // e.g. "streamable_http"
+  string mcp_server_url    = 4;
+  map<string, string> auth_headers = 5;    // ready-to-use HTTP headers
+  map<string, string> auth_env     = 6;    // env vars for stdio transports
+  repeated ConnectorAction actions = 7;    // enabled actions of this connector
+}
+
+message ConnectorAction {
+  string action_key            = 1;
+  string label                 = 2;
+  string description           = 3;
+  string parameter_schema_json = 4;        // JSON Schema of the action params
+}
