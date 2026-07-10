@@ -1,32 +1,22 @@
-import { useEffect, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-
-import { crawlUrl } from '../api';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
-import type { PageNode } from '../types';
-import { PageTree, collectSelectableUrls } from './PageTree';
+import { useBrowserSession, normalizeUrl } from '../hooks/useBrowserSession';
+import { BrowserSessionViewer } from './BrowserSessionViewer';
+import { CollectionSidebar } from './CollectionSidebar';
 
 function isValidUrl(value: string): boolean {
   try {
     const u = new URL(value.trim());
     return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-function collectPreChecked(nodes: PageNode[]): Set<string> {
-  // Pre-check the top-level real page(s) only — skip synthetic group nodes
-  // (url === '') and already-indexed pages.
-  const s = new Set<string>();
-  nodes.forEach((n) => { if (n.url && !n.alreadyIndexed) s.add(n.url); });
-  return s;
+  } catch { return false; }
 }
 
 export function AddLinkDialog({
@@ -38,84 +28,91 @@ export function AddLinkDialog({
   initialUrl?: string;
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
-  const [phase, setPhase] = useState<'input' | 'tree'>('input');
+  const documentsCache = useWorkspaceStore((s) => s.documents);
+  const session = useBrowserSession();
+
+  const [phase, setPhase] = useState<'input' | 'browse'>('input');
   const [url, setUrl] = useState(initialUrl);
+  const [addressBar, setAddressBar] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tree, setTree] = useState<PageNode[]>([]);
-  const [truncated, setTruncated] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [focusUrl, setFocusUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setPhase('input'); setUrl(initialUrl); setError(null); setBusy(false);
-      setTree([]); setTruncated(false); setSelected(new Set()); setFocusUrl(null);
+      // An already-active session (e.g. carried over from a prior open) should
+      // drop the user straight into the browse phase instead of forcing a
+      // redundant "input" step.
+      setPhase(session.status === 'idle' ? 'input' : 'browse');
+      setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+    } else {
+      session.stop();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialUrl]);
 
-  const handleCrawl = async () => {
-    if (busy) return;
+  // Auto-select each newly collected page.
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      session.pages.forEach((p) => next.add(p.url));
+      return next;
+    });
+  }, [session.pages]);
+
+  useEffect(() => { if (session.currentUrl) setAddressBar(session.currentUrl); }, [session.currentUrl]);
+
+  // `documents` in the store is a paginated cache (Map<page, WorkspaceDocument[]>),
+  // not a flat array — flatten it defensively (tests may pass a plain array/[]).
+  const indexedUrls = useMemo(() => {
+    const all = documentsCache instanceof Map ? Array.from(documentsCache.values()).flat() : [];
+    return new Set(
+      all.filter((d) => d?.sourceUrl).map((d) => normalizeUrl(d.sourceUrl as string)),
+    );
+  }, [documentsCache]);
+
+  const handleStart = () => {
     setError(null);
-    if (!isValidUrl(url)) {
-      setError('Veuillez saisir une URL valide (http:// ou https://).');
-      return;
-    }
-    const clean = url.trim();
-    setBusy(true);
-    try {
-      const res = await crawlUrl(workspaceId, clean);
-      if (res.unreachable) {
-        setError('Ce site est injoignable. Vérifiez le lien et réessayez.');
-        return;
-      }
-      setTree(res.tree);
-      setTruncated(res.truncated);
-      setSelected(collectPreChecked(res.tree));
-      // Focus the first real (selectable) page for the preview, not a group node.
-      setFocusUrl(collectSelectableUrls(res.tree)[0] ?? clean);
-      setPhase('tree');
-    } catch {
-      setError('Une erreur est survenue lors de la cartographie. Réessayez.');
-    } finally {
-      setBusy(false);
-    }
+    if (!isValidUrl(url)) { setError('Veuillez saisir une URL valide (http:// ou https://).'); return; }
+    session.start(url.trim());
+    setPhase('browse');
   };
 
   const toggle = (u: string) =>
     setSelected((prev) => { const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n; });
-  const selectAll = () => setSelected(new Set(collectSelectableUrls(tree)));
+  const remove = (u: string) =>
+    setSelected((prev) => { const n = new Set(prev); n.delete(u); return n; });
+  const selectableUrls = () => session.pages.filter((p) => !indexedUrls.has(normalizeUrl(p.url))).map((p) => p.url);
+  const selectAll = () => setSelected(new Set(selectableUrls()));
   const selectNone = () => setSelected(new Set());
 
-  const handleAdd = async () => {
-    if (busy || selected.size === 0) return;
+  const chosen = session.pages
+    .map((p) => p.url)
+    .filter((u) => selected.has(u) && !indexedUrls.has(normalizeUrl(u)));
+
+  const handleIndex = async () => {
+    if (busy || chosen.length === 0) return;
     setBusy(true);
     try {
-      await addPageLinks(workspaceId, [...selected]);
-      toast.success(`${selected.size} page(s) ajoutée(s) · conversion en cours`);
+      await addPageLinks(workspaceId, chosen);
+      toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
     } catch {
-      setError('Une erreur est survenue lors de l\'ajout. Réessayez.');
-    } finally {
-      setBusy(false);
-    }
+      setError("Une erreur est survenue lors de l'ajout. Réessayez.");
+    } finally { setBusy(false); }
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent
-        className={
-          phase === 'tree'
-            ? 'flex h-[92vh] w-[96vw] max-w-[96vw] flex-col gap-3 overflow-hidden'
-            : undefined
-        }
+        className={phase === 'browse' ? 'flex h-[92vh] w-[96vw] max-w-[96vw] flex-col gap-3 overflow-hidden' : undefined}
       >
-        <DialogHeader className={phase === 'tree' ? 'shrink-0' : undefined}>
+        <DialogHeader className={phase === 'browse' ? 'shrink-0' : undefined}>
           <DialogTitle>Ajouter un lien</DialogTitle>
           <DialogDescription>
             {phase === 'input'
-              ? "Indexez le contenu d'un site web. Cartographiez le site pour choisir les pages à indexer."
-              : 'Sélectionnez les pages à indexer. Chaque page sera convertie en PDF puis indexée.'}
+              ? "Naviguez sur le site et collectez les pages à indexer."
+              : 'Naviguez ; les pages visitées sont collectées à droite. Sélectionnez celles à indexer.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -127,87 +124,69 @@ export function AddLinkDialog({
               placeholder='https://exemple.com'
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void handleCrawl(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleStart(); }}
               autoFocus
-              disabled={busy}
             />
             {error && <p className='text-sm text-destructive'>{error}</p>}
           </div>
         ) : (
-          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[260px_1fr]'>
+          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_320px]'>
             <div className='flex min-h-0 min-w-0 flex-col rounded border'>
-              <div className='flex shrink-0 items-center gap-2 border-b px-2 py-1.5 text-xs'>
-                <button type='button' className='underline' onClick={selectAll}>Tout sélectionner</button>
-                <span className='text-muted-foreground'>·</span>
-                <button type='button' className='underline' onClick={selectNone}>Aucun</button>
-                {truncated && <span className='ml-auto text-muted-foreground'>Résultats limités</span>}
+              <div className='flex shrink-0 items-center gap-1 border-b px-2 py-1.5'>
+                <Button size='icon' variant='ghost' className='h-7 w-7' onClick={() => session.navigate({ kind: 'back' })}><ArrowLeft className='h-4 w-4' /></Button>
+                <Button size='icon' variant='ghost' className='h-7 w-7' onClick={() => session.navigate({ kind: 'forward' })}><ArrowRight className='h-4 w-4' /></Button>
+                <Button size='icon' variant='ghost' className='h-7 w-7' onClick={() => session.navigate({ kind: 'reload' })}><RotateCw className='h-4 w-4' /></Button>
+                <Input
+                  value={addressBar}
+                  onChange={(e) => setAddressBar(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && isValidUrl(addressBar)) session.navigate({ kind: 'goto', url: addressBar.trim() }); }}
+                  className='h-7 text-xs'
+                />
               </div>
-              <div className='min-h-0 flex-1'>
-                <PageTree nodes={tree} selected={selected} focusUrl={focusUrl} onToggle={toggle} onFocus={setFocusUrl} />
+              <div className='relative min-h-0 flex-1 overflow-hidden bg-muted/10'>
+                {session.status === 'busy' ? (
+                  <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>Navigateur occupé. Réessayez dans un instant.</div>
+                ) : session.status === 'connecting' ? (
+                  <div className='flex h-full items-center justify-center'><Loader2 className='h-6 w-6 animate-spin' /></div>
+                ) : (
+                  <BrowserSessionViewer frame={session.frame} onInput={session.sendInput} />
+                )}
+                {session.blockedNotice && (
+                  <div className='absolute inset-x-0 bottom-0 bg-destructive/90 px-3 py-1.5 text-xs text-destructive-foreground'>
+                    {session.blockedNotice}
+                  </div>
+                )}
               </div>
             </div>
-            <div className='flex min-h-0 min-w-0 flex-col'>
-              {focusUrl ? (
-                <>
-                  <div className='mb-1 flex shrink-0 items-center gap-2 text-xs text-muted-foreground'>
-                    <span className='truncate' title={focusUrl}>{focusUrl}</span>
-                    <a href={focusUrl} target='_blank' rel='noreferrer'
-                       className='ml-auto inline-flex shrink-0 items-center gap-1 underline'>
-                      Ouvrir <ExternalLink className='h-3 w-3' />
-                    </a>
-                  </div>
-                  {/* Best-effort preview. Deliberately omit `allow-same-origin`:
-                      combined with `allow-scripts` it is a known sandbox-escape
-                      anti-pattern, and the framed page (a user-supplied crawl
-                      target) has no need to reach its own origin's cookies here.
-                      The iframe is scaled to 70% ("zoom out") so more of the page
-                      is visible at once; width/height are enlarged by 1/0.7 so the
-                      scaled frame still fills its container. */}
-                  <div className='min-h-0 flex-1 overflow-hidden rounded border bg-muted/20'>
-                    <iframe
-                      title='Aperçu'
-                      src={focusUrl}
-                      sandbox='allow-scripts'
-                      style={{
-                        width: '142.857%',
-                        height: '142.857%',
-                        transform: 'scale(0.7)',
-                        transformOrigin: '0 0',
-                        border: 0,
-                      }}
-                    />
-                  </div>
-                  <p className='mt-1 shrink-0 text-[11px] text-muted-foreground'>
-                    L'aperçu peut être indisponible pour certains sites.
-                  </p>
-                </>
-              ) : (
-                <p className='text-sm text-muted-foreground'>Sélectionnez une page pour l'aperçu.</p>
-              )}
-            </div>
+            <CollectionSidebar
+              pages={session.pages}
+              selected={selected}
+              indexedUrls={indexedUrls}
+              onToggle={toggle}
+              onDelete={remove}
+              onSelectAll={selectAll}
+              onSelectNone={selectNone}
+            />
           </div>
         )}
 
         <DialogFooter>
           {phase === 'input' ? (
             <>
-              <Button variant='outline' onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
-              <Button onClick={handleCrawl} disabled={busy} className='gap-1.5'>
-                {busy && <Loader2 className='h-4 w-4 animate-spin' />}
-                Cartographier
-              </Button>
+              <Button variant='outline' onClick={() => onOpenChange(false)}>Annuler</Button>
+              <Button onClick={handleStart}>Naviguer</Button>
             </>
           ) : (
             <>
-              <Button variant='outline' onClick={() => setPhase('input')} disabled={busy}>Retour</Button>
-              <Button onClick={handleAdd} disabled={busy || selected.size === 0} className='gap-1.5'>
+              <Button variant='outline' onClick={() => { session.stop(); setPhase('input'); }} disabled={busy}>Retour</Button>
+              <Button onClick={handleIndex} disabled={busy || chosen.length === 0} className='gap-1.5'>
                 {busy && <Loader2 className='h-4 w-4 animate-spin' />}
-                Ajouter ({selected.size})
+                Indexer ({chosen.length})
               </Button>
             </>
           )}
         </DialogFooter>
-        {phase === 'tree' && error && <p className='text-sm text-destructive'>{error}</p>}
+        {phase === 'browse' && error && <p className='text-sm text-destructive'>{error}</p>}
       </DialogContent>
     </Dialog>
   );
