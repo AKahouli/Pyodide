@@ -80,4 +80,24 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('allowTranscriptDownload!==false');
     expect(snippet).toContain('localStorage.setItem("ys_visitor_id",visitorId)');
   });
+
+  it('wires citation badges to signed URLs and PDF page fragments', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('_ysUpsertCitation');
+    expect(snippet).toContain('_ysNextCitationRef');
+    expect(snippet).toContain('_ysInjectCitationMarkers');
+    expect(snippet).toContain('_ysSortCitations');
+    expect(snippet).toContain('ys-comp-citation-badge');
+    expect(snippet).toContain('data-ys-page');
+    expect(snippet).toContain('data-ys-highlight');
+    expect(snippet).toContain('ys-file-viewer-quote');
+    expect(snippet).toContain('#page=');
+    expect(snippet).toContain('CITATION_URL_API_URL');
+    expect(snippet).toContain('_ysStreamSessionId===SESSION_ID');
+  });
 });
