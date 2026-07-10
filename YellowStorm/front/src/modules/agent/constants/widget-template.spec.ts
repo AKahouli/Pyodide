@@ -96,7 +96,10 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('data-ys-page');
     expect(snippet).toContain('data-ys-highlight');
     expect(snippet).toContain('ys-file-viewer-quote');
-    expect(snippet).toContain('#page=');
+    expect(snippet).toContain('ys-file-viewer-quote-mark');
+    expect(snippet).toContain('_ysBuildPdfPreviewUrl');
+    expect(snippet).toContain('"page="');
+    expect(snippet).toContain('"search="');
     expect(snippet).toContain('CITATION_URL_API_URL');
     expect(snippet).toContain('_ysStreamSessionId===SESSION_ID');
   });
