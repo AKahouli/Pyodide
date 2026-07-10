@@ -57,4 +57,14 @@ describe('BrowserSessionGateway', () => {
     gw.handleDisconnect(client as never);
     expect(svc.destroy).toHaveBeenCalledWith('sess1');
   });
+
+  it('destroys a prior session when start is called again on the same socket', async () => {
+    svc.create.mockResolvedValueOnce('sess1').mockResolvedValueOnce('sess2');
+    const client = fakeClient('u1');
+    await gw.handleStart(client as never, { url: 'https://ok.example' });
+    expect(client.data.sessionId).toBe('sess1');
+    await gw.handleStart(client as never, { url: 'https://ok2.example' });
+    expect(svc.destroy).toHaveBeenCalledWith('sess1');
+    expect(client.data.sessionId).toBe('sess2');
+  });
 });

@@ -64,7 +64,6 @@ export class BrowserSessionService {
     this.sessions.set(id, managed);
 
     engineSession.onFrame((data) => {
-      this.touch(id);
       emit('frame', { data });
     });
     engineSession.onNavigated((nav) => {

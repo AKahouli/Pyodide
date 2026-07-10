@@ -123,4 +123,18 @@ describe('BrowserSessionService', () => {
     jest.advanceTimersByTime(2000); // would have fired without the reset
     expect(svc.count()).toBe(1);
   });
+
+  it('does NOT reset the idle timer on outbound frames', async () => {
+    const engine = new FakeEngine();
+    const svc = await build(engine);
+    await svc.create('u1', 'https://ok.example', () => {});
+    const s = engine.sessions[0];
+    jest.advanceTimersByTime(CONFIG.idleMs - 1000);
+    s.frameCb!('BASE64_1');
+    s.frameCb!('BASE64_2');
+    jest.advanceTimersByTime(2000); // total idleMs + 1000: should have idled out despite frames
+    await Promise.resolve();
+    expect(s.closed).toBe(true);
+    expect(svc.count()).toBe(0);
+  });
 });

@@ -53,6 +53,10 @@ export class BrowserSessionGateway implements OnGatewayConnection, OnGatewayDisc
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
     const userId = client.data.userId;
     if (!userId || !body?.url) return { ok: false, error: 'BAD_REQUEST' };
+    if (client.data.sessionId) {
+      await this.sessions.destroy(client.data.sessionId);
+      client.data.sessionId = undefined;
+    }
     try {
       const sessionId = await this.sessions.create(userId, body.url, (event, payload) => {
         client.emit(event, payload);
