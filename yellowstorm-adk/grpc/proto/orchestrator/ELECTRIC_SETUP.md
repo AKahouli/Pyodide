@@ -5,10 +5,11 @@ The orchestrator writes the client-facing slice into `companion_ai`
 ElectricSQL. The tables are already Electric-compatible (each has a primary key).
 Two things must be true on the Postgres instance before Electric can sync.
 
-## 1. wal_level = logical (REQUIRED — currently blocking)
+## 1. wal_level = logical (REQUIRED — DONE)
 
-Electric tails Postgres via **logical replication**. The instance behind
-`DATABASE_URL` is currently `wal_level = replica`; it must be `logical`.
+Electric tails Postgres via **logical replication**; the instance must be
+`wal_level = logical`. DevOps enabled this and the full read path (snapshot +
+live push) was verified against `companion_ai`.
 
 Check:
 ```sql
@@ -33,7 +34,9 @@ read-model tables on first shape request. PK tables don't need
 
 `docker-compose.yaml` runs the `electric` service on host `:3100`. In `.env`:
 ```dotenv
-ELECTRIC_DATABASE_URL=postgresql://postgres:PASSWORD@poc.postgres.yellowmind.ai:3515/companion_ai?sslmode=require
+# This instance does NOT accept SSL — sslmode=disable (verified). Electric crashes
+# with "Database server not configured to accept SSL connections" on sslmode=require.
+ELECTRIC_DATABASE_URL=postgresql://postgres:PASSWORD@poc.postgres.yellowmind.ai:3515/companion_ai?sslmode=disable
 ELECTRIC_SECRET=<a long random string>   # injected by the proxy, NEVER the browser
 ```
 ```bash
@@ -53,7 +56,10 @@ pins `where = session_id = '<owned>'`; see README.md).
 
 ## Status
 
-Verified: the read model writes correctly to `companion_ai`, and the Electric
-shape API + our table shapes were confirmed against a logical-replication
-Postgres. The only remaining production step is enabling `wal_level = logical`
-on the shared instance (step 1) — a DBA/restart decision.
+**Verified end-to-end against companion_ai:** wrote read-model rows, read them
+through the Electric shape API filtered by `session_id`, and confirmed a live
+row update (`s2 -> completed`) pushed on the live poll. Read path is production-ready.
+
+Gotcha: the instance rejects SSL — Electric must use `sslmode=disable`. A
+throwaway Electric leaves `electric_slot_default` + `electric_publication_default`
+behind; drop them if you tear a test instance down (the real one reuses them).
