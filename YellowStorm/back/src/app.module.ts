@@ -42,6 +42,7 @@ import { UsageModule } from './modules/usage';
 import { NotificationsModule } from './modules/notifications';
 import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
+import { BrowserSessionModule } from './modules/browser-session/browser-session.module';
 import { ModelsModule } from './modules/models';
 import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
@@ -103,6 +104,7 @@ import { GovernanceModule } from './modules/governance';
     NotificationsModule,
     WorkspaceModule,
     IndexingModule,
+    BrowserSessionModule,
     ConversationModule,
     ConversationV2Module,
     ModelsModule,
