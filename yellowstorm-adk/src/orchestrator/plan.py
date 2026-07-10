@@ -26,6 +26,9 @@ class Status(str, Enum):
 class Step(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     description: str = ""
+    # "execute" (an agent does the work) or "ask" (block and ask the user).
+    kind: str = "execute"
+    question: Optional[str] = None      # for kind == "ask"
     status: Status = Status.PENDING
     # Ids of steps that must be COMPLETED before this one may start. Empty = ready.
     depends_on: List[str] = Field(default_factory=list)

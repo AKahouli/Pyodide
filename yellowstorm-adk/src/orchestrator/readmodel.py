@@ -23,13 +23,17 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
         await con.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'sessions')} (
-                id         TEXT PRIMARY KEY,
-                user_id    TEXT NOT NULL,
-                title      TEXT,
-                status     TEXT NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                id           TEXT PRIMARY KEY,
+                user_id      TEXT NOT NULL,
+                title        TEXT,
+                status       TEXT NOT NULL DEFAULT 'pending',
+                interrupt_id TEXT,     -- set while waiting on ask-the-user
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
+        # Idempotent migration for an existing sessions table.
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"sessions")} ADD COLUMN IF NOT EXISTS interrupt_id TEXT')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'plans')} (
                 session_id TEXT PRIMARY KEY,
@@ -46,6 +50,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 ordinal        INT  NOT NULL,
                 wave           INT  NOT NULL DEFAULT 0,
                 status         TEXT NOT NULL DEFAULT 'pending',
+                kind           TEXT NOT NULL DEFAULT 'execute',   -- execute | ask
+                question       TEXT,          -- for kind = ask
                 description    TEXT,
                 depends_on     TEXT,          -- comma-joined step ids
                 agent          TEXT,
@@ -54,6 +60,9 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, step_id)
             )""")
+        for col, typ in (("kind", "TEXT NOT NULL DEFAULT 'execute'"), ("question", "TEXT")):
+            await con.execute(
+                f'ALTER TABLE {_q(schema,"plan_steps")} ADD COLUMN IF NOT EXISTS {col} {typ}')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'messages')} (
                 id         TEXT PRIMARY KEY,
@@ -89,6 +98,16 @@ class ReadModel:
                 f"UPDATE {_q(self._schema,'sessions')} SET status=$2, updated_at=now() WHERE id=$1",
                 session_id, status)
 
+    async def set_waiting(self, session_id: str, interrupt_id: Optional[str]) -> None:
+        """Mark the session waiting on user input (interrupt_id set), or clear it
+        (pass None) when resuming."""
+        status = "waiting" if interrupt_id else "running"
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'sessions')} SET status=$2, interrupt_id=$3, "
+                f"updated_at=now() WHERE id=$1",
+                session_id, status, interrupt_id)
+
     async def upsert_plan(self, session_id: str, plan_id: str, title: str,
                           goal: str, status: str) -> None:
         async with self._pool.acquire() as con:
@@ -101,15 +120,17 @@ class ReadModel:
             """, session_id, plan_id, title, goal, status)
 
     async def upsert_steps(self, session_id: str,
-                           steps: List[Tuple[str, int, int, str, str, str, str]]) -> None:
-        """steps: (step_id, ordinal, wave, status, description, depends_on, agent)."""
+                           steps: List[Tuple[str, int, int, str, str, str, str, str, str]]) -> None:
+        """steps: (step_id, ordinal, wave, status, kind, question, description,
+        depends_on, agent)."""
         async with self._pool.acquire() as con:
             await con.executemany(f"""
                 INSERT INTO {_q(self._schema,'plan_steps')}
-                    (session_id,step_id,ordinal,wave,status,description,depends_on,agent)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    (session_id,step_id,ordinal,wave,status,kind,question,description,depends_on,agent)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 ON CONFLICT (session_id,step_id) DO UPDATE
                   SET ordinal=EXCLUDED.ordinal, wave=EXCLUDED.wave,
+                      kind=EXCLUDED.kind, question=EXCLUDED.question,
                       description=EXCLUDED.description, depends_on=EXCLUDED.depends_on,
                       updated_at=now()
             """, [(session_id, *s) for s in steps])

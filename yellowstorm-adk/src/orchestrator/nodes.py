@@ -60,9 +60,16 @@ def make_llm_node_factory(
     connectors materialized as tools). `instruction_for` overrides the default
     per-step prompt if given.
     """
+    from . import hitl
+
     shared_tools = list(tools or [])
 
-    def factory(step: Step, name: str) -> LlmAgent:
+    def factory(step: Step, name: str):
+        # An "ask" step blocks deterministically asking the user (FunctionNode:
+        # its interrupt id is stable across replays, so resume matches — unlike an
+        # LLM tool call whose id is random each rerun).
+        if step.kind == "ask":
+            return hitl.make_ask_user_node(name, step.question or step.description or "Please provide input.")
         instruction = (
             instruction_for(step)
             if instruction_for is not None

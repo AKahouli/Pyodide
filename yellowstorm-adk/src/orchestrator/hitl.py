@@ -42,8 +42,10 @@ def make_ask_user_node(name: str, question: str, *, state_key: str | None = None
         answer = ctx.resume_inputs.get(iid)
         if answer is None:
             return RequestInput(interrupt_id=iid, message=question)
-        ctx.state[key] = answer
-        return {key: answer}
+        # Normalize {"value": "..."} -> "..." so downstream steps get the text.
+        value = answer.get("value") if isinstance(answer, dict) and "value" in answer else answer
+        ctx.state[key] = value
+        return {key: value}
 
     ask.__name__ = name
     return FunctionNode(func=ask, name=name, rerun_on_resume=True)

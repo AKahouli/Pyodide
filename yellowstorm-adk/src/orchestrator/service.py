@@ -23,7 +23,7 @@ from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.genai import types
 
-from . import graph, nodes, scheduler
+from . import graph, hitl, nodes, scheduler
 from .plan import Plan, Status, Step
 from .readmodel import ReadModel
 
@@ -38,13 +38,17 @@ Return ONLY strict JSON, no prose, in exactly this shape:
   "title": "<short title>",
   "goal": "<one-sentence goal>",
   "steps": [
-    {{"id": "s1", "description": "<what to do>", "depends_on": []}},
-    {{"id": "s2", "description": "<what to do>", "depends_on": ["s1"]}}
+    {{"id": "s1", "kind": "execute", "description": "<what to do>", "depends_on": []}},
+    {{"id": "s2", "kind": "ask", "question": "<question for the user>", "depends_on": []}},
+    {{"id": "s3", "kind": "execute", "description": "<uses the answer>", "depends_on": ["s2"]}}
   ]
 }}
 
 Rules:
 - ids are short unique strings.
+- kind is "execute" (an agent does the work) or "ask" (pause and ask the USER a
+  question). Use "ask" ONLY when you genuinely need information from the user that
+  you cannot obtain otherwise; give it a "question". Most steps are "execute".
 - depends_on lists ids that MUST finish first; leave it [] for independent steps.
 - Prefer parallelism: only add a dependency when a step truly needs another's output.
 - No cycles."""
@@ -54,6 +58,23 @@ def _node_to_step_name(path: str) -> str:
     """'wf@1/step_a@1' -> 'step_a' (strip parents and @version)."""
     seg = path.split("/")[-1]
     return seg.split("@")[0]
+
+
+def _plan_from_snapshot(snap: dict) -> Plan:
+    """Rebuild a Plan from a read-model snapshot so resume reconstructs the same
+    workflow graph (same step ids + depends_on => same node names + edges)."""
+    p = snap["plan"] or {}
+    steps = []
+    for row in snap["steps"]:
+        deps = [d for d in (row.get("depends_on") or "").split(",") if d]
+        steps.append(Step(
+            id=row["step_id"], description=row.get("description") or "",
+            kind=row.get("kind") or "execute", question=row.get("question"),
+            depends_on=deps, status=Status(row["status"]),
+            wave=row.get("wave") or 0, result=row.get("result")))
+    return Plan(id=p.get("id") or "", title=p.get("title") or "",
+                goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
+                steps=steps)
 
 
 async def _ensure_session(runner, app_name: str, user_id: str, session_id: str) -> None:
@@ -115,22 +136,82 @@ class OrchestratorService:
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
 
-        started: set = set()
-        async for ev in runner.run_async(
-            user_id=user_id, session_id=session_id,
-            new_message=types.Content(role="user", parts=[types.Part(text=message)])):
-            await self._apply_event(session_id, plan, ev, name_to_step, started)
+        interrupt = await self._drive(
+            runner, session_id, user_id, plan, name_to_step,
+            types.Content(role="user", parts=[types.Part(text=message)]))
+        await self._finalize(session_id, plan, interrupt)
+        return plan
 
-        # Roll up final status from whatever the steps ended at.
+    async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
+                          model: str, connectors_tools: Optional[List] = None) -> Plan:
+        """Resume a turn blocked on ask-the-user with the user's `answer`.
+
+        Rebuilds the same workflow from the stored plan and resumes it via the
+        interrupt id; ADK replays completed nodes from the durable session and
+        re-runs the blocked one with the answer injected."""
+        if self._rm is None:
+            raise RuntimeError("resume requires the read model")
+        snap = await self._rm.snapshot(session_id)
+        interrupt_id = snap and snap["session"].get("interrupt_id")
+        if not snap or not interrupt_id:
+            raise RuntimeError(f"session {session_id} is not waiting on input")
+
+        plan = _plan_from_snapshot(snap)
+        factory = nodes.make_llm_node_factory(
+            model_name=model, goal=plan.goal, tools=connectors_tools or [])
+        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
+        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
+                               max_concurrency=self._max_concurrency)
+        runner = self._runner_factory(wf, f"orch_{session_id}")
+        await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
+        await self._project(self._rm.set_waiting(session_id, None))  # waiting -> running
+
+        interrupt = await self._drive(
+            runner, session_id, user_id, plan, name_to_step,
+            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]))
+        await self._finalize(session_id, plan, interrupt)
+        return plan
+
+    async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
+        """Run the workflow, project step statuses, and capture the first
+        ask-the-user interrupt as (interrupt_id, step_id) or None."""
+        started: set = set()
+        interrupt = None
+        async for ev in runner.run_async(
+                user_id=user_id, session_id=session_id, new_message=new_message):
+            await self._apply_event(session_id, plan, ev, name_to_step, started)
+            if interrupt is None:
+                ids = hitl.interrupt_ids(ev)
+                if ids:
+                    ni = getattr(ev, "node_info", None)
+                    step_id = (name_to_step.get(_node_to_step_name(ni.path))
+                               if ni and getattr(ni, "path", None) else None)
+                    interrupt = (ids[0], step_id)
+        return interrupt
+
+    async def _finalize(self, session_id: str, plan: Plan, interrupt) -> None:
+        if interrupt is not None:
+            interrupt_id, step_id = interrupt
+            if step_id:
+                step = plan.step(step_id)
+                step.status = Status.BLOCKED
+                step.blocked_reason = "awaiting user input"
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, step_id, "blocked", blocked_reason="awaiting user input"))
+            plan.status = Status.BLOCKED
+            await self._project(self._rm and self._rm.upsert_plan(
+                session_id, plan.id, plan.title, plan.goal, "blocked"))
+            await self._project(self._rm and self._rm.set_waiting(session_id, interrupt_id))
+            return
+        # Normal completion — any node the workflow finished is completed.
         for s in plan.steps:
             if not s.is_done():
-                s.status = Status.COMPLETED  # workflow finished this node
+                s.status = Status.COMPLETED
         plan.status = scheduler.derive_status(plan)
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, plan.status.value))
         await self._project(self._rm and self._rm.set_session_status(
             session_id, "completed" if plan.status is Status.COMPLETED else plan.status.value))
-        return plan
 
     async def _make_plan(self, session_id: str, user_id: str, message: str) -> Plan:
         planner = LlmAgent(
@@ -150,7 +231,9 @@ class OrchestratorService:
                         text = p.text
         data = _extract_json(text)
         steps = [Step(id=s["id"], description=s.get("description", ""),
-                      depends_on=list(s.get("depends_on", []))) for s in data.get("steps", [])]
+                      kind=s.get("kind", "execute"), question=s.get("question"),
+                      depends_on=list(s.get("depends_on", [])))
+                 for s in data.get("steps", [])]
         return Plan(title=data.get("title", ""), goal=data.get("goal", ""), steps=steps)
 
     def _build_planner_model(self):
@@ -161,7 +244,8 @@ class OrchestratorService:
     async def _project_plan(self, session_id: str, plan: Plan) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, "running"))
-        rows = [(s.id, i, s.wave, s.status.value, s.description, ",".join(s.depends_on), s.agent or "")
+        rows = [(s.id, i, s.wave, s.status.value, s.kind, s.question or "",
+                 s.description, ",".join(s.depends_on), s.agent or "")
                 for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
 

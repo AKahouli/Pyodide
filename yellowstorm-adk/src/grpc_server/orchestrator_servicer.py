@@ -62,9 +62,21 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
         try:
             # TODO: materialize request.connectors into ADK tools (per-user MCP
             # servers) and pass as connectors_tools. Empty for now.
-            await self._svc.plan_turn(
-                session_id=request.session_id, user_id=request.user_id,
-                message=request.message, model=model, connectors_tools=[])
+            # If the session is blocked on ask-the-user, this message is the
+            # answer → resume; otherwise it's a new turn → plan.
+            waiting = False
+            if self._rm is not None:
+                snap = await self._rm.snapshot(request.session_id)
+                waiting = bool(snap and snap["session"].get("status") == "waiting"
+                               and snap["session"].get("interrupt_id"))
+            if waiting:
+                await self._svc.resume_turn(
+                    session_id=request.session_id, user_id=request.user_id,
+                    answer=request.message, model=model, connectors_tools=[])
+            else:
+                await self._svc.plan_turn(
+                    session_id=request.session_id, user_id=request.user_id,
+                    message=request.message, model=model, connectors_tools=[])
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn cancelled (session=%s)", request.session_id)
