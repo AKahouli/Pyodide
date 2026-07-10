@@ -150,6 +150,19 @@ describe('AgentService connector skill inheritance', () => {
     });
   };
 
+  it('preserves deployment modes for widget-only updates', () => {
+    const { service } = createService();
+
+    const settings = (service as any).normalizeDeploymentSettings(
+      { widget: { layout: { desktopWidth: 480, desktopHeight: 720 } } },
+      { embedEnabled: true, restEnabled: true, widget: {} },
+    );
+
+    expect(settings.embedEnabled).toBe(true);
+    expect(settings.restEnabled).toBe(true);
+    expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
+  });
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService } = createService();
     const streamAgent: IAgentForStream = {

@@ -287,7 +287,7 @@ export class AgentService {
       );
     }
     if (dto.deploymentSettings) {
-      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings);
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
     }
 
     const updated = await this.agentModel
@@ -558,7 +558,7 @@ export class AgentService {
       );
     }
     if (dto.deploymentSettings) {
-      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings);
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
     }
 
     const updated = await this.agentModel
@@ -1495,11 +1495,15 @@ export class AgentService {
     embedEnabled?: boolean;
     restEnabled?: boolean;
     widget?: unknown;
+  }, existing?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
   }): { embedEnabled: boolean; restEnabled: boolean; widget: ReturnType<typeof normalizeWidgetSettings> } {
     return {
-      embedEnabled: settings?.embedEnabled ?? false,
-      restEnabled: settings?.restEnabled ?? false,
-      widget: normalizeWidgetSettings(settings?.widget as Parameters<typeof normalizeWidgetSettings>[0]),
+      embedEnabled: settings?.embedEnabled ?? existing?.embedEnabled ?? false,
+      restEnabled: settings?.restEnabled ?? existing?.restEnabled ?? false,
+      widget: normalizeWidgetSettings((settings?.widget ?? existing?.widget) as Parameters<typeof normalizeWidgetSettings>[0]),
     };
   }
 

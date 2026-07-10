@@ -66,4 +66,18 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('#ys-widget-menu-btn,#ys-widget-close{background:color-mix');
     expect(snippet).toContain('color:var(--ys-header-foreground)');
   });
+
+  it('keeps a closed dialog inert and applies configured behavior settings', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('aria-hidden=\\"true\\" hidden inert');
+    expect(snippet).toContain('panel.setAttribute("inert","")');
+    expect(snippet).toContain('function applyBehavior()');
+    expect(snippet).toContain('allowTranscriptDownload!==false');
+    expect(snippet).toContain('localStorage.setItem("ys_visitor_id",visitorId)');
+  });
 });
