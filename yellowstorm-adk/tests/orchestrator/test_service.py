@@ -6,8 +6,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
-from src.orchestrator import service as svc
-from src.orchestrator.plan import Status
+from src.companion_ai import service as svc
+from src.companion_ai.plan import Status
 
 
 def test_extract_json_plain():

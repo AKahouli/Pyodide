@@ -15,8 +15,8 @@ import grpc
 
 from src.grpc_generated import orchestrator_pb2 as pb
 from src.grpc_generated import orchestrator_pb2_grpc as pb_grpc
-from src.orchestrator.readmodel import ReadModel
-from src.orchestrator.service import OrchestratorService
+from src.companion_ai.readmodel import ReadModel
+from src.companion_ai.service import OrchestratorService
 
 logger = logging.getLogger(__name__)
 

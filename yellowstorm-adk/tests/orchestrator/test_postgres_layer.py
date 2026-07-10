@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import asyncpg
 
-from src.orchestrator import mcp_tasks, readmodel
+from src.companion_ai import mcp_tasks, readmodel
 
 DSN = dict(host=os.getenv("PGHOST", "localhost"), port=int(os.getenv("PGPORT", "5432")),
            database=os.getenv("PGDATABASE", "manus"), user=os.getenv("PGUSER", "manus"),

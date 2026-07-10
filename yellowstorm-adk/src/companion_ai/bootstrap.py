@@ -14,10 +14,10 @@ from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 
 from src.grpc_server.orchestrator_servicer import AgentOrchestratorServicer
-from src.orchestrator import mcp_tasks, readmodel
-from src.orchestrator.config import OrchestratorSettings, get_orchestrator_settings
-from src.orchestrator.poller import MCPTaskPoller
-from src.orchestrator.service import OrchestratorService
+from src.companion_ai import mcp_tasks, readmodel
+from src.companion_ai.config import OrchestratorSettings, get_orchestrator_settings
+from src.companion_ai.poller import MCPTaskPoller
+from src.companion_ai.service import OrchestratorService
 
 logger = logging.getLogger(__name__)
 

@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from src.orchestrator.plan import Plan, Step
-from src.orchestrator import graph
+from src.companion_ai.plan import Plan, Step
+from src.companion_ai import graph
 
 
 def _fn_factory(runs: Counter, when: dict, t0_ref: list, delay: float = 0.2):

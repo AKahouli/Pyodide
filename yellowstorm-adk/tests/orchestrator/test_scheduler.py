@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
-from src.orchestrator.plan import Plan, Step, Status
-from src.orchestrator import scheduler as sch
+from src.companion_ai.plan import Plan, Step, Status
+from src.companion_ai import scheduler as sch
 
 
 def _plan(*steps: Step) -> Plan:

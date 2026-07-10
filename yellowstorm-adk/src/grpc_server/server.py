@@ -121,11 +121,11 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
 
     # Agent Orchestrator (parallel multi-agent). Gated by ORCHESTRATOR_ENABLED.
     orchestrator_runtime = None
-    from src.orchestrator.config import get_orchestrator_settings
+    from src.companion_ai.config import get_orchestrator_settings
     if get_orchestrator_settings().ORCHESTRATOR_ENABLED:
         try:
             from src.grpc_generated import orchestrator_pb2_grpc as orch_grpc
-            from src.orchestrator.bootstrap import OrchestratorRuntime
+            from src.companion_ai.bootstrap import OrchestratorRuntime
 
             orchestrator_runtime = await OrchestratorRuntime().start()
             orch_grpc.add_AgentOrchestratorServicer_to_server(

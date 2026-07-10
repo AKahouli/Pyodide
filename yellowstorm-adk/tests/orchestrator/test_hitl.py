@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from src.orchestrator import hitl
+from src.companion_ai import hitl
 from google.adk.workflow import Workflow, START
 
 
