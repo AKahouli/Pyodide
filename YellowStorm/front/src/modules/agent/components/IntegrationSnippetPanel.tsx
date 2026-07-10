@@ -52,8 +52,8 @@ export function IntegrationSnippetPanel({
           {isCopied ? copiedLabel : copyLabel}
         </Button>
       </div>
-      <ScrollArea className="h-[min(260px,34vh)] w-full bg-[#0d1117]">
-        <pre className="p-3 font-mono text-[10px] leading-relaxed text-zinc-300">
+      <ScrollArea className="h-[min(260px,34vh)] min-w-0 max-w-full bg-[#0d1117]">
+        <pre className="min-w-0 max-w-full whitespace-pre-wrap break-all p-3 font-mono text-[10px] leading-relaxed text-zinc-300">
           <code>{lines.join("\n")}</code>
         </pre>
       </ScrollArea>

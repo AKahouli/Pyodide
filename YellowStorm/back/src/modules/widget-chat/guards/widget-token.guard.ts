@@ -1,4 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { LoggerService } from '@modules/logger';
 import { Request } from 'express';
 import { createHash } from 'crypto';
@@ -8,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
 import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import { WIDGET_DEPLOYMENT_MODE_KEY, type WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
 
 interface RequestWithWidget extends Request {
   widgetTokenHash?: string;
@@ -20,6 +22,7 @@ export class WidgetTokenGuard implements CanActivate {
   constructor(
     @InjectModel(WidgetToken.name) private readonly widgetTokenModel: Model<WidgetTokenDocument>,
     @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly reflector: Reflector,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WidgetTokenGuard.name);
@@ -80,6 +83,18 @@ export class WidgetTokenGuard implements CanActivate {
     const agent = await this.agentModel.findById(widgetToken.agentId).lean().exec() as any;
     if (!agent || !agent.isActive) {
       throw new NotFoundException(ErrorCode.WIDGET_AGENT_NOT_FOUND, 'Agent not found or inactive');
+    }
+
+    const mode = this.reflector.getAllAndOverride<WidgetDeploymentMode>(WIDGET_DEPLOYMENT_MODE_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]) ?? (request.path.startsWith('/integrations/') ? 'rest' : 'embed');
+    const deploymentSettings = agent.deploymentSettings as { embedEnabled?: boolean; restEnabled?: boolean } | undefined;
+    if (mode === 'embed' && deploymentSettings?.embedEnabled !== true) {
+      throw new ForbiddenException(ErrorCode.WIDGET_TOKEN_INVALID, 'Embed widget deployment is disabled for this agent');
+    }
+    if (mode === 'rest' && deploymentSettings?.restEnabled !== true) {
+      throw new ForbiddenException(ErrorCode.WIDGET_TOKEN_INVALID, 'REST API deployment is disabled for this agent');
     }
 
     request.widgetTokenHash = tokenHash;

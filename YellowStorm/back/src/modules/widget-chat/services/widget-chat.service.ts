@@ -18,7 +18,8 @@ import { WidgetSession, WidgetSessionDocument } from '../schemas/widget-session.
 import { WidgetMessage, WidgetMessageDocument } from '../schemas/widget-message.schema';
 import { AgentService } from '@modules/agent/agent.service';
 import { ModelsService } from '@modules/models/models.service';
-import { IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
+import { AgentWidgetSettings, IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
+import { normalizeWidgetSettings } from '@modules/agent/constants/widget-default-settings';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
 import { extractComponentData, aggregateTextFromComponents } from '@modules/conversation/utils/component-mapper';
 import {
@@ -110,7 +111,24 @@ export class WidgetChatService {
 
   // ─── Session ─────────────────────────────────────────────────
 
-  async createOrGetSession(tokenHash: string, agentId: string, visitorId: string, metadata: Record<string, unknown>): Promise<{ id: string }> {
+  getPublicConfig(agent: { _id?: unknown; deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } }, agentId: string): {
+    agentId: string;
+    widget: AgentWidgetSettings;
+  } {
+    return {
+      agentId,
+      widget: normalizeWidgetSettings(agent.deploymentSettings?.widget),
+    };
+  }
+
+  async createOrGetSession(
+    tokenHash: string,
+    agentId: string,
+    visitorId: string,
+    metadata: Record<string, unknown>,
+    agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
+    channel: 'web_widget' | 'rest_api' = 'web_widget',
+  ): Promise<{ id: string }> {
     let session = await this.widgetSessionModel.findOne({ tokenHash, visitorId, status: 'active' }).lean().exec() as any;
     if (session) {
       const sessionId = session._id.toString();
@@ -118,7 +136,24 @@ export class WidgetChatService {
       return { id: sessionId };
     }
 
-    session = await this.widgetSessionModel.create({ tokenHash, agentId, visitorId, metadata });
+    const clientContext = this.normalizeClientContext(metadata.clientContext);
+    const widgetSettings = normalizeWidgetSettings(agent?.deploymentSettings?.widget);
+    const appSource = {
+      channel,
+      appSourceName: widgetSettings.appSourceName,
+      sourceInstanceId: tokenHash.slice(0, 12),
+      origin: clientContext.origin || (metadata.origin as string | undefined),
+      pageUrl: clientContext.pageUrl,
+    };
+    session = await this.widgetSessionModel.create({
+      tokenHash,
+      agentId,
+      visitorId,
+      metadata,
+      clientContext,
+      appSource,
+      geo: { status: 'unavailable', reason: 'provider_not_configured' },
+    });
     const sessionId = (session as any)._id.toString();
     this.logger.log('Widget session created', { sessionId, agentId, visitorId });
     return { id: sessionId };
@@ -130,6 +165,7 @@ export class WidgetChatService {
     agentId: string,
     visitorId: string,
     metadata: Record<string, unknown>,
+    agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
   ): Promise<{ sessionId: string }> {
     const active = await this.widgetSessionModel
       .findOne({ tokenHash, visitorId, status: 'active' })
@@ -143,8 +179,20 @@ export class WidgetChatService {
       this.logger.log('Widget session closed for reset', { previousSessionId, agentId, visitorId });
     }
 
-    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata, agent);
     return { sessionId: session.id };
+  }
+
+  private normalizeClientContext(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object') return {};
+    const source = value as Record<string, unknown>;
+    return ['pageUrl', 'origin', 'referrer', 'locale', 'timezone'].reduce<Record<string, string>>((acc, key) => {
+      const raw = source[key];
+      if (typeof raw === 'string' && raw.trim()) {
+        acc[key] = raw.trim();
+      }
+      return acc;
+    }, {});
   }
 
   // ─── Citation URL ───────────────────────────────────────────
@@ -400,7 +448,7 @@ export class WidgetChatService {
     usage: { inputTokens: number; outputTokens: number; model?: string };
   }> {
     const { tokenHash, agentId, message, visitorId, agent, metadata } = params;
-    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata, agent, 'rest_api');
     const sessionId = session.id;
 
     this.logger.log('Integration message received', {

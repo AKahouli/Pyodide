@@ -15,6 +15,7 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
+import { AgentWidgetSettingsDto } from './widget-settings.dto';
 
 export class PromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ description: 'Enable input prompt injection guardrail', default: false })
@@ -75,6 +76,12 @@ export class AgentDeploymentSettingsDto {
   @IsOptional()
   @IsBoolean()
   restEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Public embedded webchat appearance and content settings', type: AgentWidgetSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentWidgetSettingsDto)
+  widget?: AgentWidgetSettingsDto;
 }
 
 export class CreateAgentDto {

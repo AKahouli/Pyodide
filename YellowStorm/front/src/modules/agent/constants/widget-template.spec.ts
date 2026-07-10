@@ -17,4 +17,53 @@ describe('buildWidgetSnippet', () => {
 
     expect(() => new Function(body)).not.toThrow();
   });
+
+  it('mounts the self-contained widget inside a shadow root', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('host.attachShadow({mode:"open"})');
+    expect(snippet).toContain('shadow.getElementById(id)');
+    expect(snippet).toContain(':host{all:initial;position:fixed');
+  });
+
+  it('lets configured theme variables override the browser color scheme', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('background:var(--ys-surface)');
+    expect(snippet).toContain('background:var(--ys-background)');
+    expect(snippet).not.toContain('@media (prefers-color-scheme:dark)');
+  });
+
+  it('supports configured desktop dimensions and bottom-left placement', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('--ys-panel-width');
+    expect(snippet).toContain('--ys-panel-height');
+    expect(snippet).toContain('ys-widget-position-left');
+    expect(snippet).toContain('--ys-panel-radius');
+    expect(snippet).toContain('@media (max-width:480px)');
+  });
+
+  it('uses the configured header foreground for header actions', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('#ys-widget-menu-btn,#ys-widget-close{background:color-mix');
+    expect(snippet).toContain('color:var(--ys-header-foreground)');
+  });
 });

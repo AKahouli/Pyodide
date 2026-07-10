@@ -53,6 +53,7 @@ import { getAdminGuardrailsSettings } from '@/modules/admin/api';
 import type { AdminGuardrailsSettings } from '@/modules/admin/types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
+import { mergeWidgetSettings } from '../constants/widget-default-settings';
 
 type LegacyPromptInjectionGuardrails = Partial<UserAgentFormValues['guardrails']['promptInjection']> & {
   classifierPrompt?: string;
@@ -180,7 +181,11 @@ export function CreateEditAgentDialog({
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
             guardrails: normalizeGuardrails(agent.guardrails),
-            deploymentSettings: agent.deploymentSettings ?? defaultFormValues.deploymentSettings,
+            deploymentSettings: {
+              ...defaultFormValues.deploymentSettings,
+              ...agent.deploymentSettings,
+              widget: mergeWidgetSettings(agent.deploymentSettings?.widget),
+            },
           });
         } else {
           reset(defaultFormValues);

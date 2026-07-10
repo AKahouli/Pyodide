@@ -13,4 +13,19 @@ describe('widgetMarkdown', () => {
     const html = widgetMarkdown('Use `https://example.com` as code.');
     expect(html).toContain('<code class="ys-md-inline-code">https://example.com</code>');
   });
+
+  it('renders supported heading levels with widget-owned classes', () => {
+    const html = widgetMarkdown('# Heading\n###### Detail');
+
+    expect(html).toContain('<h1 class="ys-md-h1">Heading</h1>');
+    expect(html).toContain('<h6 class="ys-md-h6">Detail</h6>');
+  });
+
+  it('escapes raw HTML before rendering markdown', () => {
+    expect(widgetMarkdown('<script>alert(1)</script>')).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  it('rejects unsafe markdown link schemes', () => {
+    expect(widgetMarkdown('[Open](javascript:alert(1))')).toContain('href="#"');
+  });
 });

@@ -45,6 +45,9 @@ export class AgentDeploymentSettings {
 
   @Prop({ type: Boolean, default: false })
   restEnabled!: boolean;
+
+  @Prop({ type: Object, default: undefined })
+  widget?: Record<string, unknown>;
 }
 
 const AgentDeploymentSettingsSchema = SchemaFactory.createForClass(AgentDeploymentSettings);

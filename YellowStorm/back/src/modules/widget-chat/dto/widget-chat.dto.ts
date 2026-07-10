@@ -1,5 +1,38 @@
-import { IsString, IsOptional, IsMongoId, MaxLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+
+export class WidgetClientContextDto {
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  pageUrl?: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  origin?: string;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  referrer?: string;
+
+  @ApiPropertyOptional({ maxLength: 32 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  locale?: string;
+
+  @ApiPropertyOptional({ maxLength: 80 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  timezone?: string;
+}
 
 export class WidgetSendMessageDto {
   @ApiProperty({ maxLength: 5000 })
@@ -12,6 +45,12 @@ export class WidgetSendMessageDto {
   @IsString()
   @MaxLength(64)
   visitorId?: string;
+
+  @ApiPropertyOptional({ type: WidgetClientContextDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WidgetClientContextDto)
+  clientContext?: WidgetClientContextDto;
 }
 
 export class WidgetCreateSessionDto {
@@ -19,6 +58,12 @@ export class WidgetCreateSessionDto {
   @IsString()
   @MaxLength(64)
   visitorId!: string;
+
+  @ApiPropertyOptional({ type: WidgetClientContextDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WidgetClientContextDto)
+  clientContext?: WidgetClientContextDto;
 }
 
 export class CreateWidgetTokenDto {

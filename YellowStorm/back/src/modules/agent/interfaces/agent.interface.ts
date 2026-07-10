@@ -22,6 +22,89 @@ export interface AgentGuardrails {
 export interface AgentDeploymentSettings {
   embedEnabled: boolean;
   restEnabled: boolean;
+  widget: AgentWidgetSettings;
+}
+
+export type WidgetThemePreset =
+  | 'yellowstorm-modern'
+  | 'public-service-light'
+  | 'pold-magenta'
+  | 'neutral-blue'
+  | 'high-contrast-light'
+  | 'dark-modern';
+
+export interface WidgetSuggestion {
+  id: string;
+  label: string;
+  prompt: string;
+  icon?: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export interface AgentWidgetSettings {
+  version: 1;
+  appSourceName: string;
+  identity: {
+    organizationName?: string;
+    assistantTitle: string;
+    assistantSubtitle?: string;
+    avatarMode: 'initials' | 'icon' | 'none';
+    avatarInitials?: string;
+  };
+  launcher: {
+    label: string;
+    mobileLabel?: string;
+    variant: 'pill' | 'circle';
+    position: 'bottom-right' | 'bottom-left';
+    showUnreadBadge: boolean;
+    showIntroTooltip: boolean;
+    introTooltipText?: string;
+  };
+  theme: {
+    preset: WidgetThemePreset;
+    customEnabled: boolean;
+    colors: Record<string, string | undefined>;
+    radius: 'sm' | 'md' | 'lg' | 'xl';
+    density: 'comfortable' | 'compact';
+  };
+  layout: {
+    desktopWidth: 360 | 400 | 480;
+    desktopHeight: 520 | 620 | 720;
+  };
+  content: {
+    greetingTitle: string;
+    greetingBody?: string;
+    suggestions: WidgetSuggestion[];
+    privacyNotice?: string;
+    footerText?: string;
+    footerLinks?: Array<{ label: string; url: string }>;
+  };
+  labels: {
+    inputPlaceholder: string;
+    sendButton: string;
+    closeButton: string;
+    optionsButton: string;
+    newConversation: string;
+    copyTranscript: string;
+    downloadTranscript: string;
+    transcriptCopied: string;
+    transcriptDownloaded: string;
+    emptyTranscript: string;
+    errorGeneric: string;
+    errorReset: string;
+    typing: string;
+    sourcesUsedSingular: string;
+    sourcesUsedPlural: string;
+  };
+  behavior: {
+    defaultOpen: boolean;
+    persistVisitorId: boolean;
+    allowTranscriptCopy: boolean;
+    allowTranscriptDownload: boolean;
+    allowNewConversation: boolean;
+    requirePrivacyNotice: boolean;
+  };
 }
 
 /** A single share entry on an agent (owner's view of who it's shared with). */

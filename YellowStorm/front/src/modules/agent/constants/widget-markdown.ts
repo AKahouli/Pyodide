@@ -3,7 +3,7 @@
  * Mirror of `_ysMd` / `_ysInlineMd` in `widget-template.ts` (vanilla JS runtime).
  * Used only by `renderText` for `TextComponent.content` chunks.
  *
- * Supported syntax: headings (h1–h3), bold, italic, inline code, fenced code blocks,
+ * Supported syntax: headings (h1-h6), bold, italic, inline code, fenced code blocks,
  * markdown links `[label](url)`, unordered lists (`-` / `*`), paragraphs.
  * Bare URLs are not auto-linked (sources use the `sources` component).
  */
@@ -50,7 +50,7 @@ export function widgetMarkdown(text: string): string {
       continue;
     }
 
-    const heading = trimmed.match(/^(#{1,3})\s(.*)$/);
+    const heading = trimmed.match(/^(#{1,6})\s(.*)$/);
     if (heading) {
       closeList();
       const level = heading[1].length;
@@ -88,7 +88,7 @@ function inlineMarkdown(text: string): string {
   out = out.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (_match, label: string, href: string) =>
-      `<a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" class="ys-md-link">${label}</a>`,
+      `<a href="${sanitizeLinkHref(href)}" target="_blank" rel="noopener noreferrer" class="ys-md-link">${label}</a>`,
   );
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -96,12 +96,17 @@ function inlineMarkdown(text: string): string {
   return out.replace(/\x00YS_CODE_(\d+)\x00/g, (_match, index: string) => codeSegments[Number(index)]);
 }
 
+function sanitizeLinkHref(href: string): string {
+  return /^(https?:|mailto:)/i.test(href) ? href : '#';
+}
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function escapeAttr(str: string): string {

@@ -29,6 +29,7 @@ import {
   normalizeAdminGuardrailsSettings,
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
+import { normalizeWidgetSettings } from './constants/widget-default-settings';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -109,7 +110,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -285,6 +286,9 @@ export class AgentService {
         dto.connectorActionSelections,
       );
     }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings);
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -385,7 +389,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -552,6 +556,9 @@ export class AgentService {
         dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
         dto.connectorActionSelections,
       );
+    }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings);
     }
 
     const updated = await this.agentModel
@@ -1484,6 +1491,18 @@ export class AgentService {
   // Private mapping helpers
   // ==========================================
 
+  private normalizeDeploymentSettings(settings?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
+  }): { embedEnabled: boolean; restEnabled: boolean; widget: ReturnType<typeof normalizeWidgetSettings> } {
+    return {
+      embedEnabled: settings?.embedEnabled ?? false,
+      restEnabled: settings?.restEnabled ?? false,
+      widget: normalizeWidgetSettings(settings?.widget as Parameters<typeof normalizeWidgetSettings>[0]),
+    };
+  }
+
   private toResponse(
     doc: AgentDocument | Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
@@ -1539,6 +1558,9 @@ export class AgentService {
       deploymentSettings: {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
+        widget: normalizeWidgetSettings(
+          (d.deploymentSettings as { widget?: Parameters<typeof normalizeWidgetSettings>[0] } | undefined)?.widget,
+        ),
       },
       hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,
