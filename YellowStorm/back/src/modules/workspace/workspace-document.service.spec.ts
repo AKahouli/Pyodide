@@ -6,6 +6,7 @@ import axios from 'axios';
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
+import * as urlSafetyModule from './services/url-safety';
 
 jest.mock('dns/promises');
 jest.mock('axios');
@@ -336,7 +337,15 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
         { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
         {
           provide: ConfigService,
-          useValue: { get: (_: string, dflt?: unknown) => dflt },
+          // addLinks reads 'indexing.sequentialDelayMs' directly (no default
+          // arg passed at the call site); keep it at 0 here so the
+          // fire-and-forget sequential loop doesn't wait on a real timer
+          // between items in these tests. Other keys keep the old
+          // "return whatever default the caller passed" behavior.
+          useValue: {
+            get: (key: string, dflt?: unknown) =>
+              key === 'indexing.sequentialDelayMs' ? 0 : dflt,
+          },
         },
         {
           provide: WorkspaceUploadSettingsService,
@@ -453,6 +462,12 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const paths = created.map((d) => d.path);
     expect(new Set(paths).size).toBe(2);
     paths.forEach((p) => expect(p).toContain('link-pending:'));
+
+    // Conversion is now a strictly sequential, fire-and-forget loop: the
+    // second item's convertAndStore call only happens after the first
+    // item's mocked call resolves (a microtask hop beyond addLinks
+    // returning), so flush pending microtasks before asserting both ran.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
   });
 });
@@ -600,5 +615,182 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
     expect(userAgent).toEqual(expect.any(String));
     expect(userAgent?.length).toBeGreaterThan(0);
     expect(userAgent).not.toMatch(/^axios\//);
+  });
+});
+
+describe('WorkspaceDocumentService.addLinks sequencing', () => {
+  let service: WorkspaceDocumentService;
+  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
+  let workspaceService: {
+    checkStorageQuota: jest.Mock;
+    getStorageContext: jest.Mock;
+    updateStorageUsage: jest.Mock;
+  };
+  let indexingService: { queueDocument: jest.Mock; sendIndexingStatusNotification: jest.Mock };
+  let documentService: { upload: jest.Mock };
+  let urlSafeSpy: jest.SpyInstance;
+  let order: string[];
+  let events: string[];
+  let convert: jest.Mock;
+
+  beforeEach(async () => {
+    // convertAndStore (called from the fire-and-forget loop) runs the real
+    // assertUrlIsSafe guard, which does a live DNS lookup. Test URLs like
+    // https://a.example won't resolve, so convert() would never be reached
+    // and the ordering assertion below would fail for the wrong reason.
+    // Stub the guard just for this describe block. TS compiles the named
+    // import in workspace-document.service.ts ("import { assertUrlIsSafe }
+    // from './services/url-safety'") to a property access on the required
+    // module object at each call site (commonjs target), so spying on the
+    // module's export here is visible to the service without a jest.mock()
+    // that would affect the SSRF-guard describe block above, which needs
+    // the real implementation.
+    urlSafeSpy = jest.spyOn(urlSafetyModule, 'assertUrlIsSafe').mockResolvedValue(undefined);
+
+    order = [];
+    events = [];
+    convert = jest.fn(async (url: string) => {
+      order.push(url);
+      events.push(`convert:${url}`);
+      return Buffer.from('pdf');
+    });
+
+    let createCount = 0;
+    documentModel = {
+      create: jest.fn(async (doc: any) => {
+        createCount += 1;
+        return {
+          ...doc,
+          _id: { toString: () => `doc${createCount}` },
+          workspaceId: { toString: () => 'ws1' },
+          createdBy: { toString: () => 'u1' },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      }),
+      // findByIdAndUpdate with a COMPLETED/FAILED status is the last step of
+      // one item's whole convertAndStore pipeline; recording it (alongside
+      // convert start, above) lets the test tell "strictly sequential" apart
+      // from "started concurrently but happened to call convert() in input
+      // order" — the latter is exactly what the old bounded-concurrency
+      // fan-out produces with fast, same-speed mocks.
+      findByIdAndUpdate: jest.fn(async (documentId: string) => {
+        events.push(`update:${documentId}`);
+        return {};
+      }),
+    };
+    workspaceService = {
+      checkStorageQuota: jest.fn().mockResolvedValue({ allowed: true, available: 999_999 }),
+      getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
+      updateStorageUsage: jest.fn().mockResolvedValue(undefined),
+    };
+    indexingService = {
+      queueDocument: jest.fn().mockResolvedValue(undefined),
+      sendIndexingStatusNotification: jest.fn().mockResolvedValue(undefined),
+    };
+    documentService = {
+      upload: jest.fn().mockResolvedValue({
+        storedName: 'stored.pdf',
+        blobPath: 'blob/stored.pdf',
+        url: 'https://blob/stored.pdf',
+        contentHash: 'hash',
+      }),
+    };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: WorkspaceService, useValue: workspaceService },
+        { provide: DocumentService, useValue: documentService },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: indexingService },
+        { provide: UrlToPdfClientService, useValue: { convert } },
+        { provide: WebsiteCrawlerService, useValue: { crawl: jest.fn() } },
+        {
+          provide: ConfigService,
+          useValue: {
+            // Real addLinks reads the dotted key 'indexing.sequentialDelayMs'
+            // directly; sequentialDelayMs: 0 keeps the test from waiting on
+            // a real inter-item delay.
+            get: (key: string) => (key === 'indexing.sequentialDelayMs' ? 0 : undefined),
+          },
+        },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            debug: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+    // Real resolveUniqueOriginalName issues a documentModel.exists(...).lean()
+    // query; stub it out (mirroring the existing addLinks tests above) since
+    // uniqueness resolution isn't what this test is about.
+    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws: string, name: string) => name);
+  });
+
+  afterEach(() => {
+    urlSafeSpy.mockRestore();
+  });
+
+  it('converts URLs strictly one at a time, in order', async () => {
+    const responses = await service.addLinks(WS_ID, USER_ID, [
+      'https://a.example',
+      'https://b.example',
+    ]);
+
+    // Conversion is fire-and-forget; flush pending microtasks before asserting.
+    // The whole per-item chain (guard -> convert -> quota -> upload -> DB
+    // update -> usage -> indexing) is a pure microtask chain when the delay
+    // is 0, and Node drains the microtask queue fully before a timer macro-
+    // task runs, so one setTimeout(0) flush covers both items.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(order).toEqual(['https://a.example', 'https://b.example']);
+    expect(convert).toHaveBeenCalledTimes(2);
+
+    // Strict sequencing: item 2's convert() must not fire until item 1's
+    // whole pipeline (through its final findByIdAndUpdate) has completed.
+    // A concurrency-capped fan-out with >1 worker starts both items' first
+    // await essentially at once, so with fast same-speed mocks it still
+    // calls convert() in input order (asserted above) but does NOT wait for
+    // item 1's update before starting item 2 -- this interleaving is what
+    // distinguishes the old scheduling from the new one.
+    expect(events).toEqual([
+      `convert:${responses[0].sourceUrl}`,
+      `update:${responses[0].id}`,
+      `convert:${responses[1].sourceUrl}`,
+      `update:${responses[1].id}`,
+    ]);
+  });
+
+  it('does not stop subsequent conversions when an earlier one fails', async () => {
+    convert.mockImplementationOnce(async (url: string) => {
+      order.push(url);
+      throw new Error('conversion failed');
+    });
+
+    await service.addLinks(WS_ID, USER_ID, ['https://a.example', 'https://b.example']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(order).toEqual(['https://a.example', 'https://b.example']);
+    expect(convert).toHaveBeenCalledTimes(2);
   });
 });

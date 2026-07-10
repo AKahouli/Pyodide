@@ -738,22 +738,24 @@ export class WorkspaceDocumentService {
       });
     }
 
-    // Convert with a concurrency cap so we don't hammer Gotenberg.
-    const CONCURRENCY = 3;
-    let i = 0;
-    const workers = Array.from({ length: Math.min(CONCURRENCY, created.length) }, async () => {
-      while (i < created.length) {
-        const item = created[i++];
+    // Convert strictly one at a time, spaced by a delay, so a rate-limited target
+    // (HTTP 429) gets its window to reset between pages instead of being hit in a
+    // burst. Fire-and-forget the whole loop; respond as soon as the docs exist.
+    const delayMs = this.configService.get<number>('indexing.sequentialDelayMs') ?? 2000;
+    void (async () => {
+      for (let idx = 0; idx < created.length; idx++) {
+        const item = created[idx];
         await this.convertAndStore(item.id, workspaceId, item.url, item.name).catch((err) => {
           this.logger.error('convertAndStore failed', {
             documentId: item.id,
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         });
+        if (idx < created.length - 1 && delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
       }
-    });
-    // Fire-and-forget the whole conversion batch; respond as soon as docs exist.
-    void Promise.all(workers);
+    })();
 
     return created.map((c) => c.response);
   }
