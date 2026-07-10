@@ -53,7 +53,8 @@ class OrchestratorRuntime:
         service = OrchestratorService(
             runner_factory, read_model=rm,
             planner_model=s.ORCHESTRATOR_PLANNER_MODEL,
-            max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY)
+            max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY,
+            pool=self._pool, schema=schema)
         self.servicer = AgentOrchestratorServicer(
             service, rm, default_model=s.ORCHESTRATOR_PLANNER_MODEL)
 

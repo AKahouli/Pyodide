@@ -92,6 +92,16 @@ class MCPTaskPoller:
                                     schema=self._schema)  # never fail just for being slow
             return
 
+        # mode=record (Option A, set-and-forget): just store the fired result,
+        # nothing to resume — the turn already completed when the task started.
+        if row["mode"] == "record":
+            if outcome == "completed":
+                await mcp_tasks.mark_done(self._pool, row["id"], text or "", schema=self._schema)
+            else:
+                await mcp_tasks.requeue(self._pool, row["id"], max_attempts=self._max_attempts,
+                                        reason=text or "failed", schema=self._schema)
+            return
+
         try:
             resumed = await self._resume(row, outcome, text)
         except Exception as e:

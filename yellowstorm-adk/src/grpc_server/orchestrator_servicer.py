@@ -75,8 +75,7 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
 
     async def _run_turn(self, request: pb.RunRequest, model: str, run_id: str) -> None:
         try:
-            from src.orchestrator.connectors import connectors_to_toolsets
-            tools = connectors_to_toolsets(_connectors_to_dicts(request.connectors))
+            connectors = _connectors_to_dicts(request.connectors)
             # If the session is blocked on ask-the-user, this message is the
             # answer → resume; otherwise it's a new turn → plan.
             waiting = False
@@ -87,11 +86,11 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
             if waiting:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    answer=request.message, model=model, connectors_tools=tools)
+                    answer=request.message, model=model, connectors=connectors)
             else:
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    message=request.message, model=model, connectors_tools=tools)
+                    message=request.message, model=model, connectors=connectors)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn cancelled (session=%s)", request.session_id)

@@ -23,8 +23,11 @@ Overall goal (context only): {goal}
 Your task — do exactly this and nothing else:
 {description}
 
-Use the available tools when needed. Return a concise result for this step only —
-other steps are handled by other agents, so just produce your part directly."""
+Use the available tools when needed. For a LONG-RUNNING action (e.g. setting a
+reminder for hours, scheduling a delayed job), call the `schedule_*_task` tool so
+it starts in the background and returns immediately — never wait for it to finish.
+Return a concise result for this step only — other steps are handled by other
+agents, so just produce your part directly."""
 
 
 def build_llm(model_name: str, *, with_tools: bool, temperature: float = 0.0):

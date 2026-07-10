@@ -97,13 +97,35 @@ def _extract_json(text: str) -> dict:
 
 class OrchestratorService:
     def __init__(self, runner_factory, read_model: Optional[ReadModel] = None,
-                 *, planner_model: str, max_concurrency: int = 4):
+                 *, planner_model: str, max_concurrency: int = 4,
+                 pool=None, schema: str = "public"):
         """runner_factory(node, app_name) -> Runner (so session service / app wiring
-        stays with the caller). read_model may be None (projection disabled)."""
+        stays with the caller). read_model may be None (projection disabled).
+        pool/schema are used to record set-and-forget long-running MCP tasks."""
         self._runner_factory = runner_factory
         self._rm = read_model
         self._planner_model = planner_model
         self._max_concurrency = max_concurrency
+        self._pool = pool
+        self._schema = schema
+
+    def _tools_for(self, connectors: Optional[List[dict]], session_id: str, user_id: str) -> List:
+        """Materialize connectors into executor tools: the synchronous MCP tools
+        plus, per connector, a fire-and-forget `schedule_*_task` tool for
+        long-running actions (records the handle in mcp_tasks for the poller)."""
+        connectors = connectors or []
+        from . import connectors as conn_mod
+        from . import long_running, mcp_tasks
+        tools = conn_mod.connectors_to_toolsets(connectors)
+        for c in connectors:
+            async def _record(task_id, action, args, _c=c):
+                if self._pool is not None:
+                    await mcp_tasks.enqueue(
+                        self._pool, session_id=session_id, user_id=user_id, task_id=task_id,
+                        server_name=_c.get("connector_name", ""), server_url=_c.get("mcp_server_url", ""),
+                        auth_headers=_c.get("auth_headers") or {}, mode="record", schema=self._schema)
+            tools.append(long_running.make_schedule_tool(c, on_started=_record))
+        return tools
 
     async def _project(self, coro):
         if self._rm is None:
@@ -114,7 +136,7 @@ class OrchestratorService:
             logger.warning("read-model projection failed: %s", e)
 
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
-                        model: str, connectors_tools: Optional[List] = None) -> Plan:
+                        model: str, connectors: Optional[List[dict]] = None) -> Plan:
         await self._project(self._rm and self._rm.ensure_session(session_id, user_id, None, "running"))
 
         plan = await self._make_plan(session_id, user_id, message)
@@ -128,7 +150,8 @@ class OrchestratorService:
 
         # Build the executable graph and run it.
         factory = nodes.make_llm_node_factory(
-            model_name=model, goal=plan.goal, tools=connectors_tools or [])
+            model_name=model, goal=plan.goal,
+            tools=self._tools_for(connectors, session_id, user_id))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -143,7 +166,7 @@ class OrchestratorService:
         return plan
 
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
-                          model: str, connectors_tools: Optional[List] = None) -> Plan:
+                          model: str, connectors: Optional[List[dict]] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
 
         Rebuilds the same workflow from the stored plan and resumes it via the
@@ -158,7 +181,8 @@ class OrchestratorService:
 
         plan = _plan_from_snapshot(snap)
         factory = nodes.make_llm_node_factory(
-            model_name=model, goal=plan.goal, tools=connectors_tools or [])
+            model_name=model, goal=plan.goal,
+            tools=self._tools_for(connectors, session_id, user_id))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
