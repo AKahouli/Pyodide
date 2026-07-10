@@ -14,7 +14,9 @@ export type ComponentType =
   | 'sandbox'
   | 'webPreview'
   | 'artifact'
-  | 'citation';
+  | 'citation'
+  | 'toolInfo'
+  | 'chainOfThought';
 
 export type FeedbackType = 'like' | 'dislike';
 

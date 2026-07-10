@@ -45,6 +45,17 @@ export class WhatsAppIntegrationController {
     return this.integrationService.getByAgentForUser(user._id.toString(), agentId);
   }
 
+  @Post('auto-recover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Notify backend to auto-reconnect after FAILED status' })
+  @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
+  async autoRecover(
+    @CurrentUser() user: UserDocument,
+    @Param('agentId') agentId: string,
+  ): Promise<WhatsAppIntegrationResponseDto> {
+    return this.connectionService.autoRecover(user._id.toString(), agentId);
+  }
+
   @Post('connect')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start WhatsApp pairing for this agent' })

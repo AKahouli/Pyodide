@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, Globe, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,6 +64,11 @@ function getFileIcon(mime: string) {
   return FileIcon;
 }
 
+function getItemIcon(file: WorkspaceFile) {
+  if (file.type === 'url') return Globe;
+  return getFileIcon(file.mimeType);
+}
+
 export function WorkspacePage() {
   const { id: routeWorkspaceId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -112,7 +117,10 @@ export function WorkspacePage() {
   // While any file is still indexing, poll so its status dot updates to
   // green/red on its own without a manual refresh. Stops once all settle.
   const hasIndexingInFlight = files.some(
-    (f) => f.indexingStatus === 'pending' || f.indexingStatus === 'processing',
+    (f) =>
+      f.indexingStatus === 'pending' ||
+      f.indexingStatus === 'processing' ||
+      (f.type === 'url' && f.status === 'processing'),
   );
   useEffect(() => {
     if (!hasIndexingInFlight) return;
@@ -794,7 +802,8 @@ function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexing
 }
 
 function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
-  const Icon = getFileIcon(file.mimeType);
+  const Icon = getItemIcon(file);
+  const isConverting = file.type === 'url' && file.status === 'processing';
   const canWrite = useCanWriteWorkspace();
   const [isDragging, setIsDragging] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -808,7 +817,11 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const { enabled: deepSearch } = useDeepSearchIndexation();
 
-  const viewable = isViewableFile(file.mimeType);
+  // A link only has a real, openable blob once conversion completes. Until then
+  // its `path` is an internal `link-pending:` placeholder, so view/download must
+  // be suppressed (otherwise the viewer signs the placeholder and errors).
+  const isStored = file.type !== 'url' || file.status === 'completed';
+  const viewable = isViewableFile(file.mimeType) && !!file.path && !isConverting && isStored;
 
   const handleDragStart = (e: React.DragEvent) => {
     if (!canWrite) return;
@@ -870,7 +883,13 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
         <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
 
         <div className='min-w-0 flex-1 flex items-center gap-2'>
-          <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
+          {isConverting ? (
+            <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+              <Loader2 className='h-3.5 w-3.5 animate-spin' />
+            </span>
+          ) : (
+            <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
+          )}
           <span className='truncate text-sm'>{file.name}</span>
         </div>
 
@@ -888,10 +907,12 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
                 <Eye className='mr-2 h-4 w-4' /> Voir
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
-              {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
-              Télécharger
-            </DropdownMenuItem>
+            {isStored && (
+              <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
+                {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
+                Télécharger
+              </DropdownMenuItem>
+            )}
             {canWrite && (
               <>
                 <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>

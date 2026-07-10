@@ -189,3 +189,24 @@ export function validateFiles(files: File[]): FileValidationResult {
 
   return { validFiles, errors };
 }
+
+// ===== Link Utilities =====
+
+/**
+ * Extract the first http(s) URL from arbitrary dropped/typed text.
+ * Returns the URL string, or null if none found.
+ */
+export function extractUrlFromText(text: string): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const match = trimmed.match(/https?:\/\/[^\s<>"']+/i);
+  if (!match) return null;
+  const candidate = match[0];
+  try {
+    const u = new URL(candidate);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return candidate;
+  } catch {
+    return null;
+  }
+}

@@ -1074,6 +1074,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             components.unshift(plan);
           }
 
+          // Chain-of-thought sits above everything (including the plan)
+          const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
+          if (cotIndex > 0) {
+            const [cot] = components.splice(cotIndex, 1);
+            components.unshift(cot);
+          }
+
           this.logger.debug(
             'Persisting stream components',
             {
@@ -1451,8 +1458,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
+      case 'chainOfThought':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
+      case 'toolInfo':
+        // The 'update' chunk carries the final status (completed/failed) that
+        // supersedes the initial 'running', but params (the tool-call args) are
+        // only sent on the initial 'add' — preserve them when the update omits them.
+        return {
+          title: (incoming.title as string) || (existing.title as string) || '',
+          status: (incoming.status as string) || (existing.status as string) || 'running',
+          params: (incoming.params as string) || (existing.params as string) || '',
+        };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update
         return {

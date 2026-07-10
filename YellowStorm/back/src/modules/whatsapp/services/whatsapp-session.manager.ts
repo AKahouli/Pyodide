@@ -21,11 +21,17 @@ import {
   toWorkyIntegrationRef,
   type WhatsAppIntegrationRef,
 } from '../interfaces/whatsapp-integration-ref.interface';
+import type { WhatsAppIntegrationResponseDto } from '../dto/whatsapp-integration-response.dto';
 import { WhatsAppConnectivityService } from './whatsapp-connectivity.service';
+import { WhatsAppIntegrationSseService } from './whatsapp-integration-sse.service';
 import { WhatsAppIntegrationService } from './whatsapp-integration.service';
 import { WhatsAppMessageService } from './whatsapp-message.service';
 import { WhatsAppPairingCacheService } from './whatsapp-pairing-cache.service';
 import { WorkyWhatsAppGroupService } from './worky-whatsapp-group.service';
+import {
+  resolveStatusAfterReconnectExhausted,
+  shouldAutoReconnectAfterDisconnect,
+} from '../utils/whatsapp-reconnect.util';
 import { normalizeWhatsappUserJid } from '../utils/whatsapp-user-jid.util';
 import {
   getWhatsAppAudioMimetype,
@@ -64,6 +70,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     private readonly connectivity: WhatsAppConnectivityService,
     private readonly pairingCache: WhatsAppPairingCacheService,
     private readonly agentIntegrationService: WhatsAppIntegrationService,
+    private readonly integrationSse: WhatsAppIntegrationSseService,
     private readonly workyIntegrationService: WorkyWhatsAppIntegrationService,
     private readonly systemBotService: WorkyWhatsAppSystemBotService,
     @Inject(forwardRef(() => WorkyWhatsAppGroupService))
@@ -83,56 +90,22 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
 
     const systemBot = await this.systemBotService.findConnected();
     if (systemBot?.sessionId && systemBot.pairedByUserId) {
-      try {
-        await this.openSocket(
-          toSystemBotIntegrationRef(systemBot, systemBot.pairedByUserId),
-          systemBot.sessionId,
-          false,
-        );
-      } catch (error) {
-        this.logger.warn('WhatsApp system bot session restore failed', {
-          integrationId: systemBot._id.toString(),
-          error: (error as Error).message,
-        });
-        await this.systemBotService.updateStatus(systemBot._id, {
-          status: WhatsAppIntegrationStatus.FAILED,
-          errorMessage: (error as Error).message,
-        });
-      }
+      this.restoreConnectedIntegration(
+        toSystemBotIntegrationRef(systemBot, systemBot.pairedByUserId),
+        systemBot.sessionId,
+      );
     }
 
     const agentIntegrations = await this.agentIntegrationService.findConnectedIntegrations();
     for (const integration of agentIntegrations) {
       if (!integration.sessionId) continue;
-      try {
-        await this.openSocket(toAgentIntegrationRef(integration), integration.sessionId, false);
-      } catch (error) {
-        this.logger.warn('WhatsApp agent session restore failed', {
-          integrationId: integration._id.toString(),
-          error: (error as Error).message,
-        });
-        await this.agentIntegrationService.updateStatus(integration._id, {
-          status: WhatsAppIntegrationStatus.FAILED,
-          errorMessage: (error as Error).message,
-        });
-      }
+      this.restoreConnectedIntegration(toAgentIntegrationRef(integration), integration.sessionId);
     }
 
     const workyIntegrations = await this.workyIntegrationService.findConnectedIntegrations();
     for (const integration of workyIntegrations) {
       if (!integration.sessionId) continue;
-      try {
-        await this.openSocket(toWorkyIntegrationRef(integration), integration.sessionId, false);
-      } catch (error) {
-        this.logger.warn('WhatsApp Worky session restore failed', {
-          integrationId: integration._id.toString(),
-          error: (error as Error).message,
-        });
-        await this.workyIntegrationService.updateStatus(integration._id, {
-          status: WhatsAppIntegrationStatus.FAILED,
-          errorMessage: (error as Error).message,
-        });
-      }
+      this.restoreConnectedIntegration(toWorkyIntegrationRef(integration), integration.sessionId);
     }
   }
 
@@ -211,12 +184,34 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
   }
 
   async reconnect(integrationRef: WhatsAppIntegrationRef, sessionId: string): Promise<void> {
-    await this.updateIntegrationStatus(integrationRef, {
-      status: WhatsAppIntegrationStatus.PAIRING,
-      sessionId,
-      errorMessage: undefined,
-    });
-    await this.startPairing(integrationRef, sessionId);
+    if (integrationRef.status === WhatsAppIntegrationStatus.PAIRING) {
+      await this.updateIntegrationStatus(integrationRef, {
+        status: WhatsAppIntegrationStatus.PAIRING,
+        sessionId,
+        errorMessage: undefined,
+      });
+      await this.startPairing(integrationRef, sessionId);
+      return;
+    }
+    await this.restoreSession(integrationRef, sessionId);
+  }
+
+  /** Re-open a stored session after FAILED/DISCONNECTED (SSE connect or bootstrap). */
+  requestRecovery(
+    integrationRef: WhatsAppIntegrationRef,
+    sessionId: string,
+    reason: string,
+  ): void {
+    if (integrationRef.kind !== 'agent') {
+      return;
+    }
+    if (this.sessions.has(sessionId) || this.reconnectTimers.has(sessionId)) {
+      this.logger.debug('WhatsApp recovery skipped — session active', { sessionId, reason });
+      return;
+    }
+    this.logger.log('WhatsApp recovery requested', { sessionId, reason });
+    this.reconnectAttempts.set(sessionId, 0);
+    this.autoReconnect(integrationRef, sessionId, 1, undefined, reason, false);
   }
 
   async stopSession(sessionId: string, logout: boolean): Promise<void> {
@@ -490,7 +485,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const shouldRetry = pairingMode || statusCode === baileys.DisconnectReason.restartRequired;
+    const shouldRetry = shouldAutoReconnectAfterDisconnect({ pairingMode, statusCode });
     const attempt = (this.reconnectAttempts.get(sessionId) ?? 0) + 1;
     const maxAttempts = this.maxReconnectAttempts();
 
@@ -511,42 +506,32 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     }
 
     if (shouldRetry && attempt <= maxAttempts) {
-      this.reconnectAttempts.set(sessionId, attempt);
-      const delay = this.reconnectDelay(attempt);
-      this.logger.warn('WhatsApp reconnect scheduled', {
+      this.autoReconnect(
+        integrationRef,
         sessionId,
         attempt,
-        delayMs: delay,
         statusCode,
         errorMessage,
         pairingMode,
-      });
-      this.cancelReconnect(sessionId);
-      const timer = setTimeout(() => {
-        this.reconnectTimers.delete(sessionId);
-        void this.openSocket(integrationRef, sessionId, pairingMode).catch((error) => {
-          this.logger.error('WhatsApp reconnect openSocket failed', {
-            sessionId,
-            error: (error as Error).message,
-          });
-        });
-      }, delay);
-      this.reconnectTimers.set(sessionId, timer);
+      );
       return;
     }
 
     this.pairingCache.clear(sessionId);
     this.reconnectAttempts.delete(sessionId);
-    this.applyIntegrationRefPatch(integrationRef, {
-      status: WhatsAppIntegrationStatus.FAILED,
-    });
+    const finalStatus = resolveStatusAfterReconnectExhausted({ pairingMode, statusCode });
+    const integrationStatus =
+      finalStatus === 'DISCONNECTED'
+        ? WhatsAppIntegrationStatus.DISCONNECTED
+        : WhatsAppIntegrationStatus.FAILED;
+    this.applyIntegrationRefPatch(integrationRef, { status: integrationStatus });
     await this.updateIntegrationStatus(integrationRef, {
-      status: WhatsAppIntegrationStatus.FAILED,
+      status: integrationStatus,
       errorMessage,
     });
-    this.emitPairingEvent(userId, integrationRef, sessionId, 'whatsapp.session.failed', {
-      errorMessage,
-    });
+    const failureEvent =
+      finalStatus === 'DISCONNECTED' ? 'whatsapp.disconnected' : 'whatsapp.session.failed';
+    this.emitPairingEvent(userId, integrationRef, sessionId, failureEvent, { errorMessage });
   }
 
   private emitPairingEvent(
@@ -613,6 +598,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     if (integrationRef.kind === 'agent') {
       await this.agentIntegrationService.updateStatus(integrationRef.integrationId, patch);
+      this.publishAgentStatus(integrationRef, patch);
       return;
     }
     if (integrationRef.kind === 'worky_system_bot') {
@@ -620,6 +606,36 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
       return;
     }
     await this.workyIntegrationService.updateStatus(integrationRef.integrationId, patch);
+  }
+
+  private publishAgentStatus(
+    integrationRef: WhatsAppIntegrationRef,
+    patch: Partial<{
+      status: WhatsAppIntegrationStatus;
+      sessionId: string;
+      phoneNumber: string;
+      displayName: string;
+      errorMessage: string;
+      lastActivityAt: Date;
+    }>,
+  ): void {
+    if (integrationRef.kind !== 'agent' || !integrationRef.agentId) {
+      return;
+    }
+    const snapshot: WhatsAppIntegrationResponseDto = {
+      enabled: integrationRef.enabled,
+      status: patch.status ?? integrationRef.status,
+      sessionId: patch.sessionId ?? integrationRef.sessionId,
+      phoneNumber: patch.phoneNumber ?? integrationRef.phoneNumber,
+      displayName: patch.displayName,
+      errorMessage: patch.errorMessage,
+      lastActivityAt: patch.lastActivityAt?.toISOString(),
+    };
+    this.integrationSse.publishStatus(
+      integrationRef.userId.toString(),
+      integrationRef.agentId.toString(),
+      snapshot,
+    );
   }
 
   private async setupWorkyStreamGroup(
@@ -739,6 +755,91 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     const userPart = jid.slice(0, atIndex).split(':')[0];
     const digits = userPart.replace(/\D/g, '');
     return digits ? `+${digits}` : undefined;
+  }
+
+  /** Restores a CONNECTED integration after backend restart (no QR). */
+  private restoreConnectedIntegration(
+    integrationRef: WhatsAppIntegrationRef,
+    sessionId: string,
+  ): void {
+    void this.restoreSession(integrationRef, sessionId, {
+      preserveStatus: true,
+      pairingMode: false,
+      resetAttemptCounter: true,
+    }).catch((error) => {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.warn('WhatsApp bootstrap restore failed; scheduling reconnect', {
+        integrationId: integrationRef.integrationId.toString(),
+        sessionId,
+        error: errorMessage,
+      });
+      this.autoReconnect(integrationRef, sessionId, 1, undefined, errorMessage, false);
+    });
+  }
+
+  private async restoreSession(
+    integrationRef: WhatsAppIntegrationRef,
+    sessionId: string,
+    options?: {
+      preserveStatus?: boolean;
+      pairingMode?: boolean;
+      resetAttemptCounter?: boolean;
+    },
+  ): Promise<void> {
+    this.cancelReconnect(sessionId);
+    if (options?.resetAttemptCounter !== false) {
+      this.reconnectAttempts.set(sessionId, 0);
+    }
+    await this.stopSession(sessionId, false);
+
+    const statusPatch = options?.preserveStatus
+      ? { sessionId, errorMessage: undefined }
+      : {
+          status: WhatsAppIntegrationStatus.CONNECTED,
+          sessionId,
+          errorMessage: undefined,
+        };
+    await this.updateIntegrationStatus(integrationRef, statusPatch);
+    this.applyIntegrationRefPatch(integrationRef, statusPatch);
+
+    const reopenPairingMode =
+      options?.pairingMode ?? integrationRef.status === WhatsAppIntegrationStatus.PAIRING;
+    await this.openSocket(integrationRef, sessionId, reopenPairingMode);
+  }
+
+  private autoReconnect(
+    integrationRef: WhatsAppIntegrationRef,
+    sessionId: string,
+    attempt: number,
+    statusCode: number | undefined,
+    errorMessage: string,
+    pairingMode: boolean,
+  ): void {
+    this.reconnectAttempts.set(sessionId, attempt);
+    const delay = this.reconnectDelay(attempt);
+    this.logger.warn('WhatsApp reconnect scheduled', {
+      sessionId,
+      attempt,
+      delayMs: delay,
+      statusCode,
+      errorMessage,
+      pairingMode,
+    });
+    this.cancelReconnect(sessionId);
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(sessionId);
+      void this.restoreSession(integrationRef, sessionId, {
+        preserveStatus: true,
+        pairingMode,
+        resetAttemptCounter: false,
+      }).catch((error) => {
+        this.logger.error('WhatsApp auto-reconnect failed', {
+          sessionId,
+          error: (error as Error).message,
+        });
+      });
+    }, delay);
+    this.reconnectTimers.set(sessionId, timer);
   }
 
   private maxReconnectAttempts(): number {

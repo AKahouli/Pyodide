@@ -205,6 +205,10 @@ message ReasoningComponent {
     string content = 1;          // Internal thought process
 }
 
+message ChainOfThoughtComponent {
+    repeated string steps = 1;   // Ordered step titles (e.g. tool names)
+}
+
 // Task status enum
 enum TaskStatus {
     PENDING = 0;                 // Task not started yet (default)
@@ -248,6 +252,12 @@ message QueueComponent {
 
 message CheckpointComponent {
     string label = 1;            // Checkpoint label
+}
+
+message ToolInfoComponent {
+    string title = 1;            // Tool name / label
+    string status = 2;           // running | completed | failed
+    optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
 }
 
 enum ChartKind {
@@ -370,6 +380,8 @@ message Component {
         WebPreviewComponent web_preview = 13;  // HTML/CSS/JS web preview
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
+        ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
+        ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
     }
 }
 
