@@ -99,6 +99,7 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
   private readonly width: number;
   private readonly height: number;
   private readonly quality: number;
+  private readonly chromiumExecutablePath: string;
 
   constructor(
     config: ConfigService,
@@ -108,15 +109,21 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     this.logger.setContext(PlaywrightBrowserEngine.name);
     const c = config.get('browserSession') as {
       viewportWidth: number; viewportHeight: number; screencastQuality: number;
+      chromiumExecutablePath: string;
     };
     this.width = c.viewportWidth;
     this.height = c.viewportHeight;
     this.quality = c.screencastQuality;
+    this.chromiumExecutablePath = c.chromiumExecutablePath;
   }
 
   private async ensureBrowser(): Promise<Browser> {
     if (this.browser && this.browser.isConnected()) return this.browser;
-    this.browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    this.browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox'],
+      ...(this.chromiumExecutablePath ? { executablePath: this.chromiumExecutablePath } : {}),
+    });
     return this.browser;
   }
 

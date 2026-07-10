@@ -9,11 +9,18 @@ describe('browserSessionConfig', () => {
     expect(c.viewportWidth).toBe(1280);
     expect(c.viewportHeight).toBe(800);
     expect(c.screencastQuality).toBe(60);
+    expect(c.chromiumExecutablePath).toBe('');
   });
 
   it('reads overrides from env', () => {
     process.env.BROWSER_SESSION_MAX_CONCURRENT = '2';
     expect(browserSessionConfig().maxConcurrent).toBe(2);
     delete process.env.BROWSER_SESSION_MAX_CONCURRENT;
+  });
+
+  it('reads chromiumExecutablePath override from env', () => {
+    process.env.BROWSER_SESSION_CHROMIUM_PATH = '/usr/bin/chromium';
+    expect(browserSessionConfig().chromiumExecutablePath).toBe('/usr/bin/chromium');
+    delete process.env.BROWSER_SESSION_CHROMIUM_PATH;
   });
 });

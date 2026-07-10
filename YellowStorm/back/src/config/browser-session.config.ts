@@ -7,4 +7,5 @@ export default registerAs('browserSession', () => ({
   viewportWidth: Number.parseInt(process.env.BROWSER_SESSION_VIEWPORT_W || '1280', 10),
   viewportHeight: Number.parseInt(process.env.BROWSER_SESSION_VIEWPORT_H || '800', 10),
   screencastQuality: Number.parseInt(process.env.BROWSER_SESSION_SCREENCAST_QUALITY || '60', 10),
+  chromiumExecutablePath: process.env.BROWSER_SESSION_CHROMIUM_PATH || '',
 }));
