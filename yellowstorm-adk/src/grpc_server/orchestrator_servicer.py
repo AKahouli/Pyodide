@@ -21,6 +21,21 @@ from src.orchestrator.service import OrchestratorService
 logger = logging.getLogger(__name__)
 
 
+def _connectors_to_dicts(connectors) -> list:
+    """proto ConnectorBinding[] -> the dict shape connectors_to_toolsets wants."""
+    return [
+        {
+            "connector_id": c.connector_id,
+            "connector_name": c.connector_name,
+            "mcp_transport_type": c.mcp_transport_type,
+            "mcp_server_url": c.mcp_server_url,
+            "auth_headers": dict(c.auth_headers),
+            "actions": [{"action_key": a.action_key} for a in c.actions],
+        }
+        for c in connectors
+    ]
+
+
 class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
     def __init__(self, service: OrchestratorService, read_model: Optional[ReadModel] = None,
                  *, default_model: str = "gpt-5.4-mini"):
@@ -60,8 +75,8 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
 
     async def _run_turn(self, request: pb.RunRequest, model: str, run_id: str) -> None:
         try:
-            # TODO: materialize request.connectors into ADK tools (per-user MCP
-            # servers) and pass as connectors_tools. Empty for now.
+            from src.orchestrator.connectors import connectors_to_toolsets
+            tools = connectors_to_toolsets(_connectors_to_dicts(request.connectors))
             # If the session is blocked on ask-the-user, this message is the
             # answer → resume; otherwise it's a new turn → plan.
             waiting = False
@@ -72,11 +87,11 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
             if waiting:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    answer=request.message, model=model, connectors_tools=[])
+                    answer=request.message, model=model, connectors_tools=tools)
             else:
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    message=request.message, model=model, connectors_tools=[])
+                    message=request.message, model=model, connectors_tools=tools)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn cancelled (session=%s)", request.session_id)
