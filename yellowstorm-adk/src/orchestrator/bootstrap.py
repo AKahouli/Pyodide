@@ -10,7 +10,8 @@ import logging
 from typing import Optional
 
 import asyncpg
-from google.adk.runners import InMemoryRunner
+from google.adk.runners import Runner
+from google.adk.sessions import DatabaseSessionService
 
 from src.grpc_server.orchestrator_servicer import AgentOrchestratorServicer
 from src.orchestrator import mcp_tasks, readmodel
@@ -35,13 +36,19 @@ class OrchestratorRuntime:
             s.readmodel_dsn(), min_size=1, max_size=10)
         await readmodel.init_schema(self._pool, schema)
         await mcp_tasks.init_schema(self._pool, schema)
+        async with self._pool.acquire() as con:  # ADK's own tables live here
+            await con.execute(f'CREATE SCHEMA IF NOT EXISTS "{s.ORCHESTRATOR_ADK_SCHEMA}"')
         rm = readmodel.ReadModel(self._pool, schema=schema)
 
-        # ponytail: InMemoryRunner for now — sessions live per-process. Swap for a
-        # Runner backed by DatabaseSessionService (Postgres) when ADK sessions must
-        # survive restarts / span replicas.
+        # Durable ADK sessions on Postgres (companion_ai) so a turn blocked on
+        # ask-the-user resumes in a later RunTask / another replica. ADK's tables
+        # go in a separate schema (search_path) to avoid the read model's names.
+        session_service = DatabaseSessionService(
+            db_url=s.session_service_url(),
+            connect_args={"server_settings": {"search_path": s.ORCHESTRATOR_ADK_SCHEMA}})
+
         def runner_factory(node, app_name):
-            return InMemoryRunner(node=node, app_name=app_name)
+            return Runner(node=node, app_name=app_name, session_service=session_service)
 
         service = OrchestratorService(
             runner_factory, read_model=rm,

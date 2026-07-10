@@ -24,6 +24,9 @@ class OrchestratorSettings(BaseSettings):
     ORCHESTRATOR_READMODEL_DSN: Optional[str] = None   # explicit override
     ORCHESTRATOR_READMODEL_DB: str = "companion_ai"     # else derived from DATABASE_URL
     ORCHESTRATOR_READMODEL_SCHEMA: str = "public"
+    # ADK's own session/event tables live in a separate schema so they never
+    # collide with the read model (both define a "sessions" table).
+    ORCHESTRATOR_ADK_SCHEMA: str = "adk"
 
     # ElectricSQL (client reads shapes via a trusted proxy that injects the secret)
     ELECTRIC_URL: Optional[str] = None
@@ -50,6 +53,11 @@ class OrchestratorSettings(BaseSettings):
             dsn = dsn.replace(drv, "")
         parts = urlsplit(dsn)
         return urlunsplit(parts._replace(path="/" + self.ORCHESTRATOR_READMODEL_DB))
+
+    def session_service_url(self) -> str:
+        """SQLAlchemy async URL for ADK's DatabaseSessionService (same DB as the
+        read model, but the async +asyncpg driver SQLAlchemy expects)."""
+        return self.readmodel_dsn().replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 @lru_cache

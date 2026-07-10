@@ -56,6 +56,15 @@ def _node_to_step_name(path: str) -> str:
     return seg.split("@")[0]
 
 
+async def _ensure_session(runner, app_name: str, user_id: str, session_id: str) -> None:
+    """Get-or-create — durable sessions persist, so re-running a session_id must
+    not collide on create."""
+    ss = runner.session_service
+    existing = await ss.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+    if existing is None:
+        await ss.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
+
+
 def _extract_json(text: str) -> dict:
     """Tolerant JSON extraction from an LLM response (handles ```json fences)."""
     text = text.strip()
@@ -104,8 +113,7 @@ class OrchestratorService:
                                max_concurrency=self._max_concurrency)
 
         runner = self._runner_factory(wf, f"orch_{session_id}")
-        await runner.session_service.create_session(
-            app_name=f"orch_{session_id}", user_id=user_id, session_id=session_id)
+        await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
 
         started: set = set()
         async for ev in runner.run_async(
@@ -131,8 +139,7 @@ class OrchestratorService:
             instruction=PLANNER_INSTRUCTION,
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
-        await runner.session_service.create_session(
-            app_name=f"planner_{session_id}", user_id=user_id, session_id=session_id + "_plan")
+        await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
         text = ""
         async for ev in runner.run_async(
             user_id=user_id, session_id=session_id + "_plan",
