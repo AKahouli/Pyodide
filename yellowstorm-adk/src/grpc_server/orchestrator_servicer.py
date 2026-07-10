@@ -44,7 +44,6 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
         self._default_model = default_model
         self._bg: Set[asyncio.Task] = set()          # keep strong refs
         self._running: Dict[str, asyncio.Task] = {}   # session_id -> turn task
-        self._seen_idem: Set[str] = set()             # session_id + '\0' + key
 
     async def CreateSession(self, request: pb.CreateSessionRequest, context) -> pb.CreateSessionResponse:
         session_id = uuid.uuid4().hex
@@ -57,13 +56,14 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
 
     async def RunTask(self, request: pb.RunRequest, context) -> pb.RunResponse:
         run_id = uuid.uuid4().hex
-        # Idempotency: a retried command runs at most once per session.
-        if request.idempotency_key:
-            key = f"{request.session_id}\0{request.idempotency_key}"
-            if key in self._seen_idem:
+        # Idempotency: a retried command runs at most once per session. Durable
+        # (Postgres) so it holds across restarts and multiple replicas.
+        if request.idempotency_key and self._rm is not None:
+            first = await self._rm.claim_run(
+                request.session_id, request.idempotency_key, run_id)
+            if not first:
                 logger.info("RunTask duplicate idempotency_key ignored (session=%s)", request.session_id)
                 return pb.RunResponse(session_id=request.session_id, accepted=False, run_id=run_id)
-            self._seen_idem.add(key)
 
         model = request.model or self._default_model
         task = asyncio.create_task(self._run_turn(request, model, run_id))
