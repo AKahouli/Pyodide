@@ -30,4 +30,5 @@ export default registerAs('indexing', () => ({
   crawlTimeBudgetMs: Number.parseInt(process.env.CRAWL_TIME_BUDGET_MS || '10000', 10),
   crawlConcurrency: Number.parseInt(process.env.CRAWL_CONCURRENCY || '5', 10),
   crawlUserAgent: process.env.CRAWL_USER_AGENT || DEFAULT_CRAWL_USER_AGENT,
+  sequentialDelayMs: Number.parseInt(process.env.INDEXING_SEQUENTIAL_DELAY_MS || '2000', 10),
 }));
