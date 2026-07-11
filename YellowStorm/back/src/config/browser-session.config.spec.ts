@@ -5,7 +5,7 @@ describe('browserSessionConfig', () => {
     const c = browserSessionConfig();
     expect(c.idleMs).toBe(300000);
     expect(c.maxMs).toBe(1200000);
-    expect(c.maxConcurrent).toBe(5);
+    expect(c.maxConcurrent).toBe(10);
     expect(c.viewportWidth).toBe(1280);
     expect(c.viewportHeight).toBe(800);
     expect(c.screencastQuality).toBe(60);
