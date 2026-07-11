@@ -74,6 +74,28 @@ it('toggles and deletes a leaf by its page name', () => {
   expect(onDelete).toHaveBeenCalledWith('https://ex.com/a/c');
 });
 
+it('collapses and expands a category, hiding/showing its children', () => {
+  render(
+    <CollectionSidebar
+      pages={[
+        { url: 'https://ex.com/a/b', title: '' },
+        { url: 'https://ex.com/a/c', title: '' },
+      ]}
+      selected={new Set()}
+      indexedUrls={new Set()}
+      onToggle={vi.fn()}
+      onDelete={vi.fn()}
+      onSelectAll={vi.fn()}
+      onSelectNone={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText('b')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('collapse a'));
+  expect(screen.queryByLabelText('b')).toBeNull();
+  fireEvent.click(screen.getByLabelText('expand a'));
+  expect(screen.getByLabelText('b')).toBeInTheDocument();
+});
+
 it('disables a leaf already indexed in the workspace', () => {
   render(
     <CollectionSidebar

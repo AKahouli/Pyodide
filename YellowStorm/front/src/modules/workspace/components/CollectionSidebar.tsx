@@ -1,4 +1,5 @@
-import { Trash2 } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { ChevronRight, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 
@@ -61,66 +62,92 @@ export function buildTrie(pages: CollectedPage[]): TrieNode[] {
 }
 
 function TrieRows({
-  nodes, depth, selected, indexedUrls, onToggle, onDelete,
+  nodes, parentKey, selected, indexedUrls, collapsed, onToggleCollapse, onToggle, onDelete,
 }: {
   nodes: TrieNode[];
-  depth: number;
+  parentKey: string;
   selected: Set<string>;
   indexedUrls: Set<string>;
+  collapsed: Set<string>;
+  onToggleCollapse: (key: string) => void;
   onToggle: (url: string) => void;
   onDelete: (url: string) => void;
 }) {
   return (
-    <>
+    <ul className='m-0 list-none p-0'>
       {nodes.map((node) => {
-        const pad = depth * 14 + 8;
+        const key = `${parentKey}/${node.segment}`;
+        const hasChildren = node.children.length > 0;
+        const isCollapsed = collapsed.has(key);
         const already = node.url ? indexedUrls.has(normalizeUrl(node.url)) : false;
         return (
-          <div key={node.segment}>
-            {node.url ? (
-              <div className='flex items-center gap-2 border-b py-1.5 pr-2 text-sm' style={{ paddingLeft: pad }}>
-                <Checkbox
-                  aria-label={node.segment}
-                  checked={selected.has(node.url)}
-                  disabled={already}
-                  onCheckedChange={() => onToggle(node.url as string)}
-                />
-                <div className='min-w-0 flex-1'>
-                  <div className='truncate font-medium' title={node.segment}>{node.segment}</div>
-                  <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
-                  {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
-                </div>
+          <li key={node.segment}>
+            <div className='flex items-center gap-1 border-b py-1 pr-2 text-sm'>
+              {hasChildren ? (
                 <button
                   type='button'
-                  aria-label={`delete ${node.url}`}
-                  className='shrink-0 text-muted-foreground hover:text-destructive'
-                  onClick={() => onDelete(node.url as string)}
+                  aria-label={`${isCollapsed ? 'expand' : 'collapse'} ${node.segment}`}
+                  className='flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground'
+                  onClick={() => onToggleCollapse(key)}
                 >
-                  <Trash2 className='h-4 w-4' />
+                  <ChevronRight className={`size-3.5 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
                 </button>
-              </div>
-            ) : (
-              <div
-                className='flex items-center border-b bg-muted/40 py-1 pr-2 text-xs font-medium text-muted-foreground'
-                style={{ paddingLeft: pad }}
-              >
-                <span className='truncate' title={node.segment}>{node.segment}</span>
+              ) : (
+                <span className='size-4 shrink-0' aria-hidden />
+              )}
+
+              {node.url ? (
+                <>
+                  <Checkbox
+                    aria-label={node.segment}
+                    checked={selected.has(node.url)}
+                    disabled={already}
+                    onCheckedChange={() => onToggle(node.url as string)}
+                  />
+                  <div className='min-w-0 flex-1'>
+                    <div className='truncate font-medium' title={node.segment}>{node.segment}</div>
+                    <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
+                    {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
+                  </div>
+                  <button
+                    type='button'
+                    aria-label={`delete ${node.url}`}
+                    className='shrink-0 text-muted-foreground hover:text-destructive'
+                    onClick={() => onDelete(node.url as string)}
+                  >
+                    <Trash2 className='h-4 w-4' />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type='button'
+                  className='min-w-0 flex-1 truncate text-left text-xs font-medium text-muted-foreground'
+                  title={node.segment}
+                  onClick={() => onToggleCollapse(key)}
+                >
+                  {node.segment}
+                </button>
+              )}
+            </div>
+
+            {hasChildren && !isCollapsed && (
+              <div className='ml-[9px] border-l border-border/60 pl-1'>
+                <TrieRows
+                  nodes={node.children}
+                  parentKey={key}
+                  selected={selected}
+                  indexedUrls={indexedUrls}
+                  collapsed={collapsed}
+                  onToggleCollapse={onToggleCollapse}
+                  onToggle={onToggle}
+                  onDelete={onDelete}
+                />
               </div>
             )}
-            {node.children.length > 0 && (
-              <TrieRows
-                nodes={node.children}
-                depth={depth + 1}
-                selected={selected}
-                indexedUrls={indexedUrls}
-                onToggle={onToggle}
-                onDelete={onDelete}
-              />
-            )}
-          </div>
+          </li>
         );
       })}
-    </>
+    </ul>
   );
 }
 
@@ -135,6 +162,18 @@ export function CollectionSidebar({
   onSelectAll: () => void;
   onSelectNone: () => void;
 }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const onToggleCollapse = useCallback(
+    (key: string) =>
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
+
   const roots = buildTrie(pages);
   return (
     <div className='flex min-h-0 min-w-0 flex-col rounded border'>
@@ -144,15 +183,17 @@ export function CollectionSidebar({
         <span className='text-muted-foreground'>·</span>
         <button type='button' className='underline' onClick={onSelectNone}>Aucun</button>
       </div>
-      <div className='min-h-0 flex-1 overflow-y-auto'>
+      <div className='min-h-0 flex-1 overflow-y-auto p-1'>
         {pages.length === 0 ? (
           <p className='p-3 text-sm text-muted-foreground'>Naviguez pour collecter des pages.</p>
         ) : (
           <TrieRows
             nodes={roots}
-            depth={0}
+            parentKey=''
             selected={selected}
             indexedUrls={indexedUrls}
+            collapsed={collapsed}
+            onToggleCollapse={onToggleCollapse}
             onToggle={onToggle}
             onDelete={onDelete}
           />
