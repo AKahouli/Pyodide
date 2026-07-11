@@ -87,7 +87,8 @@ const widgetSettingsSchema = z.object({
       id: z.string().max(80).default(''),
       label: z.string().min(1).max(60),
       prompt: z.string().min(1).max(5000),
-      icon: z.string().max(40).optional(),
+      // The API serializes an unset optional icon as null for existing agents.
+      icon: z.string().max(40).nullish().transform((value) => value ?? undefined),
       enabled: z.boolean().default(true),
       sortOrder: z.number().int().min(0).max(1000).default(0),
     })).max(6).default(DEFAULT_WIDGET_SETTINGS.content.suggestions),
