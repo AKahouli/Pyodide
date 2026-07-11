@@ -70,7 +70,13 @@ export class WidgetSseStreamRegistry {
       const sub = merge(events$, heartbeat$)
         .pipe(takeUntil(stream.disconnect$))
         .subscribe(subscriber);
-      return () => sub.unsubscribe();
+      return () => {
+        sub.unsubscribe();
+        // Allow emit() to buffer again while the browser reconnects between turns.
+        if (this.activeStreams.get(sessionId) === stream) {
+          stream.sseSubscribed = false;
+        }
+      };
     });
   }
 
