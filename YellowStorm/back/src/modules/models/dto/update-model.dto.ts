@@ -1,4 +1,4 @@
-import { IsString, IsBoolean, IsArray, IsOptional, IsIn } from 'class-validator';
+import { ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { MODEL_TYPES } from '../interfaces/model.interface';
 
@@ -31,6 +31,17 @@ export class UpdateModelDto {
   @IsIn(MODEL_TYPES)
   @IsOptional()
   type?: string;
+
+  @ApiPropertyOptional({
+    description: 'Model classification types',
+    enum: MODEL_TYPES,
+    isArray: true,
+  })
+  @IsArray()
+  @ArrayUnique()
+  @IsIn(MODEL_TYPES, { each: true })
+  @IsOptional()
+  types?: string[];
 
   @ApiPropertyOptional({ description: 'Whether the model is active' })
   @IsBoolean()

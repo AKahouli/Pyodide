@@ -115,6 +115,13 @@ const widgetSettingsSchema = z.object({
     typing: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.typing),
     sourcesUsedSingular: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.sourcesUsedSingular),
     sourcesUsedPlural: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.sourcesUsedPlural),
+    choiceSubmit: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceSubmit),
+    choiceDismiss: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceDismiss),
+    choiceDismissed: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceDismissed),
+    choiceDismissMessage: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceDismissMessage),
+    choiceOtherLabel: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceOtherLabel),
+    choiceSendError: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceSendError),
+    choiceWaitForReply: z.string().max(120).default(DEFAULT_WIDGET_SETTINGS.labels.choiceWaitForReply),
   }).default(DEFAULT_WIDGET_SETTINGS.labels),
   behavior: z.object({
     defaultOpen: z.boolean().default(DEFAULT_WIDGET_SETTINGS.behavior.defaultOpen),

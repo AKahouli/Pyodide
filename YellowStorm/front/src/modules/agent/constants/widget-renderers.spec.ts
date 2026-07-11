@@ -6,6 +6,9 @@ import {
   normalizeCitationReference,
   parseCitationPage,
   renderCitation,
+  renderChoice,
+  renderSources,
+  RENDERER_MAP,
   sortCitationsByReference,
 } from './widget-renderers';
 
@@ -113,5 +116,45 @@ describe('widget citation helpers', () => {
     expect(injectCitationMarkers('Missing [9] only.', [{ reference: '1', url: 'a.pdf', fileName: 'a.pdf' }])).toContain(
       '[9]',
     );
+  });
+});
+
+describe('widget choice renderer', () => {
+  it('exposes and safely renders quick replies', () => {
+    const html = renderChoice({
+      schemaVersion: 1,
+      prompt: '<Pick>',
+      options: [{ id: 'one', label: '<One>' }, { id: 'two', label: 'Two' }],
+    }, 'choice-1');
+    expect(RENDERER_MAP.choice).toBe(renderChoice);
+    expect(html).toContain('ys-choice-quick');
+    expect(html).toContain('&lt;Pick&gt;');
+    expect(html).toContain('&lt;One&gt;');
+  });
+});
+
+describe('widget source rendering', () => {
+  it('renders the full escaped source title as a clickable link', () => {
+    const title = 'A detailed source title that should remain readable in the widget without truncation';
+    const html = renderSources({ sources: [{ title, url: 'https://example.com/resource' }] });
+
+    expect(html).toContain(`>${title}</span>`);
+    expect(html).toContain('href="https://example.com/resource"');
+    expect(html).toContain('target="_blank" rel="noopener noreferrer"');
+  });
+
+  it('trims safe source URLs before rendering them', () => {
+    const html = renderSources({ sources: [{ title: 'Example', url: ' https://example.com/resource ' }] });
+
+    expect(html).toContain('href="https://example.com/resource"');
+    expect(html).toContain('title="https://example.com/resource"');
+  });
+
+  it('does not expose unsafe source URL schemes', () => {
+    for (const url of ['javascript:alert(1)', 'data:text/html,unsafe', '//untrusted.example']) {
+      const html = renderSources({ sources: [{ title: 'Unsafe', url }] });
+      expect(html).toContain('href="#"');
+      expect(html).not.toContain(`href="${url}`);
+    }
   });
 });

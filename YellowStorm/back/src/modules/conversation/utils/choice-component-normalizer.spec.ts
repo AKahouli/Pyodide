@@ -30,4 +30,11 @@ describe('normalizeChoiceComponentData', () => {
     expect(normalizeChoiceComponentData({ ...valid, options: [{ ...valid.options[0] }, { ...valid.options[0] }] })).toBeNull();
     expect(normalizeChoiceComponentData({ ...valid, options: [{ ...valid.options[0], id: '<bad>' }, valid.options[1]] })).toBeNull();
   });
+
+  it('rejects missing or unknown statuses rather than making them interactive', () => {
+    const { status: _status, ...withoutStatus } = valid;
+    expect(normalizeChoiceComponentData(withoutStatus)).toBeNull();
+    expect(normalizeChoiceComponentData({ ...valid, status: 'building' })).toBeNull();
+    expect(normalizeChoiceComponentData({ ...valid, status: 'READY' })).toBeNull();
+  });
 });

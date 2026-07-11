@@ -12,6 +12,10 @@ NATIVE_TOOL_REGISTRY: dict[str, Any] = {
     "present_choices": present_choices,
 }
 
+# These tools are attached by the existing agent factories. The catalogue may
+# configure them, but must not add a second declaration to an ADK agent.
+FACTORY_MANAGED_NATIVE_TOOLS = frozenset({"calculator", "render_chart"})
+
 
 def get_native_tool(name: str) -> Any | None:
     return NATIVE_TOOL_REGISTRY.get(name.strip()) if isinstance(name, str) else None
@@ -31,6 +35,7 @@ def _configured_native_tool(tool: Any, description: str | None) -> Any:
 
 def resolve_native_tools(tool_configs: Iterable[Any]) -> list[Any]:
     resolved: list[Any] = []
+    resolved_names: set[str] = set()
     for config in tool_configs:
         if isinstance(config, str):
             name = config
@@ -45,6 +50,7 @@ def resolve_native_tools(tool_configs: Iterable[Any]) -> list[Any]:
             enabled = getattr(config, "enabled", True)
             description = getattr(config, "description", None)
         tool = get_native_tool(name) if enabled and isinstance(name, str) else None
-        if tool is not None:
+        if tool is not None and name not in resolved_names:
             resolved.append(_configured_native_tool(tool, description.strip() if isinstance(description, str) else None))
+            resolved_names.add(name)
     return resolved

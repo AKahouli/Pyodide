@@ -60,7 +60,7 @@ export function GuardrailsPage() {
       getAllModels().catch(() => ({ models: [], total: 0 })),
     ]).then(([nextSettings, models]) => {
       setSettings(normalizeSettings(nextSettings));
-      setClassifierName(models.models.find((model) => model.isActive && model.type === 'guardrails_classifier')?.name || '');
+      setClassifierName(models.models.find((model) => model.isActive && (model.types?.includes('guardrails_classifier') || model.type === 'guardrails_classifier'))?.name || '');
     }).finally(() => setLoading(false));
   }, []);
 

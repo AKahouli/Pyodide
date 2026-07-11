@@ -42,6 +42,37 @@ def _registers_connector_citations(tool_name: str) -> bool:
     return _is_locate_answer_citations_tool(tool_name)
 
 
+def _normalize_structured_sources(value: Any) -> List[Dict[str, str]]:
+    """Keep only direct, URL-backed sources that are safe for a public UI."""
+    if not isinstance(value, list):
+        return []
+
+    sources: List[Dict[str, str]] = []
+    seen_urls = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        raw_url = item.get("url")
+        if not isinstance(raw_url, str):
+            continue
+        url = raw_url.strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+
+        dedupe_key = url
+        if dedupe_key in seen_urls:
+            continue
+        seen_urls.add(dedupe_key)
+
+        raw_title = item.get("title")
+        title = raw_title.strip() if isinstance(raw_title, str) else ""
+        sources.append({"title": title or parsed.netloc, "url": url})
+
+    return sources
+
+
 def _loggable_structured_response(tool_name: str, response: Any) -> Any:
     if _registers_connector_citations(tool_name):
         return response
@@ -1297,26 +1328,25 @@ class AgentRunner:
 
             response_data = function_response.response
 
-            # Check if response has sources
-            if isinstance(response_data, dict) and "sources" in response_data:
-                sources = response_data.get("sources", [])
-
-                if sources:
-                    # Stream sources as sources component
-                    sources_chunk = self.streaming_formatter.format_component_event(
-                        agent_id=agent_id,
-                        component_type="sources",
-                        component_data={"sources": sources},
-                        message_id=session_id,
-                    )
-                    await q.put(sources_chunk)
-                    logger.info(
-                        f"[WEB SEARCH] Successfully streamed {len(sources)} web sources to queue"
-                    )
-            else:
+            if not isinstance(response_data, dict):
                 logger.debug(
                     f"[WEB SEARCH] No sources found in response or response is not dict. Type: {type(response_data)}"
                 )
+                return
+
+            sources = _normalize_structured_sources(response_data.get("sources"))
+            if not sources:
+                logger.debug("[WEB SEARCH] No valid URL-backed sources to stream")
+                return
+
+            sources_chunk = self.streaming_formatter.format_component_event(
+                agent_id=agent_id,
+                component_type="sources",
+                component_data={"sources": sources},
+                message_id=session_id,
+            )
+            await q.put(sources_chunk)
+            logger.info(f"[WEB SEARCH] Streamed {len(sources)} web sources to queue")
 
         except Exception as e:
             logger.error(
@@ -1352,10 +1382,10 @@ class AgentRunner:
                     tool_name,
                 )
 
-            sources = response_data.get("sources", [])
-            if _is_locate_answer_citations_tool(tool_name) and isinstance(sources, list) and sources:
+            sources = _normalize_structured_sources(response_data.get("sources"))
+            if sources:
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s streaming_sources_count=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s valid_sources_count=%s",
                     tool_name,
                     len(sources),
                 )
@@ -1368,11 +1398,8 @@ class AgentRunner:
                 await q.put(sources_chunk)
             else:
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s no_sources_to_stream keys=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s no_valid_sources",
                     tool_name,
-                    sorted(response_data.keys())
-                    if _is_locate_answer_citations_tool(tool_name)
-                    else [],
                 )
         except Exception as e:
             logger.error(

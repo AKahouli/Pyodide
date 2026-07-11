@@ -128,6 +128,13 @@ export interface AgentWidgetSettings {
     typing: string;
     sourcesUsedSingular: string;
     sourcesUsedPlural: string;
+    choiceSubmit: string;
+    choiceDismiss: string;
+    choiceDismissed: string;
+    choiceDismissMessage: string;
+    choiceOtherLabel: string;
+    choiceSendError: string;
+    choiceWaitForReply: string;
   };
   behavior: {
     defaultOpen: boolean;

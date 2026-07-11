@@ -75,7 +75,8 @@ export function normalizeChoiceComponentData(raw: unknown): ChoiceComponentData 
   const submitBehavior: ChoiceSubmitBehavior = selectionMode === 'multiple' || otherOption?.enabled || presentation === 'list'
     ? 'explicit'
     : data.submitBehavior === 'explicit' || data.submit_behavior === 'explicit' ? 'explicit' : 'immediate';
-  const status: ChoiceStatus = data.status === 'submitted' || data.status === 'disabled' ? data.status : 'ready';
+  if (data.status !== 'ready' && data.status !== 'submitted' && data.status !== 'disabled') return null;
+  const status: ChoiceStatus = data.status;
   const description = text(data.description, 1500);
   const fallbackText = text(field(data, 'fallbackText', 'fallback_text'), 2000);
   const rawLabels = data.labels;

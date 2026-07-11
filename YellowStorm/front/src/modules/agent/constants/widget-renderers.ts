@@ -1,7 +1,7 @@
 /**
  * TypeScript reference renderers for the public embed widget SSE contract.
  * Mirror of `_ysRenderers` in `widget-template.ts` (vanilla JS runtime).
- * Supported component types: `text`, `sources`, `citation`.
+ * Supported component types: `text`, `sources`, `citation`, `choice`.
  */
 
 import { widgetMarkdown } from './widget-markdown';
@@ -55,7 +55,8 @@ export function renderSources(data: Record<string, unknown>): string {
   const itemsHtml = sources
     .map((src: { title?: string; url?: string }) => {
       const title = typeof src.title === 'string' ? src.title : '';
-      const url = typeof src.url === 'string' ? src.url : '#';
+      const rawUrl = typeof src.url === 'string' ? src.url : '';
+      const url = safeHttpUrl(rawUrl);
       const label = sourceDisplayLabel(title, url);
       return (
         '<a class="ys-comp-source-item" href="' +
@@ -267,10 +268,28 @@ export function renderCitation(data: Record<string, unknown>): string {
   return '<div class="ys-comp-wrap ys-comp-citations">' + itemsHtml + '</div>';
 }
 
+/** Renders a validated, non-interactive reference representation of a choice component. */
+export function renderChoice(data: Record<string, unknown>, renderId = 'choice'): string {
+  if (data.schemaVersion !== 1 || !Array.isArray(data.options) || data.options.length < 2) return '';
+  const presentation = data.presentation === 'list' ? 'ys-choice-list' : 'ys-choice-quick';
+  const options = data.options
+    .filter((option): option is Record<string, unknown> => Boolean(option) && typeof option === 'object')
+    .map((option) => {
+      const id = typeof option.id === 'string' ? option.id : '';
+      const label = typeof option.label === 'string' ? option.label : '';
+      if (!id || !label) return '';
+      return `<button type="button" class="ys-choice-option" data-ys-choice-component="${escapeAttr(renderId)}" data-ys-choice-option="${escapeAttr(id)}"${option.disabled === true ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
+    })
+    .join('');
+  const prompt = typeof data.prompt === 'string' ? data.prompt : '';
+  return options ? `<section class="ys-comp-wrap ys-choice ${presentation}"><p class="ys-choice-prompt">${escapeHtml(prompt)}</p><div class="ys-choice-options">${options}</div></section>` : '';
+}
+
 export const RENDERER_MAP: Record<string, (data: Record<string, unknown>, renderId?: string) => string> = {
   text: renderText,
   sources: renderSources,
   citation: renderCitation,
+  choice: renderChoice,
 };
 
 function escapeHtml(str: string): string {
@@ -279,6 +298,11 @@ function escapeHtml(str: string): string {
 
 function escapeAttr(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function safeHttpUrl(value: string): string {
+  const trimmed = value.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : '#';
 }
 
 function extractDomain(url: string): string {
@@ -299,11 +323,7 @@ function sourcesLabel(count: number): string {
 
 function sourceDisplayLabel(title: string, url: string): string {
   const trimmed = title.trim();
-  const label = trimmed || extractDomain(url);
-  if (label.length <= 72) {
-    return label;
-  }
-  return `${label.slice(0, 69)}...`;
+  return trimmed || extractDomain(url);
 }
 
 function globeIconSvg(): string {

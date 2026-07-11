@@ -76,6 +76,13 @@ export const DEFAULT_WIDGET_SETTINGS = {
     typing: 'L assistant redige une reponse',
     sourcesUsedSingular: '1 source utilisee',
     sourcesUsedPlural: '{count} sources utilisees',
+    choiceSubmit: 'Envoyer',
+    choiceDismiss: 'Passer cette question',
+    choiceDismissed: 'Question ignoree',
+    choiceDismissMessage: 'Je prefere ne pas repondre a cette question.',
+    choiceOtherLabel: 'Autre reponse',
+    choiceSendError: 'Impossible d envoyer ce choix. Reessayez.',
+    choiceWaitForReply: 'Attendez la fin de la reponse en cours.',
   },
   behavior: {
     defaultOpen: false,

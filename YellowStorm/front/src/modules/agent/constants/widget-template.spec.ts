@@ -26,6 +26,33 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('selectedOptions');
     expect(snippet).toContain('customAnswer');
     expect(snippet).toContain('reconcileChoicePrompt');
+    expect(snippet).toContain('_ysSubmitChoice');
+    expect(snippet).toContain('choiceSendError');
+    expect(snippet).toContain('ys-choice-quick');
+  });
+
+  it('ships the table renderer and responsive table styles', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('function _ysParseTable');
+    expect(snippet).toContain('function _ysRenderTable');
+    expect(snippet).toContain('function _ysTableAlignment');
+    expect(snippet).toContain('ys-md-table-wrap');
+    expect(snippet).toContain('overflow-x:auto');
+  });
+
+  it('matches the reference renderer apostrophe escaping', () => {
+    const snippet = buildWidgetSnippet({
+      agentId: 'agent-id',
+      embedHandle: 'embed-token',
+      apiBaseUrl: 'http://localhost:3000/api/v1',
+    });
+
+    expect(snippet).toContain('replace(/\'/g,"&#39;")');
   });
 
   it('mounts the self-contained widget inside a shadow root', () => {

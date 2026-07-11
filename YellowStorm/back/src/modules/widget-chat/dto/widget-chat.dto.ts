@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MaxLength, ValidateNested, IsArray, IsBoolean, IsIn } from 'class-validator';
+import { IsString, IsOptional, MaxLength, ValidateNested, IsArray, IsBoolean, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -35,7 +35,7 @@ export class WidgetClientContextDto {
 }
 
 class WidgetChoiceSelectionDto {
-  @IsString() @MaxLength(64) optionId!: string;
+  @IsString() @Matches(/^[A-Za-z0-9._-]+$/) @MaxLength(64) optionId!: string;
   @IsString() @MaxLength(160) label!: string;
   @IsOptional() @IsString() @MaxLength(200) value?: string;
 }
@@ -45,10 +45,10 @@ class WidgetChoiceInteractionDto {
   @IsString() @MaxLength(128) componentId!: string;
   @IsString() @MaxLength(100) questionId!: string;
   @IsIn(['single', 'multiple']) selectionMode!: 'single' | 'multiple';
-  @IsArray() @ValidateNested({ each: true }) @Type(() => WidgetChoiceSelectionDto) selectedOptions!: WidgetChoiceSelectionDto[];
-  @IsOptional() @IsString() @MaxLength(2000) customAnswer?: string;
+  @IsArray() @ArrayMaxSize(10) @ArrayUnique((item: WidgetChoiceSelectionDto) => item.optionId) @ValidateNested({ each: true }) @Type(() => WidgetChoiceSelectionDto) selectedOptions!: WidgetChoiceSelectionDto[];
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(2000) customAnswer?: string;
   @IsOptional() @IsBoolean() dismissed?: boolean;
-  @IsOptional() @IsString() @MaxLength(1000) displayText?: string;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(1000) displayText?: string;
 }
 
 export class WidgetSendMessageDto {

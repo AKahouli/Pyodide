@@ -28,7 +28,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Lab
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
-import type { ChoiceComponentData } from '@/modules/conversation/types';
+import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
@@ -201,19 +201,20 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   /** Whether the message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 };
 
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const visibleParts = parts.filter((part) => part.type !== 'text' || !choicePrompts.has(part.content.trim()));
 
   return (
     <div className={cn('space-y-4', className)} {...props}>
       {visibleParts.map((part, index) => (
-        <AIMessagePart key={part.type === 'choice' ? part.componentId : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} />
+        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} />
       ))}
     </div>
   );
@@ -227,9 +228,10 @@ type AIMessagePartProps = {
   part: MessageContentPart;
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
@@ -246,7 +248,7 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction }: AIMessa
     case 'chart':
       return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
     case 'choice':
-      return <ChoicePartRenderer {...part} onAction={onComponentAction} />;
+      return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':

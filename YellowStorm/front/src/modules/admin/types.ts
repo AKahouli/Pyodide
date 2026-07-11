@@ -925,6 +925,7 @@ export interface AdminModelResponse {
   litellmModel: string;
   providers: string[];
   type: string;
+  types: string[];
   isActive: boolean;
   isDefault: boolean;
 }
@@ -954,6 +955,7 @@ export interface UpdateModelRequest {
   chefSlug?: string;
   providers?: string[];
   type?: string;
+  types?: ModelType[];
   isActive?: boolean;
 }
 

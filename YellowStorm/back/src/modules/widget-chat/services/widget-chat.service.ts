@@ -6,7 +6,7 @@ import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { Observable } from 'rxjs';
-import { ServiceUnavailableException, NotFoundException } from '@modules/exceptions';
+import { ServiceUnavailableException, NotFoundException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { StreamService } from '@modules/conversation/services/stream.service';
 import { DocumentService } from '@modules/document/document.service';
@@ -389,42 +389,64 @@ export class WidgetChatService {
       origin: metadata.origin,
     });
 
-    this.sseRegistry.ensureSession(sessionId);
+    if (!this.sseRegistry.tryStartRun(sessionId)) {
+      throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'A response is already streaming for this widget session');
+    }
 
-    const userMsg = await this.widgetMessageModel.create({
-      sessionId,
-      tokenHash,
-      agentId,
-      role: 'user',
-      content: message,
-      interaction,
-    });
+    try {
+      const userMsg = await this.widgetMessageModel.create({
+        sessionId,
+        tokenHash,
+        agentId,
+        role: 'user',
+        content: message,
+        interaction,
+      });
 
-    await this.widgetSessionModel.findByIdAndUpdate(sessionId, {
-      $inc: { messageCount: 1 },
-    }).exec();
+      await this.widgetSessionModel.findByIdAndUpdate(sessionId, {
+        $inc: { messageCount: 1 },
+      }).exec();
 
-    await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
+      await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
 
-    this.executeStream(sessionId, agentId, tokenHash, message, agent).catch((err) => {
-      this.logger.error('Widget stream failed', { sessionId, error: (err as Error).message });
-      this.sseRegistry.emit(sessionId, { type: 'stream_error', data: { message: 'AI service error' } });
-      this.sseRegistry.cleanup(sessionId);
-    });
+      this.executeStream(sessionId, agentId, tokenHash, message, agent)
+        .catch((err) => {
+          this.logger.error('Widget stream failed', { sessionId, error: (err as Error).message });
+          this.sseRegistry.emit(sessionId, { type: 'stream_error', data: { message: 'AI service error' } });
+        })
+        .finally(() => this.sseRegistry.finishRun(sessionId));
 
-    this.logger.log('Widget chat accepted, stream starting', { sessionId, messageId: userMsg.id });
-    return { messageId: userMsg.id, sessionId };
+      this.logger.log('Widget chat accepted, stream starting', { sessionId, messageId: userMsg.id });
+      return { messageId: userMsg.id, sessionId };
+    } catch (error) {
+      this.sseRegistry.finishRun(sessionId);
+      throw error;
+    }
   }
 
-  getStream(sessionId: string): Observable<{ type: string; data: Record<string, unknown> }> | null {
-    if (!sessionId) {
-      this.logger.warn('Widget SSE rejected: empty sessionId');
+  async getAuthorizedStream(input: {
+    sessionId: string;
+    tokenHash: string;
+    agentId: string;
+  }): Promise<Observable<{ type: string; data: Record<string, unknown> }> | null> {
+    if (!Types.ObjectId.isValid(input.sessionId)) {
+      this.logger.warn('Widget SSE rejected: invalid sessionId');
       return null;
     }
-    this.sseRegistry.ensureSession(sessionId);
+    const session = await this.widgetSessionModel.findOne({
+      _id: input.sessionId,
+      tokenHash: input.tokenHash,
+      agentId: input.agentId,
+      status: 'active',
+    }).select('_id').lean().exec();
+    if (!session) {
+      this.logger.warn('Widget SSE rejected: unauthorized session', { sessionId: input.sessionId, agentId: input.agentId });
+      return null;
+    }
+    this.sseRegistry.ensureSession(input.sessionId);
     const heartbeatMs = this.configService.get<number>('conversation.sseHeartbeatMs', 15000);
-    this.logger.log('Widget SSE stream opened', { sessionId });
-    return this.sseRegistry.observe(sessionId, heartbeatMs);
+    this.logger.log('Widget SSE stream opened', { sessionId: input.sessionId, agentId: input.agentId });
+    return this.sseRegistry.observe(input.sessionId, heartbeatMs);
   }
 
   removeStream(sessionId: string): void {

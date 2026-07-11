@@ -110,7 +110,7 @@ export class MessageController {
 
     // Validate model is active
     if (dto.modelId) {
-      const modelValidation = await this.modelsService.validateModelActive(dto.modelId);
+      const modelValidation = await this.modelsService.validateModelActive(dto.modelId, 'chat');
       if (!modelValidation.valid) {
         if (modelValidation.inactive) {
           this.logger.warn('Attempted to use inactive model', {
@@ -118,6 +118,12 @@ export class MessageController {
             modelId: dto.modelId,
           });
           throw new BadRequestException(ErrorCode.MODEL_INACTIVE);
+        } else if (modelValidation.unsupported) {
+          this.logger.warn('Attempted to use a non-chat model for conversation', {
+            conversationId,
+            modelId: dto.modelId,
+          });
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Selected model does not support chat.');
         } else {
           this.logger.warn('Attempted to use unknown model', {
             conversationId,

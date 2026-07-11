@@ -9,6 +9,7 @@ import { useCallback, useMemo } from 'react';
 import { CodeArtifact, parseMessageContent } from '@/components/ai-elements/code-artifact';
 import { AIMessageContent, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
+import type { ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import type { BundledLanguage } from 'shiki';
 
 // Types - Re-export for external use
@@ -42,6 +43,7 @@ export interface ChatMessage {
   timestamp?: Date;
   isEdited?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 }
 
 export type ChatConversationProps = ComponentProps<typeof StickToBottom>;
@@ -99,14 +101,14 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
               <>
                 {reasoningParts.length > 0 && (
                   <div className='px-1'>
-                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} />
+                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} />
                   </div>
                 )}
 
                 {/* Only render bubble if there are other parts */}
                 {otherParts.length > 0 && (
                   <div className={cn('rounded-2xl text-sm shadow-sm', 'bg-muted/70 dark:bg-muted/40 text-foreground rounded-tl-none border border-border px-4 py-3')}>
-                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} />
+                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} />
                     {message.timestamp && <time className='mt-2 block text-[10px] opacity-50'>{formatMessageTimestamp(message.timestamp)}</time>}
                   </div>
                 )}
