@@ -28,7 +28,15 @@ export class BrowserSessionGateway implements OnGatewayConnection, OnGatewayDisc
 
   async handleConnection(client: AuthedSocket): Promise<void> {
     const token = this.extractToken(client);
-    if (!token) { client.disconnect(true); return; }
+    if (!token) {
+      // No token on the handshake — the socket connects then immediately drops,
+      // which looks like "connected, no data" in the browser with nothing logged.
+      this.logger.warn('browser-session connection rejected: no auth token', {
+        socketId: client.id,
+      });
+      client.disconnect(true);
+      return;
+    }
     try {
       const payload = await this.jwt.verifyAsync<{ sub: string }>(token, {
         secret: this.config.get<string>('jwt.secret'),
@@ -36,6 +44,7 @@ export class BrowserSessionGateway implements OnGatewayConnection, OnGatewayDisc
         audience: this.config.get<string>('jwt.audience'),
       });
       client.data.userId = payload.sub;
+      this.logger.debug('browser-session client connected', { userId: payload.sub });
     } catch (e) {
       this.logger.warn('browser-session auth failed', { error: (e as Error).message });
       client.disconnect(true);
