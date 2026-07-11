@@ -1,56 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const crawlUrl = vi.fn();
-const addPageLinks = vi.fn();
-
-vi.mock('../api', () => ({ crawlUrl: (...a: unknown[]) => crawlUrl(...a) }));
+const session = {
+  status: 'idle' as string, frame: null as string | null, currentUrl: null as string | null,
+  pages: [] as Array<{ url: string; title: string }>, blockedNotice: null as string | null,
+  start: vi.fn(), sendInput: vi.fn(), navigate: vi.fn(), stop: vi.fn(),
+};
+vi.mock('../hooks/useBrowserSession', async () => {
+  const actual = await vi.importActual<typeof import('../hooks/useBrowserSession')>('../hooks/useBrowserSession');
+  return { ...actual, useBrowserSession: () => session };
+});
+const addPageLinks = vi.fn().mockResolvedValue(undefined);
 vi.mock('../store', () => ({
-  useWorkspaceStore: (sel: (s: unknown) => unknown) => sel({ addPageLinks }),
+  useWorkspaceStore: (sel: (s: unknown) => unknown) =>
+    sel({ addPageLinks, documents: [] }),
 }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { AddLinkDialog } from './AddLinkDialog';
 
-describe('AddLinkDialog', () => {
-  beforeEach(() => { crawlUrl.mockReset(); addPageLinks.mockReset(); });
+beforeEach(() => {
+  session.status = 'idle'; session.pages = []; addPageLinks.mockClear();
+  session.start.mockClear();
+});
 
-  it('blocks crawl on invalid URL format', async () => {
-    render(<AddLinkDialog open onOpenChange={() => {}} workspaceId="ws1" />);
-    await screen.findByRole('dialog');
-    fireEvent.change(screen.getByRole('textbox', { name: /lien/i }), { target: { value: 'not a url' } });
-    fireEvent.click(screen.getByRole('button', { name: /cartographier/i }));
-    expect(crawlUrl).not.toHaveBeenCalled();
-    expect(await screen.findByText(/URL valide/i)).toBeInTheDocument();
-  });
+it('starts a browse session from the entered url', () => {
+  render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  fireEvent.change(screen.getByPlaceholderText('https://exemple.com'), { target: { value: 'https://ok.example' } });
+  fireEvent.click(screen.getByText('Naviguer'));
+  expect(session.start).toHaveBeenCalledWith('https://ok.example');
+});
 
-  it('shows an error when the site is unreachable', async () => {
-    crawlUrl.mockResolvedValue({ tree: [], truncated: false, unreachable: true });
-    render(<AddLinkDialog open onOpenChange={() => {}} workspaceId="ws1" />);
-    await screen.findByRole('dialog');
-    fireEvent.change(screen.getByRole('textbox', { name: /lien/i }), { target: { value: 'https://ex.com' } });
-    fireEvent.click(screen.getByRole('button', { name: /cartographier/i }));
-    await waitFor(() => expect(crawlUrl).toHaveBeenCalledWith('ws1', 'https://ex.com'));
-    expect(await screen.findByText(/injoignable/i)).toBeInTheDocument();
-  });
-
-  it('crawls, shows the tree, and adds selected pages', async () => {
-    crawlUrl.mockResolvedValue({ truncated: false, tree: [
-      { url: 'https://ex.com/', path: '/', name: 'ex.com', alreadyIndexed: false, children: [
-        { url: 'https://ex.com/a', path: '/a', name: 'a', alreadyIndexed: false, children: [] },
-      ] },
-    ] });
-    addPageLinks.mockResolvedValue(undefined);
-    const onOpenChange = vi.fn();
-    render(<AddLinkDialog open onOpenChange={onOpenChange} workspaceId="ws1" />);
-    await screen.findByRole('dialog');
-    fireEvent.change(screen.getByRole('textbox', { name: /lien/i }), { target: { value: 'https://ex.com' } });
-    fireEvent.click(screen.getByRole('button', { name: /cartographier/i }));
-    // Tree appears; rows are labelled by page name. Root (ex.com) is pre-checked; add 'a' too.
-    await screen.findByLabelText('a');
-    fireEvent.click(screen.getByLabelText('a'));
-    fireEvent.click(screen.getByRole('button', { name: /ajouter/i }));
-    await waitFor(() => expect(addPageLinks).toHaveBeenCalledWith(
-      'ws1', expect.arrayContaining(['https://ex.com/', 'https://ex.com/a'])));
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-  });
+it('indexes the selected pages', async () => {
+  session.status = 'live';
+  session.pages = [{ url: 'https://ok.example/a', title: 'A' }, { url: 'https://ok.example/b', title: 'B' }];
+  const onOpenChange = vi.fn();
+  render(<AddLinkDialog open onOpenChange={onOpenChange} workspaceId='w1' />);
+  // both selected by default → index
+  fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
+  await waitFor(() => expect(addPageLinks).toHaveBeenCalledWith('w1', ['https://ok.example/a', 'https://ok.example/b']));
 });

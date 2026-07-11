@@ -33,7 +33,6 @@ import type {
   WorkspaceShareResponse,
   UserSearchResult,
   PaginatedPublicWorkspaces,
-  CrawlResponse,
 } from './types';
 
 // ===== Workspace APIs =====
@@ -770,17 +769,6 @@ export async function addLink(
 ): Promise<WorkspaceDocument> {
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.link(workspaceId),
-    { url },
-  );
-  return response.data.data;
-}
-
-/**
- * Crawl a website URL and return the discovered page tree
- */
-export async function crawlUrl(workspaceId: string, url: string): Promise<CrawlResponse> {
-  const response = await apiClient.post<ApiResponse<CrawlResponse>>(
-    API_ENDPOINTS.workspaceDocuments.crawl(workspaceId),
     { url },
   );
   return response.data.data;
