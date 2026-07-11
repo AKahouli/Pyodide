@@ -378,8 +378,9 @@ export class WidgetChatService {
     message: string;
     agent: any;
     metadata: Record<string, unknown>;
+    interaction?: Record<string, unknown>;
   }): Promise<{ messageId: string; sessionId: string }> {
-    const { tokenHash, agentId, sessionId, message, agent, metadata } = params;
+    const { tokenHash, agentId, sessionId, message, agent, metadata, interaction } = params;
 
     this.logger.log('Widget chat message received', {
       sessionId,
@@ -396,6 +397,7 @@ export class WidgetChatService {
       agentId,
       role: 'user',
       content: message,
+      interaction,
     });
 
     await this.widgetSessionModel.findByIdAndUpdate(sessionId, {

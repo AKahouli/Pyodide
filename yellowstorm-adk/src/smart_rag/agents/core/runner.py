@@ -21,6 +21,7 @@ from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
+from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
 from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
@@ -614,6 +615,15 @@ class AgentRunner:
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
 
+                        if q and await self._handle_ui_tool_response(
+                            func_name,
+                            part.function_response,
+                            agent_id,
+                            session_id,
+                            q,
+                        ):
+                            continue
+
                         response_payload = part.function_response.response
                         if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):
                             ceph_path = response_payload.get("ceph_path", "")
@@ -679,14 +689,6 @@ class AgentRunner:
                                 q,
                             )
 
-                        # Check if this is a render_chart tool response
-                        if func_name == "render_chart" and q:
-                            await self._handle_render_chart_response(
-                                part.function_response,
-                                agent_id,
-                                session_id,
-                                q,
-                            )
 
                 if event.is_final_response() and event.content and event.content.parts:
                     final_text_for_citations = "".join(
@@ -1439,66 +1441,31 @@ class AgentRunner:
                 exc_info=True,
             )
 
-    async def _handle_render_chart_response(
-        self, function_response, agent_id, session_id, q
-    ):
-        """Emit a chart component when a sub-agent calls render_chart."""
-        try:
-            response_data = coerce_to_dict(
-                getattr(function_response, "response", None)
-            )
-            call_id = getattr(function_response, "id", None) or str(uuid.uuid4())
-
-            if not response_data:
-                logger.warning(
-                    "[CHART] render_chart response empty or un-coercible; raw type=%s",
-                    type(getattr(function_response, "response", None)).__name__,
-                )
-                return
-
-            if response_data.get("error"):
-                logger.warning(
-                    "[CHART] render_chart tool returned error: %s",
-                    response_data.get("details"),
-                )
-                return
-
-            logger.info(
-                "[CHART] emitting render_chart component_id=%s kind=%s data_len=%s",
-                call_id,
-                response_data.get("kind"),
-                len(response_data.get("chartData") or []),
-            )
-
-            chart_chunk = self.streaming_formatter.format_component_event(
+    async def _handle_ui_tool_response(
+        self, tool_name: str, function_response: Any, agent_id: str, session_id: str, q: asyncio.Queue[dict]
+    ) -> bool:
+        """Convert registered native UI-tool responses into atomic components."""
+        definition = UI_TOOL_COMPONENT_REGISTRY.get(tool_name)
+        if definition is None:
+            return False
+        response = coerce_to_dict(getattr(function_response, "response", None))
+        normalized = definition.normalize_response(response) if response else None
+        if normalized is None:
+            logger.warning("[UI TOOL] rejected response tool=%s", tool_name)
+            return True
+        component_id = getattr(function_response, "id", None) or str(uuid.uuid4())
+        await q.put(
+            self.streaming_formatter.format_component_event(
                 agent_id=agent_id,
-                component_type="chart",
-                component_data={
-                    "title": response_data.get("title", ""),
-                    "chartData": response_data.get("chartData", []),
-                    "config": response_data.get("config", {}),
-                    "xAxisKey": response_data.get("xAxisKey", ""),
-                    "yAxisKey": response_data.get("yAxisKey", ""),
-                    "nameKey": response_data.get("nameKey", ""),
-                    "zAxisKey": response_data.get("zAxisKey", ""),
-                    "series": response_data.get("series", []),
-                    "kind": response_data.get("kind", "bar"),
-                    "stacked": response_data.get("stacked", False),
-                    "layout": response_data.get("layout", "horizontal"),
-                    "innerRadius": response_data.get("innerRadius", 0),
-                    "showLegend": response_data.get("showLegend", True),
-                    "showGrid": response_data.get("showGrid", True),
-                },
+                component_type=definition.component_type,
+                component_data=normalized,
                 message_id=session_id,
+                component_id=component_id,
                 action="add",
-                component_id=call_id,
             )
-            await q.put(chart_chunk)
-        except Exception as e:
-            logger.error(
-                f"[CHART] Error handling render_chart response: {str(e)}",
-                exc_info=True,
-            )
+        )
+        logger.info("[UI TOOL] emitted component tool=%s component_id=%s", tool_name, component_id)
+        return True
 
     def _find_source_by_reference(
         self,

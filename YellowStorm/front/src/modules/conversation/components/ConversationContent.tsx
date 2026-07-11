@@ -11,6 +11,7 @@ import { BranchNavigation } from './BranchNavigation';
 import { LoadingIndicator } from './LoadingIndicator';
 import { MessageAttachments } from './MessageAttachments';
 import type { Message } from '../types';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 /** Find the scrollable ancestor element */
 function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -61,6 +62,7 @@ function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => voi
 
 const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string }) {
   const chatMessage = useMemo(() => messageToChat(message), [message]);
+  const sendMessage = useConversationStore((s) => s.sendMessage);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -68,6 +70,10 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
 
   const isEditing = editingMessageId === message.id;
   const isUser = message.conversationType === 'user';
+  const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
+    await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
+  }, [conversationId, message.id, sendMessage]);
+  chatMessage.onComponentAction = handleComponentAction;
 
   // Branch nav for AI messages
   const branches = message.questionMessageId ? branchCache.get(message.questionMessageId) : undefined;
@@ -100,6 +106,7 @@ export function ConversationContent() {
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
   const fetchBranches = useConversationStore((s) => s.fetchBranches);
   const branchCache = useConversationStore((s) => s.branchCache);
+  const sendMessage = useConversationStore((s) => s.sendMessage);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -184,8 +191,12 @@ export function ConversationContent() {
       id: 'streaming',
       role: 'assistant',
       content: parts,
+      onComponentAction: async (action: ChoiceComponentAction) => {
+        if (!currentConversationId) throw new Error('No active conversation');
+        await sendMessage(currentConversationId, { content: action.submitText, interaction: action.interaction });
+      },
     } as const;
-  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId]);
+  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId, sendMessage]);
 
   return (
     <ChatConversation className='flex-1 min-h-0'>
@@ -221,4 +232,3 @@ export function ConversationContent() {
     </ChatConversation>
   );
 }
- 

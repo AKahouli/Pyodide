@@ -65,11 +65,11 @@ export class WidgetSseStreamRegistry {
       map(() => ({ type: 'heartbeat', data: { timestamp: Date.now() } })),
     );
     return new Observable<WidgetStreamEvent>((subscriber) => {
-      stream.sseSubscribed = true;
-      this.flushPending(sessionId);
       const sub = merge(events$, heartbeat$)
         .pipe(takeUntil(stream.disconnect$))
         .subscribe(subscriber);
+      stream.sseSubscribed = true;
+      this.flushPending(sessionId);
       return () => {
         sub.unsubscribe();
         // Allow emit() to buffer again while the browser reconnects between turns.

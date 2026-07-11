@@ -213,5 +213,11 @@
   "newConversation.groupDialog.sharedAgentsLabel": "Agents partagés dans cette conversation",
   "newConversation.groupDialog.yourRoleLabel": "Votre rôle (Propriétaire)",
   "newConversation.groupDialog.ownerRolePlaceholder": "ex : Chef de produit",
-  "newConversation.groupDialog.ownerRoleHint": "Définissez votre rôle pour cette conversation."
+  "newConversation.groupDialog.ownerRoleHint": "Définissez votre rôle pour cette conversation.",
+  "choice.submit": "Valider",
+  "choice.dismiss": "Ignorer",
+  "choice.dismissed": "Ignoré",
+  "choice.dismissMessage": "Je préfère ne pas répondre à cette question.",
+  "choice.submitted": "Choix envoyé",
+  "choice.sendError": "Impossible d'envoyer votre choix."
 }

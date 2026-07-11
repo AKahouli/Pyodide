@@ -98,6 +98,7 @@ export class WidgetChatController {
       message: dto.message,
       agent: req.widgetAgent,
       metadata: { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin, clientContext: dto.clientContext },
+      interaction: dto.interaction ? { ...dto.interaction } : undefined,
     });
 
     this.logger.log('Widget POST /chat completed', {

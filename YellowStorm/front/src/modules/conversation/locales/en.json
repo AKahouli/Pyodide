@@ -213,5 +213,11 @@
   "newConversation.groupDialog.sharedAgentsLabel": "Shared agents in this conversation",
   "newConversation.groupDialog.yourRoleLabel": "Your Role (Owner)",
   "newConversation.groupDialog.ownerRolePlaceholder": "ex: Product Manager",
-  "newConversation.groupDialog.ownerRoleHint": "Set your own role for this conversation."
+  "newConversation.groupDialog.ownerRoleHint": "Set your own role for this conversation.",
+  "choice.submit": "Submit",
+  "choice.dismiss": "Dismiss",
+  "choice.dismissed": "Dismissed",
+  "choice.dismissMessage": "I prefer not to answer this question.",
+  "choice.submitted": "Choice submitted",
+  "choice.sendError": "Unable to send your choice."
 }

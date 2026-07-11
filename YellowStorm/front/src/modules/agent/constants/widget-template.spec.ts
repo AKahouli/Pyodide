@@ -18,6 +18,15 @@ describe('buildWidgetSnippet', () => {
     expect(() => new Function(body)).not.toThrow();
   });
 
+  it('includes quick-reply and explicit choice submission paths', () => {
+    const snippet = buildWidgetSnippet({ agentId: 'agent-id', embedHandle: 'embed-token', apiBaseUrl: 'http://localhost:3000/api/v1' });
+    expect(snippet).toContain('_ysRenderers');
+    expect(snippet).toContain('choice:function');
+    expect(snippet).toContain('data-ys-choice-action');
+    expect(snippet).toContain('selectedOptions');
+    expect(snippet).toContain('customAnswer');
+  });
+
   it('mounts the self-contained widget inside a shadow root', () => {
     const snippet = buildWidgetSnippet({
       agentId: 'agent-id',

@@ -102,6 +102,7 @@ export class MessageService {
       isStreaming: false,
       isComplete: true,
       requestId: data.requestId,
+      interaction: data.interaction,
     });
 
     // Update conversation
@@ -660,6 +661,7 @@ export class MessageService {
       timeToFirstToken: message.timeToFirstToken,
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
+      interaction: message.interaction as Record<string, unknown> | undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),

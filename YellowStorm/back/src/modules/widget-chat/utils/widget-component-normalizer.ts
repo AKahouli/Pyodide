@@ -1,7 +1,8 @@
 import { ComponentType } from '@modules/conversation/interfaces/message.interface';
+import { normalizeChoiceComponentData } from '@modules/conversation/utils/choice-component-normalizer';
 
 /** Component types emitted on the public widget SSE stream. */
-export type WidgetStreamComponentType = 'text' | 'sources' | 'citation';
+export type WidgetStreamComponentType = 'text' | 'sources' | 'citation' | 'choice';
 
 /** Mirrors chatbot.proto SourceItem / SourcesComponent for the widget SSE stream. */
 export interface WidgetSourceItem {
@@ -71,6 +72,10 @@ export function shouldEmitWidgetComponent(
 
   if (type === 'citation') {
     return normalizeWidgetCitationData(data) !== null;
+  }
+
+  if (type === 'choice') {
+    return normalizeChoiceComponentData(data) !== null;
   }
 
   return false;
@@ -192,6 +197,11 @@ export function normalizeWidgetComponent(
   if (type === 'citation') {
     const citation = normalizeWidgetCitationData(data);
     return citation ? { type: 'citation', data: { ...citation } } : { type, data };
+  }
+
+  if (type === 'choice') {
+    const choice = normalizeChoiceComponentData(data);
+    return choice ? { type: 'choice', data: choice } : { type, data };
   }
 
   return { type, data };

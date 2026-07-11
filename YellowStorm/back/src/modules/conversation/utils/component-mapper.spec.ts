@@ -264,3 +264,15 @@ describe('component-mapper chart extraction', () => {
     });
   });
 });
+
+describe('component-mapper choice extraction', () => {
+  it('normalizes snake_case protobuf choice data', () => {
+    const result = extractComponentData({ choice: {
+      schema_version: 1, question_id: 'q1', prompt: 'Pick one', presentation: 'list', selection_mode: 'multiple', submit_behavior: 'immediate', status: 'ready',
+      labels: { submit: 'Continue' }, progress: { current: 1, total: 2, label: 'Step 1' },
+      options: [{ id: 'first', label: 'First', submit_text: 'I choose first' }, { id: 'second', label: 'Second', submit_text: 'I choose second' }],
+    } });
+    expect(result.type).toBe('choice');
+    expect(result.data).toMatchObject({ questionId: 'q1', selectionMode: 'multiple', submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 } });
+  });
+});

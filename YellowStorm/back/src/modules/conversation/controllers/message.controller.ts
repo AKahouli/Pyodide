@@ -176,6 +176,7 @@ export class MessageController {
       memberIds: dto.memberIds,
       requestId,
       parentMessageId: dto.parentMessageId,
+      interaction: dto.interaction ? { ...dto.interaction } : undefined,
     });
 
     // Fire and forget - generate conversation name asynchronously on first message

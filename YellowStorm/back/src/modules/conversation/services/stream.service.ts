@@ -1459,6 +1459,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'artifact':
       case 'citation':
       case 'chainOfThought':
+      case 'choice':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
       case 'toolInfo':

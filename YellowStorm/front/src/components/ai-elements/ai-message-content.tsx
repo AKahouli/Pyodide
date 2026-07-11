@@ -28,6 +28,8 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Lab
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
+import type { ChoiceComponentData } from '@/modules/conversation/types';
+import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
@@ -112,6 +114,7 @@ export interface CheckpointPart {
 export interface ChartPart extends ChartComponentData {
   type: 'chart';
 }
+export interface ChoicePart extends ChoiceComponentData { type: 'choice'; componentId: string; }
 
 export interface TaskPart {
   type: 'task';
@@ -187,7 +190,7 @@ export interface ChainOfThoughtPart {
   steps: string[];
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -197,16 +200,17 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   parts: MessageContentPart[];
   /** Whether the message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
+  onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
 };
 
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, ...props }: AIMessageContentProps) => {
   return (
     <div className={cn('space-y-4', className)} {...props}>
       {parts.map((part, index) => (
-        <AIMessagePart key={index} part={part} isStreaming={isStreaming} />
+        <AIMessagePart key={part.type === 'choice' ? part.componentId : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} />
       ))}
     </div>
   );
@@ -219,9 +223,10 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, ...pro
 type AIMessagePartProps = {
   part: MessageContentPart;
   isStreaming?: boolean;
+  onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
 };
 
-const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
@@ -237,6 +242,8 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
       return <CheckpointPartRenderer label={part.label} />;
     case 'chart':
       return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
+    case 'choice':
+      return <ChoicePartRenderer {...part} onAction={onComponentAction} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':

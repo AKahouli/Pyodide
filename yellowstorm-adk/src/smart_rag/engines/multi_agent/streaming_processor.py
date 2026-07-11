@@ -26,6 +26,7 @@ from src.smart_rag.engines.helpers import (
     coerce_to_plain,
 )
 from src.smart_rag.messaging.component_tracker import ComponentTracker
+from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -440,6 +441,8 @@ class StreamingEventProcessor:
                     await self._handle_render_chart_response(
                         part.function_response, current_message_id, q
                     )
+                if func_name == "present_choices" and q:
+                    await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:
                 await self._handle_final_response(current_message_id, q)
@@ -756,6 +759,20 @@ class StreamingEventProcessor:
                 f"[SANDBOX] Error handling python interpreter response: {str(e)}",
                 exc_info=True,
             )
+
+    async def _handle_ui_tool_response(self, function_response, message_id: str, q: asyncio.Queue[dict]) -> None:
+        definition = UI_TOOL_COMPONENT_REGISTRY.get(getattr(function_response, "name", ""))
+        response = coerce_to_dict(getattr(function_response, "response", None))
+        if definition is None or not response:
+            return
+        normalized = definition.normalize_response(response)
+        if normalized is None:
+            logger.warning("[UI TOOL] rejected response tool=%s", getattr(function_response, "name", ""))
+            return
+        await q.put(self.streaming_formatter.format_component_event(
+            agent_id="", component_type=definition.component_type, component_data=normalized,
+            message_id=message_id, component_id=getattr(function_response, "id", None) or str(uuid.uuid4()), action="add",
+        ))
 
     async def _handle_render_chart_response(
         self, function_response, message_id: str, q: asyncio.Queue[dict]

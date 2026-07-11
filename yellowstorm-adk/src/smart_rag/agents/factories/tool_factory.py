@@ -4,6 +4,7 @@ from src.smart_rag.tools import SearchToolADK, calculator, construct_json, gener
     in_memory_construct_json, SearchToolkit, csrd_json
 from src.smart_rag.agents.tools.tool_configuration import ToolConfigurationManager, ToolConfig, configure_tools, AgentParameters
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
+from src.smart_rag.tools.native_tool_registry import get_native_tool
 from src.logger.logging import get_logger
 from src.config.settings import get_settings
 
@@ -249,11 +250,15 @@ class ToolFactory:
                     tools.append(calculator)
                     config_dict[config.name] = config
 
-        # Process custom tools
+        # Process native and custom tools.
         for tool_type, configs in grouped_configs.items():
             if tool_type not in ['search', 'web_search', 'calculator']:
-                logger.info(f"Custom tool type '{tool_type}' found - implement handling as needed")
                 for config in configs:
+                    native_tool = get_native_tool(config.name)
+                    if config.enabled and native_tool is not None:
+                        tools.append(native_tool)
+                    elif config.enabled:
+                        logger.warning(f"No native implementation registered for assigned tool '{config.name}'")
                     config_dict[config.name] = config
 
         logger.info(f"Created {len(tools)} tools from {len(processed_configs)} configurations")

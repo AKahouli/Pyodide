@@ -690,6 +690,11 @@ def create_standard_agent_with_tools(
         ),
     )
 
+    # Catalogue assignment controls native UI tools; metadata alone never makes a
+    # Python callable available to an agent.
+    from src.smart_rag.tools.native_tool_registry import resolve_native_tools
+    agent.tools.extend(resolve_native_tools([name for name in tools if name != "render_chart"]))
+
     # Platform tools (save_file_to_workspace)
     agent_params = agent_config.get("agent_params") or {}
     if agent_params.get("platform_api_url"):

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getStreamErrorMessage, mapComponentsToContentParts } from './utils';
+import { componentsToMarkdown, formatTimingMs, getStreamErrorMessage, mapComponentsToContentParts, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
     expect(formatTimingMs(undefined)).toBe('--');
     expect(formatTimingMs(550)).toBe('550ms');
     expect(formatTimingMs(1500)).toBe('1.5s');
+  });
+
+  it('preserves choice list fields for the interactive renderer', () => {
+    const choice = normalizeChoiceComponentData({ schemaVersion: 1, questionId: 'q1', prompt: 'Pick', presentation: 'list', selectionMode: 'multiple', submitBehavior: 'immediate', status: 'ready', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true, label: 'Other', maxLength: 100 }, options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }] });
+    expect(choice).toMatchObject({ submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true } });
   });
 
   it('maps components and attaches citation to parent text', () => {
