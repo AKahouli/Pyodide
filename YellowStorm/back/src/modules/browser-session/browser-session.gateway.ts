@@ -64,7 +64,14 @@ export class BrowserSessionGateway implements OnGatewayConnection, OnGatewayDisc
       client.data.sessionId = sessionId;
       return { ok: true, sessionId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      const error = (e as Error).message;
+      // BUSY is an expected capacity signal; anything else (e.g. Chromium failing
+      // to launch) is a real fault and must be visible in the backend logs — the
+      // client only sees it in the ack, which the UI currently discards.
+      if (error !== 'BUSY') {
+        this.logger.error('browser-session start failed', { userId, url: body.url, error });
+      }
+      return { ok: false, error };
     }
   }
 

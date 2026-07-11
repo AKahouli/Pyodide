@@ -119,9 +119,12 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
 
   private async ensureBrowser(): Promise<Browser> {
     if (this.browser && this.browser.isConnected()) return this.browser;
+    // --disable-dev-shm-usage: containers default to a 64MB /dev/shm, which
+    // Chromium exhausts and then crashes ("Target closed"); this routes shared
+    // memory to /tmp instead. --disable-gpu is a no-op safety in headless.
     this.browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox'],
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
       ...(this.chromiumExecutablePath ? { executablePath: this.chromiumExecutablePath } : {}),
     });
     return this.browser;
