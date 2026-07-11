@@ -64,6 +64,23 @@ describe('AIMessageContent charts', () => {
     expect(screen.getByRole('heading', { name: prompt })).toBeInTheDocument();
   });
 
+  it('keeps an exact text prompt for submitted choices', () => {
+    const prompt = 'Choisissez une option';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: prompt },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'next-step', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'submitted',
+        options: [{ id: 'one', label: 'Un', submitText: 'Un' }, { id: 'two', label: 'Deux', submitText: 'Deux' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(screen.getByText('choice.submitted')).toBeInTheDocument();
+  });
+
   it('renders markdown lists with compact shared spacing', () => {
     const parts: MessageContentPart[] = [
       {
