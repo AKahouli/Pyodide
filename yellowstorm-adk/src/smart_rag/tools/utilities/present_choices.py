@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Any, Literal, Optional
 
@@ -75,11 +76,33 @@ class PresentChoicesInput(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_option_ids(cls, data: Any) -> Any:
+    def normalize_tool_call_artifacts(cls, data: Any) -> Any:
         if not isinstance(data, dict) or not isinstance(data.get("options"), list):
             return data
 
-        options = data["options"]
+        options: list[Any] = []
+        for option in data["options"]:
+            # Some tool-call transports serialize nested objects into a $text
+            # envelope. Accept only a JSON object, leaving malformed input for
+            # normal Pydantic validation rather than guessing its structure.
+            if isinstance(option, dict) and set(option) == {"$text"} and isinstance(option["$text"], str):
+                try:
+                    decoded = json.loads(option["$text"].strip())
+                except json.JSONDecodeError:
+                    decoded = option
+                option = decoded if isinstance(decoded, dict) else option
+            if isinstance(option, dict) and "submit_text" in option and "submitText" not in option:
+                option = {**option, "submitText": option["submit_text"]}
+                del option["submit_text"]
+            options.append(option)
+
+        normalized_data = {**data, "options": options}
+        # Optional objects emitted as {} are transport noise, not a request for
+        # an invalid progress/labels object.
+        for field in ("progress", "labels", "otherOption"):
+            if normalized_data.get(field) == {}:
+                normalized_data.pop(field)
+
         valid_ids = {
             option["id"].strip()
             for option in options
@@ -109,7 +132,7 @@ class PresentChoicesInput(BaseModel):
                 suffix += 1
             used_ids.add(option_id)
             normalized_options.append({**option, "id": option_id})
-        return {**data, "options": normalized_options}
+        return {**normalized_data, "options": normalized_options}
 
     @field_validator("questionId", "prompt", "description", "fallbackText", mode="before")
     @classmethod

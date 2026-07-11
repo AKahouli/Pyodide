@@ -27,6 +27,7 @@ import { UsageLimitGuard } from '../../usage/guards/usage-limit.guard';
 import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
 import { UserDocument } from '../../user/schemas/user.schema';
+import { ChoiceInteractionService } from '../services/choice-interaction.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -40,6 +41,7 @@ export class MessageController {
     private readonly teamService: TeamService,
     private readonly requestContext: RequestContextService,
     private readonly logger: LoggerService,
+    private readonly choiceInteractionService: ChoiceInteractionService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -170,11 +172,15 @@ export class MessageController {
       dto.teamIds,
     );
 
+    const canonicalChoice = dto.interaction
+      ? await this.choiceInteractionService.canonicalize(conversationId, dto.interaction)
+      : undefined;
+
     // Create user message
     const userMessage = await this.messageService.createUserMessage({
       conversationId,
       senderId: user._id.toString(),
-      content: dto.content,
+      content: canonicalChoice?.content ?? dto.content,
       attachedFileIds: dto.attachedFileIds,
       webSearchEnabled: dto.webSearchEnabled,
       modelId: dto.modelId,
@@ -182,7 +188,7 @@ export class MessageController {
       memberIds: dto.memberIds,
       requestId,
       parentMessageId: dto.parentMessageId,
-      interaction: dto.interaction ? { ...dto.interaction } : undefined,
+      interaction: canonicalChoice?.interaction,
     });
 
     // Fire and forget - generate conversation name asynchronously on first message
@@ -190,7 +196,7 @@ export class MessageController {
       this.streamService.generateConversationNameAsync(
         user._id.toString(),
         conversationId,
-        dto.content,
+        canonicalChoice?.content ?? dto.content,
         dto.modelId,
         user.email,
       );
@@ -224,7 +230,7 @@ export class MessageController {
       // Start streaming (non-blocking)
       this.streamService
         .startStream(user._id.toString(), conversationId, aiMessage.id, {
-          content: dto.content,
+          content: canonicalChoice?.content ?? dto.content,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,

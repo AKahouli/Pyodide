@@ -38,3 +38,27 @@ def test_does_not_repair_unrelated_invalid_option_fields():
             {"id": "invalid id", "label": "Option"},
             option("other"),
         ]))
+
+
+def test_unwraps_text_enveloped_options_and_omits_empty_optional_objects():
+    result = PresentChoicesInput.model_validate({
+        **payload([
+            {"$text": '\t{"id":"economy","label":"Economic support","submit_text":"I want economic support"}'},
+            {"$text": '{"id":"done","label":"No thanks","submit_text":"No thanks, that is all"}'},
+        ]),
+        "progress": {},
+    })
+
+    assert [(item.id, item.submitText) for item in result.options] == [
+        ("economy", "I want economic support"),
+        ("done", "No thanks, that is all"),
+    ]
+    assert result.progress is None
+
+
+def test_rejects_non_object_text_envelopes():
+    with pytest.raises(ValidationError):
+        PresentChoicesInput.model_validate(payload([
+            {"$text": "not json"},
+            option("other"),
+        ]))
