@@ -2,47 +2,126 @@ import { Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 
-/** The page's short name: the last path segment of the URL, falling back to the host for a site root. */
-export function pageName(url: string): string {
-  try {
-    const u = new URL(url);
-    const segments = u.pathname.split('/').filter(Boolean);
-    const last = segments[segments.length - 1];
-    return last ? decodeURIComponent(last) : u.hostname;
-  } catch {
-    return url;
-  }
+export interface TrieNode {
+  /** Display name for this level: the host at the root, otherwise a path segment. */
+  segment: string;
+  /** Set when a collected page lives exactly at this path (a selectable leaf/branch). */
+  url?: string;
+  children: TrieNode[];
 }
 
-/** Category label used to group pages that share the same site. */
-function originLabel(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
-interface Group {
-  label: string;
-  items: CollectedPage[];
-}
-
-/** Group pages by host, preserving the order each host (and each page) first appeared. */
-function groupByOrigin(pages: CollectedPage[]): Group[] {
-  const groups: Group[] = [];
-  const byLabel = new Map<string, Group>();
+/**
+ * Build a path hierarchy from the collected pages: host → path segments. Pages that
+ * share a prefix (e.g. `/a/b` and `/a/c`) nest under the same `a` category. A node can
+ * be both a visited page (has `url`) and a category (has children).
+ */
+export function buildTrie(pages: CollectedPage[]): TrieNode[] {
+  const roots: TrieNode[] = [];
+  const rootByHost = new Map<string, TrieNode>();
   for (const p of pages) {
-    const label = originLabel(p.url);
-    let group = byLabel.get(label);
-    if (!group) {
-      group = { label, items: [] };
-      byLabel.set(label, group);
-      groups.push(group);
+    let host: string;
+    let segments: string[];
+    try {
+      const u = new URL(p.url);
+      host = u.hostname;
+      segments = u.pathname
+        .split('/')
+        .filter(Boolean)
+        .map((s) => {
+          try {
+            return decodeURIComponent(s);
+          } catch {
+            return s;
+          }
+        });
+    } catch {
+      host = p.url;
+      segments = [];
     }
-    group.items.push(p);
+    const existing = rootByHost.get(host);
+    let node: TrieNode;
+    if (existing) {
+      node = existing;
+    } else {
+      node = { segment: host, children: [] };
+      rootByHost.set(host, node);
+      roots.push(node);
+    }
+    for (const seg of segments) {
+      let child: TrieNode | undefined = node.children.find((c) => c.segment === seg);
+      if (!child) {
+        child = { segment: seg, children: [] };
+        node.children.push(child);
+      }
+      node = child;
+    }
+    if (!node.url) node.url = p.url;
   }
-  return groups;
+  return roots;
+}
+
+function TrieRows({
+  nodes, depth, selected, indexedUrls, onToggle, onDelete,
+}: {
+  nodes: TrieNode[];
+  depth: number;
+  selected: Set<string>;
+  indexedUrls: Set<string>;
+  onToggle: (url: string) => void;
+  onDelete: (url: string) => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) => {
+        const pad = depth * 14 + 8;
+        const already = node.url ? indexedUrls.has(normalizeUrl(node.url)) : false;
+        return (
+          <div key={node.segment}>
+            {node.url ? (
+              <div className='flex items-center gap-2 border-b py-1.5 pr-2 text-sm' style={{ paddingLeft: pad }}>
+                <Checkbox
+                  aria-label={node.segment}
+                  checked={selected.has(node.url)}
+                  disabled={already}
+                  onCheckedChange={() => onToggle(node.url as string)}
+                />
+                <div className='min-w-0 flex-1'>
+                  <div className='truncate font-medium' title={node.segment}>{node.segment}</div>
+                  <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
+                  {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
+                </div>
+                <button
+                  type='button'
+                  aria-label={`delete ${node.url}`}
+                  className='shrink-0 text-muted-foreground hover:text-destructive'
+                  onClick={() => onDelete(node.url as string)}
+                >
+                  <Trash2 className='h-4 w-4' />
+                </button>
+              </div>
+            ) : (
+              <div
+                className='flex items-center border-b bg-muted/40 py-1 pr-2 text-xs font-medium text-muted-foreground'
+                style={{ paddingLeft: pad }}
+              >
+                <span className='truncate' title={node.segment}>{node.segment}</span>
+              </div>
+            )}
+            {node.children.length > 0 && (
+              <TrieRows
+                nodes={node.children}
+                depth={depth + 1}
+                selected={selected}
+                indexedUrls={indexedUrls}
+                onToggle={onToggle}
+                onDelete={onDelete}
+              />
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 export function CollectionSidebar({
@@ -56,7 +135,7 @@ export function CollectionSidebar({
   onSelectAll: () => void;
   onSelectNone: () => void;
 }) {
-  const groups = groupByOrigin(pages);
+  const roots = buildTrie(pages);
   return (
     <div className='flex min-h-0 min-w-0 flex-col rounded border'>
       <div className='flex shrink-0 items-center gap-2 border-b px-2 py-1.5 text-xs'>
@@ -69,41 +148,14 @@ export function CollectionSidebar({
         {pages.length === 0 ? (
           <p className='p-3 text-sm text-muted-foreground'>Naviguez pour collecter des pages.</p>
         ) : (
-          groups.map((group) => (
-            <div key={group.label}>
-              <div className='sticky top-0 flex items-center gap-1 border-b bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground'>
-                <span className='truncate' title={group.label}>{group.label}</span>
-                <span className='shrink-0'>({group.items.length})</span>
-              </div>
-              {group.items.map((p) => {
-                const already = indexedUrls.has(normalizeUrl(p.url));
-                const name = pageName(p.url);
-                return (
-                  <div key={p.url} className='flex items-center gap-2 border-b py-1.5 pl-4 pr-2 text-sm'>
-                    <Checkbox
-                      aria-label={name}
-                      checked={selected.has(p.url)}
-                      disabled={already}
-                      onCheckedChange={() => onToggle(p.url)}
-                    />
-                    <div className='min-w-0 flex-1'>
-                      <div className='truncate font-medium' title={name}>{name}</div>
-                      <div className='truncate text-[11px] text-muted-foreground' title={p.url}>{p.url}</div>
-                      {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
-                    </div>
-                    <button
-                      type='button'
-                      aria-label={`delete ${p.url}`}
-                      className='shrink-0 text-muted-foreground hover:text-destructive'
-                      onClick={() => onDelete(p.url)}
-                    >
-                      <Trash2 className='h-4 w-4' />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ))
+          <TrieRows
+            nodes={roots}
+            depth={0}
+            selected={selected}
+            indexedUrls={indexedUrls}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
         )}
       </div>
     </div>

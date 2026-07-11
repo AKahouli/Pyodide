@@ -1,48 +1,40 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { CollectionSidebar, pageName } from './CollectionSidebar';
+import { CollectionSidebar, buildTrie } from './CollectionSidebar';
 
-const pages = [
-  { url: 'https://ex.com/a', title: 'A' },
-  { url: 'https://ex.com/b', title: 'B' },
-];
+describe('buildTrie', () => {
+  it('nests pages that share a path prefix under the same category', () => {
+    const roots = buildTrie([
+      { url: 'https://ex.com/a/b', title: '' },
+      { url: 'https://ex.com/a/c', title: '' },
+    ]);
+    expect(roots).toHaveLength(1);
+    expect(roots[0].segment).toBe('ex.com');
+    const a = roots[0].children.find((n) => n.segment === 'a')!;
+    expect(a).toBeDefined();
+    expect(a.url).toBeUndefined(); // 'a' was never visited itself → a category, not a page
+    expect(a.children.map((n) => n.segment).sort()).toEqual(['b', 'c']);
+    expect(a.children.every((n) => !!n.url)).toBe(true);
+  });
 
-describe('pageName', () => {
-  it('is the last path segment, or the host for a site root', () => {
-    expect(pageName('https://ex.com/docs/intro')).toBe('intro');
-    expect(pageName('https://ex.com/')).toBe('ex.com');
-    expect(pageName('https://ex.com/a%20b')).toBe('a b');
+  it('marks a node as both a page and a category when the parent path was also visited', () => {
+    const roots = buildTrie([
+      { url: 'https://ex.com/a', title: '' },
+      { url: 'https://ex.com/a/b', title: '' },
+    ]);
+    const a = roots[0].children.find((n) => n.segment === 'a')!;
+    expect(a.url).toBe('https://ex.com/a'); // selectable page
+    expect(a.children.map((n) => n.segment)).toEqual(['b']); // and a category
   });
 });
 
-it('shows the page name as title (row is labelled by the last segment)', () => {
-  const onToggle = vi.fn();
-  const onDelete = vi.fn();
-  render(
-    <CollectionSidebar
-      pages={pages}
-      selected={new Set(['https://ex.com/a'])}
-      indexedUrls={new Set()}
-      onToggle={onToggle}
-      onDelete={onDelete}
-      onSelectAll={vi.fn()}
-      onSelectNone={vi.fn()}
-    />,
-  );
-  // Title is the last path segment; the full URL is shown too (as a subtitle).
-  fireEvent.click(screen.getByLabelText('b'));
-  expect(onToggle).toHaveBeenCalledWith('https://ex.com/b');
-  fireEvent.click(screen.getByLabelText('delete https://ex.com/a'));
-  expect(onDelete).toHaveBeenCalledWith('https://ex.com/a');
-});
-
-it('groups pages sharing the same origin under one category header', () => {
+it('renders the path hierarchy: host + shared segment as categories, leaves selectable', () => {
   render(
     <CollectionSidebar
       pages={[
-        { url: 'https://ex.com/a', title: 'A' },
-        { url: 'https://ex.com/b', title: 'B' },
-        { url: 'https://other.com/x', title: 'X' },
+        { url: 'https://ex.com/a/b', title: '' },
+        { url: 'https://ex.com/a/c', title: '' },
+        { url: 'https://ex.com/x', title: '' },
       ]}
       selected={new Set()}
       indexedUrls={new Set()}
@@ -52,22 +44,47 @@ it('groups pages sharing the same origin under one category header', () => {
       onSelectNone={vi.fn()}
     />,
   );
-  // One header per origin, named by host.
-  expect(screen.getByText('ex.com')).toBeInTheDocument();
-  expect(screen.getByText('other.com')).toBeInTheDocument();
+  expect(screen.getByText('ex.com')).toBeInTheDocument(); // host category header
+  expect(screen.getByText('a')).toBeInTheDocument(); // shared-segment category header
+  expect(screen.getByLabelText('b')).toBeInTheDocument(); // leaf page (title = last segment)
+  expect(screen.getByLabelText('c')).toBeInTheDocument();
+  expect(screen.getByLabelText('x')).toBeInTheDocument();
 });
 
-it('disables rows already indexed in the workspace', () => {
+it('toggles and deletes a leaf by its page name', () => {
+  const onToggle = vi.fn();
+  const onDelete = vi.fn();
   render(
     <CollectionSidebar
-      pages={pages}
+      pages={[
+        { url: 'https://ex.com/a/b', title: '' },
+        { url: 'https://ex.com/a/c', title: '' },
+      ]}
       selected={new Set()}
-      indexedUrls={new Set(['https://ex.com/a'])}
+      indexedUrls={new Set()}
+      onToggle={onToggle}
+      onDelete={onDelete}
+      onSelectAll={vi.fn()}
+      onSelectNone={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByLabelText('b'));
+  expect(onToggle).toHaveBeenCalledWith('https://ex.com/a/b');
+  fireEvent.click(screen.getByLabelText('delete https://ex.com/a/c'));
+  expect(onDelete).toHaveBeenCalledWith('https://ex.com/a/c');
+});
+
+it('disables a leaf already indexed in the workspace', () => {
+  render(
+    <CollectionSidebar
+      pages={[{ url: 'https://ex.com/a/b', title: '' }]}
+      selected={new Set()}
+      indexedUrls={new Set(['https://ex.com/a/b'])}
       onToggle={vi.fn()}
       onDelete={vi.fn()}
       onSelectAll={vi.fn()}
       onSelectNone={vi.fn()}
     />,
   );
-  expect(screen.getByLabelText('a')).toBeDisabled();
+  expect(screen.getByLabelText('b')).toBeDisabled();
 });
