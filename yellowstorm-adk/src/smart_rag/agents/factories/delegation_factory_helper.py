@@ -492,6 +492,12 @@ def create_search_agent_with_tools(
     # Store toolkit for source handling
     agent._toolkit = toolkit
 
+    from src.smart_rag.tools.native_tool_registry import resolve_native_tools
+    agent.tools.extend(resolve_native_tools([
+        tool for tool in tools_config
+        if (tool if isinstance(tool, str) else tool.get("name")) != "render_chart"
+    ]))
+
     if connector_bindings:
         try:
             connector_workspace_id = agent_factory._resolve_connector_workspace_id(
@@ -693,7 +699,10 @@ def create_standard_agent_with_tools(
     # Catalogue assignment controls native UI tools; metadata alone never makes a
     # Python callable available to an agent.
     from src.smart_rag.tools.native_tool_registry import resolve_native_tools
-    agent.tools.extend(resolve_native_tools([name for name in tools if name != "render_chart"]))
+    agent.tools.extend(resolve_native_tools([
+        tool for tool in agent_config.get("tools", [])
+        if (tool if isinstance(tool, str) else tool.get("name")) != "render_chart"
+    ]))
 
     # Platform tools (save_file_to_workspace)
     agent_params = agent_config.get("agent_params") or {}

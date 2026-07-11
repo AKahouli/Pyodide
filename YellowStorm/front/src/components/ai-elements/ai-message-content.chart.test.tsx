@@ -31,6 +31,39 @@ beforeAll(() => {
 });
 
 describe('AIMessageContent charts', () => {
+  it('renders an exact choice prompt only once', () => {
+    const prompt = 'Pour vous orienter, de quel type de dossier s’agit-il ?';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: ` ${prompt} ` },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'dossier-type', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'ready',
+        options: [{ id: 'create', label: 'Créer une activité', submitText: 'Créer une activité' }, { id: 'funding', label: 'Demander une aide', submitText: 'Demander une aide' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getAllByText(prompt)).toHaveLength(1);
+  });
+
+  it('keeps non-identical text alongside a choice prompt', () => {
+    const prompt = 'Choisissez une option';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: `${prompt} pour continuer.` },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'next-step', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'ready',
+        options: [{ id: 'one', label: 'Un', submitText: 'Un' }, { id: 'two', label: 'Deux', submitText: 'Deux' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getByText(`${prompt} pour continuer.`)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: prompt })).toBeInTheDocument();
+  });
+
   it('renders markdown lists with compact shared spacing', () => {
     const parts: MessageContentPart[] = [
       {

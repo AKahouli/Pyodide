@@ -1,3 +1,4 @@
+import re
 from typing import Any, Literal, Optional
 
 from google.adk.tools.tool_context import ToolContext
@@ -72,6 +73,44 @@ class PresentChoicesInput(BaseModel):
     dismissible: bool = False
     fallbackText: Optional[str] = Field(default=None, max_length=2000)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_option_ids(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or not isinstance(data.get("options"), list):
+            return data
+
+        options = data["options"]
+        valid_ids = {
+            option["id"].strip()
+            for option in options
+            if isinstance(option, dict)
+            and isinstance(option.get("id"), str)
+            and re.fullmatch(r"[A-Za-z0-9._-]+", option["id"].strip())
+            and option["id"].strip()
+        }
+        used_ids = set(valid_ids)
+        normalized_options: list[Any] = []
+        for index, option in enumerate(options, start=1):
+            if not isinstance(option, dict):
+                normalized_options.append(option)
+                continue
+            candidate_id = option.get("id")
+            if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9._-]+", candidate_id.strip()) and candidate_id.strip():
+                normalized_options.append(option)
+                continue
+            source = candidate_id if isinstance(candidate_id, str) else option.get("label")
+            base = re.sub(r"[^A-Za-z0-9._-]+", "-", source.strip()).strip("._-") if isinstance(source, str) else ""
+            base = (base or f"option-{index}")[:64]
+            option_id = base
+            suffix = 2
+            while option_id in used_ids:
+                suffix_text = f"-{suffix}"
+                option_id = f"{base[:64 - len(suffix_text)]}{suffix_text}"
+                suffix += 1
+            used_ids.add(option_id)
+            normalized_options.append({**option, "id": option_id})
+        return {**data, "options": normalized_options}
+
     @field_validator("questionId", "prompt", "description", "fallbackText", mode="before")
     @classmethod
     def trim_strings(cls, value: Any) -> Any:
@@ -113,15 +152,7 @@ async def present_choices(
     fallbackText: Optional[str] = None,
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
-    """Present a structured question with answers the user can select.
-
-    Use quick_replies for two to five short, mutually exclusive answers that can
-    be submitted immediately. Use list when answers need descriptions, multiple
-    selection, another-answer input, or explicit confirmation. Multiple selection
-    and another-answer input always require explicit submission. Do not use this
-    for informational Markdown lists. Ground every option in the conversation and
-    give every option a stable id, concise label, and autonomous submitText.
-    """
+    """Present a structured choice component."""
     try:
         payload = PresentChoicesInput.model_validate(
             {

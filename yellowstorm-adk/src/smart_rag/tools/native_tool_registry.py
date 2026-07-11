@@ -1,3 +1,4 @@
+from functools import wraps
 from typing import Any, Iterable
 
 from src.smart_rag.tools.utilities.calculator import calculator
@@ -16,13 +17,34 @@ def get_native_tool(name: str) -> Any | None:
     return NATIVE_TOOL_REGISTRY.get(name.strip()) if isinstance(name, str) else None
 
 
-def resolve_native_tools(tool_configs: Iterable[dict[str, Any] | str]) -> list[Any]:
+def _configured_native_tool(tool: Any, description: str | None) -> Any:
+    if not description:
+        return tool
+
+    @wraps(tool)
+    async def configured_tool(*args: Any, **kwargs: Any) -> Any:
+        return await tool(*args, **kwargs)
+
+    configured_tool.__doc__ = description
+    return configured_tool
+
+
+def resolve_native_tools(tool_configs: Iterable[Any]) -> list[Any]:
     resolved: list[Any] = []
     for config in tool_configs:
-        name = config if isinstance(config, str) else config.get("name") if isinstance(config, dict) else None
-        enabled = not isinstance(config, dict) or config.get("enabled", True)
+        if isinstance(config, str):
+            name = config
+            enabled = True
+            description = None
+        elif isinstance(config, dict):
+            name = config.get("name")
+            enabled = config.get("enabled", True)
+            description = config.get("description")
+        else:
+            name = getattr(config, "name", None)
+            enabled = getattr(config, "enabled", True)
+            description = getattr(config, "description", None)
         tool = get_native_tool(name) if enabled and isinstance(name, str) else None
         if tool is not None:
-            resolved.append(tool)
+            resolved.append(_configured_native_tool(tool, description.strip() if isinstance(description, str) else None))
     return resolved
-

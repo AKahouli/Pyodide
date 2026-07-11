@@ -25,6 +25,7 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('data-ys-choice-action');
     expect(snippet).toContain('selectedOptions');
     expect(snippet).toContain('customAnswer');
+    expect(snippet).toContain('reconcileChoicePrompt');
   });
 
   it('mounts the self-contained widget inside a shadow root', () => {

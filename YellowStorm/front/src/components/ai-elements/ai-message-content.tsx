@@ -207,9 +207,12 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
 export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, ...props }: AIMessageContentProps) => {
+  const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice').map((part) => part.prompt.trim()).filter(Boolean));
+  const visibleParts = parts.filter((part) => part.type !== 'text' || !choicePrompts.has(part.content.trim()));
+
   return (
     <div className={cn('space-y-4', className)} {...props}>
-      {parts.map((part, index) => (
+      {visibleParts.map((part, index) => (
         <AIMessagePart key={part.type === 'choice' ? part.componentId : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} />
       ))}
     </div>
