@@ -26,6 +26,7 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('selectedOptions');
     expect(snippet).toContain('customAnswer');
     expect(snippet).toContain('reconcileChoicePrompt');
+    expect(snippet).toContain('new RegExp(escaped,"g")');
     expect(snippet).toContain('_ysSubmitChoice');
     expect(snippet).toContain('choiceSendError');
     expect(snippet).toContain('ys-choice-quick');

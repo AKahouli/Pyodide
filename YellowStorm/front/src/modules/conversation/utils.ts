@@ -512,7 +512,8 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
     const option = item as Record<string, unknown>;
     if (typeof option.id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(option.id) || ids.has(option.id) || typeof option.label !== 'string' || !option.label || typeof option.submitText !== 'string' || !option.submitText) return null;
     ids.add(option.id);
-    return { id: option.id, label: option.label, submitText: option.submitText, ...(typeof option.value === 'string' ? { value: option.value } : {}), ...(typeof option.description === 'string' ? { description: option.description } : {}), ...(option.disabled === true ? { disabled: true } : {}) };
+    const url = typeof option.url === 'string' && /^https:\/\//i.test(option.url) ? option.url : undefined;
+    return { id: option.id, label: option.label, submitText: option.submitText, ...(typeof option.value === 'string' ? { value: option.value } : {}), ...(typeof option.description === 'string' ? { description: option.description } : {}), ...(url ? { url } : {}), ...(option.disabled === true ? { disabled: true } : {}) };
   });
   if (normalizedOptions.some((option) => option === null)) return null;
   const presentation = raw.presentation === 'list' ? 'list' : 'quick_replies';

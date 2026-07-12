@@ -37,4 +37,9 @@ describe('normalizeChoiceComponentData', () => {
     expect(normalizeChoiceComponentData({ ...valid, status: 'building' })).toBeNull();
     expect(normalizeChoiceComponentData({ ...valid, status: 'READY' })).toBeNull();
   });
+
+  it('preserves only safe HTTPS option URLs', () => {
+    expect(normalizeChoiceComponentData({ ...valid, options: [{ ...valid.options[0], url: 'https://example.com/form' }, valid.options[1]] })?.options[0]?.url).toBe('https://example.com/form');
+    expect(normalizeChoiceComponentData({ ...valid, options: [{ ...valid.options[0], url: 'javascript:alert(1)' }, valid.options[1]] })?.options[0]?.url).toBeUndefined();
+  });
 });

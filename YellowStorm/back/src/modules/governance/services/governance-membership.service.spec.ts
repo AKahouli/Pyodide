@@ -7,8 +7,9 @@ describe('GovernanceMembershipService', () => {
   const programId = '507f1f77bcf86cd799439012';
   const userId = '507f1f77bcf86cd799439013';
   const groupId = '507f1f77bcf86cd799439014';
+  const membershipId = '507f1f77bcf86cd799439016';
 
-  function buildService(duplicate?: Record<string, unknown>, memberships: Record<string, unknown>[] = []) {
+  function buildService(duplicate?: Record<string, unknown>, memberships: Record<string, unknown>[] = [], isProgramOwner = true) {
     const exec = jest.fn().mockResolvedValue(memberships);
     const lean = jest.fn().mockReturnValue({ exec });
     const sort = jest.fn().mockReturnValue({ lean });
@@ -16,10 +17,11 @@ describe('GovernanceMembershipService', () => {
     const membershipModel = {
       findOne: jest.fn().mockReturnValue({ exec: findOneExec, lean: jest.fn().mockReturnValue({ exec: findOneExec }) }),
       create: jest.fn().mockImplementation(async (payload) => ({ _id: { toString: () => 'membership-1' }, ...payload, createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') })),
+      deleteOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ deletedCount: 1 }) }),
       find: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnValue({ sort }), lean }),
       findById: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }) }),
     };
-    const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined), assertProgramOwner: jest.fn().mockResolvedValue(undefined) };
+    const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined), assertProgramOwner: jest.fn().mockImplementation(async () => { if (!isProgramOwner) throw new Error('not owner'); }) };
     const scopeService = { findById: jest.fn().mockResolvedValue({}) };
     const userGroupService = { findById: jest.fn().mockResolvedValue({ id: groupId }), findGroupIdsForMember: jest.fn().mockResolvedValue([groupId]) };
     const auditLogService = { logSuccess: jest.fn() };
@@ -107,5 +109,29 @@ describe('GovernanceMembershipService', () => {
 
     expect(membershipModel.find).toHaveBeenCalledWith(expect.objectContaining({ $or: expect.arrayContaining([expect.objectContaining({ groupId: expect.any(Object) })]) }));
     expect(scopes).toEqual([scopeId]);
+  });
+
+  it('definitively removes a membership when the program owner removes it', async () => {
+    const membership = { _id: { toString: () => membershipId }, save: jest.fn() };
+    const { service, membershipModel, auditLogService } = buildService(membership);
+
+    await service.disable(actorId, actorEmail, programId, membershipId);
+
+    expect(membershipModel.deleteOne).toHaveBeenCalledWith({ _id: membership._id });
+    expect(membership.save).not.toHaveBeenCalled();
+    expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.deleted' }));
+  });
+
+  it('disables a membership when a delegated administrator removes it', async () => {
+    const scopeId = '507f1f77bcf86cd799439015';
+    const membership = { _id: { toString: () => membershipId }, scopeId: { toString: () => scopeId }, status: 'active', save: jest.fn().mockResolvedValue(undefined) };
+    const { service, membershipModel, auditLogService } = buildService(membership, [{ userId: actorId, scopeId: { toString: () => scopeId }, status: 'active' }], false);
+
+    await service.disable(actorId, actorEmail, programId, membershipId);
+
+    expect(membershipModel.deleteOne).not.toHaveBeenCalled();
+    expect(membership.status).toBe('disabled');
+    expect(membership.save).toHaveBeenCalled();
+    expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.disabled' }));
   });
 });

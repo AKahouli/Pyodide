@@ -31,7 +31,7 @@ Choose presentation deliberately:
 
 The component renders its own prompt, introduction, and options. When calling this tool, do not repeat the question, options, or a related introduction in conversational text. Do not emit bullets, numbered lists, dashes, or instructions to type an answer. Make the tool call without prose unless unrelated conversational context is essential.
 
-Ground every option in the conversation. Give each option a stable id, concise visible label, and autonomous submitText that the agent can understand without the UI. Do not use this tool for arbitrary actions, URLs, or JavaScript.`,
+Ground every option in the conversation. Give each option a stable id, concise visible label, and autonomous submitText that the agent can understand without the UI. An option may include an absolute HTTPS url when opening an external page is useful; it is rendered as a separate link and never replaces choice submission. Never use JavaScript, data URLs, HTTP URLs, or arbitrary executable actions.`,
           categoryId: category?._id ?? null,
           requiredAppKey: null,
           defaultAgentTypes: [],

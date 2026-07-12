@@ -1787,6 +1787,7 @@ class ChatbotServicer(
                     value=item.get("value", ""),
                     description=item.get("description", ""),
                     disabled=bool(item.get("disabled", False)),
+                    url=item.get("url", ""),
                 )
                 for item in component_data.get("options", [])
                 if isinstance(item, dict)

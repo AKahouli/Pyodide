@@ -34,6 +34,7 @@ const AgentPromptInjectionGuardrailsSchema = SchemaFactory.createForClass(AgentP
 export class AgentGuardrails {
   @Prop({ type: AgentPromptInjectionGuardrailsSchema, default: () => ({}) })
   promptInjection!: AgentPromptInjectionGuardrails;
+
 }
 
 const AgentGuardrailsSchema = SchemaFactory.createForClass(AgentGuardrails);

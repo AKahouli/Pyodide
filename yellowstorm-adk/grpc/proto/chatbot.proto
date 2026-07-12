@@ -369,6 +369,7 @@ message ChoiceOption {
     string value = 4;
     string description = 5;
     bool disabled = 6;
+    string url = 7;
 }
 
 message ChoiceOtherOption {

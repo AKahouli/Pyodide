@@ -64,6 +64,7 @@ export class AgentGuardrailsDto {
   @ValidateNested()
   @Type(() => PromptInjectionGuardrailsDto)
   promptInjection?: PromptInjectionGuardrailsDto;
+
 }
 
 export class AgentDeploymentSettingsDto {

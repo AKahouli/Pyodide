@@ -1,5 +1,6 @@
 import json
 import re
+from urllib.parse import urlparse
 from typing import Any, Literal, Optional
 
 from google.adk.tools.tool_context import ToolContext
@@ -20,11 +21,22 @@ class ChoiceOptionInput(BaseModel):
     value: Optional[str] = Field(default=None, max_length=200)
     description: Optional[str] = Field(default=None, max_length=1000)
     disabled: bool = False
+    url: Optional[str] = Field(default=None, max_length=2048)
 
     @field_validator("id", "label", "submitText", "value", "description", mode="before")
     @classmethod
     def trim_strings(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("url")
+    @classmethod
+    def validate_https_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        parsed = urlparse(value.strip())
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("url must be an absolute HTTPS URL without credentials")
+        return value.strip()
 
 
 class ChoiceOtherOptionInput(BaseModel):

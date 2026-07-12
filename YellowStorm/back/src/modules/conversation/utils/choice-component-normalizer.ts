@@ -11,7 +11,7 @@ export interface ChoiceComponentData extends Record<string, unknown> {
   presentation: ChoicePresentation;
   selectionMode: ChoiceSelectionMode;
   submitBehavior: ChoiceSubmitBehavior;
-  options: Array<{ id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean }>;
+  options: Array<{ id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string }>;
   otherOption?: { enabled: boolean; label: string; placeholder?: string; maxLength: number };
   labels?: { submit?: string; dismiss?: string; other?: string };
   progress?: { current: number; total: number; label?: string };
@@ -31,6 +31,14 @@ function text(value: unknown, max: number, required = false): string | undefined
 
 function field(data: Record<string, unknown>, camel: string, snake: string): unknown {
   return data[camel] ?? data[snake];
+}
+
+function safeHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : undefined;
+  } catch { return undefined; }
 }
 
 /** Normalizes untrusted producer data before it reaches persistence or a public renderer. */
@@ -55,7 +63,8 @@ export function normalizeChoiceComponentData(raw: unknown): ChoiceComponentData 
     ids.add(id);
     const value = text(option.value, 200);
     const description = text(option.description, 1000);
-    options.push({ id, label, submitText, ...(value ? { value } : {}), ...(description ? { description } : {}), ...(option.disabled === true ? { disabled: true } : {}) });
+    const url = safeHttpsUrl(option.url);
+    options.push({ id, label, submitText, ...(value ? { value } : {}), ...(description ? { description } : {}), ...(url ? { url } : {}), ...(option.disabled === true ? { disabled: true } : {}) });
   }
 
   const presentation: ChoicePresentation = data.presentation === 'list' ? 'list' : 'quick_replies';
