@@ -81,8 +81,10 @@ export const DEFAULT_WIDGET_SETTINGS: AgentWidgetSettings = {
     optionsButton: 'Options du chat',
     newConversation: 'Nouvelle conversation',
     copyTranscript: 'Copier la conversation',
+    copyMessage: 'Copier le message',
     downloadTranscript: 'Telecharger la conversation',
     transcriptCopied: 'Conversation copiee',
+    messageCopied: 'Message copie',
     transcriptDownloaded: 'Conversation telechargee',
     emptyTranscript: 'Aucune conversation a copier',
     errorGeneric: 'Desole, une erreur est survenue. Veuillez reessayer.',
@@ -97,6 +99,18 @@ export const DEFAULT_WIDGET_SETTINGS: AgentWidgetSettings = {
     choiceOtherLabel: 'Autre reponse',
     choiceSendError: 'Impossible d envoyer ce choix. Reessayez.',
     choiceWaitForReply: 'Attendez la fin de la reponse en cours.',
+    accessibilitySettings: 'Reglages accessibilite',
+    accessibilitySettingsTitle: 'Reglages accessibilite',
+    accessibilitySettingsDescription: 'Choisissez un profil d affichage. Ce choix est enregistre uniquement dans ce navigateur.',
+    accessibilityProfile: 'Profil accessibilite',
+    accessibilityClose: 'Fermer les reglages accessibilite',
+    accessibilityReset: 'Utiliser le profil par defaut',
+    microphoneStart: 'Demarrer la saisie vocale',
+    microphoneUnavailable: 'La saisie vocale n est pas disponible dans ce navigateur',
+    microphoneListening: 'Ecoute en cours. La saisie vocale est traitee par votre navigateur.',
+    readAloud: 'Lire a voix haute',
+    stopReading: 'Arreter la lecture',
+    readAloudUnavailable: 'La lecture a voix haute n est pas disponible dans ce navigateur',
   },
   behavior: {
     defaultOpen: false,
@@ -105,6 +119,16 @@ export const DEFAULT_WIDGET_SETTINGS: AgentWidgetSettings = {
     allowTranscriptDownload: true,
     allowNewConversation: true,
     requirePrivacyNotice: true,
+  },
+  accessibility: {
+    enabled: true, showSettingsButton: true, defaultProfile: 'standard',
+    availableProfiles: ['standard', 'low-vision', 'high-contrast-light', 'high-contrast-dark', 'cognitive-comfort', 'motor-assistance', 'low-stimulation'],
+    allowTextResize: true, allowLineSpacing: true, allowLetterSpacing: true, allowFontSelection: true, allowLinkUnderlining: true, allowHighContrast: true, allowCustomAccessibleColors: false, allowMotionControl: true, allowLargeTargets: true, allowSimplifiedMode: true, allowEnhancedFocus: true,
+    enforceMinimumContrast: true, minimumTextContrastRatio: 4.5, minimumUiContrastRatio: 3,
+    voiceInput: { enabled: true, language: 'auto', continuous: false, interimResults: true, autoPunctuation: true, autoSend: false, stopAfterSilenceMs: 3000, retainAudio: false },
+    readAloud: { enabled: true, autoPlay: false, defaultRate: 1, highlightCurrentSentence: true, readSourcesByDefault: false },
+    screenReader: { announceStreaming: true, announcementIntervalMs: 1500, announceChoices: true, announceSources: false, announceCompletion: true },
+    keyboard: { shortcutsEnabled: true, microphoneShortcut: 'Alt+Shift+M', accessibilityPanelShortcut: 'Alt+Shift+A', readAloudShortcut: 'Alt+Shift+R' },
   },
 };
 
@@ -124,7 +148,30 @@ export function normalizeWidgetSettings(input?: Partial<AgentWidgetSettings>): A
       desktopWidth: isDesktopWidth(merged.layout?.desktopWidth) ? merged.layout.desktopWidth : DEFAULT_WIDGET_SETTINGS.layout.desktopWidth,
       desktopHeight: isDesktopHeight(merged.layout?.desktopHeight) ? merged.layout.desktopHeight : DEFAULT_WIDGET_SETTINGS.layout.desktopHeight,
     },
+    accessibility: normalizeAccessibilitySettings(merged.accessibility),
   };
+}
+
+const ACCESSIBILITY_PROFILES = ['standard', 'low-vision', 'high-contrast-light', 'high-contrast-dark', 'cognitive-comfort', 'motor-assistance', 'low-stimulation'] as const;
+
+function normalizeAccessibilitySettings(value: AgentWidgetSettings['accessibility']): AgentWidgetSettings['accessibility'] {
+  const defaults = DEFAULT_WIDGET_SETTINGS.accessibility;
+  const profiles = Array.from(new Set((value.availableProfiles ?? []).filter((profile): profile is typeof ACCESSIBILITY_PROFILES[number] => ACCESSIBILITY_PROFILES.includes(profile as typeof ACCESSIBILITY_PROFILES[number]))));
+  const availableProfiles = profiles.length ? profiles : defaults.availableProfiles;
+  const defaultProfile = availableProfiles.includes(value.defaultProfile) ? value.defaultProfile : defaults.defaultProfile;
+  return {
+    ...defaults, ...value, availableProfiles, defaultProfile,
+    minimumTextContrastRatio: clamp(value.minimumTextContrastRatio, 1, 21, defaults.minimumTextContrastRatio),
+    minimumUiContrastRatio: clamp(value.minimumUiContrastRatio, 1, 21, defaults.minimumUiContrastRatio),
+    voiceInput: { ...defaults.voiceInput, ...value.voiceInput, autoSend: false, retainAudio: false, stopAfterSilenceMs: clamp(value.voiceInput?.stopAfterSilenceMs, 1000, 15000, defaults.voiceInput.stopAfterSilenceMs) },
+    readAloud: { ...defaults.readAloud, ...value.readAloud, autoPlay: false, defaultRate: clamp(value.readAloud?.defaultRate, 0.5, 2, defaults.readAloud.defaultRate) },
+    screenReader: { ...defaults.screenReader, ...value.screenReader, announcementIntervalMs: clamp(value.screenReader?.announcementIntervalMs, 500, 5000, defaults.screenReader.announcementIntervalMs) },
+    keyboard: { ...defaults.keyboard, ...value.keyboard },
+  };
+}
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
 function sanitizeWidgetSettings(input?: Partial<AgentWidgetSettings>): Partial<AgentWidgetSettings> | undefined {
@@ -161,6 +208,13 @@ function mergeWidgetSettings(
     content: { ...base.content, ...input.content },
     labels: { ...base.labels, ...input.labels },
     behavior: { ...base.behavior, ...input.behavior },
+    accessibility: {
+      ...base.accessibility, ...input.accessibility,
+      voiceInput: { ...base.accessibility.voiceInput, ...input.accessibility?.voiceInput },
+      readAloud: { ...base.accessibility.readAloud, ...input.accessibility?.readAloud },
+      screenReader: { ...base.accessibility.screenReader, ...input.accessibility?.screenReader },
+      keyboard: { ...base.accessibility.keyboard, ...input.accessibility?.keyboard },
+    },
   };
 }
 

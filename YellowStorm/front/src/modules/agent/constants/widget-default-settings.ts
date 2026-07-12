@@ -67,8 +67,10 @@ export const DEFAULT_WIDGET_SETTINGS = {
     optionsButton: 'Options du chat',
     newConversation: 'Nouvelle conversation',
     copyTranscript: 'Copier la conversation',
+    copyMessage: 'Copier le message',
     downloadTranscript: 'Telecharger la conversation',
     transcriptCopied: 'Conversation copiee',
+    messageCopied: 'Message copie',
     transcriptDownloaded: 'Conversation telechargee',
     emptyTranscript: 'Aucune conversation a copier',
     errorGeneric: 'Desole, une erreur est survenue. Veuillez reessayer.',
@@ -83,6 +85,18 @@ export const DEFAULT_WIDGET_SETTINGS = {
     choiceOtherLabel: 'Autre reponse',
     choiceSendError: 'Impossible d envoyer ce choix. Reessayez.',
     choiceWaitForReply: 'Attendez la fin de la reponse en cours.',
+    accessibilitySettings: 'Reglages accessibilite',
+    accessibilitySettingsTitle: 'Reglages accessibilite',
+    accessibilitySettingsDescription: 'Choisissez un profil d affichage. Ce choix est enregistre uniquement dans ce navigateur.',
+    accessibilityProfile: 'Profil accessibilite',
+    accessibilityClose: 'Fermer les reglages accessibilite',
+    accessibilityReset: 'Utiliser le profil par defaut',
+    microphoneStart: 'Demarrer la saisie vocale',
+    microphoneUnavailable: 'La saisie vocale n est pas disponible dans ce navigateur',
+    microphoneListening: 'Ecoute en cours. La saisie vocale est traitee par votre navigateur.',
+    readAloud: 'Lire a voix haute',
+    stopReading: 'Arreter la lecture',
+    readAloudUnavailable: 'La lecture a voix haute n est pas disponible dans ce navigateur',
   },
   behavior: {
     defaultOpen: false,
@@ -91,6 +105,16 @@ export const DEFAULT_WIDGET_SETTINGS = {
     allowTranscriptDownload: true,
     allowNewConversation: true,
     requirePrivacyNotice: true,
+  },
+  accessibility: {
+    enabled: true, showSettingsButton: true, defaultProfile: 'standard',
+    availableProfiles: ['standard', 'low-vision', 'high-contrast-light', 'high-contrast-dark', 'cognitive-comfort', 'motor-assistance', 'low-stimulation'],
+    allowTextResize: true, allowLineSpacing: true, allowLetterSpacing: true, allowFontSelection: true, allowLinkUnderlining: true, allowHighContrast: true, allowCustomAccessibleColors: false, allowMotionControl: true, allowLargeTargets: true, allowSimplifiedMode: true, allowEnhancedFocus: true,
+    enforceMinimumContrast: true, minimumTextContrastRatio: 4.5, minimumUiContrastRatio: 3,
+    voiceInput: { enabled: true, language: 'auto', continuous: false, interimResults: true, autoPunctuation: true, autoSend: false, stopAfterSilenceMs: 3000, retainAudio: false },
+    readAloud: { enabled: true, autoPlay: false, defaultRate: 1, highlightCurrentSentence: true, readSourcesByDefault: false },
+    screenReader: { announceStreaming: true, announcementIntervalMs: 1500, announceChoices: true, announceSources: false, announceCompletion: true },
+    keyboard: { shortcutsEnabled: true, microphoneShortcut: 'Alt+Shift+M', accessibilityPanelShortcut: 'Alt+Shift+A', readAloudShortcut: 'Alt+Shift+R' },
   },
 } satisfies AgentWidgetSettings;
 
@@ -109,6 +133,13 @@ export function mergeWidgetSettings(value?: Partial<AgentWidgetSettings>): Agent
     content: { ...DEFAULT_WIDGET_SETTINGS.content, ...value?.content },
     labels: { ...DEFAULT_WIDGET_SETTINGS.labels, ...value?.labels },
     behavior: { ...DEFAULT_WIDGET_SETTINGS.behavior, ...value?.behavior },
+    accessibility: {
+      ...DEFAULT_WIDGET_SETTINGS.accessibility, ...value?.accessibility,
+      voiceInput: { ...DEFAULT_WIDGET_SETTINGS.accessibility.voiceInput, ...value?.accessibility?.voiceInput, autoSend: false, retainAudio: false },
+      readAloud: { ...DEFAULT_WIDGET_SETTINGS.accessibility.readAloud, ...value?.accessibility?.readAloud, autoPlay: false },
+      screenReader: { ...DEFAULT_WIDGET_SETTINGS.accessibility.screenReader, ...value?.accessibility?.screenReader },
+      keyboard: { ...DEFAULT_WIDGET_SETTINGS.accessibility.keyboard, ...value?.accessibility?.keyboard },
+    },
   };
 }
 

@@ -131,6 +131,24 @@ describe('widget choice renderer', () => {
     expect(html).toContain('&lt;Pick&gt;');
     expect(html).toContain('&lt;One&gt;');
   });
+
+  it('uses the matching web-source title as the citation anchor label', () => {
+    const sources = [{ title: 'Aide de la Ville de Nanterre', url: ' https://www.nanterre.fr/aides ' }];
+    const citation = { reference: '1', url: 'https://www.nanterre.fr/aides', fileName: 'nante...fr' };
+
+    expect(injectCitationMarkers('See [1].', [citation], sources)).toContain('>Aide de la Ville de Nanterre</a>');
+    expect(renderCitation({ files: [citation], sources })).toContain('>Aide de la Ville de Nanterre</a>');
+  });
+
+  it('keeps the existing citation label when no titled web source matches', () => {
+    const html = renderCitation({
+      files: [{ reference: '1', url: 'workspaces/ws1/report.pdf', fileName: 'report.pdf' }],
+      sources: [{ title: 'Unrelated source', url: 'https://example.com/other' }],
+    });
+
+    expect(html).toContain('>1</a>');
+    expect(html).not.toContain('>Unrelated source</a>');
+  });
 });
 
 describe('widget source rendering', () => {

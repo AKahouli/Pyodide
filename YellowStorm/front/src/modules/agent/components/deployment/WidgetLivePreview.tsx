@@ -31,6 +31,7 @@ export function WidgetLivePreview({ settings, title }: WidgetLivePreviewProps) {
             <p className="truncate text-sm font-semibold">{settings.identity.assistantTitle}</p>
             <p className="truncate text-xs opacity-80">{settings.identity.assistantSubtitle}</p>
           </div>
+          {settings.accessibility.enabled && settings.accessibility.showSettingsButton && <span className="ml-auto rounded-md border border-white/30 px-2 py-1 text-xs">{settings.labels.accessibilitySettings}</span>}
         </div>
         <div className="space-y-3 p-4" style={{ background: colors.background }}>
           {settings.identity.organizationName && <p className="text-xs font-medium uppercase tracking-wide" style={{ color: colors.mutedText }}>{settings.identity.organizationName}</p>}
@@ -52,6 +53,18 @@ export function WidgetLivePreview({ settings, title }: WidgetLivePreviewProps) {
           <div className="rounded-2xl border px-3 py-2 text-xs" style={{ background: colors.assistantBubble, color: colors.assistantBubbleText, borderColor: colors.border }}>
             {settings.labels.typing}
           </div>
+          <div className="flex items-center gap-1 text-xs" style={{ color: colors.mutedText }}>
+            <span>12:19</span>
+            {settings.accessibility.readAloud.enabled && <span className="inline-flex h-7 w-7 items-center justify-center rounded-md" title={settings.labels.readAloud}>◖</span>}
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md" title={settings.labels.copyTranscript}>▣</span>
+          </div>
+          {settings.accessibility.voiceInput.enabled && (
+            <div className="flex justify-end">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-md border" style={{ borderColor: colors.border }} title={settings.labels.microphoneStart}>
+                <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21H8v2h8v-2h-3v-3.08A7 7 0 0 0 19 11h-2Z" /></svg>
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -40,6 +40,16 @@ export type WidgetCitationFileEntry = {
   highlightText?: string;
 };
 
+function citationSourceTitle(url: string, sources: WidgetSourceItem[]): string {
+  const citationUrl = url.trim();
+  if (!citationUrl) return '';
+
+  const source = sources.find(
+    (item) => typeof item?.url === 'string' && item.url.trim() === citationUrl,
+  );
+  return typeof source?.title === 'string' ? source.title.trim() : '';
+}
+
 /** Renders markdown assistant text (`TextComponent.content`). */
 export function renderText(data: Record<string, unknown>): string {
   const content = typeof data.content === 'string' ? data.content : '';
@@ -159,7 +169,10 @@ export function sortCitationsByReference(
 }
 
 /** Builds a clickable numbered citation badge. */
-export function buildCitationBadgeHtml(entry: WidgetCitationFileEntry): string {
+export function buildCitationBadgeHtml(
+  entry: WidgetCitationFileEntry,
+  sources: WidgetSourceItem[] = [],
+): string {
   const fileName = typeof entry.fileName === 'string' ? entry.fileName : '';
   const url = typeof entry.url === 'string' ? entry.url : '';
   const source = url || fileName;
@@ -171,7 +184,7 @@ export function buildCitationBadgeHtml(entry: WidgetCitationFileEntry): string {
   const highlightText = extractHighlightText(
     typeof entry.highlightText === 'string' ? entry.highlightText : '',
   );
-  const label = reference || fileName || url || 'Source';
+  const label = citationSourceTitle(url, sources) || reference || fileName || url || 'Source';
   const title = fileName ? (pageNum ? `${fileName} (p. ${pageNum})` : fileName) : label;
 
   if (!source && !reference) return '';
@@ -198,6 +211,7 @@ export function buildCitationBadgeHtml(entry: WidgetCitationFileEntry): string {
 export function injectCitationMarkers(
   html: string,
   citations: WidgetCitationFileEntry[],
+  sources: WidgetSourceItem[] = [],
 ): string {
   const byRef = new Map<string, WidgetCitationFileEntry>();
   for (const entry of ensureCitationReferences(citations)) {
@@ -209,7 +223,7 @@ export function injectCitationMarkers(
     const citation = byRef.get(String(n));
     if (!citation) return match;
     if (!citation.url && !citation.fileName) return match;
-    return buildCitationBadgeHtml(citation) || match;
+    return buildCitationBadgeHtml(citation, sources) || match;
   });
 }
 
@@ -257,10 +271,11 @@ function normalizeCitationFiles(data: Record<string, unknown>): WidgetCitationFi
  */
 export function renderCitation(data: Record<string, unknown>): string {
   const normalizedFiles = sortCitationsByReference(normalizeCitationFiles(data));
+  const sources = Array.isArray(data.sources) ? (data.sources as WidgetSourceItem[]) : [];
   if (!normalizedFiles.length) return '';
 
   const itemsHtml = normalizedFiles
-    .map((entry) => buildCitationBadgeHtml(entry))
+    .map((entry) => buildCitationBadgeHtml(entry, sources))
     .filter(Boolean)
     .join('');
 

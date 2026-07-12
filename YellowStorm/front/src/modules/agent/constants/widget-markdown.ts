@@ -99,6 +99,10 @@ function inlineMarkdown(text: string): string {
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (_match, label: string, href: string) => storeLink(linkSegments, sanitizeLinkHref(href), label),
   );
+  out = out.replace(
+    /\[([^,\]\n]+),\s*(https?:\/\/[^\]\s]+)\]/gi,
+    (_match, label: string, href: string) => storeLink(linkSegments, sanitizeHttpHref(href), label.trim()),
+  );
   out = out.replace(/https?:\/\/[^\s<]+/gi, (url) => {
     const { href, trailing } = trimTrailingUrlPunctuation(url);
     return storeLink(linkSegments, sanitizeLinkHref(href), displayUrlLabel(href)) + trailing;
@@ -208,6 +212,10 @@ function renderTable(table: MarkdownTable): string {
 
 function sanitizeLinkHref(href: string): string {
   return /^(https?:|mailto:)/i.test(href) ? href : '#';
+}
+
+function sanitizeHttpHref(href: string): string {
+  return /^https?:\/\//i.test(href) ? href : '#';
 }
 
 function escapeHtml(str: string): string {

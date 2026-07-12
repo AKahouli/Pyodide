@@ -9,6 +9,21 @@ describe('widgetMarkdown', () => {
     expect(html).toContain('>example.com</a>');
   });
 
+  it('renders agent citations as titled HTTP(S) links', () => {
+    const html = widgetMarkdown('[Aide de la Ville de Nanterre, https://www.nanterre.fr/aides]');
+
+    expect(html).toContain('href="https://www.nanterre.fr/aides"');
+    expect(html).toContain('>Aide de la Ville de Nanterre</a>');
+    expect(html).not.toContain('[Aide de la Ville');
+  });
+
+  it('does not turn agent citation syntax in inline code into a link', () => {
+    const html = widgetMarkdown('`[Unsafe, https://example.com]`');
+
+    expect(html).toContain('<code class="ys-md-inline-code">[Unsafe, https://example.com]</code>');
+    expect(html).not.toContain('href="https://example.com"');
+  });
+
   it('renders bare email addresses as mailto links without changing code', () => {
     const html = widgetMarkdown('Contact aide@example.com or use `aide@example.com`.');
 

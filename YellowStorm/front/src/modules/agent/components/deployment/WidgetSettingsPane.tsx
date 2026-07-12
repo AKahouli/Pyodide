@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
 import { DEFAULT_WIDGET_SETTINGS } from '../../constants/widget-default-settings';
+import { getContrastRatio, isTextContrastCompliant } from '../../constants/widget-contrast';
 import { WIDGET_THEME_COLORS, WIDGET_THEME_PRESETS } from '../../constants/widget-theme-presets';
 import type { AgentWidgetSettings } from '../../types';
 import { WidgetLivePreview } from './WidgetLivePreview';
@@ -23,6 +24,7 @@ interface WidgetSettingsPaneProps {
 const COLOR_FIELDS = ['primary', 'headerBackground', 'launcherBackground', 'background', 'surface', 'text', 'border', 'userBubble', 'assistantBubble', 'focusRing'] as const;
 const DESKTOP_WIDTHS = [360, 400, 480] as const;
 const DESKTOP_HEIGHTS = [520, 620, 720] as const;
+const ACCESSIBILITY_PROFILES = ['standard', 'low-vision', 'high-contrast-light', 'high-contrast-dark', 'cognitive-comfort', 'motor-assistance', 'low-stimulation'] as const;
 
 export function WidgetSettingsPane({ value, onChange }: WidgetSettingsPaneProps) {
   const { t } = useModuleTranslation('agent');
@@ -34,6 +36,15 @@ export function WidgetSettingsPane({ value, onChange }: WidgetSettingsPaneProps)
   const updateContent = (patch: Partial<AgentWidgetSettings['content']>) => update({ content: { ...value.content, ...patch } });
   const updateLabels = (patch: Partial<AgentWidgetSettings['labels']>) => update({ labels: { ...value.labels, ...patch } });
   const updateBehavior = (patch: Partial<AgentWidgetSettings['behavior']>) => update({ behavior: { ...value.behavior, ...patch } });
+  const updateAccessibility = (patch: Partial<AgentWidgetSettings['accessibility']>) => update({ accessibility: { ...value.accessibility, ...patch } });
+  const colors = { ...WIDGET_THEME_COLORS[value.theme.preset], ...(value.theme.customEnabled ? value.theme.colors : {}) };
+  const contrastRows = [
+    [t('createEdit.widget.textContrast'), colors.text, colors.background, value.accessibility.minimumTextContrastRatio],
+    [t('createEdit.widget.headerContrast'), colors.headerForeground, colors.headerBackground, value.accessibility.minimumUiContrastRatio],
+    [t('createEdit.widget.launcherContrast'), colors.launcherForeground, colors.launcherBackground, value.accessibility.minimumUiContrastRatio],
+    [t('createEdit.widget.userBubbleContrast'), colors.userBubbleText, colors.userBubble, value.accessibility.minimumTextContrastRatio],
+    [t('createEdit.widget.assistantBubbleContrast'), colors.assistantBubbleText, colors.assistantBubble, value.accessibility.minimumTextContrastRatio],
+  ] as const;
 
   return (
     <Collapsible defaultOpen className="rounded-md border bg-background">
@@ -131,6 +142,30 @@ export function WidgetSettingsPane({ value, onChange }: WidgetSettingsPaneProps)
           <Toggle label={t('createEdit.widget.allowNewConversation')} checked={value.behavior.allowNewConversation} onCheckedChange={(allowNewConversation) => updateBehavior({ allowNewConversation })} />
           <Toggle label={t('createEdit.widget.allowTranscriptCopy')} checked={value.behavior.allowTranscriptCopy} onCheckedChange={(allowTranscriptCopy) => updateBehavior({ allowTranscriptCopy })} />
           <Toggle label={t('createEdit.widget.allowTranscriptDownload')} checked={value.behavior.allowTranscriptDownload} onCheckedChange={(allowTranscriptDownload) => updateBehavior({ allowTranscriptDownload })} />
+        </section>
+
+        <section className="grid gap-3 rounded-md border p-3 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <h3 className="text-sm font-semibold">{t('createEdit.widget.accessibilityTitle')}</h3>
+            <p className="text-xs text-muted-foreground">{t('createEdit.widget.accessibilityDescription')}</p>
+          </div>
+          <Toggle label={t('createEdit.widget.accessibilityEnabled')} checked={value.accessibility.enabled} onCheckedChange={(enabled) => updateAccessibility({ enabled })} />
+          <Toggle label={t('createEdit.widget.accessibilityButton')} checked={value.accessibility.showSettingsButton} onCheckedChange={(showSettingsButton) => updateAccessibility({ showSettingsButton })} />
+          <Field label={t('createEdit.widget.defaultAccessibilityProfile')}>
+            <Select value={value.accessibility.defaultProfile} onValueChange={(defaultProfile: AgentWidgetSettings['accessibility']['defaultProfile']) => updateAccessibility({ defaultProfile })}>
+              <SelectTrigger aria-label={t('createEdit.widget.defaultAccessibilityProfile')}><SelectValue /></SelectTrigger>
+              <SelectContent>{ACCESSIBILITY_PROFILES.map((profile) => <SelectItem key={profile} value={profile}>{t(`createEdit.widget.accessibilityProfile.${profile}`)}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+          <Toggle label={t('createEdit.widget.voiceInput')} checked={value.accessibility.voiceInput.enabled} onCheckedChange={(enabled) => updateAccessibility({ voiceInput: { ...value.accessibility.voiceInput, enabled } })} />
+          <Toggle label={t('createEdit.widget.readAloud')} checked={value.accessibility.readAloud.enabled} onCheckedChange={(enabled) => updateAccessibility({ readAloud: { ...value.accessibility.readAloud, enabled } })} />
+          <Toggle label={t('createEdit.widget.reducedMotion')} checked={value.accessibility.allowMotionControl} onCheckedChange={(allowMotionControl) => updateAccessibility({ allowMotionControl })} />
+          <div className="md:col-span-2 grid gap-1 rounded-md border px-3 py-2 text-xs">
+            {contrastRows.map(([label, foreground, background, minimum]) => {
+              const ratio = getContrastRatio(foreground ?? '', background ?? '');
+              return <p key={label} className={isTextContrastCompliant(foreground ?? '', background ?? '', minimum) ? 'text-emerald-700' : 'text-amber-700'}>{label}: {ratio ? ratio.toFixed(2) : t('createEdit.widget.contrastUnavailable')}:1</p>;
+            })}
+          </div>
         </section>
 
         <WidgetLivePreview settings={value} title={t('createEdit.widget.preview')} />

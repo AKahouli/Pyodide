@@ -239,6 +239,67 @@ export class WidgetBehaviorDto {
   @IsOptional() @IsBoolean() requirePrivacyNotice?: boolean;
 }
 
+const WIDGET_ACCESSIBILITY_PROFILES = ['standard', 'low-vision', 'high-contrast-light', 'high-contrast-dark', 'cognitive-comfort', 'motor-assistance', 'low-stimulation'] as const;
+
+export class WidgetVoiceInputDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsString() @MaxLength(35) language?: string;
+  @IsOptional() @IsBoolean() continuous?: boolean;
+  @IsOptional() @IsBoolean() interimResults?: boolean;
+  @IsOptional() @IsBoolean() autoPunctuation?: boolean;
+  @IsOptional() @IsBoolean() autoSend?: boolean;
+  @IsOptional() @IsInt() @Min(1000) @Max(15000) stopAfterSilenceMs?: number;
+  @IsOptional() @IsBoolean() retainAudio?: boolean;
+}
+
+export class WidgetReadAloudDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsBoolean() autoPlay?: boolean;
+  @IsOptional() @Min(0.5) @Max(2) defaultRate?: number;
+  @IsOptional() @IsBoolean() highlightCurrentSentence?: boolean;
+  @IsOptional() @IsBoolean() readSourcesByDefault?: boolean;
+}
+
+export class WidgetScreenReaderDto {
+  @IsOptional() @IsBoolean() announceStreaming?: boolean;
+  @IsOptional() @IsInt() @Min(500) @Max(5000) announcementIntervalMs?: number;
+  @IsOptional() @IsBoolean() announceChoices?: boolean;
+  @IsOptional() @IsBoolean() announceSources?: boolean;
+  @IsOptional() @IsBoolean() announceCompletion?: boolean;
+}
+
+export class WidgetKeyboardDto {
+  @IsOptional() @IsBoolean() shortcutsEnabled?: boolean;
+  @IsOptional() @IsString() @MaxLength(30) microphoneShortcut?: string;
+  @IsOptional() @IsString() @MaxLength(30) accessibilityPanelShortcut?: string;
+  @IsOptional() @IsString() @MaxLength(30) readAloudShortcut?: string;
+}
+
+export class WidgetAccessibilityDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsBoolean() showSettingsButton?: boolean;
+  @IsOptional() @IsEnum(WIDGET_ACCESSIBILITY_PROFILES) defaultProfile?: (typeof WIDGET_ACCESSIBILITY_PROFILES)[number];
+  @IsOptional() @IsArray() @ArrayMaxSize(7) @IsEnum(WIDGET_ACCESSIBILITY_PROFILES, { each: true }) availableProfiles?: (typeof WIDGET_ACCESSIBILITY_PROFILES)[number][];
+  @IsOptional() @IsBoolean() allowTextResize?: boolean;
+  @IsOptional() @IsBoolean() allowLineSpacing?: boolean;
+  @IsOptional() @IsBoolean() allowLetterSpacing?: boolean;
+  @IsOptional() @IsBoolean() allowFontSelection?: boolean;
+  @IsOptional() @IsBoolean() allowLinkUnderlining?: boolean;
+  @IsOptional() @IsBoolean() allowHighContrast?: boolean;
+  @IsOptional() @IsBoolean() allowCustomAccessibleColors?: boolean;
+  @IsOptional() @IsBoolean() allowMotionControl?: boolean;
+  @IsOptional() @IsBoolean() allowLargeTargets?: boolean;
+  @IsOptional() @IsBoolean() allowSimplifiedMode?: boolean;
+  @IsOptional() @IsBoolean() allowEnhancedFocus?: boolean;
+  @IsOptional() @IsBoolean() enforceMinimumContrast?: boolean;
+  @IsOptional() @Min(1) @Max(21) minimumTextContrastRatio?: number;
+  @IsOptional() @Min(1) @Max(21) minimumUiContrastRatio?: number;
+  @IsOptional() @ValidateNested() @Type(() => WidgetVoiceInputDto) voiceInput?: WidgetVoiceInputDto;
+  @IsOptional() @ValidateNested() @Type(() => WidgetReadAloudDto) readAloud?: WidgetReadAloudDto;
+  @IsOptional() @ValidateNested() @Type(() => WidgetScreenReaderDto) screenReader?: WidgetScreenReaderDto;
+  @IsOptional() @ValidateNested() @Type(() => WidgetKeyboardDto) keyboard?: WidgetKeyboardDto;
+}
+
 export class AgentWidgetSettingsDto {
   @IsOptional()
   @IsInt()
@@ -285,4 +346,9 @@ export class AgentWidgetSettingsDto {
   @ValidateNested()
   @Type(() => WidgetBehaviorDto)
   behavior?: WidgetBehaviorDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WidgetAccessibilityDto)
+  accessibility?: WidgetAccessibilityDto;
 }

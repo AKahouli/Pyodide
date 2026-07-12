@@ -33,6 +33,20 @@ export type WidgetThemePreset =
   | 'high-contrast-light'
   | 'dark-modern';
 
+export type WidgetAccessibilityProfile =
+  | 'standard' | 'low-vision' | 'high-contrast-light' | 'high-contrast-dark'
+  | 'cognitive-comfort' | 'motor-assistance' | 'low-stimulation';
+
+export interface WidgetAccessibilitySettings {
+  enabled: boolean; showSettingsButton: boolean; defaultProfile: WidgetAccessibilityProfile; availableProfiles: WidgetAccessibilityProfile[];
+  allowTextResize: boolean; allowLineSpacing: boolean; allowLetterSpacing: boolean; allowFontSelection: boolean; allowLinkUnderlining: boolean; allowHighContrast: boolean; allowCustomAccessibleColors: boolean; allowMotionControl: boolean; allowLargeTargets: boolean; allowSimplifiedMode: boolean; allowEnhancedFocus: boolean;
+  enforceMinimumContrast: boolean; minimumTextContrastRatio: number; minimumUiContrastRatio: number;
+  voiceInput: { enabled: boolean; language: string; continuous: boolean; interimResults: boolean; autoPunctuation: boolean; autoSend: false; stopAfterSilenceMs: number; retainAudio: false };
+  readAloud: { enabled: boolean; autoPlay: false; defaultRate: number; highlightCurrentSentence: boolean; readSourcesByDefault: boolean };
+  screenReader: { announceStreaming: boolean; announcementIntervalMs: number; announceChoices: boolean; announceSources: boolean; announceCompletion: boolean };
+  keyboard: { shortcutsEnabled: boolean; microphoneShortcut: string; accessibilityPanelShortcut: string; readAloudShortcut: string };
+}
+
 export interface WidgetSuggestion {
   id: string;
   label: string;
@@ -87,8 +101,10 @@ export interface AgentWidgetSettings {
     optionsButton: string;
     newConversation: string;
     copyTranscript: string;
+    copyMessage: string;
     downloadTranscript: string;
     transcriptCopied: string;
+    messageCopied: string;
     transcriptDownloaded: string;
     emptyTranscript: string;
     errorGeneric: string;
@@ -103,6 +119,18 @@ export interface AgentWidgetSettings {
     choiceOtherLabel: string;
     choiceSendError: string;
     choiceWaitForReply: string;
+    accessibilitySettings: string;
+    accessibilitySettingsTitle: string;
+    accessibilitySettingsDescription: string;
+    accessibilityProfile: string;
+    accessibilityClose: string;
+    accessibilityReset: string;
+    microphoneStart: string;
+    microphoneUnavailable: string;
+    microphoneListening: string;
+    readAloud: string;
+    stopReading: string;
+    readAloudUnavailable: string;
   };
   behavior: {
     defaultOpen: boolean;
@@ -112,6 +140,7 @@ export interface AgentWidgetSettings {
     allowNewConversation: boolean;
     requirePrivacyNotice: boolean;
   };
+  accessibility: WidgetAccessibilitySettings;
 }
 
 /** A single share entry on an agent (owner's view of who it's shared with). */
