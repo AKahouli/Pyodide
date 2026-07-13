@@ -27,6 +27,7 @@ import { UsageLimitGuard } from '../../usage/guards/usage-limit.guard';
 import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
 import { UserDocument } from '../../user/schemas/user.schema';
+import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -154,15 +155,30 @@ export class MessageController {
       senderId: user._id.toString(),
     });
 
-    // Expand any mentioned teams into their agents and merge with directly
-    // mentioned agents. We resolve once here (capturing the team's membership at
-    // send time) and persist the flattened agentIds on the message, so the rest
-    // of the pipeline — and regenerate — keep working purely off agentIds.
-    const resolvedAgentIds = await this.resolveAgentIds(
-      user._id.toString(),
-      dto.agentIds,
-      dto.teamIds,
-    );
+    // Mentions replace sticky taggedAgentIds; untagged AI turns reuse them.
+    // Member-only turns never reuse sticky (avoid stamping agents on human pings).
+    const mentionedAgentIds =
+      (await this.resolveAgentIds(
+        user._id.toString(),
+        dto.agentIds,
+        dto.teamIds,
+      )) ?? [];
+    const stickyAgentIds =
+      conversation.taggedAgentIds?.map((id) => id.toString()) ?? [];
+    const willRunAi = !dto.memberIds?.length;
+    const { effectiveAgentIds, shouldReplaceSticky } =
+      resolveStickyAgentRouting({
+        mentionedAgentIds,
+        stickyAgentIds,
+        reuseSticky: willRunAi,
+      });
+
+    if (shouldReplaceSticky && effectiveAgentIds?.length) {
+      await this.conversationService.replaceTaggedAgentIds(
+        conversationId,
+        effectiveAgentIds,
+      );
+    }
 
     // Create user message
     const userMessage = await this.messageService.createUserMessage({
@@ -172,7 +188,7 @@ export class MessageController {
       attachedFileIds: dto.attachedFileIds,
       webSearchEnabled: dto.webSearchEnabled,
       modelId: dto.modelId,
-      agentIds: resolvedAgentIds,
+      agentIds: effectiveAgentIds,
       memberIds: dto.memberIds,
       requestId,
       parentMessageId: dto.parentMessageId,
@@ -222,7 +238,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
           modelId: dto.modelId,
-          agentIds: resolvedAgentIds,
+          agentIds: effectiveAgentIds,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
         }, requestId, undefined, this.resolveDisplayName(user))

@@ -38,11 +38,12 @@ export interface Conversation {
   isShared: boolean;
   workspaces?: string[];
   selectedSkills?: string[];
+  /** Sticky routing agents (last @mention set); backend reuses when next turn has no tags. */
+  taggedAgentIds?: string[];
   systemWorkspaceId?: string;
   createdAt: string;
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
-  taggedAgents?: string[];
   projectId?: string | null;
 }
 
@@ -64,6 +65,9 @@ export interface Message {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
+  /** Agents used for this turn (mentions or sticky reuse from backend). */
+  agentIds?: string[];
+  memberIds?: string[];
   webSearchEnabled?: boolean;
   questionMessageId?: string;
   answerMessageId?: string;

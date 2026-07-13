@@ -64,6 +64,8 @@ export interface ConversationResponse {
   ownerName?: string;
   workspaces: string[];
   selectedSkills: string[];
+  /** Sticky routing agents: last @mention set; reused when a turn has no tags. */
+  taggedAgentIds: string[];
   systemWorkspaceId?: string;
   lastMessageAt?: string;
   messageCount: number;

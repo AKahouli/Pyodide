@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { useConversationStore, useCurrentConversation, useConversationLoading, useMessagesLoading } from './store';
+import { useConversationStore, useCurrentConversation, useConversationLoading } from './store';
 import { ConversationHeader } from './components/ConversationHeader';
 import { ConversationContent } from './components/ConversationContent';
 import { ConversationInput } from './components/ConversationInput';
@@ -19,9 +19,7 @@ export function ConversationPage() {
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
   const currentConversation = useCurrentConversation();
   const conversationLoading = useConversationLoading();
-  const messagesLoading = useMessagesLoading();
 
- 
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
 
   // Auto-switch to floating when leaving conversation page
@@ -54,13 +52,12 @@ export function ConversationPage() {
     }
   }, [id, setCurrentConversation]);
 
+  // Depend on conversation id only — object patches (e.g. taggedAgentIds) must not re-fetch.
   useEffect(() => {
-    if (id && currentConversation) {
-      if (!isGroup) {
-        fetchMessages(id);
-      }
+    if (id && currentConversationId === id) {
+      fetchMessages(id);
     }
-  }, [id, currentConversation, isGroup, fetchMessages]);
+  }, [id, currentConversationId, fetchMessages]);
 
   useEffect(() => {
     return () => {
