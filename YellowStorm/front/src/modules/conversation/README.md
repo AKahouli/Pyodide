@@ -16,6 +16,7 @@ The conversation module provides the complete AI chat experience, handling real-
 - [Types](#types)
 - [Key Features](#key-features)
 - [Data Flow](#data-flow)
+- [Sticky Agent Routing](#sticky-agent-routing)
 - [Performance Optimizations](#performance-optimizations)
 - [Reply to a Message](#reply-to-a-message)
 - [Mention notifications & tracking](#mention-notifications--tracking)
@@ -31,6 +32,7 @@ The conversation module is a self-contained feature module that handles:
 - **Message Management**: Send messages, receive AI responses, provide feedback
 - **File Attachments**: Upload files to conversations with progress tracking, previews, and file viewer integration
 - **Agent & Member Mentioning**: Tag agents or group members with `@` mentions to route messages or notify specific participants; group **member** mentions emit SSE `mention_created`, sidebar badges, and jump-to-mention UI (see [Mention notifications & tracking](#mention-notifications--tracking))
+- **Sticky Agent Routing**: After an `@agent` mention, the backend keeps those agents on the conversation (`taggedAgentIds`) and reuses them on later turns without tags
 - **Shared Agents**: In group conversations, agents tagged by any member are shared and accessible to all participants in the conversation
 - **Branch Navigation**: Support for regenerating responses and navigating between response branches
 - **Message Management**: Send messages, receiving AI responses, and provide feedback. Support for **Message Editing** with automatic AI response regeneration.
@@ -392,7 +394,7 @@ Backend gRPC Stream
 
 ## Agent Mentioning
 
-Users can tag AI agents in messages using `@` mentions. This routes the message to specific agents on the backend.
+Users can tag AI agents in messages using `@` mentions. This routes the message to specific agents on the backend. Mentions also seed **sticky routing**: the backend stores the resolved agent IDs on the conversation (`taggedAgentIds`) and reuses them on later messages that have no `@` tags (see [Sticky Agent Routing](#sticky-agent-routing)).
 
 ### How It Works
 
@@ -402,9 +404,9 @@ Users can tag AI agents in messages using `@` mentions. This routes the message 
    - **Agents**: Mentioning an agent routes the message to them. Multiple agents can be tagged.
    - **Members**: Mentioning a member tags them in the message.
 4. On submit, IDs are extracted:
-   - `agentIds[]` sent to trigger specific AI agents.
+   - `agentIds[]` / `teamIds[]` sent **only when** the user mentioned agents/teams on this turn.
    - `memberIds[]` sent to tag participants. **Note**: If any member is tagged, AI response is skipped.
-5. Backend resolves the mentions and routes or suppresses AI responses accordingly.
+5. Backend resolves mentions, applies sticky reuse when there are no agent tags, and routes or suppresses AI responses accordingly.
 
 ### Mention Detection
 
@@ -474,6 +476,8 @@ The `WorkspaceManagerSheet` allows users to link conversations to workspaces, pr
 interface Conversation {
   // ...existing fields
   workspaces?: string[]; // Linked workspace IDs
+  selectedSkills?: string[]; // Skills selected for this conversation
+  taggedAgentIds?: string[]; // Sticky routing agents (last @mention set; server-owned)
   systemWorkspaceId?: string; // System workspace for the conversation
 }
 ```
@@ -737,7 +741,8 @@ Draw freehand sketches and attach them to messages:
 - Searchable popup grouped by personal and default agents
 - Multiple agents can be mentioned per message
 - Right-click context menu for quick mention or agent creation
-- Agent IDs extracted from text and sent with the message payload
+- Agent IDs extracted from text and sent with the message payload **only when present**
+- Backend sticky `taggedAgentIds` reuses the last mention set on subsequent untagged turns
 
 ### 5. Branch Navigation
 
@@ -819,9 +824,9 @@ Seamless process for onboarding invited users:
 - **Dynamic Fetching**: `ConversationInput` and `EditableUserMessage` automatically fetch shared agents via the `fetchTaggedAgents` API when a group conversation is active.
 
 ### 14. Shared Agents Persistence
-- The system automatically tracks which agents are used in a group conversation.
-- Once an agent is tagged in a message, it is persisted to the conversation metadata.
-- These shared agents are then automatically included in all subsequent AI streaming requests for that conversation, ensuring consistent AI behavior for all members.
+- The system automatically tracks which agents are used in a group conversation (`groupMeta.taggedAgents`, append-only toolbox).
+- Once an agent is tagged in a message, it is persisted for the group mention picker / shared roster.
+- This is **distinct** from sticky routing (`Conversation.taggedAgentIds`), which selects which agents run on untagged follow-ups.
 - The `CreateGroupConversationDialog` (in manage mode) provides a dedicated "Shared Agents" section to view all agents currently part of the group's toolbox.
 
 ---
@@ -835,18 +840,19 @@ Seamless process for onboarding invited users:
 2. Files upload immediately on attach via useConversationFileUpload hook
    - requestUploadUrl → XHR PUT to Azure (with progress) → confirmFileUpload
 3. Submit → store.sendMessage() (submit disabled while uploads in progress)
-4. Agent IDs extracted from @mentions in text
+4. Agent/team IDs extracted from @mentions in text (omitted from payload when none)
 5. Optimistic message added to state (includes attachedFiles for instant display)
-6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds, modelId }
-7. Backend resolves mentioned agents, starts AI stream
-   - In group chats, any new agentIds are persisted as shared agents
-7. SSE: stream_start event → store.onStreamStart()
-8. SSE: stream_chunk events → store.onStreamChunk()
-9. Chunks buffered → StreamingBuffer.flush() at 60fps
-10. UI renders streaming components
-11. SSE: stream_complete → store.onStreamComplete()
-12. Fetch completed message from API
-13. Replace streaming state with persisted message
+6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds?, teamIds?, modelId }
+7. Backend applies sticky routing (mention → replace taggedAgentIds; no mention → reuse)
+   - In group chats, new agentIds may still $addToSet into groupMeta.taggedAgents (shared toolbox)
+8. SSE: stream_start event → store.onStreamStart()
+9. SSE: stream_chunk events → store.onStreamChunk()
+10. Chunks buffered → StreamingBuffer.flush() at 60fps
+11. UI renders streaming components
+12. SSE: stream_complete → store.onStreamComplete()
+13. Fetch completed message from API
+14. Replace streaming state with persisted message
+15. Store may patch currentConversation.taggedAgentIds from userMessage.agentIds when the set changed
 ```
 
 ### Mentioning an Agent or Member
@@ -856,9 +862,9 @@ Seamless process for onboarding invited users:
 2. MentionPopup opens → fetches agents via useAgents(), active group members, and shared conversation agents
 3. User filters by typing, selects agent or member
 4. "@Name" inserted into textarea, tracked in mentionMap with type ('agent' or 'member')
-5. On submit, mentionMap scanned → only 'agent' IDs extracted into agentIds[]
-6. agentIds sent with message payload (member mentions remain as text only)
-7. Backend uses agentIds to select which agents process the message and updates shared agents if in a group
+5. On submit, mentionMap scanned → agent IDs → agentIds[]; teams → teamIds[]
+6. agentIds/teamIds sent only when present; member mentions remain as text + memberIds
+7. Backend selects agents (mention or sticky reuse) and updates group shared agents if in a group
 ```
 
 ### Regenerating a Response
@@ -884,17 +890,19 @@ Seamless process for onboarding invited users:
 2. Files upload immediately on attach via useConversationFileUpload hook
    - requestUploadUrl → XHR PUT to Azure (with progress) → confirmFileUpload
 3. Submit → store.sendMessage() (submit disabled while uploads in progress)
-4. Agent IDs extracted from @mentions in text
+4. Agent/team IDs extracted from @mentions in text (omitted from payload when none)
 5. Optimistic message added to state (includes attachedFiles for instant display)
-6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds, modelId }
-7. Backend resolves mentioned agents, starts AI stream
-7. SSE: stream_start event → store.onStreamStart()
-8. SSE: stream_chunk events → store.onStreamChunk()
-9. Chunks buffered → StreamingBuffer.flush() at 60fps
-10. UI renders streaming components
-11. SSE: stream_complete → store.onStreamComplete()
-12. Fetch completed message from API
-13. Replace streaming state with persisted message
+6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds?, teamIds?, modelId }
+7. Backend applies sticky routing (mention → replace taggedAgentIds; no mention → reuse)
+   - In group chats, new agentIds may still $addToSet into groupMeta.taggedAgents (shared toolbox)
+8. SSE: stream_start event → store.onStreamStart()
+9. SSE: stream_chunk events → store.onStreamChunk()
+10. Chunks buffered → StreamingBuffer.flush() at 60fps
+11. UI renders streaming components
+12. SSE: stream_complete → store.onStreamComplete()
+13. Fetch completed message from API
+14. Replace streaming state with persisted message
+15. Store may patch currentConversation.taggedAgentIds from userMessage.agentIds when the set changed
 ```
 
 ### Mentioning an Agent or Member
@@ -904,9 +912,9 @@ Seamless process for onboarding invited users:
 2. MentionPopup opens → fetches agents via useAgents() and active group members
 3. User filters by typing, selects agent or member
 4. "@Name" inserted into textarea, tracked in mentionMap with type ('agent' or 'member')
-5. On submit, mentionMap scanned → only 'agent' IDs extracted into agentIds[]
-6. agentIds sent with message payload (member mentions remain as text only)
-7. Backend uses agentIds to select which agents process the message
+5. On submit, mentionMap scanned → agent IDs → agentIds[]; teams → teamIds[]
+6. agentIds/teamIds sent only when present; member mentions remain as text + memberIds
+7. Backend selects agents (mention or sticky reuse)
 ```
 
 ### Regenerating a Response
@@ -945,6 +953,39 @@ Seamless process for onboarding invited users:
 3. Configure share options (expiration, recipients)
 4. API call: POST /conversations/:id/shares
 5. Share link generated and displayed for copying
+```
+
+---
+
+## Sticky Agent Routing
+
+Sticky routing is **owned by the backend**. The frontend must not inject previous agent IDs into the send payload when the user did not `@mention` anyone on the current turn.
+
+### Contract
+
+| Side | Responsibility |
+|------|----------------|
+| **Front** | Send `agentIds` / `teamIds` only when the composer extracted mentions; omit them otherwise |
+| **Back** | On mention → `$set` conversation `taggedAgentIds`; on no mention (AI turn) → reuse `taggedAgentIds` |
+| **Front store** | After a successful send, optionally patch `currentConversation.taggedAgentIds` from `userMessage.agentIds` **only when the set changed** |
+| **ConversationPage** | `fetchMessages` depends on conversation **id**, not the whole conversation object — so sticky field updates do not soft-reload the message list |
+
+### UX notes
+
+- Follow-up messages without `@` continue with the last mentioned agent(s) automatically.
+- Tagging new agents on a later message **replaces** the sticky set entirely (no merge).
+- Group “Shared Agents” (`GET .../tagged-agents` / `groupMeta.taggedAgents`) remains a separate shared toolbox for the mention picker — not sticky routing.
+
+### Related types
+
+```typescript
+interface Conversation {
+  taggedAgentIds?: string[]; // last sticky routing set from the API
+}
+
+interface Message {
+  agentIds?: string[]; // agents used for that turn (mention or sticky reuse)
+}
 ```
 
 ---
@@ -1114,7 +1155,7 @@ Users can reply to specific messages within a conversation.
 
 ## Agent Mentioning
 
-Users can tag AI agents in messages using `@` mentions. This routes the message to specific agents on the backend.
+Users can tag AI agents in messages using `@` mentions. This routes the message to specific agents on the backend. Mentions also seed **sticky routing**: the backend stores the resolved agent IDs on the conversation (`taggedAgentIds`) and reuses them on later messages that have no `@` tags (see [Sticky Agent Routing](#sticky-agent-routing)).
 
 ### How It Works
 
@@ -1124,9 +1165,9 @@ Users can tag AI agents in messages using `@` mentions. This routes the message 
    - **Agents**: Mentioning an agent routes the message to them. Multiple agents can be tagged.
    - **Members**: Mentioning a member tags them in the message.
 4. On submit, IDs are extracted:
-   - `agentIds[]` sent to trigger specific AI agents.
+   - `agentIds[]` / `teamIds[]` sent **only when** the user mentioned agents/teams on this turn.
    - `memberIds[]` sent to tag participants. **Note**: If any member is tagged, AI response is skipped.
-5. Backend resolves the mentions and routes or suppresses AI responses accordingly.
+5. Backend resolves mentions, applies sticky reuse when there are no agent tags, and routes or suppresses AI responses accordingly.
 
 ### Mention Detection
 
@@ -1196,6 +1237,8 @@ The `WorkspaceManagerSheet` allows users to link conversations to workspaces, pr
 interface Conversation {
   // ...existing fields
   workspaces?: string[]; // Linked workspace IDs
+  selectedSkills?: string[]; // Skills selected for this conversation
+  taggedAgentIds?: string[]; // Sticky routing agents (last @mention set; server-owned)
   systemWorkspaceId?: string; // System workspace for the conversation
 }
 ```
@@ -1459,7 +1502,8 @@ Draw freehand sketches and attach them to messages:
 - Searchable popup grouped by personal and default agents
 - Multiple agents can be mentioned per message
 - Right-click context menu for quick mention or agent creation
-- Agent IDs extracted from text and sent with the message payload
+- Agent IDs extracted from text and sent with the message payload **only when present**
+- Backend sticky `taggedAgentIds` reuses the last mention set on subsequent untagged turns
 
 ### 5. Branch Navigation
 
@@ -1541,9 +1585,9 @@ Seamless process for onboarding invited users:
 - **Dynamic Fetching**: `ConversationInput` and `EditableUserMessage` automatically fetch shared agents via the `fetchTaggedAgents` API when a group conversation is active.
 
 ### 14. Shared Agents Persistence
-- The system automatically tracks which agents are used in a group conversation.
-- Once an agent is tagged in a message, it is persisted to the conversation metadata.
-- These shared agents are then automatically included in all subsequent AI streaming requests for that conversation, ensuring consistent AI behavior for all members.
+- The system automatically tracks which agents are used in a group conversation (`groupMeta.taggedAgents`, append-only toolbox).
+- Once an agent is tagged in a message, it is persisted for the group mention picker / shared roster.
+- This is **distinct** from sticky routing (`Conversation.taggedAgentIds`), which selects which agents run on untagged follow-ups.
 - The `CreateGroupConversationDialog` (in manage mode) provides a dedicated "Shared Agents" section to view all agents currently part of the group's toolbox.
 
 ---
@@ -1557,18 +1601,19 @@ Seamless process for onboarding invited users:
 2. Files upload immediately on attach via useConversationFileUpload hook
    - requestUploadUrl → XHR PUT to Azure (with progress) → confirmFileUpload
 3. Submit → store.sendMessage() (submit disabled while uploads in progress)
-4. Agent IDs extracted from @mentions in text
+4. Agent/team IDs extracted from @mentions in text (omitted from payload when none)
 5. Optimistic message added to state (includes attachedFiles for instant display)
-6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds, modelId }
-7. Backend resolves mentioned agents, starts AI stream
-   - In group chats, any new agentIds are persisted as shared agents
-7. SSE: stream_start event → store.onStreamStart()
-8. SSE: stream_chunk events → store.onStreamChunk()
-9. Chunks buffered → StreamingBuffer.flush() at 60fps
-10. UI renders streaming components
-11. SSE: stream_complete → store.onStreamComplete()
-12. Fetch completed message from API
-13. Replace streaming state with persisted message
+6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds?, teamIds?, modelId }
+7. Backend applies sticky routing (mention → replace taggedAgentIds; no mention → reuse)
+   - In group chats, new agentIds may still $addToSet into groupMeta.taggedAgents (shared toolbox)
+8. SSE: stream_start event → store.onStreamStart()
+9. SSE: stream_chunk events → store.onStreamChunk()
+10. Chunks buffered → StreamingBuffer.flush() at 60fps
+11. UI renders streaming components
+12. SSE: stream_complete → store.onStreamComplete()
+13. Fetch completed message from API
+14. Replace streaming state with persisted message
+15. Store may patch currentConversation.taggedAgentIds from userMessage.agentIds when the set changed
 ```
 
 ### Mentioning an Agent or Member
@@ -1578,9 +1623,9 @@ Seamless process for onboarding invited users:
 2. MentionPopup opens → fetches agents via useAgents(), active group members, and shared conversation agents
 3. User filters by typing, selects agent or member
 4. "@Name" inserted into textarea, tracked in mentionMap with type ('agent' or 'member')
-5. On submit, mentionMap scanned → only 'agent' IDs extracted into agentIds[]
-6. agentIds sent with message payload (member mentions remain as text only)
-7. Backend uses agentIds to select which agents process the message and updates shared agents if in a group
+5. On submit, mentionMap scanned → agent IDs → agentIds[]; teams → teamIds[]
+6. agentIds/teamIds sent only when present; member mentions remain as text + memberIds
+7. Backend selects agents (mention or sticky reuse) and updates group shared agents if in a group
 ```
 
 ### Regenerating a Response
@@ -1606,17 +1651,19 @@ Seamless process for onboarding invited users:
 2. Files upload immediately on attach via useConversationFileUpload hook
    - requestUploadUrl → XHR PUT to Azure (with progress) → confirmFileUpload
 3. Submit → store.sendMessage() (submit disabled while uploads in progress)
-4. Agent IDs extracted from @mentions in text
+4. Agent/team IDs extracted from @mentions in text (omitted from payload when none)
 5. Optimistic message added to state (includes attachedFiles for instant display)
-6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds, modelId }
-7. Backend resolves mentioned agents, starts AI stream
-7. SSE: stream_start event → store.onStreamStart()
-8. SSE: stream_chunk events → store.onStreamChunk()
-9. Chunks buffered → StreamingBuffer.flush() at 60fps
-10. UI renders streaming components
-11. SSE: stream_complete → store.onStreamComplete()
-12. Fetch completed message from API
-13. Replace streaming state with persisted message
+6. API call: POST /conversations/:id/messages { content, attachedFileIds, agentIds?, teamIds?, modelId }
+7. Backend applies sticky routing (mention → replace taggedAgentIds; no mention → reuse)
+   - In group chats, new agentIds may still $addToSet into groupMeta.taggedAgents (shared toolbox)
+8. SSE: stream_start event → store.onStreamStart()
+9. SSE: stream_chunk events → store.onStreamChunk()
+10. Chunks buffered → StreamingBuffer.flush() at 60fps
+11. UI renders streaming components
+12. SSE: stream_complete → store.onStreamComplete()
+13. Fetch completed message from API
+14. Replace streaming state with persisted message
+15. Store may patch currentConversation.taggedAgentIds from userMessage.agentIds when the set changed
 ```
 
 ### Mentioning an Agent or Member
@@ -1626,9 +1673,9 @@ Seamless process for onboarding invited users:
 2. MentionPopup opens → fetches agents via useAgents() and active group members
 3. User filters by typing, selects agent or member
 4. "@Name" inserted into textarea, tracked in mentionMap with type ('agent' or 'member')
-5. On submit, mentionMap scanned → only 'agent' IDs extracted into agentIds[]
-6. agentIds sent with message payload (member mentions remain as text only)
-7. Backend uses agentIds to select which agents process the message
+5. On submit, mentionMap scanned → agent IDs → agentIds[]; teams → teamIds[]
+6. agentIds/teamIds sent only when present; member mentions remain as text + memberIds
+7. Backend selects agents (mention or sticky reuse)
 ```
 
 ### Regenerating a Response
@@ -1667,6 +1714,39 @@ Seamless process for onboarding invited users:
 3. Configure share options (expiration, recipients)
 4. API call: POST /conversations/:id/shares
 5. Share link generated and displayed for copying
+```
+
+---
+
+## Sticky Agent Routing
+
+Sticky routing is **owned by the backend**. The frontend must not inject previous agent IDs into the send payload when the user did not `@mention` anyone on the current turn.
+
+### Contract
+
+| Side | Responsibility |
+|------|----------------|
+| **Front** | Send `agentIds` / `teamIds` only when the composer extracted mentions; omit them otherwise |
+| **Back** | On mention → `$set` conversation `taggedAgentIds`; on no mention (AI turn) → reuse `taggedAgentIds` |
+| **Front store** | After a successful send, optionally patch `currentConversation.taggedAgentIds` from `userMessage.agentIds` **only when the set changed** |
+| **ConversationPage** | `fetchMessages` depends on conversation **id**, not the whole conversation object — so sticky field updates do not soft-reload the message list |
+
+### UX notes
+
+- Follow-up messages without `@` continue with the last mentioned agent(s) automatically.
+- Tagging new agents on a later message **replaces** the sticky set entirely (no merge).
+- Group “Shared Agents” (`GET .../tagged-agents` / `groupMeta.taggedAgents`) remains a separate shared toolbox for the mention picker — not sticky routing.
+
+### Related types
+
+```typescript
+interface Conversation {
+  taggedAgentIds?: string[]; // last sticky routing set from the API
+}
+
+interface Message {
+  agentIds?: string[]; // agents used for that turn (mention or sticky reuse)
+}
 ```
 
 ---
