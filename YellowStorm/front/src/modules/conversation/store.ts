@@ -918,16 +918,28 @@ export const useConversationStore = create<ConversationState>()(
           const { attachedFiles: _, ...apiPayload } = payload;
           const result = await api.sendMessage(conversationId, apiPayload);
 
-          // Replace optimistic message with real user message (with deduplication)
+          // Replace optimistic message with real user message (with deduplication).
+          // Patch sticky taggedAgentIds when the set actually changes.
           set((s) => {
-            // Check if message already exists (avoid duplicates from race with fetchMessages)
             const alreadyExists = s.messages.some((m) => m.id === result.userMessage.id);
+            const nextTaggedAgentIds = result.userMessage.agentIds?.length
+              ? result.userMessage.agentIds
+              : undefined;
+            const prevTagged = s.currentConversation?.taggedAgentIds;
+            const taggedChanged =
+              !!nextTaggedAgentIds &&
+              s.currentConversation?.id === conversationId &&
+              (prevTagged?.length !== nextTaggedAgentIds.length ||
+                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged?.[i]));
 
             return {
               messages: alreadyExists ? s.messages : [...s.messages, result.userMessage],
               optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
               messagesTotal: alreadyExists ? s.messagesTotal : s.messagesTotal + 1,
               selectedModelId: payload.modelId || s.selectedModelId,
+              currentConversation: taggedChanged
+                ? { ...s.currentConversation!, taggedAgentIds: nextTaggedAgentIds }
+                : s.currentConversation,
             };
           });
         } catch (err) {
@@ -1327,12 +1339,31 @@ export const useConversationStore = create<ConversationState>()(
         const alreadyExists = state.messages.some((m) => m.id === event.message.id);
         if (alreadyExists) return;
 
-        set((s) => ({
-          messages: [...s.messages, event.message],
-          messagesTotal: s.messagesTotal + 1,
-          // Clear optimistic if it matches (by requestId if available, or temporary ID)
-          optimisticMessages: s.optimisticMessages.filter((m) => m.id !== event.message.id),
-        }));
+        set((s) => {
+          // Optimistic ids are temp-*; clear the matching pending user turn (content + conversation).
+          let clearedOptimistic = false;
+          const optimisticMessages = s.optimisticMessages.filter((m) => {
+            if (m.id === event.message.id) return false;
+            if (
+              !clearedOptimistic &&
+              m.id.startsWith('temp-') &&
+              m.conversationType === 'user' &&
+              event.message.conversationType === 'user' &&
+              m.conversationId === event.conversationId &&
+              m.content === event.message.content
+            ) {
+              clearedOptimistic = true;
+              return false;
+            }
+            return true;
+          });
+
+          return {
+            messages: [...s.messages, event.message],
+            messagesTotal: s.messagesTotal + 1,
+            optimisticMessages,
+          };
+        });
 
         // Refresh conversations list to update sidebar order
         get().fetchConversations({ reset: true });
@@ -1739,13 +1770,24 @@ export const useMessagesLoadingOlder = () => useConversationStore((s) => s.messa
 export const useAllMessages = () =>
   useConversationStore(
     useShallow((s) => {
-      // Combine messages with optimistic messages, dedupe by ID
+      // Combine messages with optimistic messages, dedupe by ID / temp content match
       if (s.optimisticMessages.length === 0) {
         return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
       }
 
       const seenIds = new Set(s.messages.map((m) => m.id));
-      const newOptimistic = s.optimisticMessages.filter((m) => !seenIds.has(m.id));
+      const newOptimistic = s.optimisticMessages.filter((m) => {
+        if (seenIds.has(m.id)) return false;
+        if (m.id.startsWith('temp-') && m.conversationType === 'user') {
+          return !s.messages.some(
+            (msg) =>
+              msg.conversationType === 'user' &&
+              msg.conversationId === m.conversationId &&
+              msg.content === m.content,
+          );
+        }
+        return true;
+      });
 
       if (newOptimistic.length === 0) {
         return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
@@ -1811,13 +1853,24 @@ export const useReplyingToMessage = () => useConversationStore((s) => s.replying
 export const useDisplayMessages = () =>
   useConversationStore(
     useShallow((s) => {
-      // Combine messages with optimistic messages, dedupe by ID
+      // Combine messages with optimistic messages, dedupe by ID / temp content match
       let combined: Message[];
       if (s.optimisticMessages.length === 0) {
         combined = s.messages;
       } else {
         const seenIds = new Set(s.messages.map((m) => m.id));
-        const newOptimistic = s.optimisticMessages.filter((m) => !seenIds.has(m.id));
+        const newOptimistic = s.optimisticMessages.filter((m) => {
+          if (seenIds.has(m.id)) return false;
+          if (m.id.startsWith('temp-') && m.conversationType === 'user') {
+            return !s.messages.some(
+              (msg) =>
+                msg.conversationType === 'user' &&
+                msg.conversationId === m.conversationId &&
+                msg.content === m.content,
+            );
+          }
+          return true;
+        });
         combined = newOptimistic.length === 0 ? s.messages : [...s.messages, ...newOptimistic];
       }
 
