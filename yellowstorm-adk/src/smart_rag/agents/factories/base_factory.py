@@ -84,7 +84,7 @@ class AgentFactory:
         self.diagram_tool_config = diagram_tool_config
 
     def _create_html_diagram_tool(
-        self, chatbot_name: str, instructions: Optional[str] = None
+        self, chatbot_name: str, instructions: Optional[str] = None, temperature: Optional[float] = 0.0
     ) -> AgentTool:
         """Create an HtmlAgent tool for diagramming.
 
@@ -97,7 +97,7 @@ class AgentFactory:
         if not instructions:
             instructions = self.diagram_tool_config["instructions"]
         diagramming_agent = self.create_html_diagram_agent(
-            instructions=instructions, chatbot_name=chatbot_name
+            instructions=instructions, chatbot_name=chatbot_name, temperature=temperature
         )
 
         return AgentTool(diagramming_agent, skip_summarization=False)
@@ -137,7 +137,7 @@ class AgentFactory:
         vectorstore_name: str = "default",
         task_order: Optional[str] = None,
         mcp_toolset: Optional[MCPToolset] = None,
-        temperature: float = 0.0,
+        temperature: Optional[float] = 0.0,
         max_tokens: int = 20000,
         session_id: Optional[str] = None,
         brain_documents: Optional[list] = None,
@@ -198,7 +198,7 @@ class AgentFactory:
 
         # Add HTML diagram tool if requested
         if html_design:
-            tools.append(self._create_html_diagram_tool(chatbot_name))
+            tools.append(self._create_html_diagram_tool(chatbot_name, temperature=temperature))
 
         # Add search tools if requested
         if search_tool and doc_tree and brain_ids:
@@ -719,6 +719,7 @@ class AgentFactory:
         instructions: str = None,
         chatbot_name: str = None,
         name: Optional[str] = "HtmlAgent",
+        temperature: Optional[float] = 0.0,
     ) -> Agent:
         """Create a visualizer agent capable of generating HTML.
         Args:
@@ -732,7 +733,7 @@ class AgentFactory:
         if not instructions:
             instructions = self.diagram_tool_config["instructions"]
 
-        model = self.llm_factory.create_no_tool_calls_llm(chatbot_name)
+        model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=temperature)
         return Agent(
             name=name,
             model=model,

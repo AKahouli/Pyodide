@@ -73,18 +73,24 @@ export interface GovernanceSource {
   lastReviewedAt?: string;
   nextReviewAt?: string;
   reviewFrequencyDays?: number;
+  isArchived: boolean;
+  archivedAt?: string;
+  archiveReason?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export type GovernanceSourceVersionLifecycleStatus = 'captured' | 'to_review' | 'approved' | 'published' | 'rejected' | 'superseded';
 export type GovernanceSourceVersionTechnicalStatus = 'pending' | 'processing' | 'ready' | 'failed';
-export interface GovernanceSourceValidity { mode: 'fixed_date' | 'relative_duration' | 'until_replaced' | 'until_funds_exhausted' | 'open_ended' | 'unknown'; businessStatus: 'unknown' | 'scheduled' | 'valid' | 'needs_review' | 'expired' | 'conflicting' | 'suspended'; confidence: number; effectiveUntil?: string; }
-export interface GovernanceSourceVersion { id: string; sourceId: string; programId: string; versionNumber: number; lifecycleStatus: GovernanceSourceVersionLifecycleStatus; technicalStatus: GovernanceSourceVersionTechnicalStatus; validity: GovernanceSourceValidity; capturedAt: string; canonicalUrl?: string; contentHash?: string; reviewComment?: string; }
+export type GovernanceSourceValidityEvidenceOrigin = 'manual' | 'technical_metadata' | 'http_header' | 'html_metadata' | 'structured_data' | 'document_metadata' | 'logical_search' | 'llm_extraction' | 'policy';
+export interface GovernanceSourceValidityEvidence { id: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: unknown; origin: GovernanceSourceValidityEvidenceOrigin; confidence: number; documentId?: string; page?: number; sectionId?: string; blockId?: string; excerpt?: string; validatedBy?: string; validatedAt?: string; extractionMethod?: string; sourceVersionId?: string; sourceUrl?: string; capturedAt?: string; isCritical?: boolean; supersedesEvidenceId?: string; }
+export interface GovernanceSourceValidity { mode: 'fixed_date' | 'relative_duration' | 'until_replaced' | 'until_funds_exhausted' | 'open_ended' | 'unknown'; businessStatus: 'unknown' | 'scheduled' | 'valid' | 'needs_review' | 'expired' | 'conflicting' | 'suspended'; confidence: number; effectiveFrom?: string; effectiveUntil?: string; inclusiveEnd?: boolean; lastReviewedAt?: string; nextReviewAt?: string; reviewFrequencyDays?: number; evidence?: GovernanceSourceValidityEvidence[]; manuallyOverridden?: boolean; }
+export interface GovernanceSourceVersion { id: string; sourceId: string; programId: string; versionNumber: number; lifecycleStatus: GovernanceSourceVersionLifecycleStatus; technicalStatus: GovernanceSourceVersionTechnicalStatus; validity: GovernanceSourceValidity; capturedAt: string; canonicalUrl?: string; contentHash?: string; reviewComment?: string; submittedForReviewAt?: string; reviewedAt?: string; approvedAt?: string; publishedAt?: string; indexingAttemptId?: string; }
 export interface GovernanceSourceEvent { id: string; sourceId: string; versionId?: string; eventType: string; occurredAt: string; reason?: string; }
 export interface CreateGovernanceWorkspaceBindingPayload { workspaceId: string; visibility: 'program_shared' | 'scope_specific' | 'multi_scope'; scopeIds?: string[]; ingestionMode?: 'manual' | 'assisted' | 'automatic'; defaults?: Record<string, unknown>; }
 export interface GovernanceWorkspaceBinding extends CreateGovernanceWorkspaceBindingPayload { id: string; programId: string; enabled: boolean; createdAt: string; updatedAt: string; }
 export interface GovernanceWorkspaceReconciliationResult { bindingId: string; scannedDocuments: number; missingSources: number; missingVersions: number; repairedStatuses: number; missingArtifacts: number; emittedEvents: number; errors: Array<{ documentId?: string; sourceId?: string; message: string }>; }
+export interface GovernanceReconciliationRun { id: string; bindingId: string; status: 'pending' | 'running' | 'completed' | 'failed'; dryRun: boolean; cursor?: string; stats: Partial<Omit<GovernanceWorkspaceReconciliationResult, 'bindingId' | 'errors'>>; errors: GovernanceWorkspaceReconciliationResult['errors']; startedAt?: string; completedAt?: string; createdAt: string; updatedAt: string; }
 
 export interface CreateGovernanceProgramPayload {
   name: string;

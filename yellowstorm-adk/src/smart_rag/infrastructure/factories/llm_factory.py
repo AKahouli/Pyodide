@@ -36,7 +36,7 @@ class LLMFactory:
         create_no_tool_calls_llm: Creates LLM instance without tool calling capabilities.
     """
     @staticmethod
-    def create_parallel_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> 'LiteLlm':
+    def create_parallel_tool_calls_llm(model_name: str, temperature=0.0,max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance with parallel tool calls enabled.
 
         Creates a language model configured for parallel tool execution,
@@ -69,7 +69,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created Ollama LLM for model: {model_name}")
@@ -81,7 +81,7 @@ class LLMFactory:
                     parallel_tool_calls=True,
                     stream=True,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created LiteLLM proxy LLM for model: {model_name}")
@@ -92,7 +92,7 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_parallel_tool_calls_llm(model_name: str, temperature=None, tool_choice:str="auto",max_completion_tokens=20000) -> 'LiteLlm':
+    def create_no_parallel_tool_calls_llm(model_name: str, temperature=0.0, tool_choice:str="auto",max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
 
         try:
@@ -110,7 +110,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
 
                 )
@@ -123,7 +123,7 @@ class LLMFactory:
                     stream=True,
                     parallel_tool_calls=False,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     tool_choice=tool_choice,
                     max_completion_tokens=max_completion_tokens
 
@@ -135,7 +135,7 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> 'LiteLlm':
+    def create_no_tool_calls_llm(model_name: str, temperature=0.0,max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
         try:
             import litellm
@@ -151,7 +151,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
@@ -162,7 +162,7 @@ class LLMFactory:
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     stream=True,
                     user=get_user_label(),
-                    temperature=temperature if temperature is not None else 0.0,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created LiteLLM proxy no-tool-calls LLM for model: {model_name}")

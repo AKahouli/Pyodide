@@ -8,6 +8,7 @@ export const governanceQueryKeys = {
   sourceVersions: (programId: string, sourceId: string) => [...governanceQueryKeys.sources(programId), sourceId, 'versions'] as const,
   sourceEvents: (programId: string, sourceId: string) => [...governanceQueryKeys.sources(programId), sourceId, 'events'] as const,
   workspaceBindings: (programId: string) => [...governanceQueryKeys.program(programId), 'workspace-bindings'] as const,
+  reconciliationRun: (programId: string, bindingId: string, runId: string) => [...governanceQueryKeys.workspaceBindings(programId), bindingId, 'reconciliation-runs', runId] as const,
   memberships: (programId: string) => [...governanceQueryKeys.program(programId), 'memberships'] as const,
   deployments: (programId: string) => [...governanceQueryKeys.program(programId), 'deployments'] as const,
   deployment: (deploymentId: string) => [...governanceQueryKeys.all, 'deployment', deploymentId] as const,

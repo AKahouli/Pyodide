@@ -51,4 +51,17 @@ describe('governanceApi', () => {
 
     expect(mocks.get).toHaveBeenCalledWith('/users/search', { params: { q: 'alice', limit: 5 } });
   });
+
+  it('starts, reads, and resumes durable reconciliation runs', async () => {
+    mocks.post.mockResolvedValue({ data: { data: { id: 'run-1' } } });
+    mocks.get.mockResolvedValue({ data: { data: { id: 'run-1' } } });
+
+    await governanceApi.createReconciliationRun('program-1', 'binding-1', true);
+    await governanceApi.getReconciliationRun('program-1', 'binding-1', 'run-1');
+    await governanceApi.resumeReconciliationRun('program-1', 'binding-1', 'run-1');
+
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs', { dryRun: true });
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs/run-1');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs/run-1/resume', {});
+  });
 });

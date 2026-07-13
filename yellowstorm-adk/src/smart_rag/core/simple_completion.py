@@ -23,7 +23,7 @@ class SimpleCompletionService:
         self,
         message: str,
         model: str,
-        temperature: float = 0.7,
+        temperature: Optional[float] = 0.7,
         max_tokens: Optional[int] = None
     ) -> str:
         """Create a chat completion using OpenAI API.
@@ -62,8 +62,10 @@ class SimpleCompletionService:
             request_params = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
             }
+
+            if temperature is not None:
+                request_params["temperature"] = temperature
 
             # Add optional parameters if provided
             if max_tokens:

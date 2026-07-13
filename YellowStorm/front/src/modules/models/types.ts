@@ -16,6 +16,7 @@ export interface Model {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  omitTemperature: boolean;
 }
 
 export interface ModelsListResponse {

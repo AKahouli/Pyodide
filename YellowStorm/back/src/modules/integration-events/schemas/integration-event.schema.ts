@@ -2,6 +2,8 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 import type { IntegrationEventStatus } from '../interfaces/integration-event.interface';
 export type IntegrationEventDocument = HydratedDocument<IntegrationEvent>;
+export type IntegrationEventDeliveryStatus = 'pending' | 'completed' | 'failed';
+export interface IntegrationEventDelivery { handlerKey: string; status: IntegrationEventDeliveryStatus; attempts: number; lastError?: string; completedAt?: Date; }
 @Schema({ timestamps: true, collection: 'integration_events' })
 export class IntegrationEvent {
   @Prop({ required: true, unique: true, index: true }) eventId!: string;
@@ -9,6 +11,7 @@ export class IntegrationEvent {
   @Prop({ required: true, index: true }) aggregateType!: string;
   @Prop({ required: true, index: true }) aggregateId!: string;
   @Prop({ type: Object, required: true }) payload!: Record<string, unknown>;
+  @Prop({ type: [{ handlerKey: { type: String, required: true }, status: { type: String, enum: ['pending', 'completed', 'failed'], default: 'pending' }, attempts: { type: Number, default: 0 }, lastError: { type: String, maxlength: 2000 }, completedAt: { type: Date } }], default: [] }) deliveries!: IntegrationEventDelivery[];
   @Prop({ required: true, index: true }) occurredAt!: Date;
   @Prop({ type: String, enum: ['pending', 'processing', 'completed', 'failed', 'dead_letter'], default: 'pending', index: true }) status!: IntegrationEventStatus;
   @Prop({ default: 0, min: 0 }) attempts!: number;

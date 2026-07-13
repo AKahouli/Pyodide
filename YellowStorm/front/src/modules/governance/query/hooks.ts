@@ -195,6 +195,19 @@ export function useReconcileGovernanceWorkspaceBinding(programId: string | null)
   return useMutation({ mutationFn: ({ bindingId, dryRun }: { bindingId: string; dryRun: boolean }) => governanceApi.reconcileWorkspaceBinding(programId ?? '', bindingId, dryRun) });
 }
 
+export function useCreateGovernanceReconciliationRun(programId: string | null) {
+  return useMutation({ mutationFn: ({ bindingId, dryRun }: { bindingId: string; dryRun: boolean }) => governanceApi.createReconciliationRun(programId ?? '', bindingId, dryRun) });
+}
+
+export function useGovernanceReconciliationRun(programId: string | null, bindingId: string, runId: string | null) {
+  return useQuery({ queryKey: governanceQueryKeys.reconciliationRun(programId ?? 'none', bindingId, runId ?? 'none'), queryFn: () => governanceApi.getReconciliationRun(programId ?? '', bindingId, runId ?? ''), enabled: Boolean(programId && runId), refetchInterval: (query) => query.state.data?.status === 'pending' || query.state.data?.status === 'running' ? 1_000 : false });
+}
+
+export function useResumeGovernanceReconciliationRun(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: ({ bindingId, runId }: { bindingId: string; runId: string }) => governanceApi.resumeReconciliationRun(programId ?? '', bindingId, runId), onSuccess: (run, variables) => { if (programId) queryClient.setQueryData(governanceQueryKeys.reconciliationRun(programId, variables.bindingId, variables.runId), run); } });
+}
+
 export function useDeleteGovernanceSource(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

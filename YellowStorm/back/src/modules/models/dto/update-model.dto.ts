@@ -47,4 +47,9 @@ export class UpdateModelDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Whether to omit temperature from requests for this model' })
+  @IsBoolean()
+  @IsOptional()
+  omitTemperature?: boolean;
 }

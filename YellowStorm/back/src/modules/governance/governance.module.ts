@@ -48,6 +48,10 @@ import { WorkspaceDoc, WorkspaceDocumentSchema } from '@modules/workspace/schema
 import { Workspace, WorkspaceSchema } from '@modules/workspace/schemas/workspace.schema';
 import { WorkspaceShare, WorkspaceShareSchema } from '@modules/workspace/schemas/workspace-share.schema';
 import { GovernanceWorkspaceReconciliationService } from './services/governance-workspace-reconciliation.service';
+import { SourceValidityCalculatorService } from './services/source-validity-calculator.service';
+import { GovernanceSourceFromWorkspaceFactory } from './factories/governance-source-from-workspace.factory';
+import { GovernanceReconciliationRun, GovernanceReconciliationRunSchema } from './schemas/governance-reconciliation-run.schema';
+import { TemporalCandidateValidatorService } from './services/temporal-candidate-validator.service';
 
 @Module({
   imports: [
@@ -58,6 +62,7 @@ import { GovernanceWorkspaceReconciliationService } from './services/governance-
       { name: GovernanceSourceVersion.name, schema: GovernanceSourceVersionSchema },
       { name: GovernanceSourceEvent.name, schema: GovernanceSourceEventSchema },
       { name: GovernanceWorkspaceBinding.name, schema: GovernanceWorkspaceBindingSchema },
+      { name: GovernanceReconciliationRun.name, schema: GovernanceReconciliationRunSchema },
       { name: GovernanceMembership.name, schema: GovernanceMembershipSchema },
       { name: GovernanceDeployment.name, schema: GovernanceDeploymentSchema },
       { name: GovernanceDeploymentRevision.name, schema: GovernanceDeploymentRevisionSchema },
@@ -79,7 +84,7 @@ import { GovernanceWorkspaceReconciliationService } from './services/governance-
     IntegrationEventsModule,
   ],
   controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController],
-  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService],
+  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, SourceValidityCalculatorService, TemporalCandidateValidatorService, GovernanceSourceFromWorkspaceFactory, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService],
   exports: [GovernanceProgramService, GovernanceScopeService, GovernanceSourceService, GovernanceAccessService, GovernanceMetricService],
 })
 export class GovernanceModule {}

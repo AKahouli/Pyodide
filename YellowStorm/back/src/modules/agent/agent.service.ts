@@ -756,14 +756,14 @@ export class AgentService {
         .map((a) => a.model || fallbackModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>(); // modelId → proxy alias (e.g., "gpt-4.1")
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, m.id);
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
         }
       }
     }
@@ -817,7 +817,8 @@ export class AgentService {
       });
 
       const effectiveModelId = agent.model || fallbackModelId || '';
-      const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const resolvedModel = modelMap.get(effectiveModelId);
+      const proxyModel = resolvedModel?.model || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
@@ -880,6 +881,9 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+            ...(resolvedModel?.omitTemperature
+              ? { omit_temperature: 'true' }
+              : { temperature: String(agent.temperature) }),
           },
         },
         connectorIds: effectiveConnectorIds,
@@ -970,13 +974,13 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, m.id);
+        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
       }
     }
 
@@ -1021,7 +1025,8 @@ export class AgentService {
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
-        const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const resolvedModel = modelMap.get(effectiveModelId);
+        const proxyModel = resolvedModel?.model || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -1064,6 +1069,9 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              ...(resolvedModel?.omitTemperature
+                ? { omit_temperature: 'true' }
+                : { temperature: String(agent.temperature) }),
             },
           },
           connector_bindings: connectorBindings,

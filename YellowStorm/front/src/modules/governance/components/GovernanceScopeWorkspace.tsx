@@ -24,7 +24,6 @@ import {
   useDeleteGovernanceMembership,
   useDeleteGovernanceScope,
   useDeleteGovernanceSource,
-  useDeleteGovernanceWorkspaceBinding,
   useGovernanceDryRuns,
   useGovernanceWorkspaceBindings,
   useGovernanceUiStore,
@@ -33,15 +32,12 @@ import {
   useSuspendGovernanceDeployment,
   useUpdateGovernanceMembership,
   useUpdateGovernanceScope,
-  useUpdateGovernanceWorkspaceBinding,
-  useReconcileGovernanceWorkspaceBinding,
   type GovernanceDryRun,
   type GovernanceMembership,
   type GovernanceMembershipRole,
   type GovernanceMetric,
   type GovernanceScope,
   type GovernanceSource,
-  type GovernanceWorkspaceBinding,
   type GovernanceScopeMetadata,
   type GovernanceScopeOverview,
   type GovernanceScopeReviewChecklistItem,
@@ -50,6 +46,7 @@ import {
 import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
 import { SourcePassportDrawer } from './source/SourcePassportDrawer';
+import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/WorkspaceBindingList';
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 
 const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
@@ -441,7 +438,7 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
         <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('scopeShell.knowledge.addWorkspace')}</Button>
       </div>
       <div className='grid gap-2'>
-        {dataRoomFeatures.workspaceBindingEnabled && <WorkspaceBindingList programId={programId} bindings={scopeBindings} />}
+        {dataRoomFeatures.workspaceBindingEnabled && <WorkspaceBindingListPanel programId={programId} bindings={scopeBindings} />}
         {allSources.map((source) => {
           const isShared = source.visibility === 'program_shared';
           return (
@@ -671,36 +668,6 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
       <CreateEditAgentDialog open={Boolean(editingAgent)} onOpenChange={(open) => { if (!open) setEditingAgent(null); }} agent={editingAgent} initialTab={editingAgentTab} onSave={handleSaveAgent} saving={savingAgent} />
     </div>
   );
-}
-
-function WorkspaceBindingList({ programId, bindings }: Readonly<{ programId: string | null; bindings: GovernanceWorkspaceBinding[] }>): JSX.Element {
-  const { t } = useModuleTranslation('governance');
-  const workspaces = useWorkspaces();
-  const updateBinding = useUpdateGovernanceWorkspaceBinding(programId);
-  const deleteBinding = useDeleteGovernanceWorkspaceBinding(programId);
-  const reconcileBinding = useReconcileGovernanceWorkspaceBinding(programId);
-  const [results, setResults] = useState<Record<string, string>>({});
-  if (bindings.length === 0) return <p className='text-sm text-muted-foreground'>{t('workspaceBinding.empty')}</p>;
-  return <>
-    {bindings.map((binding) => {
-      const workspace = workspaces.find((candidate) => candidate.id === binding.workspaceId);
-      const label = workspace?.name ?? binding.workspaceId;
-      return <div key={binding.id} className='flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3'>
-        <div className='min-w-0'>
-          <p className='truncate font-medium'>{label}</p>
-          <p className='text-xs text-muted-foreground'>{t('workspaceBinding.mode', { mode: binding.ingestionMode })} · {binding.enabled ? t('workspaceBinding.enabled') : t('workspaceBinding.disabled')}</p>
-          <select aria-label={t('workspaceBinding.ingestionMode')} className='mt-2 h-8 rounded-md border bg-background px-2 text-xs' value={binding.ingestionMode} disabled={updateBinding.isPending} onChange={(event) => updateBinding.mutate({ bindingId: binding.id, payload: { ingestionMode: event.target.value as GovernanceWorkspaceBinding['ingestionMode'] } })}><option value='manual'>{t('workspaceBinding.modeManual')}</option><option value='assisted'>{t('workspaceBinding.modeAssisted')}</option><option value='automatic'>{t('workspaceBinding.modeAutomatic')}</option></select>
-          {results[binding.id] && <p className='mt-1 text-xs text-muted-foreground'>{results[binding.id]}</p>}
-        </div>
-        <div className='flex items-center gap-2'>
-          <Switch aria-label={t('workspaceBinding.toggle')} checked={binding.enabled} disabled={updateBinding.isPending} onCheckedChange={(enabled) => updateBinding.mutate({ bindingId: binding.id, payload: { enabled } })} />
-          <Button type='button' variant='outline' size='sm' disabled={reconcileBinding.isPending} onClick={() => reconcileBinding.mutate({ bindingId: binding.id, dryRun: true }, { onSuccess: (result) => setResults((current) => ({ ...current, [binding.id]: t('workspaceBinding.reconcileResult', { documents: result.scannedDocuments, repairs: result.missingSources + result.missingVersions + result.repairedStatuses + result.missingArtifacts }) })) })}>{t('workspaceBinding.reconcile')}</Button>
-          <Button type='button' size='sm' disabled={reconcileBinding.isPending} onClick={() => reconcileBinding.mutate({ bindingId: binding.id, dryRun: false }, { onSuccess: (result) => setResults((current) => ({ ...current, [binding.id]: t('workspaceBinding.repairResult', { repairs: result.missingSources + result.missingVersions + result.repairedStatuses + result.missingArtifacts }) })) })}>{t('workspaceBinding.repair')}</Button>
-          <Button type='button' variant='ghost' size='icon' aria-label={t('workspaceBinding.remove')} disabled={deleteBinding.isPending} onClick={() => deleteBinding.mutate(binding.id)}><Trash2 className='h-4 w-4' /></Button>
-        </div>
-      </div>;
-    })}
-  </>;
 }
 
 function GuardrailsTab({ overview }: Readonly<{ overview: GovernanceScopeOverview }>): JSX.Element {

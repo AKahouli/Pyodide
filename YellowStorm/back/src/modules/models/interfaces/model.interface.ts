@@ -54,6 +54,7 @@ export interface ModelResponse {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  omitTemperature: boolean;
 }
 
 export interface ModelsListResponse {

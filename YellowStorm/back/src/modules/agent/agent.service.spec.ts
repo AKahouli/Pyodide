@@ -223,6 +223,7 @@ describe('AgentService connector skill inheritance', () => {
       'agent-skill',
       'connector-skill',
     ]);
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -406,7 +407,7 @@ describe('AgentService connector skill inheritance', () => {
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -445,12 +446,13 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -493,6 +495,8 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
+    expect(result[0].agent_params?.params.temperature).toBeUndefined();
   });
 
   describe('canWriteAgent', () => {

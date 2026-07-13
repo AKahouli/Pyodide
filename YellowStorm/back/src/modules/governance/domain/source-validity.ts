@@ -1,11 +1,12 @@
 export type SourceValidityMode = 'fixed_date' | 'relative_duration' | 'until_replaced' | 'until_funds_exhausted' | 'open_ended' | 'unknown';
 export type SourceBusinessValidityStatus = 'unknown' | 'scheduled' | 'valid' | 'needs_review' | 'expired' | 'conflicting' | 'suspended';
+export type SourceValidityEvidenceOrigin = 'manual' | 'technical_metadata' | 'http_header' | 'html_metadata' | 'structured_data' | 'document_metadata' | 'logical_search' | 'llm_extraction' | 'policy';
 
 export interface SourceValidityEvidence {
   id: string;
   field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode';
   value?: unknown;
-  origin: 'manual' | 'technical_metadata' | 'document_metadata';
+  origin: SourceValidityEvidenceOrigin;
   documentId?: string;
   page?: number;
   sectionId?: string;
@@ -14,6 +15,12 @@ export interface SourceValidityEvidence {
   confidence: number;
   validatedBy?: string;
   validatedAt?: Date;
+  extractionMethod?: string;
+  sourceVersionId?: string;
+  sourceUrl?: string;
+  capturedAt?: Date;
+  isCritical?: boolean;
+  supersedesEvidenceId?: string;
 }
 
 export interface SourceValidity {

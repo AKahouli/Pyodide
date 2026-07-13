@@ -1001,6 +1001,8 @@
   "models.edit.fields.type": "Types",
   "models.edit.fields.selectType": "Select type",
   "models.edit.fields.typeHelper": "Classify this model with one or more types. LiteLLM presets a value when known; you can override it.",
+  "models.edit.fields.omitTemperature": "Omit temperature",
+  "models.edit.fields.omitTemperatureHelper": "Do not send a temperature setting to LiteLLM for this model.",
   "models.toasts.editSuccess.title": "Model updated",
   "models.toasts.editSuccess.description": "{{name}} has been updated successfully.",
   "models.edit.actions.cancel": "Cancel",

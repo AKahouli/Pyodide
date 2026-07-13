@@ -17,3 +17,5 @@ export { CreateGovernanceSourceVersionDto } from './create-governance-source-ver
 export { UpdateSourceValidityDto } from './update-source-validity.dto';
 export { SourceVersionTransitionDto } from './source-version-transition.dto';
 export { CreateGovernanceWorkspaceBindingDto, UpdateGovernanceWorkspaceBindingDto } from './create-governance-workspace-binding.dto';
+export { ArchiveGovernanceSourceDto } from './archive-governance-source.dto';
+export { PermanentlyDeleteGovernanceSourceDto } from './permanently-delete-governance-source.dto';

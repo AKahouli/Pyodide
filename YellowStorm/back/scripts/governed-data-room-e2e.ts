@@ -10,7 +10,9 @@ import { GovernanceSourceEventService } from '@modules/governance/services/gover
 import { GovernanceSourceVersionService } from '@modules/governance/services/governance-source-version.service';
 import { GovernanceSourceTransitionService } from '@modules/governance/services/governance-source-transition.service';
 import { GovernanceWorkspaceReconciliationService } from '@modules/governance/services/governance-workspace-reconciliation.service';
+import { SourceValidityCalculatorService } from '@modules/governance/services/source-validity-calculator.service';
 import { WorkspaceGovernanceEventHandler } from '@modules/governance/integration/workspace-governance-event.handler';
+import { GovernanceSourceFromWorkspaceFactory } from '@modules/governance/factories/governance-source-from-workspace.factory';
 import { WorkspaceIntegrationEvents } from '@modules/integration-events/contracts';
 
 async function run(): Promise<void> {
@@ -30,7 +32,7 @@ async function run(): Promise<void> {
     const binding = await bindings.create({ programId, workspaceId, visibility: 'program_shared', scopeIds: [], ingestionMode: 'automatic', defaults: {}, createdBy: actorId });
     const document = await documents.create({ _id: documentId, originalName: `${runId}.pdf`, mimeType: 'application/pdf', size: 32, path: `/${runId}.pdf`, workspaceId, createdBy: actorId, status: 'completed', indexingStatus: 'pending', type: 'doc', contentHash: `${runId}-hash` });
     const eventService = new GovernanceSourceEventService(events as never);
-    const versionService = new GovernanceSourceVersionService(sources as never, versions as never, eventService);
+    const versionService = new GovernanceSourceVersionService(sources as never, versions as never, eventService, new SourceValidityCalculatorService());
     const handler = new WorkspaceGovernanceEventHandler(
       { register: () => undefined } as never,
       { get: () => true } as never,
@@ -39,20 +41,24 @@ async function run(): Promise<void> {
       eventService,
       sources as never,
       versions as never,
+      new GovernanceSourceFromWorkspaceFactory(),
     );
-    const payload = { workspaceId: workspaceId.toString(), documentId: document._id.toString(), documentType: 'doc' as const, originalName: document.originalName, mimeType: document.mimeType, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus };
+    const indexingAttemptId = `${runId}:attempt-1`;
+    const payload = { workspaceId: workspaceId.toString(), documentId: document._id.toString(), documentType: 'doc' as const, originalName: document.originalName, mimeType: document.mimeType, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingAttemptId };
     await handler.handle({ eventId: `${runId}:registered`, eventType: WorkspaceIntegrationEvents.DocumentRegisteredV1, occurredAt: new Date(), payload } as never);
+    await handler.handle({ eventId: `${runId}:started`, eventType: WorkspaceIntegrationEvents.IndexingStartedV1, occurredAt: new Date(), payload: { ...payload, indexingStatus: 'processing' } } as never);
     await handler.handle({ eventId: `${runId}:ready`, eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date(), payload: { ...payload, indexingStatus: 'ready' } } as never);
     const source = await sources.findOne({ programId, originKey: `workspace-document:${workspaceId}:${document._id}` }).exec();
     const version = await versions.findOne({ documentId: document._id }).exec();
     if (!source || !version || version.technicalStatus !== 'ready') throw new Error('Candidate source version was not created and made ready');
-    const transitions = new GovernanceSourceTransitionService(sources as never, versions as never, { assertProgramWideAccess: async () => undefined } as never, eventService);
-    await transitions.transition(actorId.toString(), programId.toString(), source._id.toString(), version._id.toString(), 'to_review');
-    await transitions.transition(actorId.toString(), programId.toString(), source._id.toString(), version._id.toString(), 'approved');
-    await transitions.transition(actorId.toString(), programId.toString(), source._id.toString(), version._id.toString(), 'published');
+    const transitions = new GovernanceSourceTransitionService(sources as never, versions as never, { assertProgramWideAccess: async () => undefined } as never, eventService, connection);
+    const transition = (target: 'to_review' | 'approved' | 'published') => transitions.transition({ commandId: `${runId}:${target}`, actorId: actorId.toString(), programId: programId.toString(), sourceId: source._id.toString(), versionId: version._id.toString(), target });
+    await transition('to_review');
+    await transition('approved');
+    await transition('published');
     await documents.deleteOne({ _id: document._id }).exec();
     await handler.handle({ eventId: `${runId}:deleted`, eventType: WorkspaceIntegrationEvents.DocumentDeletedV1, occurredAt: new Date(), payload: { ...payload, indexingStatus: 'ready' } } as never);
-    const reconciliation = new GovernanceWorkspaceReconciliationService(bindings as never, documents as never, sources as never, versions as never, versionService, eventService);
+    const reconciliation = new GovernanceWorkspaceReconciliationService(bindings as never, documents as never, sources as never, versions as never, { create: async () => undefined, findById: () => ({ exec: async () => null }) } as never, versionService, eventService, new GovernanceSourceFromWorkspaceFactory());
     await reconciliation.reconcileBinding(binding._id.toString(), false);
     const deletedVersion = await versions.findById(version._id).exec();
     const history = await events.find({ sourceId: source._id }).exec();

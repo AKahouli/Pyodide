@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type GovernanceSourceEventDocument = HydratedDocument<GovernanceSourceEvent>;
-export type GovernanceSourceEventType = 'source.created' | 'version.captured' | 'version.technical_status_changed' | 'version.submitted_for_review' | 'version.returned_to_editing' | 'version.approved' | 'version.rejected' | 'version.published' | 'version.superseded' | 'validity.updated' | 'artifact.ready' | 'artifact.unavailable' | 'workspace.binding.created';
+export type GovernanceSourceEventType = 'source.created' | 'source.archived' | 'source.restored' | 'source.permanently_deleted' | 'version.captured' | 'version.technical_status_changed' | 'version.submitted_for_review' | 'version.returned_to_editing' | 'version.approved' | 'version.rejected' | 'version.published' | 'version.superseded' | 'validity.updated' | 'artifact.ready' | 'artifact.unavailable' | 'workspace.binding.created';
 @Schema({ timestamps: true, collection: 'governance_source_events' })
 export class GovernanceSourceEvent {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
@@ -10,6 +10,7 @@ export class GovernanceSourceEvent {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', index: true }) versionId?: Types.ObjectId;
   @Prop({ required: true, index: true }) eventType!: GovernanceSourceEventType;
   @Prop({ type: Types.ObjectId, ref: 'User' }) actorId?: Types.ObjectId;
+  @Prop({ type: String, enum: ['user', 'system', 'integration'], default: 'system', required: true }) actorType!: 'user' | 'system' | 'integration';
   @Prop({ maxlength: 320 }) actorEmail?: string;
   @Prop({ required: true, index: true }) occurredAt!: Date;
   @Prop({ maxlength: 2000 }) reason?: string;
@@ -18,6 +19,7 @@ export class GovernanceSourceEvent {
   @Prop({ type: Object, default: {} }) metadata!: Record<string, unknown>;
   @Prop({ index: true }) correlationId?: string;
   @Prop() causationId?: string;
+  @Prop({ trim: true, maxlength: 300 }) deduplicationKey?: string;
 }
 export const GovernanceSourceEventSchema = SchemaFactory.createForClass(GovernanceSourceEvent);
 GovernanceSourceEventSchema.set('toJSON', {
@@ -31,3 +33,4 @@ GovernanceSourceEventSchema.set('toJSON', {
 GovernanceSourceEventSchema.index({ sourceId: 1, occurredAt: -1 });
 GovernanceSourceEventSchema.index({ versionId: 1, occurredAt: -1 });
 GovernanceSourceEventSchema.index({ programId: 1, eventType: 1, occurredAt: -1 });
+GovernanceSourceEventSchema.index({ sourceId: 1, deduplicationKey: 1 }, { unique: true, partialFilterExpression: { deduplicationKey: { $type: 'string' } } });

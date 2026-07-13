@@ -332,7 +332,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean }>,
+    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean }>,
   ): Promise<ModelResponse | null> {
     const update = { ...data };
     if (update.types) {
@@ -470,6 +470,7 @@ export class ModelsService implements OnApplicationBootstrap {
       types,
       isActive: doc.isActive as boolean,
       isDefault: (doc.isDefault as boolean) || false,
+      omitTemperature: (doc.omitTemperature as boolean) || false,
     };
   }
 }

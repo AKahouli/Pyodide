@@ -112,6 +112,18 @@ export const governanceApi = {
     const res = await apiClient.post(API_ENDPOINTS.governance.reconcileWorkspaceBinding(programId, bindingId), { dryRun });
     return res.data.data;
   },
+  async createReconciliationRun(programId: string, bindingId: string, dryRun: boolean): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.reconciliationRuns(programId, bindingId), { dryRun });
+    return res.data.data;
+  },
+  async getReconciliationRun(programId: string, bindingId: string, runId: string): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.reconciliationRun(programId, bindingId, runId));
+    return res.data.data;
+  },
+  async resumeReconciliationRun(programId: string, bindingId: string, runId: string): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.resumeReconciliationRun(programId, bindingId, runId), {});
+    return res.data.data;
+  },
 
   async listSourceVersions(programId: string, sourceId: string): Promise<import('./types').GovernanceSourceVersion[]> {
     const res = await apiClient.get(API_ENDPOINTS.governance.sourceVersions(programId, sourceId));
@@ -122,10 +134,10 @@ export const governanceApi = {
     return res.data.data;
   },
   async transitionSourceVersion(programId: string, sourceId: string, versionId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', comment?: string): Promise<import('./types').GovernanceSourceVersion> {
-    const res = await apiClient.post(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/${action}`, { comment });
+    const res = await apiClient.post(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/${action}`, { commandId: crypto.randomUUID(), comment });
     return res.data.data;
   },
-  async updateSourceValidity(programId: string, sourceId: string, versionId: string, payload: import('./types').GovernanceSourceValidity): Promise<import('./types').GovernanceSourceVersion> {
+  async updateSourceValidity(programId: string, sourceId: string, versionId: string, payload: Partial<import('./types').GovernanceSourceValidity>): Promise<import('./types').GovernanceSourceVersion> {
     const res = await apiClient.patch(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/validity`, payload);
     return res.data.data;
   },

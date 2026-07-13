@@ -928,6 +928,7 @@ export interface AdminModelResponse {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  omitTemperature: boolean;
 }
 
 export interface AdminModelsListResponse {
@@ -957,6 +958,7 @@ export interface UpdateModelRequest {
   type?: string;
   types?: ModelType[];
   isActive?: boolean;
+  omitTemperature?: boolean;
 }
 
 export interface SyncModelsResponse {

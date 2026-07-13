@@ -17,6 +17,9 @@ export class GovernanceSourceVersion {
   @Prop({ trim: true, maxlength: 128, index: true }) contentHash?: string;
   @Prop({ trim: true, maxlength: 200 }) indexingTaskId?: string;
   @Prop({ trim: true, maxlength: 200 }) indexingRevisionId?: string;
+  @Prop({ trim: true, maxlength: 200, index: true }) indexingAttemptId?: string;
+  @Prop() indexingStartedAt?: Date;
+  @Prop() indexingCompletedAt?: Date;
   @Prop({ required: true }) capturedAt!: Date;
   @Prop() fetchedAt?: Date;
   @Prop({ type: Object, default: {} }) http!: { status?: number; etag?: string; lastModified?: string; contentType?: string };
@@ -25,10 +28,14 @@ export class GovernanceSourceVersion {
   @Prop({ type: Object, required: true }) validity!: SourceValidity;
   @Prop({ type: Object, default: {} }) extractedMetadata!: Record<string, unknown>;
   @Prop({ type: Types.ObjectId, ref: 'User' }) createdBy?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User' }) submittedForReviewBy?: Types.ObjectId;
+  @Prop() submittedForReviewAt?: Date;
   @Prop({ type: Types.ObjectId, ref: 'User' }) reviewedBy?: Types.ObjectId;
   @Prop() reviewedAt?: Date;
   @Prop({ type: Types.ObjectId, ref: 'User' }) approvedBy?: Types.ObjectId;
   @Prop() approvedAt?: Date;
+  @Prop({ type: Types.ObjectId, ref: 'User' }) publishedBy?: Types.ObjectId;
+  @Prop() publishedAt?: Date;
   @Prop({ trim: true, maxlength: 2000 }) reviewComment?: string;
   @Prop({ trim: true, maxlength: 200, unique: true, sparse: true }) originEventId?: string;
   @Prop({ trim: true, maxlength: 200 }) lastIntegrationEventId?: string;

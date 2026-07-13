@@ -38,6 +38,9 @@ export class AiModel extends Document {
   @Prop({ default: false })
   isDefault!: boolean; // Only one model can be default at a time
 
+  @Prop({ default: false })
+  omitTemperature!: boolean; // Do not forward temperature for providers that reject it
+
   createdAt!: Date;
   updatedAt!: Date;
 }

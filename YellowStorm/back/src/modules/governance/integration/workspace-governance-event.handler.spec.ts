@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { WorkspaceGovernanceEventHandler } from './workspace-governance-event.handler';
 import { WorkspaceIntegrationEvents } from '@modules/integration-events/contracts';
+import { GovernanceSourceFromWorkspaceFactory } from '../factories/governance-source-from-workspace.factory';
 
 describe('WorkspaceGovernanceEventHandler', () => {
   const bindingId = new Types.ObjectId();
@@ -20,7 +21,7 @@ describe('WorkspaceGovernanceEventHandler', () => {
     }) };
     const versions = { create: jest.fn(), updateTechnicalStatus: jest.fn() };
     const events = { append: jest.fn().mockResolvedValue(undefined) };
-    const handler = new WorkspaceGovernanceEventHandler({ register: jest.fn() } as never, { get: jest.fn().mockReturnValue(true) } as never, { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never, versions as never, events as never, sourceModel as never, versionModel as never);
+    const handler = new WorkspaceGovernanceEventHandler({ register: jest.fn() } as never, { get: jest.fn().mockReturnValue(true) } as never, { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never, versions as never, events as never, sourceModel as never, versionModel as never, new GovernanceSourceFromWorkspaceFactory());
 
     await handler.handle({ eventId: 'converted', eventType: WorkspaceIntegrationEvents.DocumentRegisteredV1, occurredAt: new Date(), payload: { ...payload, contentHash: 'hash-1' } } as never);
 

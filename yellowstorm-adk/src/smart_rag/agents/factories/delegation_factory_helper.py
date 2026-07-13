@@ -442,11 +442,8 @@ def create_search_agent_with_tools(
         agent_config.get("brain_documents", []),
     )
 
-    temp = (
-        agent_config.get("agent_params").get("temperature", 0.0)
-        if agent_config and agent_config.get("agent_params")
-        else 0.0
-    )
+    agent_params = agent_config.get("agent_params") or {}
+    temp = None if agent_params.get("omit_temperature") == "true" else agent_params.get("temperature", 0.0)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
             agent_config.get("agent_params").get("max_tokens", 30000)
@@ -594,11 +591,8 @@ def create_standard_agent_with_tools(
     citation_manager=None,
 ) -> Any:
     """Create standard agent with configured tools."""
-    temp = (
-        agent_config.get("agent_params").get("temperature", 0.0)
-        if agent_config and agent_config.get("agent_params")
-        else 0.0
-    )
+    agent_params = agent_config.get("agent_params") or {}
+    temp = None if agent_params.get("omit_temperature") == "true" else agent_params.get("temperature", 0.0)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
             agent_config.get("agent_params").get("max_tokens", 30000)

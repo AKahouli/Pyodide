@@ -132,6 +132,7 @@ export function ModelsPage() {
     providers: '',
     chefSlug: '',
     types: [] as ModelType[],
+    omitTemperature: false,
   });
 
   const fetchModels = async () => {
@@ -227,6 +228,7 @@ export function ModelsPage() {
       providers: model.providers.join(', '),
       chefSlug: model.chefSlug,
       types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
+      omitTemperature: model.omitTemperature,
     });
     setShowEditDialog(true);
   };
@@ -252,6 +254,7 @@ export function ModelsPage() {
         chefSlug,
         providers,
         types: editFormData.types,
+        omitTemperature: editFormData.omitTemperature,
       });
 
       setModels((prev) =>
@@ -547,6 +550,21 @@ export function ModelsPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {t('models.edit.fields.primaryProviderHelper')}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="omitTemperature" className="flex items-center gap-2 font-normal">
+                  <Checkbox
+                    id="omitTemperature"
+                    checked={editFormData.omitTemperature}
+                    onCheckedChange={(checked) =>
+                      setEditFormData((prev) => ({ ...prev, omitTemperature: checked === true }))
+                    }
+                  />
+                  {t('models.edit.fields.omitTemperature')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('models.edit.fields.omitTemperatureHelper')}
                 </p>
               </div>
             </div>
