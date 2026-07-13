@@ -146,6 +146,13 @@ export class GovernanceMembershipService {
     const membership = await this.membershipModel.findOne({ _id: new Types.ObjectId(membershipId), programId: new Types.ObjectId(programId) }).exec();
     if (!membership) throw new NotFoundException(ErrorCode.GOVERNANCE_MEMBERSHIP_NOT_FOUND);
     await this.assertCanManageMembership(actorId, programId, membership.scopeId?.toString());
+
+    if (await this.isProgramOwner(actorId, programId)) {
+      await this.membershipModel.deleteOne({ _id: membership._id }).exec();
+      this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.deleted', targetType: 'governance_membership', targetId: membershipId, metadata: { programId } });
+      return;
+    }
+
     membership.status = 'disabled';
     await membership.save();
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.disabled', targetType: 'governance_membership', targetId: membershipId, metadata: { programId, status: 'disabled' } });

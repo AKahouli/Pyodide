@@ -504,6 +504,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="SearchAgent",
                 toolkit=mock_toolkit,
                 task_order="1",
@@ -548,6 +549,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="ReportWriterAgent",
                 toolkit=None,
                 task_order="1",
@@ -584,6 +586,7 @@ class TestAgentRunner:
 
             result = await runner._handle_final_response(
                 event=mock_event,
+                agent_id="agent_123",
                 agent_name="TestAgent",
                 toolkit=None,
                 task_order="1",
@@ -594,7 +597,7 @@ class TestAgentRunner:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_handle_structured_tool_response_streams_sources_component(self):
+    async def test_handle_structured_tool_response_streams_sources_component_for_any_tool(self):
         mock_event_extractor = MagicMock()
         mock_message_transformer = MagicMock()
         mock_streaming_formatter = MagicMock()
@@ -608,7 +611,7 @@ class TestAgentRunner:
         )
 
         function_response = MagicMock()
-        function_response.name = "searchv2test_locate_answer_citations"
+        function_response.name = "web_directory_search"
         function_response.response = {
             "text": "Connector result",
             "sources": [{"title": "Q1 report", "url": "https://contoso.example/q1"}],
@@ -630,6 +633,55 @@ class TestAgentRunner:
             message_id="session_123",
         )
         queue.put.assert_called_once_with({"type": "sources"})
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_filters_and_deduplicates_sources(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        function_response = MagicMock()
+        function_response.name = "web_directory_search"
+        function_response.response = {
+            "sources": [
+                {"title": " First source ", "url": " https://example.com/a "},
+                {"title": "Duplicate", "url": "https://example.com/a"},
+                {"title": "Case-sensitive path", "url": "https://example.com/A"},
+                {"url": "https://example.com/b"},
+                {"title": "Unsafe", "url": "javascript:alert(1)"},
+                {"title": "Relative", "url": "/local"},
+                {"title": "Hostless", "url": "https://user@"},
+                {"title": "Port only", "url": "https://:443"},
+            ],
+        }
+        queue = AsyncMock()
+        runner.streaming_formatter.format_component_event.return_value = {"type": "sources"}
+
+        await runner._handle_structured_tool_response(function_response, "agent_123", "session_123", queue)
+
+        runner.streaming_formatter.format_component_event.assert_called_once_with(
+            agent_id="agent_123",
+            component_type="sources",
+            component_data={
+                "sources": [
+                    {"title": "First source", "url": "https://example.com/a"},
+                    {"title": "Case-sensitive path", "url": "https://example.com/A"},
+                    {"title": "example.com", "url": "https://example.com/b"},
+                ],
+            },
+            message_id="session_123",
+        )
+        queue.put.assert_called_once_with({"type": "sources"})
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_skips_invalid_sources(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        function_response = MagicMock()
+        function_response.name = "web_directory_search"
+        function_response.response = {"sources": [{"url": "data:text/plain,unsafe"}, {"url": "https:///missing-host"}]}
+        queue = AsyncMock()
+
+        await runner._handle_structured_tool_response(function_response, "agent_123", "session_123", queue)
+
+        runner.streaming_formatter.format_component_event.assert_not_called()
+        queue.put.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handle_structured_tool_response_registers_connector_citations_from_response(self):

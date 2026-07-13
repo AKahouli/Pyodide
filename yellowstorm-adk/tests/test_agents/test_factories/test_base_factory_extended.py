@@ -86,7 +86,7 @@ class TestBaseFactoryExtended:
             )
         dataviz.assert_called_once()
         assert isinstance(agent, Agent)
-        assert len(agent.tools) >= 3
+        assert len(agent.tools) == 2
 
     def test_create_agent_with_code_interpreter(self, agent_factory):
         with patch(
@@ -115,4 +115,4 @@ class TestBaseFactoryExtended:
                 html_design=True,
             )
         assert isinstance(agent, Agent)
-        assert len(agent.tools) >= 2
+        assert len(agent.tools) == 1

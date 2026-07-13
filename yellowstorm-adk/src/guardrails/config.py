@@ -1,9 +1,7 @@
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 import json
 import logging
-
-GuardrailMode = Literal["monitor", "balanced", "strict"]
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +11,6 @@ class PromptInjectionConfig:
     input_guardrail_enabled: bool = False
     output_guardrail_enabled: bool = False
     tool_call_guardrail_enabled: bool = False
-    mode: GuardrailMode = "balanced"
     input_classifier_prompt: str = ""
     output_classifier_prompt: str = ""
     tool_call_classifier_prompt: str = ""
@@ -38,13 +35,11 @@ class EffectiveGuardrailsConfig:
 
 def _normalize_prompt_injection(raw: dict[str, Any] | None, source: str) -> PromptInjectionConfig:
     raw = raw or {}
-    mode = raw.get("mode")
     legacy_prompt = str(raw.get("classifierPrompt") or "")
     return PromptInjectionConfig(
         input_guardrail_enabled=bool(raw.get("inputGuardrailEnabled", False)),
         output_guardrail_enabled=bool(raw.get("outputGuardrailEnabled", False)),
         tool_call_guardrail_enabled=bool(raw.get("toolCallGuardrailEnabled", False)),
-        mode=mode if mode in {"monitor", "balanced", "strict"} else "balanced",
         input_classifier_prompt=str(raw.get("inputClassifierPrompt") or legacy_prompt),
         output_classifier_prompt=str(raw.get("outputClassifierPrompt") or legacy_prompt),
         tool_call_classifier_prompt=str(raw.get("toolCallClassifierPrompt") or legacy_prompt),

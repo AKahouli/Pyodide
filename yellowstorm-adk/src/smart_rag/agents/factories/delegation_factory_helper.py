@@ -18,6 +18,16 @@ import json
 logger = get_logger("api.smart_rag.agents.factories.delegation_factory_helper")
 
 
+def _is_tool_enabled(tools_config: List[Any], tool_name: str) -> bool:
+    for tool in tools_config:
+        if isinstance(tool, str):
+            if tool == tool_name:
+                return True
+        elif tool.get("name") == tool_name and tool.get("enabled", True):
+            return True
+    return False
+
+
 def _build_connector_repo_fixed_params(
     connector_repo: Dict[str, str],
 ) -> Dict[str, str]:
@@ -487,10 +497,17 @@ def create_search_agent_with_tools(
         vectorstore_mcp_tool=True if "logical_search" in tools or "deep_search" in tools else False,
         logical_search_only=logical_search_only,
         deep_search=deep_search,
+        render_chart_tool=_is_tool_enabled(tools_config, "render_chart"),
     )
 
     # Store toolkit for source handling
     agent._toolkit = toolkit
+
+    from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
+    agent.tools.extend(resolve_native_tools([
+        tool for tool in tools_config
+        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+    ]))
 
     if connector_bindings:
         try:
@@ -662,6 +679,7 @@ def create_standard_agent_with_tools(
         prompt=enhanced_prompt,
         chatbot_name=chatbot_name,
         calculator_tool=True if "calculator" in tools else False,
+        render_chart_tool=_is_tool_enabled(agent_config.get("tools", []), "render_chart"),
         search_web_tool=True if "search_web" in tools else False,
         in_memory_tool=True if "in_memory" in tools else False,
         in_memory_tool_description=in_memory_tool_description,
@@ -689,6 +707,14 @@ def create_standard_agent_with_tools(
             _get_connector_repo(config),
         ),
     )
+
+    # Catalogue assignment controls native UI tools; metadata alone never makes a
+    # Python callable available to an agent.
+    from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
+    agent.tools.extend(resolve_native_tools([
+        tool for tool in agent_config.get("tools", [])
+        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+    ]))
 
     # Platform tools (save_file_to_workspace)
     agent_params = agent_config.get("agent_params") or {}

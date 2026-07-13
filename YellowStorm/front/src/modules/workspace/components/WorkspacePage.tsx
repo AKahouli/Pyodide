@@ -308,7 +308,7 @@ export function WorkspacePage() {
                       Recherche approfondie
                     </Label>
                     <Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label="Activer la recherche approfondie lors de l'indexation" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', deepSearch ? 'text-primary' : 'text-muted-foreground')}>{deepSearch ? 'ON' : 'OFF'}</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side='bottom' className='max-w-xs text-center'>

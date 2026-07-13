@@ -146,6 +146,18 @@ export function useDeleteGovernanceScope(programId: string | null) {
   });
 }
 
+export function useGovernanceSourceVersions(programId: string | null, sourceId: string | null) {
+  return useQuery({ queryKey: governanceQueryKeys.sourceVersions(programId ?? 'none', sourceId ?? 'none'), queryFn: () => governanceApi.listSourceVersions(programId ?? '', sourceId ?? ''), enabled: Boolean(programId && sourceId) });
+}
+
+export function useGovernanceSourceEvents(programId: string | null, sourceId: string | null) {
+  return useQuery({ queryKey: governanceQueryKeys.sourceEvents(programId ?? 'none', sourceId ?? 'none'), queryFn: () => governanceApi.listSourceEvents(programId ?? '', sourceId ?? ''), enabled: Boolean(programId && sourceId) });
+}
+
+export function useGovernanceWorkspaceBindings(programId: string | null) {
+  return useQuery({ queryKey: governanceQueryKeys.workspaceBindings(programId ?? 'none'), queryFn: () => governanceApi.listWorkspaceBindings(programId ?? ''), enabled: Boolean(programId) });
+}
+
 export function useCreateGovernanceSource(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -159,6 +171,28 @@ export function useCreateGovernanceSource(programId: string | null) {
       }
     },
   });
+}
+
+export function useCreateGovernanceWorkspaceBinding(programId: string | null, scopeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: import('../types').CreateGovernanceWorkspaceBindingPayload) => governanceApi.createWorkspaceBinding(programId ?? '', payload),
+    onSuccess: () => { if (programId) { void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) }); void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.workspaceBindings(programId) }); } },
+  });
+}
+
+export function useUpdateGovernanceWorkspaceBinding(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: ({ bindingId, payload }: { bindingId: string; payload: Parameters<typeof governanceApi.updateWorkspaceBinding>[2] }) => governanceApi.updateWorkspaceBinding(programId ?? '', bindingId, payload), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.workspaceBindings(programId) }); } });
+}
+
+export function useDeleteGovernanceWorkspaceBinding(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (bindingId: string) => governanceApi.deleteWorkspaceBinding(programId ?? '', bindingId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.workspaceBindings(programId) }); } });
+}
+
+export function useReconcileGovernanceWorkspaceBinding(programId: string | null) {
+  return useMutation({ mutationFn: ({ bindingId, dryRun }: { bindingId: string; dryRun: boolean }) => governanceApi.reconcileWorkspaceBinding(programId ?? '', bindingId, dryRun) });
 }
 
 export function useDeleteGovernanceSource(programId: string | null) {

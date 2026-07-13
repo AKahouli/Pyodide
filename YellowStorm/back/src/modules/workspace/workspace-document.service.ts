@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -54,6 +54,9 @@ import { WorkspaceUploadSettingsService } from '../system/workspace-upload-setti
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
+import { normalizeWorkspaceUrl } from './services/url-normalization';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -79,6 +82,7 @@ export class WorkspaceDocumentService {
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
 
@@ -452,7 +456,14 @@ export class WorkspaceDocumentService {
     document.status = DocumentStatus.COMPLETED;
     document.uploadedAt = new Date();
     document.url = document.path; // Canonical object key (no presigned signature)
+    document.metadata = {
+      ...document.metadata,
+      deepSearchRequested: String(Boolean(deepSearch)),
+      autoIndexRequested: 'true',
+    };
     await document.save();
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
     if (!document.isFolder) {
@@ -562,7 +573,13 @@ export class WorkspaceDocumentService {
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
       parentId: folderId ? new Types.ObjectId(folderId) : undefined,
+      metadata: {
+        deepSearchRequested: String(Boolean(deepSearch)),
+        autoIndexRequested: String(autoIndex),
+      },
     });
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
     // Trigger indexing (non-blocking), unless auto-indexation is disabled.
     if (autoIndex) {
@@ -668,8 +685,9 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     url: string,
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<DocumentResponse> {
-    const [doc] = await this.addLinks(workspaceId, userId, [url]);
+    const [doc] = await this.addLinks(workspaceId, userId, [url], options);
     return doc;
   }
 
@@ -683,6 +701,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -710,6 +729,11 @@ export class WorkspaceDocumentService {
         size: 0,
         type: DocumentType.URL,
         sourceUrl: url,
+        metadata: {
+          deepSearchRequested: String(Boolean(options?.deepSearch)),
+          autoIndexRequested: String(options?.autoIndex !== false),
+          normalizedSourceUrl: normalizeWorkspaceUrl(url),
+        },
         // The collection enforces a unique index on `path`. A link has no blob
         // yet at creation, so assign a unique placeholder (mirroring the folder
         // pattern above) to avoid an E11000 collision on { path: null } between
@@ -727,6 +751,7 @@ export class WorkspaceDocumentService {
       });
 
       this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+      await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.WebPageRegisteredV1, document);
       created.push({
         response: this.mapToResponse(document),
         id: document._id.toString(),
@@ -742,7 +767,7 @@ export class WorkspaceDocumentService {
     void (async () => {
       for (let idx = 0; idx < created.length; idx++) {
         const item = created[idx];
-        await this.convertAndStore(item.id, workspaceId, item.url, item.name).catch((err) => {
+        await this.convertAndStore(item.id, workspaceId, item.url, item.name, options).catch((err) => {
           this.logger.error('convertAndStore failed', {
             documentId: item.id,
             error: err instanceof Error ? err.message : 'Unknown error',
@@ -757,6 +782,34 @@ export class WorkspaceDocumentService {
     return created.map((c) => c.response);
   }
 
+  async checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<Record<string, unknown>> }> {
+    const normalized = urls.map((url) => ({ url, normalizedUrl: normalizeWorkspaceUrl(url) }));
+    const documents = await this.documentModel.find({
+      workspaceId: new Types.ObjectId(workspaceId),
+      type: DocumentType.URL,
+      sourceUrl: { $exists: true },
+    }).select('_id sourceUrl status indexingStatus').lean().exec();
+    const byNormalized = new Map(documents.map((doc) => [normalizeWorkspaceUrl(doc.sourceUrl ?? ''), doc]));
+    return {
+      results: normalized.map(({ url, normalizedUrl }) => {
+        const document = byNormalized.get(normalizedUrl);
+        return {
+          url,
+          normalizedUrl,
+          exists: Boolean(document),
+          documentId: document?._id?.toString(),
+          status: document?.status,
+          indexingStatus: document?.indexingStatus,
+        };
+      }),
+    };
+  }
+
+  private async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
+    if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
+    await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.sourceUrl ? normalizeWorkspaceUrl(document.sourceUrl) : undefined, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
+  }
+
   /**
    * Background step: convert the website to PDF, store it, mark the doc COMPLETED,
    * and queue indexing. On failure, mark the doc FAILED and notify the owner.
@@ -766,6 +819,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     url: string,
     filename: string,
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<void> {
     try {
       await this.assertUrlIsSafe(url);
@@ -788,7 +842,7 @@ export class WorkspaceDocumentService {
         customFileName: sanitizedName,
       });
 
-      await this.documentModel.findByIdAndUpdate(documentId, {
+      const completed = await this.documentModel.findByIdAndUpdate(documentId, {
         $set: {
           filename: uploaded.storedName,
           path: uploaded.blobPath,
@@ -798,10 +852,17 @@ export class WorkspaceDocumentService {
           status: DocumentStatus.COMPLETED,
           uploadedAt: new Date(),
         },
-      });
+      }, { new: true });
+
+      if (completed) {
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, completed);
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, completed);
+      }
 
       await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
-      await this.indexingService.queueDocument(documentId);
+      if (options?.autoIndex !== false) {
+        await this.indexingService.queueDocument(documentId, options?.deepSearch);
+      }
 
       this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
     } catch (error) {
@@ -1246,7 +1307,14 @@ export class WorkspaceDocumentService {
         document.status = DocumentStatus.COMPLETED;
         document.uploadedAt = new Date();
         document.url = document.path;
+        document.metadata = {
+          ...document.metadata,
+          deepSearchRequested: String(Boolean(deepSearch)),
+          autoIndexRequested: String(autoIndex),
+        };
         await document.save();
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
         // Trigger indexing (non-blocking). Skip folders — nothing to index —
         // and skip entirely when auto-indexation is disabled by the uploader.
@@ -1593,6 +1661,9 @@ export class WorkspaceDocumentService {
       });
     }
 
+    // Preserve the Governance source history before the document row disappears.
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
+
     // Delete document record
     await this.documentModel.deleteOne({ _id: documentId });
 
@@ -1677,6 +1748,11 @@ export class WorkspaceDocumentService {
       (doc) => doc.status === DocumentStatus.COMPLETED,
     );
     const totalSize = completedDocuments.reduce((sum, doc) => sum + doc.size, 0);
+
+    // Preserve Governance source history before removing document rows.
+    for (const document of documents) {
+      if (!document.isFolder) await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
+    }
 
     // Delete all document records
     await this.documentModel.deleteMany({
@@ -2088,6 +2164,8 @@ export class WorkspaceDocumentService {
             });
           });
         }
+
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, item);
 
         deletedDocuments++;
       }

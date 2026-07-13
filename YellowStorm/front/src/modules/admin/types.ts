@@ -17,13 +17,10 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
-export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
-
 export interface PromptInjectionGuardrailsConfig {
   inputGuardrailEnabled: boolean;
   outputGuardrailEnabled: boolean;
   toolCallGuardrailEnabled: boolean;
-  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
   toolCallClassifierPrompt: string;
@@ -928,6 +925,7 @@ export interface AdminModelResponse {
   litellmModel: string;
   providers: string[];
   type: string;
+  types: string[];
   isActive: boolean;
   isDefault: boolean;
 }
@@ -957,6 +955,7 @@ export interface UpdateModelRequest {
   chefSlug?: string;
   providers?: string[];
   type?: string;
+  types?: ModelType[];
   isActive?: boolean;
 }
 

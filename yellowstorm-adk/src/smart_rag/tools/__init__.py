@@ -20,6 +20,7 @@ from .search.web_search import WebSearchTool
 from .infrastructure.common_helpers import CommonHelpers
 from .search.toolkit import SearchToolkit
 from .utilities.render_chart import render_chart
+from .utilities.present_choices import present_choices
 
 __all__ = [
     'transform_id',
@@ -38,7 +39,8 @@ __all__ = [
     'WebSearchTool',
     'CommonHelpers',
     'SearchToolkit',
-    'render_chart'
+    'render_chart',
+    'present_choices'
 ]
 
 __version__ = "1.0.0"

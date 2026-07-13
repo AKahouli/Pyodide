@@ -51,6 +51,7 @@ export interface ModelResponse {
   litellmModel: string;
   providers: string[];
   type: string;
+  types: string[];
   isActive: boolean;
   isDefault: boolean;
 }

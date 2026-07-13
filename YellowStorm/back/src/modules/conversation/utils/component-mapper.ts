@@ -1,4 +1,5 @@
 import { ComponentType } from '../interfaces/message.interface';
+import { normalizeChoiceComponentData } from './choice-component-normalizer';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
@@ -17,6 +18,7 @@ const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> =
   { field: 'citation', type: 'citation' },
   { field: 'tool_info', type: 'toolInfo' },
   { field: 'chain_of_thought', type: 'chainOfThought' },
+  { field: 'choice', type: 'choice' },
 ];
 
 const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
@@ -39,6 +41,7 @@ const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   toolInfo: 'toolInfo',
   chain_of_thought: 'chainOfThought',
   chainOfThought: 'chainOfThought',
+  choice: 'choice',
 };
 
 function normalizeLegacyType(raw: string): ComponentType {
@@ -88,6 +91,8 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
       );
     case 'chainOfThought':
       return Array.isArray(payload.steps) && payload.steps.length > 0;
+    case 'choice':
+      return normalizeChoiceComponentData(payload) !== null;
     default:
       return false;
   }
@@ -131,7 +136,12 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
 
   if (typeof comp.type === 'string' && comp.data && typeof comp.data === 'object') {
     const type = normalizeLegacyType(comp.type);
-    return { type, data: { ...(comp.data as Record<string, unknown>) } };
+    const data = comp.data as Record<string, unknown>;
+    if (type === 'choice') {
+      const normalized = normalizeChoiceComponentData(data);
+      return normalized ? { type, data: normalized } : { type: 'text', data: { content: '' } };
+    }
+    return { type, data: { ...data } };
   }
 
   const type = getComponentType(comp);
@@ -350,6 +360,10 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')),
         },
       };
+    case 'choice': {
+      const normalized = normalizeChoiceComponentData(comp.choice);
+      return normalized ? { type, data: normalized } : { type: 'text', data: { content: '' } };
+    }
     default:
       return { type: 'text', data: { content: '' } };
   }

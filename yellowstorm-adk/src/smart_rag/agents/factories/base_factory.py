@@ -119,6 +119,7 @@ class AgentFactory:
         prompt: str,
         chatbot_name: str,
         calculator_tool: bool = False,
+        render_chart_tool: bool = False,
         search_web_tool: bool = False,
         in_memory_tool: bool = False,
         in_memory_tool_description: Optional[str] = None,
@@ -154,6 +155,7 @@ class AgentFactory:
             prompt (str): Instruction prompt for the agent.
             chatbot_name (str): Name of the chatbot model to use.
             calculator_tool (bool): Whether to include a calculator tool.
+            render_chart_tool (bool): Whether to include the chart rendering tool.
             search_web_tool (bool): Whether to include a web search tool.
             in_memory_tool (bool): Whether to include in-memory document extraction tool for accessing complete file context.
             in_memory_tool_description (Optional[str]): Custom description for the in-memory tool functionality.
@@ -191,7 +193,8 @@ class AgentFactory:
         if calculator_tool:
             tools.append(calculator)
 
-        tools.append(render_chart)
+        if render_chart_tool:
+            tools.append(render_chart)
 
         # Add HTML diagram tool if requested
         if html_design:
@@ -553,6 +556,7 @@ class AgentFactory:
         vectorstore_mcp_tool: bool = False,
         logical_search_only: bool = False,
         deep_search: bool = False,
+        render_chart_tool: bool = False,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
         if logical_search_only:
@@ -569,6 +573,9 @@ class AgentFactory:
             citation_manager=citation_manager,
             user_id=user_id,
         )
+
+        if render_chart_tool:
+            tools.append(render_chart)
 
         tree_info = ""
         if doc_tree:

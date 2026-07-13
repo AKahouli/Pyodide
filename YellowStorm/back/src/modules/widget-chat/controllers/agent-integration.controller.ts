@@ -9,6 +9,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WidgetTokenGuard } from '../guards/widget-token.guard';
 import { WidgetChatService } from '../services/widget-chat.service';
 import { WidgetSendMessageDto } from '../dto/widget-chat.dto';
+import { WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
 
 interface IntegrationRequest extends Request {
   widgetTokenHash?: string;
@@ -28,6 +29,7 @@ export class AgentIntegrationController {
   @Post(':agentId/messages')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('rest')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 15, windowMs: 60000, keyPrefix: 'agent-integration-message' })
   async sendMessage(
@@ -52,6 +54,7 @@ export class AgentIntegrationController {
         ip: req.ip,
         userAgent: req.headers['user-agent'],
         origin: req.headers.origin,
+        clientContext: dto.clientContext,
       },
     });
   }

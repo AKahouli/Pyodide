@@ -38,7 +38,7 @@ export class GovernanceMembershipController {
   @Delete(':membershipId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions([Permissions.GOVERNANCE_MEMBERSHIPS_MANAGE, Permissions.GOVERNANCE_ALL], 'any')
-  @ApiOperation({ summary: 'Disable a governance membership' })
+  @ApiOperation({ summary: 'Remove a governance membership; program owners delete definitively and delegated administrators disable it' })
   async disable(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('membershipId') membershipId: string): Promise<void> {
     return this.membershipService.disable(user._id.toString(), user.email, programId, membershipId);
   }

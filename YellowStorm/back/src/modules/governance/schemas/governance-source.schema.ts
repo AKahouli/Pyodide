@@ -32,6 +32,18 @@ export class GovernanceSource extends Document {
   @Prop({ type: Types.ObjectId, ref: 'WorkspaceDocument' })
   documentId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion' })
+  currentCandidateVersionId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion' })
+  currentPublishedVersionId?: Types.ObjectId;
+
+  @Prop({ type: Number, default: 0, min: 0 })
+  versionSequence!: number;
+
+  @Prop({ trim: true, maxlength: 1024, index: true })
+  originKey?: string;
+
   @Prop({ type: String, enum: ['draft', 'to_review', 'validated', 'published', 'expired', 'rejected'], default: 'draft', index: true })
   status!: GovernanceSourceStatus;
 
@@ -65,6 +77,7 @@ export const GovernanceSourceSchema = SchemaFactory.createForClass(GovernanceSou
 GovernanceSourceSchema.index({ programId: 1, visibility: 1, status: 1 });
 GovernanceSourceSchema.index({ programId: 1, scopeIds: 1, status: 1 });
 GovernanceSourceSchema.index({ nextReviewAt: 1, status: 1 });
+GovernanceSourceSchema.index({ programId: 1, originKey: 1 }, { unique: true, partialFilterExpression: { originKey: { $type: 'string' } } });
 
 GovernanceSourceSchema.set('toJSON', {
   virtuals: true,

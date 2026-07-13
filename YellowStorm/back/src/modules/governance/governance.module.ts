@@ -32,8 +32,22 @@ import { GovernanceDeployment, GovernanceDeploymentSchema } from './schemas/gove
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionSchema } from './schemas/governance-deployment-revision.schema';
 import { GovernanceDryRun, GovernanceDryRunSchema } from './schemas/governance-dry-run.schema';
 import { GovernanceMetric, GovernanceMetricSchema } from './schemas/governance-metric.schema';
+import { GovernanceSourceVersion, GovernanceSourceVersionSchema } from './schemas/governance-source-version.schema';
+import { GovernanceSourceEvent, GovernanceSourceEventSchema } from './schemas/governance-source-event.schema';
+import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingSchema } from './schemas/governance-workspace-binding.schema';
+import { GovernanceWorkspaceBindingController } from './controllers/governance-workspace-binding.controller';
+import { GovernanceWorkspaceBindingService } from './services/governance-workspace-binding.service';
+import { WorkspaceGovernanceEventHandler } from './integration/workspace-governance-event.handler';
+import { GovernanceSourceVersionService } from './services/governance-source-version.service';
+import { GovernanceSourceTransitionService } from './services/governance-source-transition.service';
+import { GovernanceSourceEventService } from './services/governance-source-event.service';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
 import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
+import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
+import { WorkspaceDoc, WorkspaceDocumentSchema } from '@modules/workspace/schemas/workspace-document.schema';
+import { Workspace, WorkspaceSchema } from '@modules/workspace/schemas/workspace.schema';
+import { WorkspaceShare, WorkspaceShareSchema } from '@modules/workspace/schemas/workspace-share.schema';
+import { GovernanceWorkspaceReconciliationService } from './services/governance-workspace-reconciliation.service';
 
 @Module({
   imports: [
@@ -41,6 +55,9 @@ import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
       { name: GovernanceProgram.name, schema: GovernanceProgramSchema },
       { name: GovernanceScope.name, schema: GovernanceScopeSchema },
       { name: GovernanceSource.name, schema: GovernanceSourceSchema },
+      { name: GovernanceSourceVersion.name, schema: GovernanceSourceVersionSchema },
+      { name: GovernanceSourceEvent.name, schema: GovernanceSourceEventSchema },
+      { name: GovernanceWorkspaceBinding.name, schema: GovernanceWorkspaceBindingSchema },
       { name: GovernanceMembership.name, schema: GovernanceMembershipSchema },
       { name: GovernanceDeployment.name, schema: GovernanceDeploymentSchema },
       { name: GovernanceDeploymentRevision.name, schema: GovernanceDeploymentRevisionSchema },
@@ -48,6 +65,9 @@ import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
       { name: GovernanceMetric.name, schema: GovernanceMetricSchema },
       { name: GovernancePublicationAttempt.name, schema: GovernancePublicationAttemptSchema },
       { name: Agent.name, schema: AgentSchema },
+      { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
+      { name: Workspace.name, schema: WorkspaceSchema },
+      { name: WorkspaceShare.name, schema: WorkspaceShareSchema },
     ]),
     AuthorizationModule,
     ConversationModule,
@@ -56,9 +76,10 @@ import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
     TelegramModule,
     UserGroupModule,
     LoggerModule,
+    IntegrationEventsModule,
   ],
-  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController],
-  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService],
+  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController],
+  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService],
   exports: [GovernanceProgramService, GovernanceScopeService, GovernanceSourceService, GovernanceAccessService, GovernanceMetricService],
 })
 export class GovernanceModule {}

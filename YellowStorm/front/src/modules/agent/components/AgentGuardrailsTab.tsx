@@ -5,7 +5,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PromptInjectionGuardrailsConfig } from '../types';
@@ -58,18 +57,6 @@ export function AgentGuardrailsTab({ value, disabled, forceActivation, onChange 
           disabled
           onCheckedChange={(checked) => setField('toolCallGuardrailEnabled', checked)}
         />
-      </div>
-      <div className="space-y-2">
-        <Label>{t('createEdit.guardrails.mode')}</Label>
-        <p className="text-xs text-muted-foreground">{t('createEdit.guardrails.modeDescription')}</p>
-        <Select value={value.mode} disabled={disabled} onValueChange={(mode) => setField('mode', mode as PromptInjectionGuardrailsConfig['mode'])}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="monitor">{t('createEdit.guardrails.modeMonitor')}</SelectItem>
-            <SelectItem value="balanced">{t('createEdit.guardrails.modeBalanced')}</SelectItem>
-            <SelectItem value="strict">{t('createEdit.guardrails.modeStrict')}</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
       <div className="space-y-2">
         <Label htmlFor="agent-guardrails-block-message">{t('createEdit.guardrails.blockMessage')}</Label>

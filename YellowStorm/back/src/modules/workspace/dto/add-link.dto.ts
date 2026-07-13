@@ -1,6 +1,14 @@
-import { IsUrl } from 'class-validator';
+import { IsBoolean, IsOptional, IsUrl } from 'class-validator';
 
 export class AddLinkDto {
   @IsUrl({ require_protocol: true }, { message: 'url must be a valid http(s) URL' })
   url!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  autoIndex?: boolean;
 }

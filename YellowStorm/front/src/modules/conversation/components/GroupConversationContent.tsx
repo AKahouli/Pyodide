@@ -12,10 +12,12 @@ import { BranchNavigation } from './BranchNavigation';
 import { LoadingIndicator } from './LoadingIndicator';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
-import type { Message } from '../types';
+import type { ChoiceInteractionMetadata, Message } from '../types';
 import { ParentMessagePreview } from './ParentMessagePreview';
 import { MessageAvatar } from './MessageAvatar';
 import { cn } from '@/lib/utils';
+import { buildChoiceInteractionIndex } from '../choice-interactions';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 /** Find the scrollable ancestor element */
 function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -72,6 +74,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   conversationId,
   currentUserId,
   allMessages,
+  choiceInteractions,
 }: { 
   message: Message; 
   isLastAiMessage: boolean; 
@@ -79,15 +82,20 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   conversationId: string;
   currentUserId?: string;
   allMessages: Message[];
+  choiceInteractions: Map<string, ChoiceInteractionMetadata>;
 }) {
+  const sendMessage = useConversationStore((s) => s.sendMessage);
+  const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
+    await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
+  }, [conversationId, message.id, sendMessage]);
   const chatMessage = useMemo(() => {
     const chatMsg = messageToChat(message);
     // Force the role to 'assistant' for other members' messages so ChatMessageBubble renders them on the left
     if (message.conversationType === 'user' && message.senderId && currentUserId && message.senderId !== currentUserId) {
-      return { ...chatMsg, role: 'assistant' } as const;
+      return { ...chatMsg, role: 'assistant', onComponentAction: handleComponentAction, choiceInteractions } as const;
     }
-    return chatMsg;
-  }, [message, currentUserId]);
+    return { ...chatMsg, onComponentAction: handleComponentAction, choiceInteractions } as const;
+  }, [message, currentUserId, handleComponentAction, choiceInteractions]);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -164,7 +172,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
             {isCurrentUser ? (
               <>
                 <div className="flex justify-end min-w-0">
-                  <ChatMessageBubble message={chatMessage} />
+                  <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />
                 </div>
                 <MessageAvatar message={message} currentConversation={currentConversation} />
               </>
@@ -174,6 +182,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   <ChatMessageBubble 
                     message={chatMessage} 
+                    isStreaming={isStreaming}
                     className="[&>div:first-child]:w-auto [&>div:first-child]:min-w-0"
                   />
                 </div>
@@ -226,6 +235,8 @@ export function GroupConversationContent() {
   const fetchBranches = useConversationStore((s) => s.fetchBranches);
   const branchCache = useConversationStore((s) => s.branchCache);
   const mentionNavigationLock = useConversationStore((s) => s.mentionNavigationLock);
+  const sendMessage = useConversationStore((s) => s.sendMessage);
+  const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -311,8 +322,12 @@ export function GroupConversationContent() {
       role: 'assistant',
       conversationType: 'ai',
       content: parts,
+      onComponentAction: async (action: ChoiceComponentAction) => {
+        if (!currentConversationId) throw new Error('No active conversation');
+        await sendMessage(currentConversationId, { content: action.submitText, interaction: { ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) } });
+      },
     } as const;
-  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId, streamingMessageId]);
+  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId, streamingMessageId, sendMessage]);
 
   return (
     <ChatConversation className='flex-1 min-h-0'>
@@ -339,6 +354,7 @@ export function GroupConversationContent() {
                 conversationId={currentConversationId!} 
                 currentUserId={user?.id}
                 allMessages={messages}
+                choiceInteractions={choiceInteractions}
               />
             ))
           )}

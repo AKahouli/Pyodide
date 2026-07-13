@@ -27,6 +27,18 @@ describe('AgentService connector skill inheritance', () => {
     updatedAt: new Date(),
   });
 
+  const defaultGuardrails = {
+    promptInjection: {
+      inputGuardrailEnabled: false,
+      outputGuardrailEnabled: false,
+      toolCallGuardrailEnabled: false,
+      inputClassifierPrompt: 'input policy',
+      outputClassifierPrompt: 'output policy',
+      toolCallClassifierPrompt: 'tool policy',
+      blockMessage: 'I cannot follow this instruction.',
+    },
+  };
+
   const createService = () => {
     const agentModel = {
       find: jest.fn(),
@@ -89,7 +101,6 @@ describe('AgentService connector skill inheritance', () => {
           inputGuardrailEnabled: false,
           outputGuardrailEnabled: false,
           toolCallGuardrailEnabled: false,
-          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
           toolCallClassifierPrompt: 'tool policy',
@@ -139,6 +150,19 @@ describe('AgentService connector skill inheritance', () => {
     });
   };
 
+  it('preserves deployment modes for widget-only updates', () => {
+    const { service } = createService();
+
+    const settings = (service as any).normalizeDeploymentSettings(
+      { widget: { layout: { desktopWidth: 480, desktopHeight: 720 } } },
+      { embedEnabled: true, restEnabled: true, widget: {} },
+    );
+
+    expect(settings.embedEnabled).toBe(true);
+    expect(settings.restEnabled).toBe(true);
+    expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
+  });
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService } = createService();
     const streamAgent: IAgentForStream = {
@@ -155,18 +179,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],
@@ -229,18 +242,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
@@ -300,18 +302,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],

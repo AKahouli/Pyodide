@@ -106,6 +106,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
           deploymentSettings: data.deploymentSettings,
+          guardrails: data.guardrails,
         };
         if (editingAgent) {
           await updateAgent(editingAgent.id, payload);

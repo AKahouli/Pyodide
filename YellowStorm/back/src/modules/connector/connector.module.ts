@@ -32,6 +32,7 @@ import { UserModule } from '../user/user.module';
 import { LoggerModule } from '../logger';
 import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
+import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     ConnectorCredentialService,
     ConnectorAuthServiceImpl,
     ConnectorTransferService,
+    ConnectorPlaybookBindingSyncService,
     M365TransferAdapter,
     ConnectorUserService,
     {

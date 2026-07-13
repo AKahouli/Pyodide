@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Body, Query, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { SkipMaintenance } from '@modules/system/decorators/skip-maintenance.decorator';
@@ -8,6 +8,7 @@ import { LoggerService } from '@modules/logger';
 import { WidgetTokenGuard } from '../guards/widget-token.guard';
 import { WidgetChatService } from '../services/widget-chat.service';
 import { WidgetSendMessageDto, WidgetCreateSessionDto, WidgetCitationUrlDto } from '../dto/widget-chat.dto';
+import { WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
 
 interface WidgetRequest extends Request {
   widgetTokenHash?: string;
@@ -28,6 +29,7 @@ export class WidgetChatController {
   @Post('session')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 30, windowMs: 60000, keyPrefix: 'widget-session' })
   async createSession(@Body() dto: WidgetCreateSessionDto, @Req() req: WidgetRequest) {
@@ -35,7 +37,8 @@ export class WidgetChatController {
       req.widgetTokenHash!,
       req.widgetAgentId!,
       dto.visitorId,
-      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin },
+      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin, clientContext: dto.clientContext },
+      req.widgetAgent,
     );
     this.logger.log('Widget POST /session', {
       sessionId: session.id,
@@ -48,6 +51,7 @@ export class WidgetChatController {
   @Post('session/reset')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 15, windowMs: 60000, keyPrefix: 'widget-session-reset' })
   async resetSession(@Body() dto: WidgetCreateSessionDto, @Req() req: WidgetRequest) {
@@ -55,7 +59,8 @@ export class WidgetChatController {
       req.widgetTokenHash!,
       req.widgetAgentId!,
       dto.visitorId,
-      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin },
+      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin, clientContext: dto.clientContext },
+      req.widgetAgent,
     );
     this.logger.log('Widget POST /session/reset', {
       sessionId: result.sessionId,
@@ -68,6 +73,7 @@ export class WidgetChatController {
   @Post('chat')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 20, windowMs: 60000, keyPrefix: 'widget-chat' })
   async chat(@Body() dto: WidgetSendMessageDto, @Req() req: WidgetRequest) {
@@ -82,7 +88,8 @@ export class WidgetChatController {
       req.widgetTokenHash!,
       req.widgetAgentId!,
       dto.visitorId || 'anonymous',
-      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin },
+      { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin, clientContext: dto.clientContext },
+      req.widgetAgent,
     );
     const result = await this.widgetChatService.handleMessage({
       tokenHash: req.widgetTokenHash!,
@@ -90,7 +97,8 @@ export class WidgetChatController {
       sessionId: session.id,
       message: dto.message,
       agent: req.widgetAgent,
-      metadata: { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin },
+      metadata: { ip: req.ip, userAgent: req.headers['user-agent'], origin: req.headers.origin, clientContext: dto.clientContext },
+      interaction: dto.interaction ? { ...dto.interaction } : undefined,
     });
 
     this.logger.log('Widget POST /chat completed', {
@@ -103,6 +111,7 @@ export class WidgetChatController {
   @Post('citation-url')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 60, windowMs: 60000, keyPrefix: 'widget-citation-url' })
   async citationUrl(@Body() dto: WidgetCitationUrlDto, @Req() req: WidgetRequest) {
@@ -123,19 +132,24 @@ export class WidgetChatController {
   @Get('stream')
   @Public()
   @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
   @UseGuards(WidgetTokenGuard)
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'widget-stream' })
-  stream(@Query('sessionId') sessionId: string, @Req() req: Request, @Res() res: Response) {
+  async stream(@Query('sessionId') sessionId: string, @Req() req: WidgetRequest, @Res() res: Response): Promise<void> {
     this.logger.log('Widget GET /stream', {
       sessionId: sessionId || '(empty)',
       origin: req.headers.origin,
     });
 
-    const observable = this.widgetChatService.getStream(sessionId);
+    const observable = await this.widgetChatService.getAuthorizedStream({
+      sessionId,
+      tokenHash: req.widgetTokenHash!,
+      agentId: req.widgetAgentId!,
+    });
 
     if (!observable) {
       this.logger.warn('Widget GET /stream rejected: invalid sessionId', { sessionId });
-      res.status(404).json({ success: false, error: { code: 'ERR_3305', message: 'Session stream not found' } });
+      res.status(404).json({ success: false, error: { code: 'ERR_3405', message: 'Session stream not found' } });
       return;
     }
 
@@ -181,7 +195,16 @@ export class WidgetChatController {
     req.on('close', () => {
       this.logger.debug('Widget SSE client disconnected', { sessionId });
       subscription.unsubscribe();
-      this.widgetChatService.removeStream(sessionId);
     });
+  }
+
+  @Get('config')
+  @Public()
+  @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
+  @UseGuards(WidgetTokenGuard)
+  @RateLimit({ limit: 60, windowMs: 60000, keyPrefix: 'widget-config' })
+  config(@Req() req: WidgetRequest) {
+    return this.widgetChatService.getPublicConfig(req.widgetAgent, req.widgetAgentId!);
   }
 }

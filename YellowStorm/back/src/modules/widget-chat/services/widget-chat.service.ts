@@ -6,7 +6,7 @@ import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { Observable } from 'rxjs';
-import { ServiceUnavailableException, NotFoundException } from '@modules/exceptions';
+import { ServiceUnavailableException, NotFoundException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { StreamService } from '@modules/conversation/services/stream.service';
 import { DocumentService } from '@modules/document/document.service';
@@ -18,7 +18,8 @@ import { WidgetSession, WidgetSessionDocument } from '../schemas/widget-session.
 import { WidgetMessage, WidgetMessageDocument } from '../schemas/widget-message.schema';
 import { AgentService } from '@modules/agent/agent.service';
 import { ModelsService } from '@modules/models/models.service';
-import { IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
+import { AgentWidgetSettings, IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
+import { normalizeWidgetSettings } from '@modules/agent/constants/widget-default-settings';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
 import { extractComponentData, aggregateTextFromComponents } from '@modules/conversation/utils/component-mapper';
 import {
@@ -110,7 +111,24 @@ export class WidgetChatService {
 
   // ─── Session ─────────────────────────────────────────────────
 
-  async createOrGetSession(tokenHash: string, agentId: string, visitorId: string, metadata: Record<string, unknown>): Promise<{ id: string }> {
+  getPublicConfig(agent: { _id?: unknown; deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } }, agentId: string): {
+    agentId: string;
+    widget: AgentWidgetSettings;
+  } {
+    return {
+      agentId,
+      widget: normalizeWidgetSettings(agent.deploymentSettings?.widget),
+    };
+  }
+
+  async createOrGetSession(
+    tokenHash: string,
+    agentId: string,
+    visitorId: string,
+    metadata: Record<string, unknown>,
+    agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
+    channel: 'web_widget' | 'rest_api' = 'web_widget',
+  ): Promise<{ id: string }> {
     let session = await this.widgetSessionModel.findOne({ tokenHash, visitorId, status: 'active' }).lean().exec() as any;
     if (session) {
       const sessionId = session._id.toString();
@@ -118,7 +136,24 @@ export class WidgetChatService {
       return { id: sessionId };
     }
 
-    session = await this.widgetSessionModel.create({ tokenHash, agentId, visitorId, metadata });
+    const clientContext = this.normalizeClientContext(metadata.clientContext);
+    const widgetSettings = normalizeWidgetSettings(agent?.deploymentSettings?.widget);
+    const appSource = {
+      channel,
+      appSourceName: widgetSettings.appSourceName,
+      sourceInstanceId: tokenHash.slice(0, 12),
+      origin: clientContext.origin || (metadata.origin as string | undefined),
+      pageUrl: clientContext.pageUrl,
+    };
+    session = await this.widgetSessionModel.create({
+      tokenHash,
+      agentId,
+      visitorId,
+      metadata,
+      clientContext,
+      appSource,
+      geo: { status: 'unavailable', reason: 'provider_not_configured' },
+    });
     const sessionId = (session as any)._id.toString();
     this.logger.log('Widget session created', { sessionId, agentId, visitorId });
     return { id: sessionId };
@@ -130,6 +165,7 @@ export class WidgetChatService {
     agentId: string,
     visitorId: string,
     metadata: Record<string, unknown>,
+    agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
   ): Promise<{ sessionId: string }> {
     const active = await this.widgetSessionModel
       .findOne({ tokenHash, visitorId, status: 'active' })
@@ -143,8 +179,20 @@ export class WidgetChatService {
       this.logger.log('Widget session closed for reset', { previousSessionId, agentId, visitorId });
     }
 
-    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata, agent);
     return { sessionId: session.id };
+  }
+
+  private normalizeClientContext(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object') return {};
+    const source = value as Record<string, unknown>;
+    return ['pageUrl', 'origin', 'referrer', 'locale', 'timezone'].reduce<Record<string, string>>((acc, key) => {
+      const raw = source[key];
+      if (typeof raw === 'string' && raw.trim()) {
+        acc[key] = raw.trim();
+      }
+      return acc;
+    }, {});
   }
 
   // ─── Citation URL ───────────────────────────────────────────
@@ -330,8 +378,9 @@ export class WidgetChatService {
     message: string;
     agent: any;
     metadata: Record<string, unknown>;
+    interaction?: Record<string, unknown>;
   }): Promise<{ messageId: string; sessionId: string }> {
-    const { tokenHash, agentId, sessionId, message, agent, metadata } = params;
+    const { tokenHash, agentId, sessionId, message, agent, metadata, interaction } = params;
 
     this.logger.log('Widget chat message received', {
       sessionId,
@@ -340,41 +389,64 @@ export class WidgetChatService {
       origin: metadata.origin,
     });
 
-    this.sseRegistry.ensureSession(sessionId);
+    if (!this.sseRegistry.tryStartRun(sessionId)) {
+      throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'A response is already streaming for this widget session');
+    }
 
-    const userMsg = await this.widgetMessageModel.create({
-      sessionId,
-      tokenHash,
-      agentId,
-      role: 'user',
-      content: message,
-    });
+    try {
+      const userMsg = await this.widgetMessageModel.create({
+        sessionId,
+        tokenHash,
+        agentId,
+        role: 'user',
+        content: message,
+        interaction,
+      });
 
-    await this.widgetSessionModel.findByIdAndUpdate(sessionId, {
-      $inc: { messageCount: 1 },
-    }).exec();
+      await this.widgetSessionModel.findByIdAndUpdate(sessionId, {
+        $inc: { messageCount: 1 },
+      }).exec();
 
-    await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
+      await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
 
-    this.executeStream(sessionId, agentId, tokenHash, message, agent).catch((err) => {
-      this.logger.error('Widget stream failed', { sessionId, error: (err as Error).message });
-      this.sseRegistry.emit(sessionId, { type: 'stream_error', data: { message: 'AI service error' } });
-      this.sseRegistry.cleanup(sessionId);
-    });
+      this.executeStream(sessionId, agentId, tokenHash, message, agent)
+        .catch((err) => {
+          this.logger.error('Widget stream failed', { sessionId, error: (err as Error).message });
+          this.sseRegistry.emit(sessionId, { type: 'stream_error', data: { message: 'AI service error' } });
+        })
+        .finally(() => this.sseRegistry.finishRun(sessionId));
 
-    this.logger.log('Widget chat accepted, stream starting', { sessionId, messageId: userMsg.id });
-    return { messageId: userMsg.id, sessionId };
+      this.logger.log('Widget chat accepted, stream starting', { sessionId, messageId: userMsg.id });
+      return { messageId: userMsg.id, sessionId };
+    } catch (error) {
+      this.sseRegistry.finishRun(sessionId);
+      throw error;
+    }
   }
 
-  getStream(sessionId: string): Observable<{ type: string; data: Record<string, unknown> }> | null {
-    if (!sessionId) {
-      this.logger.warn('Widget SSE rejected: empty sessionId');
+  async getAuthorizedStream(input: {
+    sessionId: string;
+    tokenHash: string;
+    agentId: string;
+  }): Promise<Observable<{ type: string; data: Record<string, unknown> }> | null> {
+    if (!Types.ObjectId.isValid(input.sessionId)) {
+      this.logger.warn('Widget SSE rejected: invalid sessionId');
       return null;
     }
-    this.sseRegistry.ensureSession(sessionId);
+    const session = await this.widgetSessionModel.findOne({
+      _id: input.sessionId,
+      tokenHash: input.tokenHash,
+      agentId: input.agentId,
+      status: 'active',
+    }).select('_id').lean().exec();
+    if (!session) {
+      this.logger.warn('Widget SSE rejected: unauthorized session', { sessionId: input.sessionId, agentId: input.agentId });
+      return null;
+    }
+    this.sseRegistry.ensureSession(input.sessionId);
     const heartbeatMs = this.configService.get<number>('conversation.sseHeartbeatMs', 15000);
-    this.logger.log('Widget SSE stream opened', { sessionId });
-    return this.sseRegistry.observe(sessionId, heartbeatMs);
+    this.logger.log('Widget SSE stream opened', { sessionId: input.sessionId, agentId: input.agentId });
+    return this.sseRegistry.observe(input.sessionId, heartbeatMs);
   }
 
   removeStream(sessionId: string): void {
@@ -400,7 +472,7 @@ export class WidgetChatService {
     usage: { inputTokens: number; outputTokens: number; model?: string };
   }> {
     const { tokenHash, agentId, message, visitorId, agent, metadata } = params;
-    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata);
+    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata, agent, 'rest_api');
     const sessionId = session.id;
 
     this.logger.log('Integration message received', {

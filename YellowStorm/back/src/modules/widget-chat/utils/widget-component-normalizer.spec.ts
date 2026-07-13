@@ -7,6 +7,12 @@ import {
 } from './widget-component-normalizer';
 
 describe('widget-component-normalizer', () => {
+  it('emits normalized choice components only when structurally valid', () => {
+    const choice = { schemaVersion: 1, questionId: 'q1', prompt: 'Pick', presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'ready', options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }] };
+    expect(shouldEmitWidgetComponent('choice', choice)).toBe(true);
+    expect(normalizeWidgetComponent('choice', choice).data).toMatchObject({ questionId: 'q1', options: choice.options });
+    expect(shouldEmitWidgetComponent('choice', { ...choice, options: [] })).toBe(false);
+  });
   it('emits non-empty text components', () => {
     expect(shouldEmitWidgetComponent('text', { content: 'Hello' })).toBe(true);
     expect(shouldEmitWidgetComponent('text', { content: '   ' })).toBe(false);
