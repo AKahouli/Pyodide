@@ -117,4 +117,37 @@ describe('conversation store', () => {
     expect(state.typewriterConversationId).toBe('c1');
     expect(state.typewriterName).toBe('New Name');
   });
+
+  it('clears matching temp optimistic when SSE message_created arrives', () => {
+    useConversationStore.setState({
+      currentConversationId: 'c1',
+      messages: [],
+      messagesTotal: 0,
+      optimisticMessages: [
+        {
+          id: 'temp-1',
+          conversationId: 'c1',
+          conversationType: 'user',
+          content: 'hello',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+
+    useConversationStore.getState().onMessageCreated({
+      conversationId: 'c1',
+      message: {
+        id: 'real-1',
+        conversationId: 'c1',
+        conversationType: 'user',
+        content: 'hello',
+        createdAt: '2026-01-01T00:00:01.000Z',
+      },
+    });
+
+    const state = useConversationStore.getState();
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].id).toBe('real-1');
+    expect(state.optimisticMessages).toHaveLength(0);
+  });
 });

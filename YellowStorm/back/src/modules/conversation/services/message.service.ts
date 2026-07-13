@@ -545,9 +545,12 @@ export class MessageService {
     message.editedAt = new Date();
     if (agentIds !== undefined) {
       message.agentIds = agentIds.map((id) => new Types.ObjectId(id));
-      // Persist tagged agents for group conversations
+      // Persist tagged agents for group conversations (roster only; sticky owned by sendMessage)
       if (agentIds.length > 0) {
-        await this.conversationService.updateTaggedAgents(message.conversationId.toString(), agentIds);
+        await this.conversationService.updateTaggedAgents(
+          message.conversationId.toString(),
+          agentIds,
+        );
       }
     }
     if (memberIds !== undefined) {
