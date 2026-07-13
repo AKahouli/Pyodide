@@ -37,6 +37,7 @@ export class WidgetMessage extends Document {
 
   @Prop()
   durationMs?: number;
+
 }
 
 export const WidgetMessageSchema = SchemaFactory.createForClass(WidgetMessage);

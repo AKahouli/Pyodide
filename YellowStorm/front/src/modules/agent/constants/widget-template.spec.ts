@@ -9,6 +9,7 @@ describe('buildWidgetSnippet', () => {
     const source = snippet.slice(start, end);
     const run = new Function('navigator', 'window', 'SpeechSynthesisUtterance', `
       var toasts = [];
+      var widgetPrefs = { tts: true, language: 'auto' };
       var SETTINGS = { accessibility: { readAloud: { enabled: true, defaultRate: 1 } } };
       function a11ySettings() { return SETTINGS.accessibility; }
       function label(_key, fallback) { return fallback; }
@@ -267,9 +268,13 @@ describe('buildWidgetSnippet', () => {
 
     expect(snippet).toContain('ys-widget-accessibility-btn');
     expect(snippet).toContain('ys-widget-accessibility-panel');
-    expect(snippet).toContain('role=\\"radiogroup\\"');
-    expect(snippet).toContain('ys_widget_accessibility:\"+AGENT_ID');
-    expect(snippet).toContain('function selectAccessibilityProfile(profile)');
+    expect(snippet).toContain('ys-setting-notifications');
+    expect(snippet).toContain('ys-setting-language');
+    expect(snippet).toContain('ys-setting-dark');
+    expect(snippet).toContain('ys-setting-size');
+    expect(snippet).toContain('ys-setting-tts');
+    expect(snippet).toContain('ys_widget_preferences:\"+AGENT_ID');
+    expect(snippet).toContain('function applyWidgetPrefs()');
     expect(snippet).toContain('function setAccessibilityPanel(open)');
   });
 
