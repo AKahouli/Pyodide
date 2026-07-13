@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
@@ -37,6 +38,7 @@ export class GovernanceSourceService {
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(ownerUserId: string, programId: string, dto: CreateGovernanceSourceDto): Promise<GovernanceSourceResponse> {
@@ -89,7 +91,10 @@ export class GovernanceSourceService {
     if (dto.url !== undefined) source.url = dto.url;
     if (dto.workspaceId !== undefined) source.workspaceId = dto.workspaceId ? new Types.ObjectId(dto.workspaceId) : undefined;
     if (dto.documentId !== undefined) source.documentId = dto.documentId ? new Types.ObjectId(dto.documentId) : undefined;
-    if (dto.status !== undefined) source.status = dto.status as GovernanceSourceStatus;
+    if (dto.status !== undefined) {
+      if (this.config.get<boolean>('dataRoom.sourceVersioningEnabled')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Use source-version lifecycle transitions while versioning is enabled');
+      source.status = dto.status as GovernanceSourceStatus;
+    }
     if (dto.tags !== undefined) source.tags = dto.tags;
     if (dto.metadata !== undefined) source.metadata = dto.metadata;
     if (dto.reviewFrequencyDays !== undefined) source.reviewFrequencyDays = dto.reviewFrequencyDays;

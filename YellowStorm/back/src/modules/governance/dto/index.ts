@@ -13,3 +13,7 @@ export { UpdateGovernanceRevisionDto } from './update-governance-revision.dto';
 export { CreateGovernanceDryRunDto } from './create-governance-dry-run.dto';
 export { MarkGovernanceDryRunDto } from './mark-governance-dry-run.dto';
 export { PublishGovernanceDeploymentDto } from './publish-governance-deployment.dto';
+export { CreateGovernanceSourceVersionDto } from './create-governance-source-version.dto';
+export { UpdateSourceValidityDto } from './update-source-validity.dto';
+export { SourceVersionTransitionDto } from './source-version-transition.dto';
+export { CreateGovernanceWorkspaceBindingDto, UpdateGovernanceWorkspaceBindingDto } from './create-governance-workspace-binding.dto';

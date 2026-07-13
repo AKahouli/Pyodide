@@ -97,6 +97,38 @@ describe('AIMessageContent charts', () => {
     expect(listItem).toHaveClass('my-0', 'leading-relaxed');
   });
 
+  it('renders titled assistant citations as safe title-only links', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: 'Voir [Aide de la Ville, https://example.com/aide].' }]} />);
+
+    const link = screen.getByRole('link', { name: 'Aide de la Ville' });
+    expect(link).toHaveAttribute('href', 'https://example.com/aide');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.queryByText('https://example.com/aide')).not.toBeInTheDocument();
+  });
+
+  it('renders every titled assistant citation in one paragraph', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '[First source, https://example.com/one] and [Second source, https://example.com/two]' }]} />);
+
+    expect(screen.getByRole('link', { name: 'First source' })).toHaveAttribute('href', 'https://example.com/one');
+    expect(screen.getByRole('link', { name: 'Second source' })).toHaveAttribute('href', 'https://example.com/two');
+  });
+
+  it('preserves assistant citation syntax in code and rejects non-HTTP(S) targets', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '`[Code, https://example.com]`\n\n```\n[Block, https://example.com]\n```\n\n[Unsafe, javascript:alert(1)]' }]} />);
+
+    expect(screen.getByText('[Code, https://example.com]')).toBeInTheDocument();
+    expect(screen.getByText('[Block, https://example.com]')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Unsafe' })).not.toBeInTheDocument();
+  });
+
+  it('does not transform citation-shaped text inside standard Markdown links', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '[Read [Example, https://example.com]](https://destination.test)' }]} />);
+
+    const link = screen.getByRole('link', { name: 'Read [Example, https://example.com]' });
+    expect(link).toHaveAttribute('href', 'https://destination.test');
+  });
+
   it('renders inline citation markers without bracket text', () => {
     const parts: MessageContentPart[] = [
       {

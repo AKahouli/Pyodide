@@ -48,6 +48,7 @@ import { UsageModule } from '../usage/usage.module';
 import { IndexingModule } from '../indexing/indexing.module';
 import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
+import { IntegrationEventsModule } from '../integration-events/integration-events.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import workspaceConfig from '../../config/workspace.config';
     UserModule,
     DocumentModule,
     LoggerModule,
+    IntegrationEventsModule,
   ],
   controllers: [
     WorkspaceController,

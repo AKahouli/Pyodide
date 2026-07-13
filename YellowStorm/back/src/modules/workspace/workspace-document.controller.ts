@@ -46,6 +46,7 @@ import { DocumentQueryDto } from './dto/document-query.dto';
 import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 import { AddLinkDto } from './dto/add-link.dto';
 import { AddLinksDto } from './dto/add-links.dto';
+import { CheckUrlsDto } from './dto/check-urls.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -125,6 +126,7 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.url,
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex },
     );
   }
 
@@ -141,7 +143,14 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.urls,
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex },
     );
+  }
+
+  @Post('check-urls')
+  @ApiOperation({ summary: 'Check URL duplicates across the complete workspace' })
+  async checkUrls(@Param('workspaceId') workspaceId: string, @Body() body: CheckUrlsDto) {
+    return this.workspaceDocumentService.checkUrls(workspaceId, body.urls);
   }
 
   /**

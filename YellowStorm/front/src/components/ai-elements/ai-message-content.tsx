@@ -34,6 +34,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
+import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
 
 // ============================================================================
 // Message Content Part Types
@@ -333,7 +334,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   },
 };
 
-const remarkPlugins = [remarkGfm];
+const remarkPlugins = [remarkGfm, remarkAssistantCitationLinks];
 const rehypeCitationPlugins = [rehypeCitationMarkers];
 
 function normalizeCitationReference(reference?: string): string | undefined {
