@@ -164,12 +164,13 @@ export class ConnectorService {
       let authHeaders: Record<string, string> = {};
       let authEnv: Record<string, string> = {};
 
-      if (userId && connector.authSourceType === 'connected_app' && connector.connectedAppKey) {
+      if (userId && connector.authSourceType !== 'none') {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
             connectedAppKey: connector.connectedAppKey,
             runtimeAuthConfig: connector.runtimeAuthConfig || {},
+            connectorId: connector.id,
           });
           authHeaders = auth.headers;
           authEnv = auth.env;
@@ -406,6 +407,7 @@ export class ConnectorService {
     connectedAppKey?: string,
     runtimeAuthConfig?: Record<string, unknown>,
     resolvedToken?: string,
+    resolvedAuthHeaders?: Record<string, string>,
   ): Promise<IMcpInspectResult> {
     try {
 
@@ -439,6 +441,16 @@ export class ConnectorService {
             error: `Failed to get authentication token: ${(error as Error).message}`,
           };
         }
+      }
+
+      if (resolvedAuthHeaders && Object.keys(resolvedAuthHeaders).length > 0) {
+        finalServerConfig = {
+          ...finalServerConfig,
+          headers: {
+            ...this.extractStringMap(finalServerConfig.headers),
+            ...resolvedAuthHeaders,
+          },
+        };
       }
 
       const requestInit = this.buildMcpRequestInit(finalServerConfig);

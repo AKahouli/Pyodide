@@ -163,7 +163,7 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
   return {
     strategy: 'http_header_bearer',
     headerName: form.runtimeHeaderName.trim() || 'Authorization',
-    headerPrefix: form.runtimeHeaderPrefix || 'Bearer ',
+    headerPrefix: form.runtimeHeaderPrefix,
   };
 }
 
@@ -387,6 +387,7 @@ export function CreateEditConnectorDialog({
         mcpServerConfig,
         form.authSourceType === 'connected_app' ? form.connectedAppKey || undefined : undefined,
         runtimeAuthConfig,
+        connector?.id,
       );
       if (result.error) {
         toast.error(t('connectors.form.inspect.title'), { description: result.error });
@@ -752,6 +753,9 @@ export function CreateEditConnectorDialog({
                     <div>
                       <Label>{t('connectors.form.auth.headerPrefixLabel')}</Label>
                       <Input value={form.runtimeHeaderPrefix} onChange={(e) => setForm({ ...form, runtimeHeaderPrefix: e.target.value })} placeholder={t('connectors.form.auth.headerPrefixPlaceholder')} />
+                      <p className='mt-1 text-xs text-muted-foreground'>
+                        {t('connectors.form.auth.headerPrefixHelper')}
+                      </p>
                     </div>
                   </div>
                 )}

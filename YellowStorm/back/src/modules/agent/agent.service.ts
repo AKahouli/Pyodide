@@ -1857,12 +1857,13 @@ export class AgentService {
     if (userId) {
       for (const binding of bindings) {
         const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+        if (connector?.authSourceType && connector.authSourceType !== 'none') {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
               connectedAppKey: connector.connectedAppKey,
               runtimeAuthConfig: connector.runtimeAuthConfig || {},
+              connectorId: connector.id,
             });
             binding.auth_headers = auth.headers;
             binding.auth_env = auth.env;

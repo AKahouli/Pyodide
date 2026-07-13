@@ -933,10 +933,11 @@ export async function inspectMcp(
   serverConfig?: Record<string, unknown>,
   connectedAppKey?: string,
   runtimeAuthConfig?: Record<string, unknown>,
+  connectorId?: string,
 ): Promise<McpInspectResult> {
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.inspect,
-    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig },
+    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId },
   );
   return response.data.data;
 }

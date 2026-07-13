@@ -447,6 +447,7 @@
   "connectors.form.auth.headerNamePlaceholder": "Authorization",
   "connectors.form.auth.headerPrefixLabel": "Header Prefix",
   "connectors.form.auth.headerPrefixPlaceholder": "Bearer ",
+  "connectors.form.auth.headerPrefixHelper": "With a stored credential, use only the prefix (for example, Bearer). Otherwise, this value is sent as the complete header value.",
   "connectors.form.auth.headerMappingsLabel": "Header Mappings",
   "connectors.form.auth.addHeader": "Add Header",
   "connectors.form.auth.headerMappingsHelper": "Use {token} in values, for example Bearer {token}.",

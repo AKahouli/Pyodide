@@ -443,6 +443,7 @@
   "connectors.form.auth.headerNamePlaceholder": "Authorization",
   "connectors.form.auth.headerPrefixLabel": "Préfixe de l'en-tête",
   "connectors.form.auth.headerPrefixPlaceholder": "Bearer ",
+  "connectors.form.auth.headerPrefixHelper": "Avec une identification enregistrée, utilisez uniquement le préfixe (par exemple, Bearer). Sinon, cette valeur est envoyée comme valeur complète de l'en-tête.",
   "connectors.form.auth.headerMappingsLabel": "Mappages d'en-têtes",
   "connectors.form.auth.addHeader": "Ajouter un en-tête",
   "connectors.form.auth.headerMappingsHelper": "Utilisez {token} dans les valeurs, par exemple Bearer {token}.",
