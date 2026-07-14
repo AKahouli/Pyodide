@@ -11,4 +11,5 @@ export default registerAs('dataRoom', () => ({
   outboxDispatchEnabled: process.env.DATA_ROOM_OUTBOX_DISPATCH_ENABLED === 'true',
   permanentSourceDeletionEnabled: process.env.DATA_ROOM_PERMANENT_SOURCE_DELETION_ENABLED === 'true',
   validityIntelligenceEnabled: process.env.DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED === 'true',
+  knowledgeAssessmentEnabled: process.env.DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED === 'true',
 }));

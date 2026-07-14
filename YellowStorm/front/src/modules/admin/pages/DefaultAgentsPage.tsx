@@ -3,9 +3,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, Loader2, AlertCircle, RefreshCw, Plus, Pencil, Trash2, Search } from 'lucide-react';
-import { toast } from 'sonner';
+import { Bot, Loader2, AlertCircle, RefreshCw, Plus, Pencil, Trash2, Search, Eye } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
+import { showSuccess, showError } from '@/lib/notifications';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,14 +14,20 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getAdminAgents, createAdminAgent, updateAdminAgent, deleteAdminAgent } from '../api';
+import { getAdminAgents, createAdminAgent, deleteAdminAgent } from '../api';
+import { updateAgent } from '@/modules/agent/api';
 import type { AgentResponse, AgentListResponse } from '../types';
-import { CreateEditAgentDialog } from './agents/CreateEditAgentDialog';
-import type { AgentFormValues } from './agents/agent-form-schema';
+import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
+import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
+import { usePermissions } from '../hooks/usePermissions';
 
 export function DefaultAgentsPage() {
   const { t } = useModuleTranslation('admin');
   const { t: tCommon } = useModuleTranslation('common');
+  const { hasPermission } = usePermissions();
+  const canManageDefaultAgents = hasPermission('agents.update');
+  const canCreateDefaultAgents = hasPermission('agents.create');
+  const canDeleteDefaultAgents = hasPermission('agents.delete');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentResponse[]>([]);
@@ -71,11 +77,11 @@ export function DefaultAgentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const handleSave = async (data: AgentFormValues) => {
+  const handleSave = async (data: UserAgentFormValues) => {
     setSaving(true);
     try {
       if (editingAgent) {
-        await updateAdminAgent(editingAgent.id, {
+        await updateAgent(editingAgent.id, {
           name: data.name,
           slug: data.slug,
           agentType: data.agentType,
@@ -85,6 +91,7 @@ export function DefaultAgentsPage() {
           model: data.model,
           instruction: data.instruction,
           ignorePrePrompt: data.ignorePrePrompt,
+          knowledgeBases: data.knowledgeBases,
           tools: data.tools,
           skills: data.skills,
           disabledSkills: data.disabledSkills,
@@ -92,8 +99,10 @@ export function DefaultAgentsPage() {
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          guardrails: data.guardrails,
+          deploymentSettings: data.deploymentSettings,
         });
-        toast.success(t('defaultAgents.toasts.updated.title'), {
+        showSuccess(t('defaultAgents.toasts.updated.title'), {
           description: t('defaultAgents.toasts.updated.description', { name: data.name }),
         });
       } else {
@@ -107,6 +116,7 @@ export function DefaultAgentsPage() {
           model: data.model || undefined,
           instruction: data.instruction,
           ignorePrePrompt: data.ignorePrePrompt,
+          knowledgeBases: data.knowledgeBases,
           tools: data.tools,
           skills: data.skills,
           disabledSkills: data.disabledSkills,
@@ -114,8 +124,10 @@ export function DefaultAgentsPage() {
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
+          guardrails: data.guardrails,
+          deploymentSettings: data.deploymentSettings,
         });
-        toast.success(t('defaultAgents.toasts.created.title'), {
+        showSuccess(t('defaultAgents.toasts.created.title'), {
           description: t('defaultAgents.toasts.created.description', { name: data.name }),
         });
       }
@@ -123,7 +135,7 @@ export function DefaultAgentsPage() {
       setEditingAgent(null);
       fetchAgents();
     } catch (err) {
-      toast.error(editingAgent ? t('defaultAgents.toasts.errors.update') : t('defaultAgents.toasts.errors.create'), {
+      showError(editingAgent ? t('defaultAgents.toasts.errors.update') : t('defaultAgents.toasts.errors.create'), {
         description: err instanceof Error ? err.message : tCommon('errorUnknown'),
       });
     } finally {
@@ -133,13 +145,13 @@ export function DefaultAgentsPage() {
 
   const handleToggleActive = async (agent: AgentResponse) => {
     try {
-      const updated = await updateAdminAgent(agent.id, { isActive: !agent.isActive });
+      const updated = await updateAgent(agent.id, { isActive: !agent.isActive });
       setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-      toast.success(updated.isActive ? t('defaultAgents.toasts.statusActivated.title') : t('defaultAgents.toasts.statusDeactivated.title'), {
+      showSuccess(updated.isActive ? t('defaultAgents.toasts.statusActivated.title') : t('defaultAgents.toasts.statusDeactivated.title'), {
         description: t(updated.isActive ? 'defaultAgents.toasts.statusActivated.description' : 'defaultAgents.toasts.statusDeactivated.description', { name: updated.name }),
       });
     } catch (err) {
-      toast.error(t('defaultAgents.toasts.errors.status'), {
+      showError(t('defaultAgents.toasts.errors.status'), {
         description: err instanceof Error ? err.message : tCommon('errorUnknown'),
       });
     }
@@ -149,13 +161,13 @@ export function DefaultAgentsPage() {
     if (!deletingAgent) return;
     try {
       await deleteAdminAgent(deletingAgent.id);
-      toast.success(t('defaultAgents.toasts.deleted.title'), {
+      showSuccess(t('defaultAgents.toasts.deleted.title'), {
         description: t('defaultAgents.toasts.deleted.description', { name: deletingAgent.name }),
       });
       setDeletingAgent(null);
       fetchAgents();
     } catch (err) {
-      toast.error(t('defaultAgents.toasts.errors.delete'), {
+      showError(t('defaultAgents.toasts.errors.delete'), {
         description: err instanceof Error ? err.message : tCommon('errorUnknown'),
       });
     }
@@ -203,10 +215,12 @@ export function DefaultAgentsPage() {
           <Button onClick={() => fetchAgents()} variant='outline' size='icon'>
             <RefreshCw className='h-4 w-4' />
           </Button>
-          <Button onClick={openCreate}>
-            <Plus className='mr-2 h-4 w-4' />
-            {t('defaultAgents.actions.add')}
-          </Button>
+          {canCreateDefaultAgents && (
+            <Button onClick={openCreate}>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('defaultAgents.actions.add')}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -270,16 +284,18 @@ export function DefaultAgentsPage() {
                       <TableCell className='hidden lg:table-cell'>{agent.temperature.toFixed(1)}</TableCell>
                       <TableCell className='hidden lg:table-cell'>{agent.model || <span className='text-muted-foreground text-sm'>{t('defaultAgents.table.modelFallback')}</span>}</TableCell>
                       <TableCell>
-                        <Switch checked={agent.isActive} onCheckedChange={() => handleToggleActive(agent)} />
+                        <Switch checked={agent.isActive} disabled={!canManageDefaultAgents} onCheckedChange={() => handleToggleActive(agent)} />
                       </TableCell>
                       <TableCell className='text-right'>
                         <div className='flex justify-end gap-1'>
                           <Button variant='ghost' size='icon' onClick={() => openEdit(agent)}>
-                            <Pencil className='h-4 w-4' />
+                            {canManageDefaultAgents ? <Pencil className='h-4 w-4' /> : <Eye className='h-4 w-4' />}
                           </Button>
-                          <Button variant='ghost' size='icon' onClick={() => setDeletingAgent(agent)}>
-                            <Trash2 className='h-4 w-4 text-destructive' />
-                          </Button>
+                          {canDeleteDefaultAgents && (
+                            <Button variant='ghost' size='icon' onClick={() => setDeletingAgent(agent)}>
+                              <Trash2 className='h-4 w-4 text-destructive' />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -314,6 +330,7 @@ export function DefaultAgentsPage() {
         agent={editingAgent}
         onSave={handleSave}
         saving={saving}
+        readOnly={!canManageDefaultAgents}
       />
 
       <AlertDialog

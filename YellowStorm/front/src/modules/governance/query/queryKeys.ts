@@ -16,4 +16,9 @@ export const governanceQueryKeys = {
   readiness: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'readiness'] as const,
   dryRuns: (deploymentId: string) => [...governanceQueryKeys.deployment(deploymentId), 'dry-runs'] as const,
   metrics: (programId: string) => [...governanceQueryKeys.program(programId), 'metrics'] as const,
+  knowledge: (programId: string, scopeId?: string) => [...governanceQueryKeys.program(programId), 'knowledge', scopeId ?? 'all'] as const,
+  knowledgeHealth: (programId: string, scopeId?: string) => [...governanceQueryKeys.knowledge(programId, scopeId), 'health'] as const,
+  knowledgeAlerts: (programId: string, scopeId?: string) => [...governanceQueryKeys.knowledge(programId, scopeId), 'alerts'] as const,
+  knowledgeRecommendations: (programId: string, scopeId?: string) => [...governanceQueryKeys.knowledge(programId, scopeId), 'recommendations'] as const,
+  metadataCandidates: (programId: string, scopeId?: string) => [...governanceQueryKeys.knowledge(programId, scopeId), 'metadata-candidates'] as const,
 };

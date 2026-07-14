@@ -13,6 +13,8 @@ import { GovernanceSourceVersion, GovernanceSourceVersionDocument } from '../sch
 import { GovernanceSourceEvent, GovernanceSourceEventDocument } from '../schemas/governance-source-event.schema';
 import { GovernanceSourceEventService } from './governance-source-event.service';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
+import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
+import { TemporalCandidateRepositoryService } from '@modules/knowledge-intelligence/services/temporal-candidate-repository.service';
 
 export interface GovernanceSourceResponse {
   id: string;
@@ -51,6 +53,8 @@ export class GovernanceSourceService {
     @InjectModel(GovernanceSourceEvent.name) private readonly eventModel: Model<GovernanceSourceEventDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
     private readonly events: GovernanceSourceEventService,
+    private readonly extractionJobs: KnowledgeExtractionOrchestratorService,
+    private readonly temporalCandidates: TemporalCandidateRepositoryService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -152,6 +156,8 @@ export class GovernanceSourceService {
       // Keep the terminal audit record after removing the source's operational history.
       // It deliberately becomes an orphaned event because the source itself is gone.
       const deletionEvent = await this.events.append({ programId, sourceId, actorId: ownerUserId, eventType: 'source.permanently_deleted', session });
+      await this.temporalCandidates.purgeSource(sourceId, session);
+      await this.extractionJobs.purgeSource(sourceId, session);
       await this.versionModel.deleteMany({ sourceId: source._id }, { session }).exec();
       await this.eventModel.deleteMany({ sourceId: source._id, _id: { $ne: deletionEvent._id } }, { session }).exec();
       await source.deleteOne({ session });

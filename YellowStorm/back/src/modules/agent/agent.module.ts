@@ -45,6 +45,12 @@ import { GuardrailsModule } from '../guardrails/guardrails.module';
   ],
   controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
   providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService],
-  exports: [AgentService, AgentShareService, A2AAdminGrpcClientService, A2APublishService],
+  exports: [
+    AgentService,
+    AgentShareService,
+    AgentPermissionGuard,
+    A2AAdminGrpcClientService,
+    A2APublishService,
+  ],
 })
 export class AgentModule {}

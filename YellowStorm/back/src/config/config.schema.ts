@@ -9,7 +9,8 @@ export const configValidationSchema = Joi.object({
   DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_PERMANENT_SOURCE_DELETION_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
+    DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
+    DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
   APP_NAME: Joi.string().default('YelloStorm'),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),

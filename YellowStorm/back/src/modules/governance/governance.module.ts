@@ -52,6 +52,26 @@ import { SourceValidityCalculatorService } from './services/source-validity-calc
 import { GovernanceSourceFromWorkspaceFactory } from './factories/governance-source-from-workspace.factory';
 import { GovernanceReconciliationRun, GovernanceReconciliationRunSchema } from './schemas/governance-reconciliation-run.schema';
 import { TemporalCandidateValidatorService } from './services/temporal-candidate-validator.service';
+import { GovernanceSourceReviewSchedulerService } from './services/governance-source-review-scheduler.service';
+import { KnowledgeIntelligenceModule } from '@modules/knowledge-intelligence/knowledge-intelligence.module';
+import { ConnectorModule } from '@modules/connector/connector.module';
+import { SystemModule } from '@modules/system/system.module';
+import { LogicalSearchEvidenceService } from './services/logical-search-evidence.service';
+import { TemporalCandidateExtractorService } from './services/temporal-candidate-extractor.service';
+import { GovernanceTemporalIntelligenceWorkerService } from './services/governance-temporal-intelligence-worker.service';
+import { GovernanceTemporalCandidateService } from './services/governance-temporal-candidate.service';
+import { IndexingModule } from '@modules/indexing/indexing.module';
+import { GovernanceKnowledgeController } from './controllers/governance-knowledge.controller';
+import { GovernanceKnowledgeAssessmentService } from './services/governance-knowledge-assessment.service';
+import { KnowledgeAlertEngineService } from './services/knowledge-alert-engine.service';
+import { KnowledgeRecommendationEngineService } from './services/knowledge-recommendation-engine.service';
+import { MetadataCandidateEngineService } from './services/metadata-candidate-engine.service';
+import { BusinessValidityEvaluator } from './services/knowledge-evaluators/business-validity.evaluator';
+import { FreshnessEvaluator } from './services/knowledge-evaluators/freshness.evaluator';
+import { AvailabilityEvaluator } from './services/knowledge-evaluators/availability.evaluator';
+import { IntegrityEvaluator } from './services/knowledge-evaluators/integrity.evaluator';
+import { SearchQualityEvaluator } from './services/knowledge-evaluators/search-quality.evaluator';
+import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/governance-quality.evaluator';
 
 @Module({
   imports: [
@@ -82,9 +102,13 @@ import { TemporalCandidateValidatorService } from './services/temporal-candidate
     UserGroupModule,
     LoggerModule,
     IntegrationEventsModule,
+    KnowledgeIntelligenceModule,
+    ConnectorModule,
+    SystemModule,
+    IndexingModule,
   ],
-  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController],
-  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, SourceValidityCalculatorService, TemporalCandidateValidatorService, GovernanceSourceFromWorkspaceFactory, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService],
+  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceSourceController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController, GovernanceKnowledgeController],
+  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, SourceValidityCalculatorService, TemporalCandidateValidatorService, TemporalCandidateExtractorService, LogicalSearchEvidenceService, GovernanceTemporalIntelligenceWorkerService, GovernanceTemporalCandidateService, GovernanceSourceReviewSchedulerService, GovernanceSourceFromWorkspaceFactory, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService, GovernanceKnowledgeAssessmentService, KnowledgeAlertEngineService, KnowledgeRecommendationEngineService, MetadataCandidateEngineService, BusinessValidityEvaluator, FreshnessEvaluator, AvailabilityEvaluator, IntegrityEvaluator, SearchQualityEvaluator, GovernanceQualityEvaluator],
   exports: [GovernanceProgramService, GovernanceScopeService, GovernanceSourceService, GovernanceAccessService, GovernanceMetricService],
 })
 export class GovernanceModule {}

@@ -259,6 +259,47 @@ export function useCreateGovernanceDeployment(programId: string | null) {
   });
 }
 
+export function useKnowledgeHealth(programId: string | null, scopeId?: string) {
+  return useQuery({ queryKey: governanceQueryKeys.knowledgeHealth(programId ?? 'none', scopeId), queryFn: () => governanceApi.getKnowledgeHealth(programId ?? '', scopeId), enabled: Boolean(programId) });
+}
+
+export function useKnowledgeAlerts(programId: string | null, scopeId?: string) {
+  return useQuery({ queryKey: governanceQueryKeys.knowledgeAlerts(programId ?? 'none', scopeId), queryFn: () => governanceApi.listKnowledgeAlerts(programId ?? '', { scopeId }), enabled: Boolean(programId) });
+}
+
+export function useKnowledgeRecommendations(programId: string | null, scopeId?: string) {
+  return useQuery({ queryKey: governanceQueryKeys.knowledgeRecommendations(programId ?? 'none', scopeId), queryFn: () => governanceApi.listKnowledgeRecommendations(programId ?? '', { scopeId }), enabled: Boolean(programId) });
+}
+
+export function useMetadataCandidates(programId: string | null, scopeId?: string) {
+  return useQuery({ queryKey: governanceQueryKeys.metadataCandidates(programId ?? 'none', scopeId), queryFn: () => governanceApi.listMetadataCandidates(programId ?? '', { scopeId }), enabled: Boolean(programId) });
+}
+
+export function useRefreshKnowledge(programId: string | null, scopeId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: () => governanceApi.refreshKnowledge(programId ?? '', scopeId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.knowledge(programId, scopeId) }); } });
+}
+
+export function useAcknowledgeKnowledgeAlert(programId: string | null, scopeId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (alertId: string) => governanceApi.acknowledgeKnowledgeAlert(programId ?? '', alertId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.knowledge(programId, scopeId) }); } });
+}
+
+export function useDecideKnowledgeRecommendation(programId: string | null, scopeId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: ({ id, action }: { id: string; action: 'accept' | 'reject' }) => governanceApi.decideKnowledgeRecommendation(programId ?? '', id, action), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.knowledge(programId, scopeId) }); } });
+}
+
+export function useApplyKnowledgeRecommendation(programId: string | null, scopeId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (id: string) => governanceApi.applyKnowledgeRecommendation(programId ?? '', id), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.knowledge(programId, scopeId) }); } });
+}
+
+export function useDecideMetadataCandidate(programId: string | null, scopeId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: ({ id, action, acceptedValue }: { id: string; action: 'accept' | 'reject'; acceptedValue?: unknown }) => governanceApi.decideMetadataCandidate(programId ?? '', id, action, acceptedValue), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.knowledge(programId, scopeId) }); } });
+}
+
 export function useUpdateGovernanceDeployment(programId: string | null, deploymentId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

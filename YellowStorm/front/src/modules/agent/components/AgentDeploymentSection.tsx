@@ -57,11 +57,14 @@ interface AgentDeploymentSectionProps {
 
   onChange: (value: AgentDeploymentSettings) => void;
 
+  readOnly?: boolean;
+
+
 }
 
 
 
-export function AgentDeploymentSection({ agentId, agentName = "", value, onChange }: AgentDeploymentSectionProps) {
+export function AgentDeploymentSection({ agentId, agentName = "", value, onChange, readOnly = false }: AgentDeploymentSectionProps) {
 
   const { t } = useModuleTranslation("agent");
 
@@ -118,9 +121,15 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
   const widgetSettings = mergeWidgetSettings(value.widget ?? DEFAULT_WIDGET_SETTINGS);
 
-  const setEmbedEnabled = (embedEnabled: boolean) => onChange({ ...value, widget: widgetSettings, embedEnabled });
+  const setEmbedEnabled = (embedEnabled: boolean) => {
+    if (readOnly) return;
+    onChange({ ...value, widget: widgetSettings, embedEnabled });
+  };
 
-  const setRestEnabled = (restEnabled: boolean) => onChange({ ...value, widget: widgetSettings, restEnabled });
+  const setRestEnabled = (restEnabled: boolean) => {
+    if (readOnly) return;
+    onChange({ ...value, widget: widgetSettings, restEnabled });
+  };
 
   const isPaneOpen = (pane: "embed" | "rest") => openPanes.includes(pane);
 
@@ -140,7 +149,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
   const handleGenerate = async (mode: "embed" | "rest") => {
 
-    if (!agentId) {
+    if (readOnly || !agentId) {
 
       showWarning(t("createEdit.fields.deploymentRequiresAgent"));
 
@@ -152,7 +161,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
     try {
 
-      const result = await createWidgetToken(agentId);
+       const result = await createWidgetToken(agentId);
 
        applyGenerated(agentId, agentName, result.token);
 
@@ -252,7 +261,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
               )}
 
               {isEmbedEnabled && agentId && (
-                <Button type="button" size="sm" onClick={() => void handleGenerate("embed")} disabled={isGenerating}>
+                <Button type="button" size="sm" onClick={() => void handleGenerate("embed")} disabled={readOnly || isGenerating}>
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                   {t("createEdit.actions.generateDeploymentSnippet")}
                 </Button>
@@ -303,7 +312,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
               )}
 
               {isRestEnabled && agentId && (
-                <Button type="button" size="sm" onClick={() => void handleGenerate("rest")} disabled={isGenerating}>
+                <Button type="button" size="sm" onClick={() => void handleGenerate("rest")} disabled={readOnly || isGenerating}>
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                   {t("createEdit.actions.generateDeploymentSnippet")}
                 </Button>

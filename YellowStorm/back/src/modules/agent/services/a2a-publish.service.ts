@@ -58,8 +58,8 @@ export class A2APublishService {
    * non-secret metadata. The API key is returned to the caller once and never
    * stored.
    */
-  async publish(userId: string, agentId: string): Promise<PublishAgentResult> {
-    const agent = await this.loadOwnedPersonalAgent(userId, agentId);
+  async publish(userId: string, agentId: string, canManageDefault = false): Promise<PublishAgentResult> {
+    const agent = await this.loadManagedAgent(userId, agentId, canManageDefault);
 
     const [grpcAgent] = await this.agentService.buildGrpcAgentsForPlaybook(
       userId,
@@ -112,8 +112,8 @@ export class A2APublishService {
    * Rotate the API key for an already-published agent. Returns the new key (and
    * the agent-card URL so the UI can re-display it) once.
    */
-  async rotateKey(userId: string, agentId: string): Promise<RotateKeyResult> {
-    const agent = await this.loadOwnedPersonalAgent(userId, agentId);
+  async rotateKey(userId: string, agentId: string, canManageDefault = false): Promise<RotateKeyResult> {
+    const agent = await this.loadManagedAgent(userId, agentId, canManageDefault);
 
     if (!agent.a2aPublished || !agent.a2aAgentId) {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_A2A_NOT_PUBLISHED);
@@ -144,8 +144,8 @@ export class A2APublishService {
    * Revoke a published agent: the A2A card and message endpoint stop serving.
    * Clears the local publish state so the UI offers "publish" again.
    */
-  async revokeAgent(userId: string, agentId: string): Promise<RevokeAgentResult> {
-    const agent = await this.loadOwnedPersonalAgent(userId, agentId);
+  async revokeAgent(userId: string, agentId: string, canManageDefault = false): Promise<RevokeAgentResult> {
+    const agent = await this.loadManagedAgent(userId, agentId, canManageDefault);
 
     if (!agent.a2aPublished || !agent.a2aAgentId) {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_A2A_NOT_PUBLISHED);
@@ -175,12 +175,13 @@ export class A2APublishService {
   }
 
   /**
-   * Fetch an agent and assert the caller owns it and it is a personal (non-default)
-   * agent. Mirrors the ownership guards in {@link AgentService}.
+   * The route guard has already validated default-agent management permission.
+   * Preserve personal ownership validation for any direct service callers.
    */
-  private async loadOwnedPersonalAgent(
+  private async loadManagedAgent(
     userId: string,
     agentId: string,
+    canManageDefault: boolean,
   ): Promise<AgentDocument> {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -190,10 +191,10 @@ export class A2APublishService {
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
-    if (agent.isDefault) {
+    if (agent.isDefault && !canManageDefault) {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
     }
-    if (agent.createdBy.toString() !== userId) {
+    if (!agent.isDefault && agent.createdBy.toString() !== userId) {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
     }
 

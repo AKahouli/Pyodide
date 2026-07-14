@@ -3,7 +3,13 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { WorkspaceSettingsPage } from './WorkspaceSettingsPage';
-import { getAdminWorkspaceUploadSettings, updateAdminWorkspaceUploadSettings } from '../api';
+import {
+  getAdminWorkspaceEvidenceSearchSettings,
+  getAdminWorkspaceUploadSettings,
+  getAdminWorkspaceEvidenceSearchConnectors,
+  updateAdminWorkspaceEvidenceSearchSettings,
+  updateAdminWorkspaceUploadSettings,
+} from '../api';
 import { __resetAllowedUploadExtensionsCache } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 
 const useAuthMock = vi.hoisted(() => vi.fn());
@@ -38,6 +44,14 @@ const TRANSLATIONS: Record<string, string> = {
   'workspaceSettings.toasts.saved.description': 'Workspace upload inputs are now restricted.',
   'workspaceSettings.toasts.saveError.title': 'Failed to save settings',
   'workspaceSettings.toasts.saveError.description': 'Try again.',
+  'workspaceSettings.evidenceSearch.title': 'Evidence search connector',
+  'workspaceSettings.evidenceSearch.description': 'Choose the global evidence search connector.',
+  'workspaceSettings.evidenceSearch.label': 'Connector',
+  'workspaceSettings.evidenceSearch.none': 'No connector selected',
+  'workspaceSettings.evidenceSearch.toasts.saved.title': 'Evidence search connector updated',
+  'workspaceSettings.evidenceSearch.toasts.saved.description': 'The connector was updated.',
+  'workspaceSettings.evidenceSearch.toasts.saveError.title': 'Evidence search connector was not updated',
+  'workspaceSettings.evidenceSearch.toasts.saveError.description': 'Try again.',
 };
 
 const translateMock = vi.hoisted(() => (
@@ -67,10 +81,16 @@ vi.mock('@/modules/localization', async (importOriginal) => {
 vi.mock('../api', () => ({
   getAdminWorkspaceUploadSettings: vi.fn().mockResolvedValue({ allowedExtensions: [], supportedExtensions: ['.pdf', '.png'] }),
   updateAdminWorkspaceUploadSettings: vi.fn().mockResolvedValue({ allowedExtensions: [], supportedExtensions: ['.pdf', '.png'] }),
+  getAdminWorkspaceEvidenceSearchSettings: vi.fn().mockResolvedValue({ connectorId: null }),
+  updateAdminWorkspaceEvidenceSearchSettings: vi.fn().mockResolvedValue({ connectorId: null }),
+  getAdminWorkspaceEvidenceSearchConnectors: vi.fn().mockResolvedValue([]),
 }));
 
 const mockedGet = vi.mocked(getAdminWorkspaceUploadSettings);
 const mockedUpdate = vi.mocked(updateAdminWorkspaceUploadSettings);
+const mockedGetEvidenceSettings = vi.mocked(getAdminWorkspaceEvidenceSearchSettings);
+const mockedUpdateEvidenceSettings = vi.mocked(updateAdminWorkspaceEvidenceSearchSettings);
+const mockedGetEvidenceConnectors = vi.mocked(getAdminWorkspaceEvidenceSearchConnectors);
 
 vi.mock('@/lib/notifications', () => ({
   showError: vi.fn(),
@@ -81,6 +101,12 @@ describe('WorkspaceSettingsPage', () => {
   beforeEach(() => {
     mockedGet.mockReset();
     mockedUpdate.mockReset();
+    mockedGetEvidenceSettings.mockReset();
+    mockedUpdateEvidenceSettings.mockReset();
+    mockedGetEvidenceConnectors.mockReset();
+    mockedGetEvidenceSettings.mockResolvedValue({ connectorId: null });
+    mockedUpdateEvidenceSettings.mockResolvedValue({ connectorId: null });
+    mockedGetEvidenceConnectors.mockResolvedValue([]);
     useAuthMock.mockReturnValue({ isAuthenticated: true, user: { id: 'admin' } });
     __resetAllowedUploadExtensionsCache();
   });
@@ -105,8 +131,8 @@ describe('WorkspaceSettingsPage', () => {
       expect(screen.getAllByText('.png').length).toBeGreaterThan(0);
     });
 
-    const saveButton = screen.getByRole('button', { name: /save changes/i });
-    await user.click(saveButton);
+    const saveButtons = screen.getAllByRole('button', { name: /save changes/i });
+    await user.click(saveButtons[0]);
 
     await waitFor(() => {
       expect(mockedUpdate).toHaveBeenCalledWith({ allowedExtensions: ['.pdf', '.docx', '.png'] });
@@ -141,5 +167,30 @@ describe('WorkspaceSettingsPage', () => {
 
     expect(await screen.findByText(/unsupported extension/i)).toBeInTheDocument();
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  it('shows every active connector and saves the selected evidence search connector', async () => {
+    mockedGet.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'] });
+    mockedGetEvidenceConnectors.mockResolvedValue([
+      { id: 'connector-search', name: 'Logical search' },
+      { id: 'connector-drive', name: 'Drive search' },
+    ]);
+    mockedUpdateEvidenceSettings.mockResolvedValue({ connectorId: 'connector-drive' });
+
+    const { user } = renderWithProviders(<WorkspaceSettingsPage />);
+
+    const trigger = await screen.findByLabelText(/connector/i);
+    await user.click(trigger);
+    expect(await screen.findByRole('option', { name: 'No connector selected' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Logical search' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Drive search' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('option', { name: 'Drive search' }));
+    const saveButtons = screen.getAllByRole('button', { name: /^save changes$/i });
+    await user.click(saveButtons[saveButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(mockedUpdateEvidenceSettings).toHaveBeenCalledWith({ connectorId: 'connector-drive' });
+    });
   });
 });

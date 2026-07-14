@@ -5,20 +5,20 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@ne
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { UserDocument } from '@modules/user/schemas/user.schema';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
-import { ArchiveGovernanceSourceDto, CreateGovernanceSourceDto, CreateGovernanceSourceVersionDto, PermanentlyDeleteGovernanceSourceDto, SourceVersionTransitionDto, UpdateGovernanceSourceDto, UpdateSourceValidityDto } from '../dto';
+import { ArchiveGovernanceSourceDto, CreateGovernanceSourceDto, CreateGovernanceSourceVersionDto, DecideTemporalCandidateDto, PermanentlyDeleteGovernanceSourceDto, SourceVersionTransitionDto, UpdateGovernanceSourceDto, UpdateSourceValidityDto } from '../dto';
 import { GovernanceSourceResponse, GovernanceSourceService } from '../services/governance-source.service';
 import { GovernanceSourceVersionService } from '../services/governance-source-version.service';
 import { GovernanceSourceTransitionService } from '../services/governance-source-transition.service';
 import { GovernanceSourceEventService } from '../services/governance-source-event.service';
 import type { GovernanceSourceVersionLifecycleStatus } from '../schemas/governance-source-version.schema';
-import type { SourceValidityEvidence } from '../domain/source-validity';
+import { GovernanceTemporalCandidateService } from '../services/governance-temporal-candidate.service';
 
 @ApiTags('Governance Sources')
 @ApiBearerAuth()
 @UseGuards(PermissionsGuard)
 @Controller('governance/programs/:programId/sources')
 export class GovernanceSourceController {
-  constructor(private readonly sourceService: GovernanceSourceService, private readonly versionService: GovernanceSourceVersionService, private readonly transitions: GovernanceSourceTransitionService, private readonly events: GovernanceSourceEventService, private readonly config: ConfigService) {}
+  constructor(private readonly sourceService: GovernanceSourceService, private readonly versionService: GovernanceSourceVersionService, private readonly transitions: GovernanceSourceTransitionService, private readonly events: GovernanceSourceEventService, private readonly temporalCandidates: GovernanceTemporalCandidateService, private readonly config: ConfigService) {}
 
   private assertVersioningEnabled(): void { if (!this.config.get<boolean>('dataRoom.sourceVersioningEnabled')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Source versioning is disabled'); }
 
@@ -42,18 +42,33 @@ export class GovernanceSourceController {
     const patch = {
       ...(dto.mode !== undefined ? { mode: dto.mode as never } : {}),
       ...(dto.businessStatus !== undefined ? { businessStatus: dto.businessStatus as never } : {}),
-      ...(dto.effectiveFrom !== undefined ? { effectiveFrom: new Date(dto.effectiveFrom) } : {}),
-      ...(dto.effectiveUntil !== undefined ? { effectiveUntil: new Date(dto.effectiveUntil) } : {}),
+      ...(dto.effectiveFrom !== undefined ? { effectiveFrom: dto.effectiveFrom === null ? undefined : new Date(dto.effectiveFrom) } : {}),
+      ...(dto.effectiveUntil !== undefined ? { effectiveUntil: dto.effectiveUntil === null ? undefined : new Date(dto.effectiveUntil) } : {}),
       ...(dto.inclusiveEnd !== undefined ? { inclusiveEnd: dto.inclusiveEnd } : {}),
-      ...(dto.lastReviewedAt !== undefined ? { lastReviewedAt: new Date(dto.lastReviewedAt) } : {}),
-      ...(dto.nextReviewAt !== undefined ? { nextReviewAt: new Date(dto.nextReviewAt) } : {}),
-      ...(dto.reviewFrequencyDays !== undefined ? { reviewFrequencyDays: dto.reviewFrequencyDays } : {}),
+      ...(dto.lastReviewedAt !== undefined ? { lastReviewedAt: dto.lastReviewedAt === null ? undefined : new Date(dto.lastReviewedAt) } : {}),
+      ...(dto.nextReviewAt !== undefined ? { nextReviewAt: dto.nextReviewAt === null ? undefined : new Date(dto.nextReviewAt) } : {}),
+      ...(dto.reviewFrequencyDays !== undefined ? { reviewFrequencyDays: dto.reviewFrequencyDays === null ? undefined : dto.reviewFrequencyDays } : {}),
       ...(dto.confidence !== undefined ? { confidence: dto.confidence } : {}),
-      ...(dto.evidence !== undefined ? { evidence: dto.evidence.map((evidence) => ({ ...evidence, field: evidence.field as SourceValidityEvidence['field'], origin: evidence.origin as SourceValidityEvidence['origin'], capturedAt: evidence.capturedAt ? new Date(evidence.capturedAt) : undefined, validatedAt: evidence.validatedAt ? new Date(evidence.validatedAt) : undefined })) } : {}),
       ...(dto.manuallyOverridden !== undefined ? { manuallyOverridden: dto.manuallyOverridden } : {}),
     };
     return this.versionService.updateValidity(user._id.toString(), programId, sourceId, versionId, patch);
   }
+
+  @Get(':sourceId/versions/:versionId/temporal-candidates')
+  @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
+  async listTemporalCandidates(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string, @Param('versionId') versionId: string) { return this.temporalCandidates.list(user._id.toString(), programId, sourceId, versionId); }
+
+  @Post(':sourceId/versions/:versionId/temporal-analysis')
+  @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  async runTemporalAnalysis(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string, @Param('versionId') versionId: string) { return this.temporalCandidates.run(user._id.toString(), programId, sourceId, versionId); }
+
+  @Get(':sourceId/versions/:versionId/temporal-analysis')
+  @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
+  async getTemporalAnalysisStatus(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string, @Param('versionId') versionId: string) { return this.temporalCandidates.status(user._id.toString(), programId, sourceId, versionId); }
+
+  @Post(':sourceId/versions/:versionId/temporal-candidates/:recordId/decision')
+  @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  async decideTemporalCandidate(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string, @Param('versionId') versionId: string, @Param('recordId') recordId: string, @Body() dto: DecideTemporalCandidateDto) { return this.temporalCandidates.decide(user._id.toString(), user.email, programId, sourceId, versionId, recordId, dto); }
 
   @Post(':sourceId/versions/:versionId/:action')
   @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_PUBLISH, Permissions.GOVERNANCE_ALL], 'any')

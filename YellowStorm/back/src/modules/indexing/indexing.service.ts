@@ -266,6 +266,7 @@ export class IndexingService {
     workspaceId: string,
     documentId: string,
     deepSearch?: boolean,
+    idempotencyKey?: string,
   ): Promise<WorkspaceDocumentDoc> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -277,6 +278,10 @@ export class IndexingService {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+
+    if (idempotencyKey && document.metadata?.governanceReindexIdempotencyKey === idempotencyKey) {
+      return document;
     }
 
     if (document.status !== DocumentStatus.COMPLETED) {
@@ -304,6 +309,7 @@ export class IndexingService {
     document.metadata = {
       ...restMetadata,
       deepSearchRequested: deepSearch === true ? 'true' : 'false',
+      ...(idempotencyKey ? { governanceReindexIdempotencyKey: idempotencyKey } : {}),
     };
     await document.save();
 

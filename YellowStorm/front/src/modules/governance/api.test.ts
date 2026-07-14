@@ -64,4 +64,32 @@ describe('governanceApi', () => {
     expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs/run-1');
     expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs/run-1/resume', {});
   });
+
+  it('runs and decides evidence-backed temporal candidates', async () => {
+    mocks.get.mockResolvedValue({ data: { data: [] } }); mocks.post.mockResolvedValue({ data: { data: {} } });
+    await governanceApi.listTemporalCandidates('program-1', 'source-1', 'version-1');
+    await governanceApi.runTemporalAnalysis('program-1', 'source-1', 'version-1');
+    await governanceApi.getTemporalAnalysisStatus('program-1', 'source-1', 'version-1');
+    await governanceApi.decideTemporalCandidate('program-1', 'source-1', 'version-1', 'candidate-1', { action: 'confirm' });
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-candidates');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-analysis', {});
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-analysis');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-candidates/candidate-1/decision', { action: 'confirm' });
+  });
+
+  it('uses the knowledge intelligence endpoints for health and governed decisions', async () => {
+    mocks.get.mockResolvedValue({ data: { data: [] } }); mocks.post.mockResolvedValue({ data: { data: {} } });
+    await governanceApi.refreshKnowledge('program-1', 'scope-1');
+    await governanceApi.getKnowledgeHealth('program-1', 'scope-1');
+    await governanceApi.listKnowledgeAlerts('program-1', { scopeId: 'scope-1' });
+    await governanceApi.acknowledgeKnowledgeAlert('program-1', 'alert-1');
+    await governanceApi.decideKnowledgeRecommendation('program-1', 'recommendation-1', 'accept');
+    await governanceApi.applyKnowledgeRecommendation('program-1', 'recommendation-1');
+    await governanceApi.listMetadataCandidates('program-1', { scopeId: 'scope-1' });
+    await governanceApi.decideMetadataCandidate('program-1', 'candidate-1', 'reject');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/knowledge/refresh', {}, { params: { scopeId: 'scope-1' } });
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/knowledge/health-summary', { params: { scopeId: 'scope-1' } });
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/knowledge/recommendations/recommendation-1/accept', { reason: undefined });
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/knowledge/metadata-candidates/candidate-1/reject', {});
+  });
 });

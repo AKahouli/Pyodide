@@ -179,11 +179,10 @@ export class AgentService {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    if (agent.isDefault) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
-    }
-
     const isOwner = agent.createdBy.toString() === userId;
+    if (agent.isDefault) {
+      return this.toResponse(agent);
+    }
     let shareInfo: ISharedAgentInfo | undefined;
     if (!isOwner) {
       // Non-owners may read the agent only if it was shared with them.
@@ -379,7 +378,7 @@ export class AgentService {
       llmModel: dto.model,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
-      knowledgeBases: [],
+      knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
@@ -537,8 +536,9 @@ export class AgentService {
       updateData.llmModel = dto.model || '';
       delete updateData.model;
     }
-    // Strip knowledgeBases for default agents
-    delete updateData.knowledgeBases;
+    if (dto.knowledgeBases) {
+      updateData.knowledgeBases = dto.knowledgeBases.map((id) => new Types.ObjectId(id));
+    }
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }

@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -24,6 +25,8 @@ import { WhatsAppPairingResponseDto } from '../dto/whatsapp-pairing-response.dto
 import { UpdateWhatsAppEnabledDto } from '../dto/update-whatsapp-enabled.dto';
 import { WhatsAppConnectionService } from '../services/whatsapp-connection.service';
 import { WhatsAppIntegrationService } from '../services/whatsapp-integration.service';
+import { AgentPermissionGuard } from '@modules/agent/guards/agent-permission.guard';
+import { RequireAgentPermission } from '@modules/agent/decorators/require-agent-permission.decorator';
 
 @ApiTags('Agent WhatsApp Integration')
 @ApiBearerAuth()
@@ -35,6 +38,8 @@ export class WhatsAppIntegrationController {
   ) {}
 
   @Get()
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('read')
   @ApiOperation({ summary: 'Get WhatsApp integration status for an agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
@@ -46,6 +51,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Post('auto-recover')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Notify backend to auto-reconnect after FAILED status' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
@@ -57,6 +64,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Post('connect')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start WhatsApp pairing for this agent' })
   @ApiResponse({ status: 200, type: WhatsAppConnectResponseDto })
@@ -68,6 +77,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Patch('enabled')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Enable or disable WhatsApp for this agent deployment' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async updateEnabled(
@@ -79,6 +90,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Get(':sessionId/pairing')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Get latest QR / pairing code for a session' })
   @ApiResponse({ status: 200, type: WhatsAppPairingResponseDto })
   async getPairing(
@@ -90,6 +103,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Post(':sessionId/reconnect')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reconnect WhatsApp using stored auth' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
@@ -102,6 +117,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Delete(':sessionId')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect WhatsApp session' })
   async disconnectSession(
@@ -113,6 +130,8 @@ export class WhatsAppIntegrationController {
   }
 
   @Delete()
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove WhatsApp integration for this agent' })
   async deleteIntegration(

@@ -4,7 +4,11 @@
 
 import type { LucideIcon } from 'lucide-react';
 import type { ModuleTranslationKey } from '@/modules/localization';
-import type { AgentConnectorActionSelection } from '@/modules/agent/types';
+import type {
+  AgentConnectorActionSelection,
+  AgentDeploymentSettings,
+  AgentGuardrails,
+} from '@/modules/agent/types';
 
 export interface AdminMenuItem {
   id: string;
@@ -1197,6 +1201,8 @@ export interface AgentResponse {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1233,6 +1239,8 @@ export interface CreateAgentRequest {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface UpdateAgentRequest {
@@ -1253,6 +1261,8 @@ export interface UpdateAgentRequest {
   connectorActionSelections?: AgentConnectorActionSelection[];
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface AgentQueryParams {
@@ -1621,6 +1631,10 @@ export interface WorkspaceUploadSettingsResponse {
 export interface UpdateWorkspaceUploadSettingsRequest {
   allowedExtensions: string[];
 }
+
+export interface WorkspaceEvidenceSearchSettingsResponse { connectorId: string | null; updatedAt?: string; }
+export interface UpdateWorkspaceEvidenceSearchSettingsRequest { connectorId: string | null; }
+export interface WorkspaceEvidenceSearchConnectorOption { id: string; name: string; }
 
 // ===== Team Auto-Builder =====
 

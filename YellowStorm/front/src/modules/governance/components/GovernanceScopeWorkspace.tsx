@@ -47,6 +47,7 @@ import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
 import { SourcePassportDrawer } from './source/SourcePassportDrawer';
 import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/WorkspaceBindingList';
+import { KnowledgeActionCenter } from './intelligence/KnowledgeActionCenter';
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 
 const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
@@ -430,6 +431,7 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
 
   return (
     <div className='grid gap-4'>
+      {dataRoomFeatures.knowledgeAssessmentEnabled && <KnowledgeActionCenter programId={programId} scopeId={scopeId} onOpenSource={(sourceId) => { const source = allSources.find((item) => item.id === sourceId); if (source) setPassportSource(source); }} />}
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>

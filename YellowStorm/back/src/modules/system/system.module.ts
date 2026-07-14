@@ -12,6 +12,9 @@ import { MaintenanceGuard } from './guards/maintenance.guard';
 import { SystemSetting, SystemSettingSchema } from './schemas/system-setting.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { User, UserSchema } from '../user/schemas/user.schema';
+import { ConnectorModule } from '../connector/connector.module';
+import { WorkspaceEvidenceSearchSettingsService } from './workspace-evidence-search-settings.service';
+import { AdminWorkspaceEvidenceSearchSettingsController } from './controllers/admin-workspace-evidence-search-settings.controller';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
@@ -32,20 +35,23 @@ import { User, UserSchema } from '../user/schemas/user.schema';
       inject: [ConfigService],
     }),
     forwardRef(() => AuthorizationModule),
+    ConnectorModule,
   ],
   controllers: [
     SystemController,
     AdminWorkspaceUploadSettingsController,
     WorkspaceUploadSettingsController,
+    AdminWorkspaceEvidenceSearchSettingsController,
   ],
   providers: [
     SystemService,
     WorkspaceUploadSettingsService,
+    WorkspaceEvidenceSearchSettingsService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, WorkspaceUploadSettingsService],
+  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService],
 })
 export class SystemModule {}

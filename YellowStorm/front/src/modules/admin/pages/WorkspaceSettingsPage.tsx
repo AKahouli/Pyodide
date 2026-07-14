@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminWorkspaceUploadSettings, updateAdminWorkspaceUploadSettings } from '../api';
-import type { WorkspaceUploadSettingsResponse } from '../types';
+import { getAdminWorkspaceEvidenceSearchConnectors, getAdminWorkspaceEvidenceSearchSettings, getAdminWorkspaceUploadSettings, updateAdminWorkspaceEvidenceSearchSettings, updateAdminWorkspaceUploadSettings } from '../api';
+import type { WorkspaceEvidenceSearchConnectorOption, WorkspaceUploadSettingsResponse } from '../types';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 
 const EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9+-]{0,15}$/i;
@@ -32,16 +33,20 @@ export function WorkspaceSettingsPage() {
   const [draftInput, setDraftInput] = useState('');
   const [invalidEntry, setInvalidEntry] = useState<string | null>(null);
   const [unsupportedEntry, setUnsupportedEntry] = useState<string | null>(null);
+  const [connectors, setConnectors] = useState<WorkspaceEvidenceSearchConnectorOption[]>([]);
+  const [evidenceConnectorId, setEvidenceConnectorId] = useState<string>('none');
 
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<void> => {
       setLoading(true);
       try {
-        const response: WorkspaceUploadSettingsResponse = await getAdminWorkspaceUploadSettings();
+        const [response, evidence, connectorList] = await Promise.all([getAdminWorkspaceUploadSettings(), getAdminWorkspaceEvidenceSearchSettings(), getAdminWorkspaceEvidenceSearchConnectors()]);
         if (cancelled) return;
         setExtensions(response.allowedExtensions);
         setSupportedExtensions(response.supportedExtensions);
+        setEvidenceConnectorId(evidence.connectorId ?? 'none');
+        setConnectors(connectorList);
       } catch (error) {
         if (!cancelled) {
           showError(t('workspaceSettings.toasts.loadError.title'), {
@@ -80,6 +85,17 @@ export function WorkspaceSettingsPage() {
     setUnsupportedEntry(null);
     setExtensions((current) => [...current, value]);
     setDraftInput('');
+  };
+
+  const handleEvidenceConnectorSave = async (): Promise<void> => {
+    setSaving(true);
+    try {
+      const result = await updateAdminWorkspaceEvidenceSearchSettings({ connectorId: evidenceConnectorId === 'none' ? null : evidenceConnectorId });
+      setEvidenceConnectorId(result.connectorId ?? 'none');
+      showSuccess(t('workspaceSettings.evidenceSearch.toasts.saved.title'), { description: t('workspaceSettings.evidenceSearch.toasts.saved.description') });
+    } catch (error) {
+      showError(t('workspaceSettings.evidenceSearch.toasts.saveError.title'), { description: error instanceof Error ? error.message : t('workspaceSettings.evidenceSearch.toasts.saveError.description') });
+    } finally { setSaving(false); }
   };
 
   const removeExtension = (value: string): void => {
@@ -221,6 +237,15 @@ export function WorkspaceSettingsPage() {
               </div>
             </>
           )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>{t('workspaceSettings.evidenceSearch.title')}</CardTitle><CardDescription>{t('workspaceSettings.evidenceSearch.description')}</CardDescription></CardHeader>
+        <CardContent className='space-y-4'>
+          <div className='grid gap-2'><Label htmlFor='evidence-search-connector'>{t('workspaceSettings.evidenceSearch.label')}</Label>
+            <Select value={evidenceConnectorId} onValueChange={setEvidenceConnectorId} disabled={loading || saving}><SelectTrigger id='evidence-search-connector'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='none'>{t('workspaceSettings.evidenceSearch.none')}</SelectItem>{connectors.map((connector) => <SelectItem key={connector.id} value={connector.id}>{connector.name}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className='flex justify-end'><Button type='button' onClick={() => void handleEvidenceConnectorSave()} disabled={saving}>{saving ? t('workspaceSettings.actions.saving') : t('workspaceSettings.actions.save')}</Button></div>
         </CardContent>
       </Card>
     </div>

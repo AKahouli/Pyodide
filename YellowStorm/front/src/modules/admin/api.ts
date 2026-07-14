@@ -93,6 +93,9 @@ import type {
   UpdateConnectorCategoryRequest,
   WorkspaceUploadSettingsResponse,
   UpdateWorkspaceUploadSettingsRequest,
+  WorkspaceEvidenceSearchSettingsResponse,
+  UpdateWorkspaceEvidenceSearchSettingsRequest,
+  WorkspaceEvidenceSearchConnectorOption,
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
@@ -1148,6 +1151,21 @@ export async function updateAdminWorkspaceUploadSettings(
     API_ENDPOINTS.adminWorkspaceUploadSettings.base,
     data,
   );
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceEvidenceSearchSettings(): Promise<WorkspaceEvidenceSearchSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceEvidenceSearchSettingsResponse>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceEvidenceSearchConnectors(): Promise<WorkspaceEvidenceSearchConnectorOption[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceEvidenceSearchConnectorOption[]>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.connectors);
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceEvidenceSearchSettings(data: UpdateWorkspaceEvidenceSearchSettingsRequest): Promise<WorkspaceEvidenceSearchSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceEvidenceSearchSettingsResponse>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.base, data);
   return response.data.data;
 }
 

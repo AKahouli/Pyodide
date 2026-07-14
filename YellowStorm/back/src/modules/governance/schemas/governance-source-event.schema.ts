@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type GovernanceSourceEventDocument = HydratedDocument<GovernanceSourceEvent>;
-export type GovernanceSourceEventType = 'source.created' | 'source.archived' | 'source.restored' | 'source.permanently_deleted' | 'version.captured' | 'version.technical_status_changed' | 'version.submitted_for_review' | 'version.returned_to_editing' | 'version.approved' | 'version.rejected' | 'version.published' | 'version.superseded' | 'validity.updated' | 'artifact.ready' | 'artifact.unavailable' | 'workspace.binding.created';
+export type GovernanceSourceEventType = 'source.created' | 'source.archived' | 'source.restored' | 'source.permanently_deleted' | 'version.captured' | 'version.technical_status_changed' | 'version.submitted_for_review' | 'version.returned_to_editing' | 'version.approved' | 'version.rejected' | 'version.published' | 'version.superseded' | 'validity.updated' | 'validity.review_due' | 'validity.candidate_decided' | 'artifact.ready' | 'artifact.unavailable' | 'workspace.binding.created' | 'knowledge.assessed' | 'knowledge.recommendation_applied' | 'metadata.candidate_decided';
 @Schema({ timestamps: true, collection: 'governance_source_events' })
 export class GovernanceSourceEvent {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;

@@ -19,3 +19,6 @@ export { SourceVersionTransitionDto } from './source-version-transition.dto';
 export { CreateGovernanceWorkspaceBindingDto, UpdateGovernanceWorkspaceBindingDto } from './create-governance-workspace-binding.dto';
 export { ArchiveGovernanceSourceDto } from './archive-governance-source.dto';
 export { PermanentlyDeleteGovernanceSourceDto } from './permanently-delete-governance-source.dto';
+export { DecideTemporalCandidateDto } from './decide-temporal-candidate.dto';
+export { KnowledgeListQueryDto } from './knowledge-list-query.dto';
+export { KnowledgeDecisionDto, MetadataCandidateDecisionDto } from './knowledge-decision.dto';

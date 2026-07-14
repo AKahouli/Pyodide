@@ -11,13 +11,16 @@ import { GovernanceWorkspaceBindingService } from '../services/governance-worksp
 import { GovernanceSourceVersionService } from '../services/governance-source-version.service';
 import { GovernanceSourceEventService } from '../services/governance-source-event.service';
 import { GovernanceSourceFromWorkspaceFactory } from '../factories/governance-source-from-workspace.factory';
+import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
+import { createHash } from 'crypto';
+import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
 
 @Injectable()
 export class WorkspaceGovernanceEventHandler implements OnModuleInit {
   private readonly logger = new Logger(WorkspaceGovernanceEventHandler.name);
   readonly handlerKey = 'governance.workspace-events.v1';
   readonly eventTypes = Object.values(WorkspaceIntegrationEvents);
-  constructor(private readonly registry: IntegrationEventHandlerRegistryService, private readonly config: ConfigService, private readonly bindings: GovernanceWorkspaceBindingService, private readonly versions: GovernanceSourceVersionService, private readonly events: GovernanceSourceEventService, @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>, @InjectModel(GovernanceSourceVersion.name) private readonly versionModel: Model<GovernanceSourceVersionDocument>, private readonly sourceFactory: GovernanceSourceFromWorkspaceFactory) {}
+  constructor(private readonly registry: IntegrationEventHandlerRegistryService, private readonly config: ConfigService, private readonly bindings: GovernanceWorkspaceBindingService, private readonly versions: GovernanceSourceVersionService, private readonly events: GovernanceSourceEventService, @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>, @InjectModel(GovernanceSourceVersion.name) private readonly versionModel: Model<GovernanceSourceVersionDocument>, private readonly sourceFactory: GovernanceSourceFromWorkspaceFactory, private readonly intelligence: KnowledgeExtractionOrchestratorService, private readonly evidenceSettings: WorkspaceEvidenceSearchSettingsService) {}
   onModuleInit(): void { this.registry.register(this); }
   async handle(event: IntegrationEventEnvelope<Record<string, unknown>>): Promise<void> {
     if (!this.config.get<boolean>('dataRoom.governanceEventConsumerEnabled')) return;
@@ -61,7 +64,13 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
       }
       if (event.eventType === WorkspaceIntegrationEvents.DocumentDeletedV1) { version.extractedMetadata = { ...version.extractedMetadata, artifactAvailable: false }; await version.save(); await this.events.append({ programId, sourceId: source._id.toString(), versionId: version._id.toString(), eventType: 'artifact.unavailable', actorType: 'integration', occurredAt: event.occurredAt, correlationId: event.correlationId, causationId: event.causationId, deduplicationKey: `${binding._id}:${event.eventId}:artifact.unavailable`, metadata: { eventId: event.eventId } }); continue; }
       const status = event.eventType === WorkspaceIntegrationEvents.IndexingReadyV1 ? 'ready' : event.eventType === WorkspaceIntegrationEvents.IndexingFailedV1 ? 'failed' : event.eventType === WorkspaceIntegrationEvents.IndexingStartedV1 ? 'processing' : 'pending';
-      await this.versions.updateTechnicalStatus(programId, source._id.toString(), version._id.toString(), status, event.eventId, event.occurredAt, payload.indexingAttemptId);
+      const acceptedAttempt = !payload.indexingAttemptId || version.indexingAttemptId === payload.indexingAttemptId;
+      const updatedVersion = await this.versions.updateTechnicalStatus(programId, source._id.toString(), version._id.toString(), status, event.eventId, event.occurredAt, payload.indexingAttemptId);
+      const isCurrentCandidate = source.currentCandidateVersionId?.toString() === updatedVersion._id.toString();
+      if (status === 'ready' && acceptedAttempt && isCurrentCandidate && !['rejected', 'superseded'].includes(updatedVersion.lifecycleStatus) && updatedVersion.technicalStatus === 'ready' && this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) {
+        const { connectorId } = await this.evidenceSettings.getSettings();
+        if (connectorId) await this.intelligence.enqueue({ programId, sourceId: source._id.toString(), sourceVersionId: updatedVersion._id.toString(), connectorId, jobType: 'technical_metadata', inputHash: createHash('sha256').update(JSON.stringify({ sourceVersionId: updatedVersion._id.toString(), documentId: updatedVersion.documentId?.toString(), contentHash: updatedVersion.contentHash, indexingAttemptId: updatedVersion.indexingAttemptId ?? null, connectorId })).digest('hex'), engineVersion: 'technical-metadata-v1' });
+      }
       } catch (error) {
         this.logger.error('Failed to process workspace event for governance binding', {
           bindingId: binding._id.toString(),

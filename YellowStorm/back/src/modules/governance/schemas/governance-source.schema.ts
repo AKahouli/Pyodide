@@ -41,6 +41,9 @@ export class GovernanceSource extends Document {
   @Prop({ type: Number, default: 0, min: 0 })
   versionSequence!: number;
 
+  @Prop({ type: Number, default: 0, min: 0 })
+  temporalDecisionRevision!: number;
+
   @Prop({ trim: true, maxlength: 1024, index: true })
   originKey?: string;
 
@@ -70,6 +73,9 @@ export class GovernanceSource extends Document {
 
   @Prop({ type: Boolean, default: false, index: true })
   isArchived!: boolean;
+
+  @Prop({ type: Number, default: 0, min: 0 })
+  knowledgeGovernanceRevision!: number;
 
   @Prop({ type: Date })
   archivedAt?: Date;

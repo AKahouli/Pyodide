@@ -71,6 +71,7 @@ export class EvaluationController {
     ) {
         return this.evaluationService.launchEvaluation(
             user._id.toString(),
+            this.permissionsOf(user),
             body.agentId,
             body.datasetId,
             body.numRuns,
@@ -97,6 +98,7 @@ export class EvaluationController {
     ) {
         return this.evaluationService.runSingleEvaluation(
             user._id.toString(),
+            this.permissionsOf(user),
             body.agentId,
             body.datasetId,
             body.mode,
@@ -118,6 +120,7 @@ export class EvaluationController {
     ) {
         return this.evaluationService.finalizeEvaluation(
             user._id.toString(),
+            this.permissionsOf(user),
             id,
             body.status,
             body.error,
@@ -126,14 +129,14 @@ export class EvaluationController {
 
     @Get('results/single/:id')
     @ApiOperation({ summary: 'Get a single evaluation by ID' })
-    async getEvaluationById(@Param('id') id: string) {
-        return this.evaluationService.findEvaluationById(id);
+    async getEvaluationById(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+        return this.evaluationService.findEvaluationByIdForUser(user._id.toString(), id);
     }
 
     @Get('results/:agentId')
     @ApiOperation({ summary: 'Get evaluation results for an agent' })
-    async getResults(@Param('agentId') agentId: string) {
-        return this.evaluationService.findEvaluationsByAgent(agentId);
+    async getResults(@CurrentUser() user: UserDocument, @Param('agentId') agentId: string) {
+        return this.evaluationService.findEvaluationsByAgent(user._id.toString(), agentId);
     }
 
     @Delete('results/:id')
@@ -143,6 +146,10 @@ export class EvaluationController {
         @CurrentUser() user: UserDocument,
         @Param('id') id: string
     ) {
-        return this.evaluationService.deleteEvaluation(user._id.toString(), id);
+        return this.evaluationService.deleteEvaluation(user._id.toString(), this.permissionsOf(user), id);
+    }
+
+    private permissionsOf(user: UserDocument): string[] {
+        return (user as unknown as { permissions?: string[] }).permissions ?? [];
     }
 }

@@ -69,6 +69,10 @@ export const API_ENDPOINTS = {
   adminWorkspaceUploadSettings: {
     base: '/admin/workspace-settings/uploads',
   },
+  adminWorkspaceEvidenceSearchSettings: {
+    base: '/admin/workspace-settings/evidence-search',
+    connectors: '/admin/workspace-settings/evidence-search/connectors',
+  },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
@@ -200,6 +204,9 @@ export const API_ENDPOINTS = {
     source: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}`,
     sourceVersions: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions`,
     sourceVersion: (programId: string, sourceId: string, versionId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions/${versionId}`,
+    temporalCandidates: (programId: string, sourceId: string, versionId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions/${versionId}/temporal-candidates`,
+    temporalAnalysis: (programId: string, sourceId: string, versionId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions/${versionId}/temporal-analysis`,
+    temporalCandidateDecision: (programId: string, sourceId: string, versionId: string, recordId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions/${versionId}/temporal-candidates/${recordId}/decision`,
     sourceEvents: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}/events`,
     workspaceBindings: (programId: string) => `/governance/programs/${programId}/workspace-bindings`,
     workspaceBinding: (programId: string, bindingId: string) => `/governance/programs/${programId}/workspace-bindings/${bindingId}`,
@@ -222,6 +229,14 @@ export const API_ENDPOINTS = {
     rollback: (deploymentId: string) => `/governance/deployments/${deploymentId}/rollback`,
     suspend: (deploymentId: string) => `/governance/deployments/${deploymentId}/suspend`,
     metrics: (programId: string) => `/governance/programs/${programId}/metrics`,
+    knowledgeHealth: (programId: string) => `/governance/programs/${programId}/knowledge/health-summary`,
+    knowledgeRefresh: (programId: string) => `/governance/programs/${programId}/knowledge/refresh`,
+    knowledgeAlerts: (programId: string) => `/governance/programs/${programId}/knowledge/alerts`,
+    knowledgeAlertAcknowledge: (programId: string, alertId: string) => `/governance/programs/${programId}/knowledge/alerts/${alertId}/acknowledge`,
+    knowledgeRecommendations: (programId: string) => `/governance/programs/${programId}/knowledge/recommendations`,
+    knowledgeRecommendationAction: (programId: string, recommendationId: string, action: 'accept' | 'reject' | 'apply') => `/governance/programs/${programId}/knowledge/recommendations/${recommendationId}/${action}`,
+    metadataCandidates: (programId: string) => `/governance/programs/${programId}/knowledge/metadata-candidates`,
+    metadataCandidateAction: (programId: string, candidateId: string, action: 'accept' | 'reject') => `/governance/programs/${programId}/knowledge/metadata-candidates/${candidateId}/${action}`,
   },
   roles: {
     base: '/admin/roles',
