@@ -54,8 +54,9 @@ export class WorkyMessageController {
     );
     // Resolve the Manager model with the same priority chain used by
     // planning turns: per-turn override → stream's persistent field →
-    // admin default. The gRPC `worky()` proto marks `model` as required,
-    // so passing empty opts would silently dead-end every message.
+    // admin default. RunTask treats `model` as optional, but we always
+    // resolve a concrete model so the orchestrator never falls back to
+    // its own default unexpectedly.
     const override = dto.managerModelId?.trim();
     let model = override || managerModelId || null;
     if (!model) {
