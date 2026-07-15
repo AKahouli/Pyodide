@@ -64,15 +64,20 @@ export class WorkyMessageController {
     if (!model) {
       model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
     }
-    // Send ALL available connectors so the orchestrator's agents can use any
-    // configured MCP tool. Resolution is per-user (auth headers/env resolved
-    // by ConnectorService); failures are non-fatal — we just send none.
+    // Send only the connectors the orchestrator actually needs (code-interpreter
+    // & linkup). Resolution is per-user (auth headers/env resolved by
+    // ConnectorService); failures are non-fatal — we just send none.
+    const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup'];
     let connectors: unknown[] = [];
     try {
-      const all = await this.connectorService.findAllActive();
-      if (all.length) {
+      const found = (
+        await Promise.all(
+          WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)),
+        )
+      ).filter(Boolean);
+      if (found.length) {
         connectors = await this.connectorService.findByIdsForGrpc(
-          all.map((c) => c.id),
+          found.map((c) => c!.id),
           user._id.toString(),
         );
       }
