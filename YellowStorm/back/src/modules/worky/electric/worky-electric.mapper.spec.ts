@@ -88,6 +88,43 @@ describe('worky-electric.mapper', () => {
       },
     );
 
+    it('prefers the new title column for the card headline, keeps description as subtitle', () => {
+      const { set } = mapPlanStep(
+        {
+          session_id: 's',
+          step_id: 's1',
+          ordinal: 0,
+          status: 'running',
+          title: 'Search Bitcoin price',
+          description: 'Search the web for the current BTC price from reputable sources.',
+        },
+        'stream-1',
+      );
+      expect(set).toMatchObject({
+        title: 'Search Bitcoin price',
+        description: 'Search the web for the current BTC price from reputable sources.',
+      });
+    });
+
+    it('for an ask step, uses question as the title fallback and as the subtitle', () => {
+      const { set } = mapPlanStep(
+        {
+          session_id: 's',
+          step_id: 's1',
+          ordinal: 0,
+          status: 'blocked',
+          description: '',
+          kind: 'ask',
+          question: 'Which currency should I use?',
+        },
+        'stream-1',
+      );
+      expect(set).toMatchObject({
+        title: 'Which currency should I use?',
+        description: 'Which currency should I use?',
+      });
+    });
+
     it('maps plan_step result and blocked_reason into the $set', () => {
       const { set } = mapPlanStep(
         {

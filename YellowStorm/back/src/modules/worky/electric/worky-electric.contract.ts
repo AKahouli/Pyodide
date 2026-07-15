@@ -18,6 +18,7 @@ export interface PgPlanStepRow {
   step_id: string;
   ordinal: number;
   status: string;
+  title?: string; // card headline (short label); falls back to description/question
   description: string;
   result?: string | null;
   blocked_reason?: string | null;
