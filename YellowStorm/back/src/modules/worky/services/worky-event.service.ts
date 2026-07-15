@@ -96,7 +96,12 @@ export class WorkyEventService implements OnModuleDestroy {
     );
     const events$ = subject.pipe(
       filter((event) => event.streamId === streamId),
-      map((event) => ({ type: event.type, data: event }) as MessageEvent),
+      // The SSE `data` MUST be the event payload (not the whole envelope):
+      // every frontend handler reads `event.data.<field>` expecting the
+      // payload fields directly (e.g. message.appended -> event.data.id).
+      // Sending the full `{type,streamId,emittedAt,payload}` would nest them
+      // one level too deep and silently drop messages/interactions.
+      map((event) => ({ type: event.type, data: event.payload }) as MessageEvent),
     );
     return merge(events$, heartbeat$).pipe(takeUntil(disconnect$));
   }
