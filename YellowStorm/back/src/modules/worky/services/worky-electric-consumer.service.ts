@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { ShapeStream, isChangeMessage, isControlMessage } from '@electric-sql/client';
 import { LoggerService } from '../../logger';
 import { WorkyStreamService } from './worky-stream.service';
@@ -120,6 +120,17 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     this.logger.log('[worky-electric] cursor persisted', { shape, handle: handle ?? null, offset });
   }
 
+  /**
+   * The manager sends session/stream ids as strings, but our Mongo schemas type
+   * `streamId` as ObjectId and every read query (board, messages) matches an
+   * ObjectId. A raw string stored via upsert never matched, so the UI showed
+   * nothing. Store a real ObjectId. Falls back to the raw string for
+   * non-ObjectId ids (e.g. unit-test fixtures like 'stream-1').
+   */
+  private toStreamOid(streamId: string): Types.ObjectId | string {
+    return Types.ObjectId.isValid(streamId) ? new Types.ObjectId(streamId) : streamId;
+  }
+
   async handleMessages(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (isControlMessage(m)) {
@@ -145,11 +156,12 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sid: row.session_id });
           continue;
         }
+        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapMessage(row, target.streamId);
         await this.messageModel
           .findOneAndUpdate(
-            { streamId: target.streamId, externalId: row.id },
-            { $set: set },
+            { streamId: streamOid, externalId: row.id },
+            { $set: { ...set, streamId: streamOid } },
             { upsert: true, new: true, setDefaultsOnInsert: true },
           )
           .exec();
@@ -199,11 +211,12 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         if (!isKnownPlanStepStatus(row.status)) {
           this.logger.warn('Unknown plan_step status', { status: row.status, step: row.step_id });
         }
+        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlanStep(row, target.streamId);
         await this.taskModel
           .findOneAndUpdate(
-            { streamId: target.streamId, externalId: row.step_id },
-            { $set: set },
+            { streamId: streamOid, externalId: row.step_id },
+            { $set: { ...set, streamId: streamOid } },
             { upsert: true, new: true, setDefaultsOnInsert: true },
           )
           .exec();
@@ -250,11 +263,12 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sid: row.session_id });
           continue;
         }
+        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlan(row, target.streamId);
         await this.planProjectionModel
           .findOneAndUpdate(
-            { streamId: target.streamId },
-            { $set: set },
+            { streamId: streamOid },
+            { $set: { ...set, streamId: streamOid } },
             { upsert: true, new: true, setDefaultsOnInsert: true },
           )
           .exec();
