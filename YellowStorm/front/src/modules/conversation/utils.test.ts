@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getStreamErrorMessage, mapComponentsToContentParts, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -68,6 +68,25 @@ describe('conversation utils', () => {
 
     expect(markdown).toContain('Hi');
     expect(markdown).toContain('```ts');
+  });
+
+  it('excludes internal execution payloads from conversation content and copies', () => {
+    const components = [
+      { type: 'reasoning', data: { content: 'Internal system instructions' } },
+      { type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
+      { type: 'chainOfThought', data: { steps: ['Internal step'] } },
+      { type: 'text', data: { content: 'Public answer' } },
+      { type: 'unknown', data: { content: 'Unexpected payload' } },
+    ] as never;
+
+    expect(mapConversationComponentsToContentParts(components)).toEqual([{ type: 'text', content: 'Public answer' }]);
+    expect(componentsToMarkdown(components)).toBe('Public answer');
+  });
+
+  it('uses generic activity states without exposing tool details', () => {
+    expect(getConversationStreamActivity([])).toBe('thinking');
+    expect(getConversationStreamActivity([{ type: 'toolInfo', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
+    expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
   it('maps snake_case sandbox and artifact component fields', () => {

@@ -5,6 +5,46 @@ import type { ModuleTranslationKey } from '@/modules/localization';
 import type { ChartComponentData, ChartKind, ChartLayout, ChoiceComponentData, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
 
+export type ConversationStreamActivity = 'thinking' | 'usingTools' | 'responding';
+
+const conversationVisibleComponentTypes = new Set([
+  'text',
+  'code',
+  'queue',
+  'plan',
+  'checkpoint',
+  'chart',
+  'task',
+  'error',
+  'sources',
+  'sandbox',
+  'webPreview',
+  'artifact',
+  'citation',
+  'choice',
+]);
+
+function getComponentType(component: MessageComponent): string {
+  return typeof component.type === 'object' && component.type !== null
+    ? (component.type as { type?: string }).type || ''
+    : component.type;
+}
+
+/**
+ * Projects structured agent output into the user-facing transcript. Internal
+ * reasoning, tool calls, and unrecognised payloads are never chat content.
+ */
+export function mapConversationComponentsToContentParts(components: MessageComponent[]): MessageContentPart[] {
+  return mapComponentsToContentParts(components.filter((component) => conversationVisibleComponentTypes.has(getComponentType(component))));
+}
+
+export function getConversationStreamActivity(components: MessageComponent[]): ConversationStreamActivity {
+  const componentTypes = components.map(getComponentType);
+  if (componentTypes.includes('toolInfo')) return 'usingTools';
+  if (componentTypes.some((type) => type === 'text' || type === 'code')) return 'responding';
+  return 'thinking';
+}
+
 const chartKindSchema = z.enum(['line', 'bar', 'area', 'pie', 'scatter', 'composed']);
 const chartLayoutSchema = z.enum(['horizontal', 'vertical']);
 const chartSeriesSchema = z.object({
@@ -67,7 +107,7 @@ export function messageToChat(msg: Message): ChatMessage {
   if (msg.conversationType === 'user') {
     content = msg.content || '';
   } else {
-    content = mapComponentsToContentParts(msg.components || []);
+    content = mapConversationComponentsToContentParts(msg.components || []);
   }
   
 return {
@@ -272,7 +312,7 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
   const regularComps: MessageComponent[] = [];
   const citationComps: MessageComponent[] = [];
   for (const comp of validComps) {
-    const compType = typeof comp.type === 'object' && comp.type !== null ? (comp.type as { type?: string }).type || 'text' : comp.type;
+    const compType = getComponentType(comp) || 'text';
     if (compType === 'citation') {
       citationComps.push(comp);
     } else {
@@ -539,7 +579,7 @@ export function componentsToMarkdown(components: MessageComponent[]): string {
   const errorLabel = translateConversation('messageActions.markdown.errorLabel');
   const defaultCitationSource = translateConversation('messageActions.markdown.defaultCitation');
   return components
-    .filter((comp) => comp && comp.type)
+    .filter((comp) => comp && conversationVisibleComponentTypes.has(getComponentType(comp)))
     .map((comp) => {
       const data = comp.data || {};
       switch (comp.type) {

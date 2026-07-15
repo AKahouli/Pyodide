@@ -219,5 +219,17 @@
   "choice.dismissed": "Dismissed",
   "choice.dismissMessage": "I prefer not to answer this question.",
   "choice.submitted": "Choice submitted",
-  "choice.sendError": "Unable to send your choice."
+  "choice.sendError": "Unable to send your choice.",
+  "stream.activity.thinking": "Thinking",
+  "stream.activity.usingTools": "Working on your request",
+  "stream.activity.responding": "Preparing the response",
+  "stream.activity.elapsed": "Working for {{seconds}}s",
+  "stream.activity.details": "Activity ({{count}})",
+  "stream.activity.detailsAria": "Show stream activity details",
+  "stream.activity.parameters": "Tool parameters",
+  "stream.activity.toolFallback": "Tool",
+  "stream.activity.sensitiveNotice": "Tool parameters can contain sensitive information.",
+  "stream.activity.toolStatus.running": "Running",
+  "stream.activity.toolStatus.completed": "Completed",
+  "stream.activity.toolStatus.failed": "Failed"
 }

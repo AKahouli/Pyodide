@@ -1,15 +1,41 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { LoadingIndicator, StreamingCursor } from './LoadingIndicator';
 
 describe('LoadingIndicator', () => {
   it('renders loader container', () => {
-    const { container } = render(<LoadingIndicator />);
-    expect(container.firstChild).toBeTruthy();
+    render(<LoadingIndicator activity='usingTools' />);
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
   });
 
   it('renders streaming cursor', () => {
     const { container } = render(<StreamingCursor />);
     expect(container.querySelector('span')).toBeTruthy();
+  });
+
+  it('keeps tool parameters and thought steps compact until explicitly expanded', () => {
+    render(
+      <LoadingIndicator
+        activity='usingTools'
+        components={[
+          { id: 'reasoning', type: 'reasoning', data: { content: 'Never show this raw prompt' } },
+          { id: 'thoughts', type: 'chainOfThought', data: { steps: ['Reviewing the document'] } },
+          { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', status: 'running', params: '{"workspaceId":"workspace-1"}' } },
+        ] as never}
+      />,
+    );
+
+    expect(screen.queryByText('Reviewing the document')).not.toBeInTheDocument();
+    expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('Reviewing the document')).toBeInTheDocument();
+    expect(screen.getByText('Activate Skill')).toBeInTheDocument();
+    expect(screen.queryByText('workspace-1')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('stream.activity.parameters'));
+    expect(screen.getByText(/workspace-1/)).toBeInTheDocument();
+    expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
   });
 });

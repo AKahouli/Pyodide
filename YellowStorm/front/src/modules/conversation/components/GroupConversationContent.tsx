@@ -3,8 +3,8 @@ import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useAuth } from '@/modules/auth';
-import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
-import { messageToChat, mapComponentsToContentParts } from '../utils';
+import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
+import { getConversationStreamActivity, mapConversationComponentsToContentParts, messageToChat } from '../utils';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
@@ -141,6 +141,8 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
   const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
 
+  if (!isUser && Array.isArray(chatMessage.content) && chatMessage.content.length === 0) return null;
+
   return (
     <div className='group/msg' id={`message-${message.id}`}>
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
@@ -225,6 +227,7 @@ export function GroupConversationContent() {
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
   const streamingConversationId = useConversationStore((s) => s.streamingConversationId);
   const isAwaitingFirstChunk = useIsAwaitingFirstChunk();
+  const awaitingConversationId = useAwaitingConversationId();
   const hasMore = useMessagesHasMore();
   const loadingOlder = useMessagesLoadingOlder();
   const loadMoreMessages = useConversationStore((s) => s.loadMoreMessages);
@@ -237,6 +240,9 @@ export function GroupConversationContent() {
   const mentionNavigationLock = useConversationStore((s) => s.mentionNavigationLock);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
+  const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
+  const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
+  const streamingActivity = useMemo(() => getConversationStreamActivity(streamingComponents), [streamingComponents]);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -308,10 +314,10 @@ export function GroupConversationContent() {
   }, [messages]);
 
   const streamingChatMessage = useMemo(() => {
-    if (!isStreaming || !streamingComponents.length) return null;
-    if (streamingConversationId !== currentConversationId) return null;
+    if (!isActiveStream || !streamingComponents.length) return null;
 
-    const parts = mapComponentsToContentParts(streamingComponents);
+    const parts = mapConversationComponentsToContentParts(streamingComponents);
+    if (!parts.length) return null;
     const lastPart = parts.at(-1);
     if (lastPart?.type === 'text') {
       (lastPart as { showCursor?: boolean }).showCursor = true;
@@ -327,12 +333,13 @@ export function GroupConversationContent() {
         await sendMessage(currentConversationId, { content: action.submitText, interaction: { ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) } });
       },
     } as const;
-  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId, streamingMessageId, sendMessage]);
+  }, [isActiveStream, streamingComponents, currentConversationId, streamingMessageId, sendMessage]);
 
   return (
-    <ChatConversation className='flex-1 min-h-0'>
-      <ChatConversationContent className='py-6'>
-        <div ref={contentRef}>
+    <>
+      <ChatConversation className='flex-1 min-h-0'>
+        <ChatConversationContent className='py-6'>
+          <div ref={contentRef}>
           {/* Load trigger - hidden during initial load to prevent immediate firing */}
           {hasMore && !messagesLoading && <TopLoadTrigger onTrigger={handleLoadMore} disabled={loadingOlder} />}
 
@@ -359,12 +366,6 @@ export function GroupConversationContent() {
             ))
           )}
 
-          {isAwaitingFirstChunk && streamingComponents.length === 0 && (
-            <div className='flex w-full gap-3'>
-              <LoadingIndicator />
-            </div>
-          )}
-
           {streamingChatMessage && !mentionNavigationLock && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingChatMessage.id}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
@@ -377,10 +378,12 @@ export function GroupConversationContent() {
               </MessageProvider>
             </div>
           )}
-        </div>
-      </ChatConversationContent>
-      <MentionMessageJump />
-      <ChatScrollButton />
-    </ChatConversation>
+          </div>
+        </ChatConversationContent>
+        <MentionMessageJump />
+        <ChatScrollButton />
+      </ChatConversation>
+      {showStreamingActivity && <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />}
+    </>
   );
 }

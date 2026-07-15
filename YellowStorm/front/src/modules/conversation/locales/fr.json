@@ -219,5 +219,17 @@
   "choice.dismissed": "Ignoré",
   "choice.dismissMessage": "Je préfère ne pas répondre à cette question.",
   "choice.submitted": "Choix envoyé",
-  "choice.sendError": "Impossible d'envoyer votre choix."
+  "choice.sendError": "Impossible d'envoyer votre choix.",
+  "stream.activity.thinking": "Réflexion en cours",
+  "stream.activity.usingTools": "Traitement de votre demande",
+  "stream.activity.responding": "Préparation de la réponse",
+  "stream.activity.elapsed": "Traitement depuis {{seconds}} s",
+  "stream.activity.details": "Activité ({{count}})",
+  "stream.activity.detailsAria": "Afficher les détails de l'activité du flux",
+  "stream.activity.parameters": "Paramètres de l'outil",
+  "stream.activity.toolFallback": "Outil",
+  "stream.activity.sensitiveNotice": "Les paramètres de l'outil peuvent contenir des informations sensibles.",
+  "stream.activity.toolStatus.running": "En cours",
+  "stream.activity.toolStatus.completed": "Terminé",
+  "stream.activity.toolStatus.failed": "Échec"
 }
