@@ -4,7 +4,7 @@ describe('WorkyMessageController', () => {
   let controller: WorkyMessageController;
   let planning: { appendOwnerMessage: jest.Mock; listMessages: jest.Mock };
   let streamService: { ensureKickoffContext: jest.Mock };
-  let grpcClient: { worky: jest.Mock };
+  let orchestrator: { runTask: jest.Mock };
   let models: { getDefaultModel: jest.Mock; getModelIdentifier: jest.Mock };
   let logger: { setContext: jest.Mock; log: jest.Mock; error: jest.Mock };
 
@@ -16,8 +16,8 @@ describe('WorkyMessageController', () => {
     streamService = {
       ensureKickoffContext: jest.fn(),
     };
-    grpcClient = {
-      worky: jest.fn().mockResolvedValue({ sessionId: 'sess-xyz', accepted: true }),
+    orchestrator = {
+      runTask: jest.fn().mockResolvedValue({ sessionId: 'sess-xyz', accepted: true, runId: 'r' }),
     };
     models = {
       getDefaultModel: jest.fn().mockResolvedValue({ id: 'default-model', litellmModel: 'openai/gpt-4o-mini' }),
@@ -32,7 +32,7 @@ describe('WorkyMessageController', () => {
     controller = new WorkyMessageController(
       planning as any,
       streamService as any,
-      grpcClient as any,
+      orchestrator as any,
       models as any,
       logger as any,
     );
@@ -47,7 +47,12 @@ describe('WorkyMessageController', () => {
 
     expect(planning.appendOwnerMessage).toHaveBeenCalledWith('user-1', 'stream-1', { content: 'hi' });
     expect(streamService.ensureKickoffContext).toHaveBeenCalledWith('stream-1', 'user-1');
-    expect(grpcClient.worky).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', expect.any(Object));
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({ idempotencyKey: 'm1' }),
+    );
     expect(res).toEqual({ id: 'm1', content: 'hi', createdAt: 'now', turnStarted: true });
   });
 
@@ -61,9 +66,12 @@ describe('WorkyMessageController', () => {
 
     await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
 
-    expect(grpcClient.worky).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', {
-      model: 'anthropic/claude-3-5-sonnet',
-    });
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({ model: 'anthropic/claude-3-5-sonnet', idempotencyKey: 'm1' }),
+    );
     expect(models.getDefaultModel).not.toHaveBeenCalled();
   });
 
@@ -81,9 +89,12 @@ describe('WorkyMessageController', () => {
       { content: 'hi', managerModelId: ' openai/gpt-4o ' } as any,
     );
 
-    expect(grpcClient.worky).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', {
-      model: 'openai/gpt-4o',
-    });
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({ model: 'openai/gpt-4o', idempotencyKey: 'm1' }),
+    );
   });
 
   it('falls back to the admin default model when neither override nor stream field is set', async () => {
@@ -94,8 +105,11 @@ describe('WorkyMessageController', () => {
     await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
 
     expect(models.getDefaultModel).toHaveBeenCalledTimes(1);
-    expect(grpcClient.worky).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', {
-      model: 'openai/gpt-4o-mini',
-    });
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({ model: 'openai/gpt-4o-mini', idempotencyKey: 'm1' }),
+    );
   });
 });

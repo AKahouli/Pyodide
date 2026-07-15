@@ -58,9 +58,9 @@ export class WorkyStream extends Document {
   workerModelId?: string | null;
 
   /**
-   * conversation-v2 session id for this stream. Created via the gRPC
+   * AgentOrchestrator session id for this stream. Created via the gRPC
    * `CreateSession` RPC when the stream is created, and used as the
-   * `session_id` on every `Worky` kickoff and as the Electric shape
+   * `session_id` on every `RunTask` kickoff and as the Electric shape
    * scope key (`session_id`) the manager writes task rows under.
    */
   @Prop({ type: String, default: null, index: true })

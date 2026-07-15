@@ -35,7 +35,7 @@ import { WorkyScheduledEvent } from '../schemas/worky-scheduled-event.schema';
 import { WorkyTask } from '../schemas/worky-task.schema';
 import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
 import { WorkyTrace } from '../schemas/worky-trace.schema';
-import { ConversationV2GrpcClientService } from '../../conversation-v2/services/conversation-v2.grpc-client.service';
+import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 
 const ARTIFACT_WORKSPACE_NAME_PREFIX = 'Worky';
 const STREAM_AGENT_NAME_PREFIX = 'Worky Manager';
@@ -67,7 +67,7 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
-    private readonly grpcClient: ConversationV2GrpcClientService,
+    private readonly orchestrator: WorkyOrchestratorGrpcClientService,
   ) {
     this.logger.setContext(WorkyStreamService.name);
   }
@@ -114,7 +114,7 @@ export class WorkyStreamService implements OnModuleInit {
       artifactWorkspaceId: artifactWorkspace._id,
       managerAgentId: managerAgent._id,
       // aiSessionId is intentionally omitted here (defaults to null via the
-      // schema). The conversation-v2 session is created lazily on first
+      // schema). The orchestrator session is created lazily on first
       // message send — see `ensureKickoffContext` — so stream creation no
       // longer depends on manager/gRPC availability.
       // Per-stream model selection starts unset; resolved at
@@ -151,12 +151,12 @@ export class WorkyStreamService implements OnModuleInit {
 
   /**
    * Used by `WorkyMessageController` to kick off the manager over gRPC:
-   * returns both the conversation-v2 session id and the stream's
+   * returns both the orchestrator session id and the stream's
    * persistent manager model selection (if any), so the caller can
    * resolve the per-turn override → stream field → admin default chain
    * without a second round-trip.
    *
-   * Lazily creates the conversation-v2 session on first use if the stream
+   * Lazily creates the orchestrator session on first use if the stream
    * doesn't have one yet (`aiSessionId: null`) — either because it was
    * created before this design change, or because eager creation was
    * removed from `create()`. This decouples stream creation from manager
@@ -175,7 +175,7 @@ export class WorkyStreamService implements OnModuleInit {
     }
     let aiSessionId = doc.aiSessionId ?? null;
     if (!aiSessionId) {
-      aiSessionId = await this.grpcClient.createSession(userId, []);
+      aiSessionId = await this.orchestrator.createSession(userId);
       await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
     }
     return { aiSessionId, managerModelId: doc.managerModelId ?? null };

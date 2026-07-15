@@ -13,7 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger'
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyPlanningService } from '../services/worky-planning.service';
 import { WorkyStreamService } from '../services/worky-stream.service';
-import { ConversationV2GrpcClientService } from '../../conversation-v2/services/conversation-v2.grpc-client.service';
+import { WorkyOrchestratorGrpcClientService } from '../services/worky-orchestrator.grpc-client.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
@@ -30,7 +30,7 @@ export class WorkyMessageController {
   constructor(
     private readonly planning: WorkyPlanningService,
     private readonly streamService: WorkyStreamService,
-    private readonly grpcClient: ConversationV2GrpcClientService,
+    private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly models: ModelsService,
     private readonly logger: LoggerService,
   ) {
@@ -64,15 +64,24 @@ export class WorkyMessageController {
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
-    this.logger.log('[worky-electric] gRPC kickoff', {
+    this.logger.log('[worky-orchestrator] RunTask kickoff', {
       streamId,
       aiSid: aiSessionId,
       model,
       contentLength: dto.content?.length,
+      idempotencyKey: saved.id,
     });
-    void this.grpcClient
-      .worky(user._id.toString(), aiSessionId, dto.content, model ? { model } : {})
-      .catch((err) => this.logger.error('Worky gRPC kickoff failed', { streamId, error: (err as Error).message }));
+    void this.orchestrator
+      .runTask(user._id.toString(), aiSessionId, dto.content, {
+        model: model ?? undefined,
+        idempotencyKey: saved.id,
+      })
+      .catch((err) =>
+        this.logger.error('[worky-orchestrator] RunTask kickoff failed', {
+          streamId,
+          error: (err as Error).message,
+        }),
+      );
     return { ...saved, turnStarted: true };
   }
 

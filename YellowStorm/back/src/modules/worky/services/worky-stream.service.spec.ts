@@ -184,7 +184,7 @@ describe('WorkyStreamService.create', () => {
     expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
 
-  it('does not eagerly create a conversation-v2 session on create()', async () => {
+  it('does not eagerly create an orchestrator session on create()', async () => {
     const { service, streamCreate, grpcClient } = makeService();
 
     await service.create(userId, { title: 'My stream' } as any);
@@ -273,7 +273,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(grpcClient.createSession).toHaveBeenCalledWith(userId, []);
+    expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
     expect(res).toEqual({ aiSessionId: 'sess-new', managerModelId: null });
   });
