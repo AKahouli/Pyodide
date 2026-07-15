@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AIMessageContent, type MessageContentPart } from './ai-message-content';
+import { MessageProvider } from './message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 
 const openFileViewerFromUrlMock = vi.hoisted(() => vi.fn());
@@ -101,10 +102,43 @@ describe('AIMessageContent charts', () => {
       'application/pdf',
       {
         displayMode: 'sidebar',
+        closeOnOutsideClick: false,
         page: 2,
         highlightText: 'Exact located quote',
         highlightBBox: [10, 20, 30, 40],
       },
+    );
+  });
+
+  it('enables outside-click dismissal for playbook citations', async () => {
+    getArtifactDownloadUrlMock.mockResolvedValueOnce({ downloadUrl: 'https://example.test/playbook.pdf' });
+    const parts: MessageContentPart[] = [{
+      type: 'text',
+      content: 'Playbook source [2].',
+      citations: [{
+        parentId: '',
+        sourceType: 'text',
+        source: 'playbook.pdf',
+        externalId: '',
+        page: '2',
+        pageContent: 'Source',
+        workspaceId: 'playbook',
+        reference: '[2]',
+      }],
+    }];
+
+    render(
+      <MessageProvider fileViewerDisplayMode='floating'>
+        <AIMessageContent parts={parts} />
+      </MessageProvider>,
+    );
+    await userEvent.click(screen.getByText('2'));
+
+    expect(openFileViewerFromUrlMock).toHaveBeenLastCalledWith(
+      'https://example.test/playbook.pdf',
+      'playbook.pdf',
+      'application/pdf',
+      expect.objectContaining({ displayMode: 'floating', closeOnOutsideClick: true }),
     );
   });
 

@@ -1,13 +1,15 @@
-import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileFloatingWindow } from './FileFloatingWindow';
 
 const setPositionMock = vi.hoisted(() => vi.fn());
 const setSizeMock = vi.hoisted(() => vi.fn());
 const setMinimizedPositionMock = vi.hoisted(() => vi.fn());
+const closeViewerMock = vi.hoisted(() => vi.fn());
 
 let modeState: 'open' | 'minimized' | 'closed' = 'open';
 let displayModeState: 'floating' | 'sidebar' = 'floating';
+let closeOnOutsideClickState = true;
 
 vi.mock('../store', () => ({
   useFileViewerMode: () => modeState,
@@ -20,6 +22,8 @@ vi.mock('../store', () => ({
         setPosition: setPositionMock,
         setSize: setSizeMock,
         setMinimizedPosition: setMinimizedPositionMock,
+        closeViewer: closeViewerMock,
+        closeOnOutsideClick: closeOnOutsideClickState,
       }),
     {
       getState: () => ({
@@ -42,6 +46,11 @@ vi.mock('./FileMinimizedWindow', () => ({ FileMinimizedWindow: () => <div>minimi
 vi.mock('./FileViewerContent', () => ({ FileViewerContent: () => <div>floating-content</div> }));
 
 describe('FileFloatingWindow', () => {
+  beforeEach(() => {
+    closeViewerMock.mockClear();
+    closeOnOutsideClickState = true;
+  });
+
   it('renders floating window with handles in open mode', () => {
     modeState = 'open';
     displayModeState = 'floating';
@@ -66,6 +75,27 @@ describe('FileFloatingWindow', () => {
     expect(setSizeMock).toHaveBeenCalled();
     expect(setPositionMock).toHaveBeenCalled();
     expect(setMinimizedPositionMock).toHaveBeenCalled();
+  });
+
+  it('closes the floating viewer when the backdrop is clicked', () => {
+    modeState = 'open';
+    displayModeState = 'floating';
+
+    render(<FileFloatingWindow />);
+    fireEvent.click(screen.getByTestId('file-viewer-backdrop'));
+
+    expect(closeViewerMock).toHaveBeenCalledOnce();
+  });
+
+  it('does not close a floating viewer that was not opened from playbook', () => {
+    modeState = 'open';
+    displayModeState = 'floating';
+    closeOnOutsideClickState = false;
+
+    render(<FileFloatingWindow />);
+    fireEvent.click(screen.getByTestId('file-viewer-backdrop'));
+
+    expect(closeViewerMock).not.toHaveBeenCalled();
   });
 
   it('returns null when closed or non-floating mode', () => {
