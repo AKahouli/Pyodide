@@ -21,6 +21,7 @@ import { RequirePermissions } from '../../authorization/decorators/require-permi
 import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
 import { ModelsService } from '../../models/models.service';
+import { ConnectorService } from '../../connector/connector.service';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -32,6 +33,7 @@ export class WorkyMessageController {
     private readonly streamService: WorkyStreamService,
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly models: ModelsService,
+    private readonly connectorService: ConnectorService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyMessageController.name);
@@ -62,6 +64,23 @@ export class WorkyMessageController {
     if (!model) {
       model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
     }
+    // Send ALL available connectors so the orchestrator's agents can use any
+    // configured MCP tool. Resolution is per-user (auth headers/env resolved
+    // by ConnectorService); failures are non-fatal — we just send none.
+    let connectors: unknown[] = [];
+    try {
+      const all = await this.connectorService.findAllActive();
+      if (all.length) {
+        connectors = await this.connectorService.findByIdsForGrpc(
+          all.map((c) => c.id),
+          user._id.toString(),
+        );
+      }
+    } catch (err) {
+      this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
+        error: (err as Error).message,
+      });
+    }
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
@@ -71,11 +90,13 @@ export class WorkyMessageController {
       model,
       contentLength: dto.content?.length,
       idempotencyKey: saved.id,
+      connectorCount: connectors.length,
     });
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, dto.content, {
         model: model ?? undefined,
         idempotencyKey: saved.id,
+        connectors,
       })
       .catch((err) =>
         this.logger.error('[worky-orchestrator] RunTask kickoff failed', {

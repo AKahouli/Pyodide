@@ -6,7 +6,8 @@ describe('WorkyMessageController', () => {
   let streamService: { ensureKickoffContext: jest.Mock };
   let orchestrator: { runTask: jest.Mock };
   let models: { getDefaultModel: jest.Mock; getModelIdentifier: jest.Mock };
-  let logger: { setContext: jest.Mock; log: jest.Mock; error: jest.Mock };
+  let connectorService: { findAllActive: jest.Mock; findByIdsForGrpc: jest.Mock };
+  let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock };
 
   beforeEach(() => {
     planning = {
@@ -23,9 +24,16 @@ describe('WorkyMessageController', () => {
       getDefaultModel: jest.fn().mockResolvedValue({ id: 'default-model', litellmModel: 'openai/gpt-4o-mini' }),
       getModelIdentifier: jest.fn((m: { litellmModel?: string; id?: string } | null) => m?.litellmModel || m?.id || ''),
     };
+    connectorService = {
+      findAllActive: jest.fn().mockResolvedValue([{ id: 'c1' }, { id: 'c2' }]),
+      findByIdsForGrpc: jest
+        .fn()
+        .mockResolvedValue([{ connector_id: 'c1' }, { connector_id: 'c2' }]),
+    };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
     };
 
@@ -34,6 +42,7 @@ describe('WorkyMessageController', () => {
       streamService as any,
       orchestrator as any,
       models as any,
+      connectorService as any,
       logger as any,
     );
   });
@@ -54,6 +63,42 @@ describe('WorkyMessageController', () => {
       expect.objectContaining({ idempotencyKey: 'm1' }),
     );
     expect(res).toEqual({ id: 'm1', content: 'hi', createdAt: 'now', turnStarted: true });
+  });
+
+  it('resolves ALL active connectors and sends them on RunTask', async () => {
+    planning.appendOwnerMessage.mockResolvedValue({ id: 'm1', content: 'hi', createdAt: 'now' });
+    streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz', managerModelId: null });
+    const user = { _id: { toString: () => 'user-1' } } as any;
+
+    await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
+
+    expect(connectorService.findAllActive).toHaveBeenCalledTimes(1);
+    expect(connectorService.findByIdsForGrpc).toHaveBeenCalledWith(['c1', 'c2'], 'user-1');
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({
+        connectors: [{ connector_id: 'c1' }, { connector_id: 'c2' }],
+      }),
+    );
+  });
+
+  it('sends no connectors and still kicks off when connector resolution fails', async () => {
+    planning.appendOwnerMessage.mockResolvedValue({ id: 'm1', content: 'hi', createdAt: 'now' });
+    streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz', managerModelId: null });
+    connectorService.findAllActive.mockRejectedValue(new Error('connector svc down'));
+    const user = { _id: { toString: () => 'user-1' } } as any;
+
+    await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
+
+    expect(logger.warn).toHaveBeenCalled();
+    expect(orchestrator.runTask).toHaveBeenCalledWith(
+      'user-1',
+      'sess-xyz',
+      'hi',
+      expect.objectContaining({ connectors: [] }),
+    );
   });
 
   it('forwards the stream persistent managerModelId when set', async () => {

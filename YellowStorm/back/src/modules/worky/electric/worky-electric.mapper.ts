@@ -82,14 +82,22 @@ export function mapMessage(row: PgMessageRow, streamId: string): { set: Record<s
 
 export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   const lane = mapStatusToLane(row.status);
-  const title = (row.description?.trim() || `Step ${row.ordinal}`).slice(0, 200);
+  // Card headline: prefer the new `title` column; fall back so it's never blank.
+  const title = (
+    row.title?.trim() ||
+    row.description?.trim() ||
+    row.question?.trim() ||
+    `Step ${row.ordinal}`
+  ).slice(0, 200);
+  // Subtitle: for ask steps the prompt lives in `question` (description is empty).
+  const subtitle = row.kind === 'ask' ? (row.question ?? '') : (row.description ?? '');
   const terminal = lane === 'done' || lane === 'failed' || lane === 'canceled';
   return {
     set: {
       streamId,
       externalId: row.step_id,
       title,
-      description: row.description ?? '',
+      description: subtitle,
       ordinal: row.ordinal,
       lane,
       executionState: laneToExecState(lane),
