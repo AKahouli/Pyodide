@@ -13,6 +13,7 @@ FROM node:22-bookworm-slim
 WORKDIR /usr/src/app
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV BROWSER_SESSION_CHROMIUM_PATH=/usr/bin/chromium
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

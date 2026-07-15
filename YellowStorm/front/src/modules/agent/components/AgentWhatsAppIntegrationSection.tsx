@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, MessageCircle } from 'lucide-react';
 
 import { parseApiError } from '@/lib/api-error';
@@ -9,12 +9,14 @@ import { ErrorCode } from '@/lib/error-codes';
 import { showSuccess, showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWhatsAppPairingSocket } from '../hooks/useWhatsAppPairingSocket';
+import { useWhatsAppIntegrationSse } from '../hooks/useWhatsAppIntegrationSse';
 import {
   connectAgentWhatsApp,
   deleteAgentWhatsAppIntegration,
   disconnectAgentWhatsAppSession,
   getAgentWhatsAppIntegration,
   getAgentWhatsAppPairing,
+  notifyAgentWhatsAppAutoRecover,
   reconnectAgentWhatsApp,
   updateAgentWhatsAppEnabled,
 } from '../api';
@@ -34,10 +36,12 @@ const PAIRING_POLL_MS = 2500;
 
 interface AgentWhatsAppIntegrationSectionProps {
   agentId: string | null;
+  agentName?: string;
 }
 
 export function AgentWhatsAppIntegrationSection({
   agentId,
+  agentName,
 }: AgentWhatsAppIntegrationSectionProps) {
   const { t } = useModuleTranslation('agent');
 
@@ -49,8 +53,14 @@ export function AgentWhatsAppIntegrationSection({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | undefined>();
   const [pairingCode, setPairingCode] = useState<string | undefined>();
+  const autoRecoverRequestedRef = useRef<string | null>(null);
+  const recoveryCompleteNotifiedRef = useRef(false);
+  const integrationStatusRef = useRef<AgentWhatsAppIntegration['status'] | undefined>();
 
   const networkErrorLabel = t('createEdit.fields.whatsappNetworkUnreachable');
+  const isFailed = isWhatsAppFailed(integration?.status);
+  const isPairing = isWhatsAppPairing(integration?.status);
+  const listenForRecoveryEvents = Boolean(agentId && sessionId && (isFailed || isPairing));
 
   const refreshIntegration = useCallback(async (id: string) => {
     const res = await getAgentWhatsAppIntegration(id);
@@ -102,8 +112,14 @@ export function AgentWhatsAppIntegrationSection({
     if (payload.pairingCode) setPairingCode(payload.pairingCode);
   }, []);
 
+  const notifyConnectedSuccess = useCallback(() => {
+    if (recoveryCompleteNotifiedRef.current) return;
+    recoveryCompleteNotifiedRef.current = true;
+    showSuccess(t('createEdit.fields.whatsappConnected'));
+  }, [t]);
+
   const handleConnected = useCallback(
-    async (payload: { phoneNumber?: string; displayName?: string }) => {
+    async (payload: { phoneNumber?: string }) => {
       if (!agentId) return;
       const refreshed = await refreshIntegration(agentId);
       setIntegration(
@@ -112,20 +128,69 @@ export function AgentWhatsAppIntegrationSection({
           status: 'CONNECTED',
           sessionId: sessionId ?? undefined,
           phoneNumber: payload.phoneNumber,
-          displayName: payload.displayName,
         },
       );
       setQrCode(undefined);
       setPairingCode(undefined);
-      showSuccess(t('createEdit.fields.whatsappConnected'));
+      autoRecoverRequestedRef.current = null;
+      notifyConnectedSuccess();
     },
-    [agentId, refreshIntegration, sessionId, t],
+    [agentId, refreshIntegration, sessionId, notifyConnectedSuccess],
   );
+
+  const handleSseStatus = useCallback((status: AgentWhatsAppIntegration) => {
+    const previousStatus = integrationStatusRef.current;
+    if (isWhatsAppFailed(previousStatus) && isWhatsAppConnected(status.status)) {
+      autoRecoverRequestedRef.current = null;
+      notifyConnectedSuccess();
+    }
+    integrationStatusRef.current = status.status;
+    setIntegration(status);
+    setEnabled(status.enabled);
+    if (status.sessionId) {
+      setSessionId(status.sessionId);
+    }
+    if (isWhatsAppConnected(status.status)) {
+      setQrCode(undefined);
+      setPairingCode(undefined);
+    }
+  }, [notifyConnectedSuccess]);
+
+  useEffect(() => {
+    if (!agentId || !sessionId || !isFailed) {
+      if (!isFailed) {
+        autoRecoverRequestedRef.current = null;
+      }
+      return;
+    }
+
+    const recoveryKey = `${sessionId}:FAILED`;
+    if (autoRecoverRequestedRef.current === recoveryKey) {
+      return;
+    }
+    autoRecoverRequestedRef.current = recoveryKey;
+    recoveryCompleteNotifiedRef.current = false;
+
+    console.log('[WhatsApp integration] notify auto-recover (FAILED)', { agentId, sessionId });
+    void notifyAgentWhatsAppAutoRecover(agentId).catch(() => {
+      autoRecoverRequestedRef.current = null;
+    });
+  }, [agentId, sessionId, isFailed]);
+
+  useEffect(() => {
+    integrationStatusRef.current = integration?.status;
+  }, [integration?.status]);
+
+  useWhatsAppIntegrationSse({
+    agentId,
+    enabled: Boolean(agentId && sessionId && isFailed),
+    onStatus: handleSseStatus,
+  });
 
   useWhatsAppPairingSocket({
     agentId,
     sessionId,
-    enabled: Boolean(agentId && sessionId && isWhatsAppPairing(integration?.status)),
+    enabled: listenForRecoveryEvents,
     onQrGenerated: (payload) => applyPairingPayload(payload),
     onConnected: (payload) => {
       void handleConnected(payload);
@@ -137,7 +202,6 @@ export function AgentWhatsAppIntegrationSection({
         sessionId: payload.sessionId,
         errorMessage: payload.errorMessage,
         phoneNumber: prev?.phoneNumber,
-        displayName: prev?.displayName,
       }));
       showWarning(t('createEdit.fields.whatsappStatusFailed'), {
         description: resolveWhatsAppErrorMessage(payload.errorMessage, networkErrorLabel),
@@ -432,12 +496,12 @@ export function AgentWhatsAppIntegrationSection({
                   {integration.phoneNumber}
                 </p>
               )}
-              {integration?.displayName && (
+              {agentName && (
                 <p>
                   <span className="text-muted-foreground">
-                    {t('createEdit.fields.whatsappDisplayName')}:{' '}
+                    {t('createEdit.fields.whatsappAgentName')}:{' '}
                   </span>
-                  {integration.displayName}
+                  {agentName}
                 </p>
               )}
             </div>

@@ -623,7 +623,10 @@ export function CreateEditAgentDialog({
                       onChange={(next) => setValue('deploymentSettings', next, { shouldDirty: true, shouldValidate: true })}
                     />
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
-                    <AgentWhatsAppIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentWhatsAppIntegrationSection
+                      agentId={agent?.id ?? null}
+                      agentName={watchedName || agent?.name}
+                    />
                   </div>
                 </TabsContent>
 

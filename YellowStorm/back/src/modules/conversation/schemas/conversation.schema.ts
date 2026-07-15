@@ -24,6 +24,10 @@ export class Conversation extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Skill' }], default: [] })
   selectedSkills!: Types.ObjectId[];
 
+  // Sticky agent routing: last @mentioned agents; reused when a turn has no mentions
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Agent' }], default: [] })
+  taggedAgentIds!: Types.ObjectId[];
+
   @Prop({ type: Types.ObjectId, ref: 'Workspace' })
   systemWorkspaceId?: Types.ObjectId;
 

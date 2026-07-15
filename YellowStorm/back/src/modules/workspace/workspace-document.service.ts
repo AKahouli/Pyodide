@@ -5,11 +5,13 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
   DocumentStatus,
+  DocumentType,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
 import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
@@ -50,6 +52,8 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
+import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
+import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -58,6 +62,7 @@ export class WorkspaceDocumentService {
   private readonly smallFileThresholdMb: number;
   private readonly uploadSessionTtlMinutes: number;
   private readonly sasUrlExpiryMinutes: number;
+  private readonly crawlUserAgent: string;
 
   constructor(
     @InjectModel(WorkspaceDoc.name)
@@ -72,6 +77,7 @@ export class WorkspaceDocumentService {
     private readonly indexingService: IndexingService,
     private readonly configService: ConfigService,
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
+    private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -81,6 +87,7 @@ export class WorkspaceDocumentService {
     this.smallFileThresholdMb = this.configService.get<number>('workspace.smallFileThresholdMb', 10);
     this.uploadSessionTtlMinutes = this.configService.get<number>('workspace.uploadSessionTtlMinutes', 60);
     this.sasUrlExpiryMinutes = this.configService.get<number>('workspace.sasUrlExpiryMinutes', 60);
+    this.crawlUserAgent = this.configService.get<string>('indexing.crawlUserAgent', DEFAULT_CRAWL_USER_AGENT);
   }
 
   /**
@@ -650,6 +657,301 @@ export class WorkspaceDocumentService {
     });
 
     return doc;
+  }
+
+  /**
+   * Add a website link as a workspace document. Creates the doc immediately in a
+   * PROCESSING state and returns it; conversion to PDF + indexing runs in the
+   * background (fire-and-forget). The stored artifact is a PDF.
+   */
+  async addLink(
+    workspaceId: string,
+    userId: string,
+    url: string,
+  ): Promise<DocumentResponse> {
+    const [doc] = await this.addLinks(workspaceId, userId, [url]);
+    return doc;
+  }
+
+  /**
+   * Add multiple website links as workspace documents. Creates each doc
+   * immediately in a PROCESSING state and returns them all; conversion to
+   * PDF + indexing runs in the background (fire-and-forget) with a bounded
+   * concurrency so we don't hammer the conversion service.
+   */
+  async addLinks(
+    workspaceId: string,
+    userId: string,
+    urls: string[],
+  ): Promise<DocumentResponse[]> {
+    // Nominal size of 0: the converted PDF's size is unknown until conversion
+    // runs, but we can still reject early if the workspace is already over
+    // quota, avoiding a wasted conversion-API call.
+    const quota = await this.workspaceService.checkStorageQuota(workspaceId, 0);
+    if (!quota.allowed) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
+        `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
+      );
+    }
+
+    // Create all docs first (fast; each PROCESSING with a unique placeholder path).
+    const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
+      [];
+    for (const url of urls) {
+      const filename = this.deriveFilenameFromUrl(url);
+      const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
+      const documentId = new Types.ObjectId();
+
+      const document = await this.documentModel.create({
+        _id: documentId,
+        originalName: effectiveName,
+        mimeType: 'application/pdf',
+        size: 0,
+        type: DocumentType.URL,
+        sourceUrl: url,
+        // The collection enforces a unique index on `path`. A link has no blob
+        // yet at creation, so assign a unique placeholder (mirroring the folder
+        // pattern above) to avoid an E11000 collision on { path: null } between
+        // concurrent/successive link adds. convertAndStore overwrites this with
+        // the real Ceph blob path once the PDF is uploaded. The `.pdf` suffix
+        // keeps the placeholder past the "no extension ⇒ folder" heuristic in
+        // DocumentService.generateSasUrl, so a stray read of a not-yet-converted
+        // link fails with an accurate "file not found" rather than a misleading
+        // "cannot download folders" error.
+        path: `link-pending:${documentId}.pdf`,
+        workspaceId: new Types.ObjectId(workspaceId),
+        createdBy: new Types.ObjectId(userId),
+        status: DocumentStatus.PROCESSING,
+        indexingStatus: IndexingStatus.NONE,
+      });
+
+      this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+      created.push({
+        response: this.mapToResponse(document),
+        id: document._id.toString(),
+        url,
+        name: effectiveName,
+      });
+    }
+
+    // Convert strictly one at a time, spaced by a delay, so a rate-limited target
+    // (HTTP 429) gets its window to reset between pages instead of being hit in a
+    // burst. Fire-and-forget the whole loop; respond as soon as the docs exist.
+    const delayMs = this.configService.get<number>('indexing.sequentialDelayMs') ?? 2000;
+    void (async () => {
+      for (let idx = 0; idx < created.length; idx++) {
+        const item = created[idx];
+        await this.convertAndStore(item.id, workspaceId, item.url, item.name).catch((err) => {
+          this.logger.error('convertAndStore failed', {
+            documentId: item.id,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        });
+        if (idx < created.length - 1 && delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    })();
+
+    return created.map((c) => c.response);
+  }
+
+  /**
+   * Background step: convert the website to PDF, store it, mark the doc COMPLETED,
+   * and queue indexing. On failure, mark the doc FAILED and notify the owner.
+   */
+  private async convertAndStore(
+    documentId: string,
+    workspaceId: string,
+    url: string,
+    filename: string,
+  ): Promise<void> {
+    try {
+      await this.assertUrlIsSafe(url);
+
+      const pdf = await this.urlToPdfClient.convert(url, filename);
+      const size = pdf.length;
+
+      const quota = await this.workspaceService.checkStorageQuota(workspaceId, size);
+      if (!quota.allowed) {
+        throw new Error('Insufficient storage for converted PDF');
+      }
+
+      const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
+        workspaceId,
+      );
+      const sanitizedName = this.sanitizeFilename(filename);
+      const uploaded = await this.documentService.upload(pdf, filename, 'application/pdf', {
+        folder: `${ownerUserId}/${storagePrefix}`,
+        generateUniqueName: false,
+        customFileName: sanitizedName,
+      });
+
+      await this.documentModel.findByIdAndUpdate(documentId, {
+        $set: {
+          filename: uploaded.storedName,
+          path: uploaded.blobPath,
+          url: uploaded.url,
+          contentHash: uploaded.contentHash,
+          size,
+          status: DocumentStatus.COMPLETED,
+          uploadedAt: new Date(),
+        },
+      });
+
+      await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
+      await this.indexingService.queueDocument(documentId);
+
+      this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Link conversion failed';
+      const failed = await this.documentModel.findByIdAndUpdate(
+        documentId,
+        {
+          $set: {
+            status: DocumentStatus.FAILED,
+            indexingStatus: IndexingStatus.FAILED,
+            errorMessage: message,
+            indexingError: message,
+          },
+        },
+        { new: true },
+      );
+      if (failed) {
+        await this.indexingService.sendIndexingStatusNotification(failed).catch(() => undefined);
+      }
+      this.logger.error('Link conversion failed', { documentId, workspaceId, error: message });
+    }
+  }
+
+  /**
+   * Derive a filesystem-safe `.pdf` name from a URL: the page name (last path
+   * segment), falling back to the host for the site root. Collisions are
+   * resolved upstream by resolveUniqueOriginalName ("page (1).pdf").
+   */
+  private deriveFilenameFromUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      const segments = u.pathname.split('/').filter(Boolean);
+      const base = segments.length
+        ? segments[segments.length - 1]
+        : u.hostname.replace(/^www\./, '');
+      const sanitized = base
+        .replace(/[^a-zA-Z0-9-_.]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 200);
+      return `${sanitized || 'page'}.pdf`;
+    } catch {
+      return 'website.pdf';
+    }
+  }
+
+  /**
+   * Check that a URL is reachable (HEAD, falling back to GET). Used by the
+   * link modal before the user commits to adding the link.
+   */
+  async checkUrlReachable(
+    url: string,
+  ): Promise<{ reachable: boolean; status?: number; error?: string }> {
+    // SSRF guard: intentionally called BEFORE the try/catch below so a
+    // disallowed URL surfaces as a thrown BadRequestException (400) to the
+    // client, rather than being swallowed into a generic {reachable:false}.
+    await this.assertUrlIsSafe(url);
+
+    try {
+      const head = await this.followGuardedRedirects('head', url);
+      if (head === null) {
+        // A redirect hop pointed at a disallowed (private/internal) host.
+        // Unlike the initial URL above, a mid-redirect block is reported,
+        // not thrown.
+        return { reachable: false, error: 'Redirect target is not allowed' };
+      }
+      if (head.status >= 200 && head.status < 400) {
+        return { reachable: true, status: head.status };
+      }
+
+      const get = await this.followGuardedRedirects('get', url);
+      if (get === null) {
+        return { reachable: false, error: 'Redirect target is not allowed' };
+      }
+      const ok = get.status >= 200 && get.status < 400;
+      // Consume/destroy the response stream — we only need the status code,
+      // and axios won't release the underlying socket until the stream is
+      // drained or destroyed.
+      (get.data as { destroy?: () => void } | undefined)?.destroy?.();
+      return { reachable: ok, status: get.status, error: ok ? undefined : `HTTP ${get.status}` };
+    } catch (error) {
+      const err = error as { message?: string };
+      return { reachable: false, error: err?.message ?? 'unreachable' };
+    }
+  }
+
+  /**
+   * Follows redirects for a HEAD/GET reachability probe manually (max 5
+   * hops), re-validating each hop with assertUrlIsSafe before requesting
+   * it. axios's built-in `maxRedirects` would follow a redirect chain
+   * WITHOUT re-checking the SSRF guard, letting an attacker-controlled URL
+   * 302/301 to an internal address (e.g. cloud metadata) and bypass the
+   * guard entirely — so auto-redirects are disabled here and each hop is
+   * resolved + guarded one at a time instead. Returns null (never throws)
+   * if a hop is blocked, so the caller can report `{ reachable: false }`
+   * instead of surfacing a 400 for what is a redirect target, not the
+   * user-supplied URL itself.
+   */
+  private async followGuardedRedirects(
+    method: 'head' | 'get',
+    url: string,
+  ): Promise<{ status: number; data?: unknown } | null> {
+    const MAX_HOPS = 5;
+    let currentUrl = url;
+    const opts = {
+      timeout: 5000,
+      maxRedirects: 0,
+      validateStatus: () => true,
+      headers: { 'User-Agent': this.crawlUserAgent },
+      ...(method === 'get' ? { responseType: 'stream' as const } : {}),
+    };
+
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      if (hop > 0) {
+        try {
+          await this.assertUrlIsSafe(currentUrl);
+        } catch {
+          return null;
+        }
+      }
+
+      const res =
+        method === 'head'
+          ? await axios.head(currentUrl, opts)
+          : await axios.get(currentUrl, opts);
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers?.location as string | undefined;
+        (res.data as { destroy?: () => void } | undefined)?.destroy?.();
+        if (!location) return null;
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+
+      return res;
+    }
+    return null;
+  }
+
+  /**
+   * SSRF guard for server-side fetches triggered by user-supplied URLs
+   * (link reachability checks and the URL-to-PDF conversion). Rejects
+   * anything that isn't a plain http(s) URL, and rejects any URL whose
+   * hostname resolves (via DNS) to a private, loopback, link-local,
+   * unspecified, or CGNAT address — this covers direct IP-literal SSRF
+   * attempts as well as DNS-rebinding to internal hosts/cloud metadata
+   * endpoints (e.g. 169.254.169.254).
+   */
+  private async assertUrlIsSafe(url: string): Promise<void> {
+    return assertUrlSafe(url);
   }
 
   /**
@@ -2062,6 +2364,8 @@ export class WorkspaceDocumentService {
       parentId: document.parentId?.toString(),
       isFolder: document.isFolder || false,
       folderName: document.folderName,
+      type: (document.type as DocumentType) || DocumentType.DOC,
+      sourceUrl: document.sourceUrl,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
     };

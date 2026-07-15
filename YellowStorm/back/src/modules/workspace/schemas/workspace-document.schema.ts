@@ -19,6 +19,11 @@ export enum IndexingStatus {
   FAILED = 'failed',
 }
 
+export enum DocumentType {
+  DOC = 'doc',
+  URL = 'url',
+}
+
 @Schema({
   timestamps: true,
   collection: 'workspace_documents',
@@ -106,6 +111,17 @@ export class WorkspaceDoc extends Document {
 
   @Prop({ trim: true, maxlength: 255 })
   folderName?: string; // Used for folders (isFolder = true)
+
+  @Prop({
+    type: String,
+    enum: DocumentType,
+    default: DocumentType.DOC,
+    index: true,
+  })
+  type!: DocumentType;
+
+  @Prop({ maxlength: 2000 })
+  sourceUrl?: string;
 
   createdAt!: Date;
   updatedAt!: Date;
