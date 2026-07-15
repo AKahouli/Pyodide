@@ -88,6 +88,22 @@ describe('worky-electric.mapper', () => {
       },
     );
 
+    it('maps plan_step result and blocked_reason into the $set', () => {
+      const { set } = mapPlanStep(
+        {
+          session_id: 's',
+          step_id: 'step-1',
+          ordinal: 0,
+          status: 'completed',
+          description: 'd',
+          result: 'the manager answer',
+          blocked_reason: null,
+        },
+        'stream-1',
+      );
+      expect(set).toMatchObject({ result: 'the manager answer', blockedReason: null });
+    });
+
     it('falls back to "Step {ordinal}" as the title when description is empty', () => {
       const { set } = mapPlanStep(
         { session_id: 's', step_id: 'step-1', ordinal: 5, status: 'pending', description: '' },

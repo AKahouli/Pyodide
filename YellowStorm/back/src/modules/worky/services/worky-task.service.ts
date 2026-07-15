@@ -72,6 +72,8 @@ export class WorkyTaskService {
         actionCategory: task.actionCategory ?? 'internal_analysis',
         dependsOn: (task.dependsOn ?? []).map((d) => (d as Types.ObjectId).toString()),
         blockerReason: blockerReasons.join(', ') || null,
+        result: (task.result as string | null | undefined) ?? null,
+        blockedReason: (task.blockedReason as string | null | undefined) ?? null,
         theoreticalDeadlineAt: task.theoreticalDeadlineAt
           ? new Date(task.theoreticalDeadlineAt).toISOString()
           : null,
@@ -142,6 +144,8 @@ export interface IBoardTaskView {
   actionCategory: string;
   dependsOn: string[];
   blockerReason: string | null;
+  result: string | null;
+  blockedReason: string | null;
   theoreticalDeadlineAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
