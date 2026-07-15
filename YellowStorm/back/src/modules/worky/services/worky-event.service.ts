@@ -77,6 +77,12 @@ export class WorkyEventService implements OnModuleDestroy {
       this.streamConnections.set(userKey, new Set());
     }
     this.streamConnections.get(userKey)!.add(connectionId);
+    this.logger.log('[worky-sse] connection registered', {
+      userId,
+      streamId,
+      connectionId,
+      total: this.streamConnections.get(userKey)!.size,
+    });
 
     const heartbeatMs = this.config.get<number>('worky.sseHeartbeatMs') ?? 15000;
     const heartbeat$ = interval(heartbeatMs).pipe(
@@ -132,6 +138,12 @@ export class WorkyEventService implements OnModuleDestroy {
   emit(userId: string, streamId: string, event: Omit<WorkyEvent, 'streamId'>): void {
     const userKey = `${userId}:${streamId}`;
     const conns = this.streamConnections.get(userKey);
+    this.logger.log('[worky-sse] emit', {
+      userId,
+      streamId,
+      type: event.type,
+      connectionCount: conns?.size ?? 0,
+    });
     if (!conns || conns.size === 0) return;
     const enriched: WorkyEvent = { ...event, streamId };
     for (const connectionId of [...conns]) {
