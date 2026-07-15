@@ -64,7 +64,7 @@ import conversationConfig from '../../config/conversation.config';
     ModelsModule,
     LoggerModule,
     UsageModule,
-    AgentModule,
+    forwardRef(() => AgentModule),
     TeamModule,
     AgentTypeModule,
     SkillModule,

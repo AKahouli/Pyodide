@@ -9,8 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminWorkspaceEvidenceSearchConnectors, getAdminWorkspaceEvidenceSearchSettings, getAdminWorkspaceUploadSettings, updateAdminWorkspaceEvidenceSearchSettings, updateAdminWorkspaceUploadSettings } from '../api';
-import type { WorkspaceEvidenceSearchConnectorOption, WorkspaceUploadSettingsResponse } from '../types';
+import { getAdminWorkspaceEvidenceSearchConnectors, getAdminWorkspaceEvidenceSearchSettings, getAdminWorkspaceUploadSettings, getAdminWorkspaceTransformationAgents, getAdminWorkspaceTransformationSettings, updateAdminWorkspaceEvidenceSearchSettings, updateAdminWorkspaceTransformationSettings, updateAdminWorkspaceUploadSettings } from '../api';
+import type { WorkspaceEvidenceSearchConnectorOption, WorkspaceTransformationAgentOption } from '../types';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 
 const EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9+-]{0,15}$/i;
@@ -35,6 +35,9 @@ export function WorkspaceSettingsPage() {
   const [unsupportedEntry, setUnsupportedEntry] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<WorkspaceEvidenceSearchConnectorOption[]>([]);
   const [evidenceConnectorId, setEvidenceConnectorId] = useState<string>('none');
+  const [transformationAgents, setTransformationAgents] = useState<WorkspaceTransformationAgentOption[]>([]);
+  const [decisionFlowAgentId, setDecisionFlowAgentId] = useState<string>('none');
+  const [savingTransformation, setSavingTransformation] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +50,15 @@ export function WorkspaceSettingsPage() {
         setSupportedExtensions(response.supportedExtensions);
         setEvidenceConnectorId(evidence.connectorId ?? 'none');
         setConnectors(connectorList);
+        try {
+          const [transformations, transformationAgentList] = await Promise.all([getAdminWorkspaceTransformationSettings(), getAdminWorkspaceTransformationAgents()]);
+          if (!cancelled) {
+            setDecisionFlowAgentId(transformations.decisionFlowAgentId ?? 'none');
+            setTransformationAgents(transformationAgentList);
+          }
+        } catch (error) {
+          if (!cancelled) showError(t('workspaceSettings.transformations.toasts.loadError'), { description: error instanceof Error ? error.message : undefined });
+        }
       } catch (error) {
         if (!cancelled) {
           showError(t('workspaceSettings.toasts.loadError.title'), {
@@ -96,6 +108,17 @@ export function WorkspaceSettingsPage() {
     } catch (error) {
       showError(t('workspaceSettings.evidenceSearch.toasts.saveError.title'), { description: error instanceof Error ? error.message : t('workspaceSettings.evidenceSearch.toasts.saveError.description') });
     } finally { setSaving(false); }
+  };
+
+  const handleTransformationSave = async (): Promise<void> => {
+    setSavingTransformation(true);
+    try {
+      const result = await updateAdminWorkspaceTransformationSettings({ decisionFlowAgentId: decisionFlowAgentId === 'none' ? null : decisionFlowAgentId });
+      setDecisionFlowAgentId(result.decisionFlowAgentId ?? 'none');
+      showSuccess(t('workspaceSettings.transformations.toasts.saved.title'), { description: t('workspaceSettings.transformations.toasts.saved.description') });
+    } catch (error) {
+      showError(t('workspaceSettings.transformations.toasts.saveError.title'), { description: error instanceof Error ? error.message : t('workspaceSettings.transformations.toasts.saveError.description') });
+    } finally { setSavingTransformation(false); }
   };
 
   const removeExtension = (value: string): void => {
@@ -246,6 +269,20 @@ export function WorkspaceSettingsPage() {
             <Select value={evidenceConnectorId} onValueChange={setEvidenceConnectorId} disabled={loading || saving}><SelectTrigger id='evidence-search-connector'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='none'>{t('workspaceSettings.evidenceSearch.none')}</SelectItem>{connectors.map((connector) => <SelectItem key={connector.id} value={connector.id}>{connector.name}</SelectItem>)}</SelectContent></Select>
           </div>
           <div className='flex justify-end'><Button type='button' onClick={() => void handleEvidenceConnectorSave()} disabled={saving}>{saving ? t('workspaceSettings.actions.saving') : t('workspaceSettings.actions.save')}</Button></div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>{t('workspaceSettings.transformations.title')}</CardTitle><CardDescription>{t('workspaceSettings.transformations.description')}</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label htmlFor="decision-flow-agent">{t('workspaceSettings.transformations.label')}</Label>
+            <Select value={decisionFlowAgentId} onValueChange={setDecisionFlowAgentId} disabled={loading || savingTransformation}>
+              <SelectTrigger id="decision-flow-agent" aria-describedby="decision-flow-agent-description"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="none">{t('workspaceSettings.transformations.none')}</SelectItem>{transformationAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}{agent.agentTypeName ? ` — ${agent.agentTypeName}` : ''}{agent.model ? ` (${agent.model})` : ''}</SelectItem>)}</SelectContent>
+            </Select>
+            <p id="decision-flow-agent-description" className="text-xs text-muted-foreground">{t('workspaceSettings.transformations.helper')}</p>
+          </div>
+          <div className="flex justify-end"><Button type="button" onClick={() => void handleTransformationSave()} disabled={savingTransformation}>{savingTransformation ? t('workspaceSettings.actions.saving') : t('workspaceSettings.actions.save')}</Button></div>
         </CardContent>
       </Card>
     </div>

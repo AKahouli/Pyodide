@@ -8,6 +8,7 @@ export * from './types';
 
 // API
 export * from './api';
+export * from './artifact-api';
 
 // Utils
 export { formatFileSize, formatDate, getFileTypeLabel, validateFiles, ALLOWED_MIME_TYPES, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, SMALL_FILE_THRESHOLD, DEFAULT_PAGE_LIMIT } from './utils';
@@ -18,6 +19,7 @@ export { useWorkspaceStore, useWorkspaces, useDocuments, useSelectedWorkspace, u
 // Page (was modules/classifier)
 export { WorkspacePage } from './components/WorkspacePage';
 export { WorkspaceHubPage } from './components/WorkspaceHubPage';
+export { DecisionFlowEditorPage } from './components/decision-flow/DecisionFlowEditorPage';
 
 // Components
 export { WorkspaceButton } from './components/WorkspaceButton';

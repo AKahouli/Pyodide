@@ -29,6 +29,7 @@ export function openFileViewer(
     highlightBBox?: HighlightBBox;
     displayMode?: DisplayMode;
     spreadsheet?: SpreadsheetNavigationOptions;
+    canWriteWorkspace?: boolean;
   },
 ) {
   return useFileViewerStore.getState().openFile(workspaceId, docId, path, fileName, mimeType, options);

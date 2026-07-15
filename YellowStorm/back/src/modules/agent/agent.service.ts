@@ -10,7 +10,7 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
+import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
@@ -1513,6 +1513,29 @@ export class AgentService {
       restEnabled: settings?.restEnabled ?? existing?.restEnabled ?? false,
       widget: normalizeWidgetSettings((settings?.widget ?? existing?.widget) as Parameters<typeof normalizeWidgetSettings>[0]),
     };
+  }
+
+  async listActiveDefaultAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
+    const agents = await this.agentModel
+      .find({ isDefault: true, isActive: true })
+      .populate('agentType', 'name')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return agents.map((agent) => {
+      const agentType = agent.agentType as unknown as { name?: string } | undefined;
+      return { id: agent._id.toString(), name: agent.name, description: agent.description || undefined, agentTypeName: agentType?.name, model: agent.llmModel };
+    });
+  }
+
+  async assertActiveDefaultAgent(agentId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
+    }
+    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true, isActive: true }).select('_id').lean().exec();
+    if (!agent) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
+    }
   }
 
   private toResponse(

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { WorkspaceSettingsPage } from './WorkspaceSettingsPage';
@@ -7,6 +7,8 @@ import {
   getAdminWorkspaceEvidenceSearchSettings,
   getAdminWorkspaceUploadSettings,
   getAdminWorkspaceEvidenceSearchConnectors,
+  getAdminWorkspaceTransformationAgents,
+  getAdminWorkspaceTransformationSettings,
   updateAdminWorkspaceEvidenceSearchSettings,
   updateAdminWorkspaceUploadSettings,
 } from '../api';
@@ -84,6 +86,9 @@ vi.mock('../api', () => ({
   getAdminWorkspaceEvidenceSearchSettings: vi.fn().mockResolvedValue({ connectorId: null }),
   updateAdminWorkspaceEvidenceSearchSettings: vi.fn().mockResolvedValue({ connectorId: null }),
   getAdminWorkspaceEvidenceSearchConnectors: vi.fn().mockResolvedValue([]),
+  getAdminWorkspaceTransformationSettings: vi.fn().mockResolvedValue({ decisionFlowAgentId: null }),
+  getAdminWorkspaceTransformationAgents: vi.fn().mockResolvedValue([]),
+  updateAdminWorkspaceTransformationSettings: vi.fn().mockResolvedValue({ decisionFlowAgentId: null }),
 }));
 
 const mockedGet = vi.mocked(getAdminWorkspaceUploadSettings);
@@ -91,6 +96,8 @@ const mockedUpdate = vi.mocked(updateAdminWorkspaceUploadSettings);
 const mockedGetEvidenceSettings = vi.mocked(getAdminWorkspaceEvidenceSearchSettings);
 const mockedUpdateEvidenceSettings = vi.mocked(updateAdminWorkspaceEvidenceSearchSettings);
 const mockedGetEvidenceConnectors = vi.mocked(getAdminWorkspaceEvidenceSearchConnectors);
+const mockedGetTransformationSettings = vi.mocked(getAdminWorkspaceTransformationSettings);
+const mockedGetTransformationAgents = vi.mocked(getAdminWorkspaceTransformationAgents);
 
 vi.mock('@/lib/notifications', () => ({
   showError: vi.fn(),
@@ -104,9 +111,13 @@ describe('WorkspaceSettingsPage', () => {
     mockedGetEvidenceSettings.mockReset();
     mockedUpdateEvidenceSettings.mockReset();
     mockedGetEvidenceConnectors.mockReset();
+    mockedGetTransformationSettings.mockReset();
+    mockedGetTransformationAgents.mockReset();
     mockedGetEvidenceSettings.mockResolvedValue({ connectorId: null });
     mockedUpdateEvidenceSettings.mockResolvedValue({ connectorId: null });
     mockedGetEvidenceConnectors.mockResolvedValue([]);
+    mockedGetTransformationSettings.mockResolvedValue({ decisionFlowAgentId: null });
+    mockedGetTransformationAgents.mockResolvedValue([]);
     useAuthMock.mockReturnValue({ isAuthenticated: true, user: { id: 'admin' } });
     __resetAllowedUploadExtensionsCache();
   });
@@ -186,8 +197,9 @@ describe('WorkspaceSettingsPage', () => {
     expect(screen.getByRole('option', { name: 'Drive search' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('option', { name: 'Drive search' }));
-    const saveButtons = screen.getAllByRole('button', { name: /^save changes$/i });
-    await user.click(saveButtons[saveButtons.length - 1]);
+    const evidenceCard = screen.getByText('Evidence search connector').closest('[data-slot="card"]');
+    expect(evidenceCard).not.toBeNull();
+    await user.click(within(evidenceCard as HTMLElement).getByRole('button', { name: /^save changes$/i }));
 
     await waitFor(() => {
       expect(mockedUpdateEvidenceSettings).toHaveBeenCalledWith({ connectorId: 'connector-drive' });

@@ -276,6 +276,16 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('ys_widget_preferences:\"+AGENT_ID');
     expect(snippet).toContain('function applyWidgetPrefs()');
     expect(snippet).toContain('function setAccessibilityPanel(open)');
+    expect(snippet).toContain('darkColors={background:"#111827"');
+    expect(snippet).toContain('root.style.setProperty("--ys-panel-width","360px")');
+    expect(snippet).toContain('widgetPrefs.language=settingLanguage.value;saveWidgetPrefs();applyWidgetPrefs()');
+    expect(snippet).toContain('title:"Paramètres"');
+    expect(snippet).toContain('languageOptions:{auto:"Navigateur",fr:"Français",en:"Anglais"}');
+    expect(snippet).toContain('sizeOptions:{default:"Par défaut",compact:"Compact",large:"Grand",veryLarge:"Très grand"}');
+    expect(snippet).toContain('value=\\"very-large\\">Very Large');
+    expect(snippet).toContain('["default","compact","large","very-large"]');
+    expect(snippet).toContain('root.style.setProperty("--ys-panel-width","720px")');
+    expect(snippet).toContain('root.style.setProperty("--ys-panel-height","1080px")');
   });
 
   it('wires citation badges to signed URLs and PDF page fragments', () => {

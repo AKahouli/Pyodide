@@ -399,11 +399,13 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
+    @Query('cascadeArtifacts') cascadeArtifacts?: string,
   ) {
     await this.workspaceDocumentService.delete(
       workspaceId,
       user._id.toString(),
       docId,
+      cascadeArtifacts === 'true',
     );
     return { message: 'Document deleted successfully' };
   }

@@ -57,6 +57,7 @@ import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
 import { normalizeWorkspaceUrl } from './services/url-normalization';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -82,6 +83,7 @@ export class WorkspaceDocumentService {
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
+    private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -1624,6 +1626,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     documentId: string,
+    cascadeArtifacts = false,
   ): Promise<void> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -1635,6 +1638,20 @@ export class WorkspaceDocumentService {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+
+    const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
+      workspaceId,
+      documentId,
+    );
+    if (linkedArtifactCount > 0 && !cascadeArtifacts) {
+      throw new ConflictException(
+        ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
+        `This document has ${linkedArtifactCount} linked decision flow(s)`,
+      );
+    }
+    if (linkedArtifactCount > 0) {
+      await this.workspaceArtifacts.deleteBySource(workspaceId, documentId);
     }
 
     // Delete from blob storage (skip for folders)
@@ -1712,6 +1729,8 @@ export class WorkspaceDocumentService {
     const documents = await this.documentModel.find({
       workspaceId: new Types.ObjectId(workspaceId),
     });
+
+    await this.workspaceArtifacts.deleteAllByWorkspace(workspaceId);
 
     // Delete indexes from vectorstore for indexed documents (non-blocking, parallel)
     const indexedDocuments = documents.filter(
@@ -2076,7 +2095,10 @@ export class WorkspaceDocumentService {
     userId: string,
     folderId: string,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
-    const folder = await this.documentModel.findById(folderId);
+    const folder = await this.documentModel.findOne({
+      _id: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
+    });
 
     if (!folder) {
       throw new NotFoundException(
@@ -2096,11 +2118,31 @@ export class WorkspaceDocumentService {
       );
     }
 
+    const descendantDocumentIds = await this.collectFolderDocumentIds(
+      new Types.ObjectId(folderId),
+      workspaceId,
+    );
+    for (const documentId of descendantDocumentIds) {
+      const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
+        workspaceId,
+        documentId,
+      );
+      if (linkedArtifactCount > 0) {
+        throw new ConflictException(
+          ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
+          'Delete linked decision flows before deleting this folder',
+        );
+      }
+    }
+
     // Recursively delete all contents
     const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
 
     // Delete the folder itself
-    await this.documentModel.deleteOne({ _id: folderId });
+    await this.documentModel.deleteOne({
+      _id: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
+    });
 
     this.logger.log('Folder deleted', {
       folderId,
@@ -2126,6 +2168,7 @@ export class WorkspaceDocumentService {
     // Find all items in the folder
     const items = await this.documentModel.find({
       parentId: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
     });
 
     let deletedFolders = 0;
@@ -2175,6 +2218,16 @@ export class WorkspaceDocumentService {
     }
 
     return { deletedFolders, deletedDocuments };
+  }
+
+  private async collectFolderDocumentIds(folderId: Types.ObjectId, workspaceId: string): Promise<string[]> {
+    const items = await this.documentModel.find({ parentId: folderId, workspaceId: new Types.ObjectId(workspaceId) });
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.isFolder) ids.push(...await this.collectFolderDocumentIds(item._id, workspaceId));
+      else ids.push(item._id.toString());
+    }
+    return ids;
   }
 
   /**

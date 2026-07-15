@@ -70,6 +70,7 @@ import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
 import { GovernanceModule } from './modules/governance';
 import { IntegrationEventsModule } from './modules/integration-events/integration-events.module';
+import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { IntegrationEventsModule } from './modules/integration-events/integratio
     NotificationsModule,
     IntegrationEventsModule,
     WorkspaceModule,
+    WorkspaceArtifactModule,
     IndexingModule,
     BrowserSessionModule,
     ConversationModule,

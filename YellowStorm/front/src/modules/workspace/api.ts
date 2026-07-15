@@ -149,9 +149,11 @@ export async function getDocument(
 export async function deleteDocument(
   workspaceId: string,
   docId: string,
+  cascadeArtifacts = false,
 ): Promise<void> {
   await apiClient.delete(
     API_ENDPOINTS.workspaceDocuments.byId(workspaceId, docId),
+    { params: cascadeArtifacts ? { cascadeArtifacts: true } : undefined },
   );
 }
 

@@ -96,6 +96,9 @@ import type {
   WorkspaceEvidenceSearchSettingsResponse,
   UpdateWorkspaceEvidenceSearchSettingsRequest,
   WorkspaceEvidenceSearchConnectorOption,
+  WorkspaceTransformationSettingsResponse,
+  UpdateWorkspaceTransformationSettingsRequest,
+  WorkspaceTransformationAgentOption,
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
@@ -1166,6 +1169,21 @@ export async function getAdminWorkspaceEvidenceSearchConnectors(): Promise<Works
 
 export async function updateAdminWorkspaceEvidenceSearchSettings(data: UpdateWorkspaceEvidenceSearchSettingsRequest): Promise<WorkspaceEvidenceSearchSettingsResponse> {
   const response = await apiClient.put<ApiResponse<WorkspaceEvidenceSearchSettingsResponse>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.base, data);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceTransformationSettings(): Promise<WorkspaceTransformationSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceTransformationAgents(): Promise<WorkspaceTransformationAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceTransformationAgentOption[]>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.agents);
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceTransformationSettings(data: UpdateWorkspaceTransformationSettingsRequest): Promise<WorkspaceTransformationSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base, data);
   return response.data.data;
 }
 

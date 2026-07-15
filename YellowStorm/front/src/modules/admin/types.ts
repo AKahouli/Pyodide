@@ -1635,6 +1635,9 @@ export interface UpdateWorkspaceUploadSettingsRequest {
 export interface WorkspaceEvidenceSearchSettingsResponse { connectorId: string | null; updatedAt?: string; }
 export interface UpdateWorkspaceEvidenceSearchSettingsRequest { connectorId: string | null; }
 export interface WorkspaceEvidenceSearchConnectorOption { id: string; name: string; }
+export interface WorkspaceTransformationSettingsResponse { decisionFlowAgentId: string | null; updatedAt?: string; }
+export interface UpdateWorkspaceTransformationSettingsRequest { decisionFlowAgentId: string | null; }
+export interface WorkspaceTransformationAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
 // ===== Team Auto-Builder =====
 

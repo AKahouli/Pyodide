@@ -49,6 +49,7 @@ import { IndexingModule } from '../indexing/indexing.module';
 import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
 import { IntegrationEventsModule } from '../integration-events/integration-events.module';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 @Module({
   imports: [
@@ -92,13 +93,17 @@ import { IntegrationEventsModule } from '../integration-events/integration-event
     WritePermissionGuard,
     InternalServiceGuard,
     UrlToPdfClientService,
+    WorkspaceArtifactCleanupService,
   ],
   exports: [
+    MongooseModule,
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
     WorkspaceInitializerService,
     WorkspaceShareService,
+    WorkspaceAccessGuard,
+    WritePermissionGuard,
   ],
 })
 export class WorkspaceModule {}

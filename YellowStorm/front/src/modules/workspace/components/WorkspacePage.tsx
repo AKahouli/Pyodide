@@ -18,7 +18,8 @@ import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
 import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
-import type { Workspace, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
+import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
+import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 import { formatFileSize } from '../utils';
@@ -31,6 +32,8 @@ import { ClassifyDialog } from './ClassifyDialog';
 import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
 import { CommunityGraphPanel } from '@/modules/playbook/components/CommunityGraphPanel';
+import { useModuleTranslation } from '@/modules/localization';
+import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 
 const ITEM_MIME = 'application/x-workspace-page-item';
 
@@ -70,6 +73,7 @@ function getItemIcon(file: WorkspaceFile) {
 }
 
 export function WorkspacePage() {
+  const { t } = useModuleTranslation('workspace');
   const { id: routeWorkspaceId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const selectedWorkspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
@@ -79,6 +83,8 @@ export function WorkspacePage() {
   const selectPageWorkspace = useWorkspaceStore((s) => s.selectPageWorkspace);
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
+  const storedArtifacts = useWorkspaceStore((s) => s.pageArtifacts);
+  const artifacts = dataRoomFeatures.decisionFlowArtifactsEnabled ? storedArtifacts : [];
   const currentFolderId = useWorkspaceStore((s) => s.pageCurrentFolderId);
   const navigateToFolder = useWorkspaceStore((s) => s.navigateToPageFolder);
   const search = useWorkspaceStore((s) => s.pageSearch);
@@ -90,6 +96,7 @@ export function WorkspacePage() {
   const movePageFolder = useWorkspaceStore((s) => s.movePageFolder);
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
+  const refreshWorkspaceArtifacts = useWorkspaceStore((s) => s.refreshWorkspaceArtifacts);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== selectedWorkspaceId) {
@@ -129,6 +136,17 @@ export function WorkspacePage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [hasIndexingInFlight, refreshPageData]);
+
+  const hasArtifactGenerationInFlight = artifacts.some(
+    (artifact) => artifact.status === 'queued' || artifact.status === 'generating',
+  );
+  useEffect(() => {
+    if (!hasArtifactGenerationInFlight) return;
+    const interval = setInterval(() => {
+      void refreshWorkspaceArtifacts();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasArtifactGenerationInFlight, refreshWorkspaceArtifacts]);
 
   const activeWorkspaceId = routeWorkspaceId ?? null;
 
@@ -209,8 +227,8 @@ export function WorkspacePage() {
     return files
       .filter((f) => f.workspaceId === activeWorkspaceId)
       .filter((f) => (currentFolderId ? f.folderId === currentFolderId : f.folderId === null))
-      .filter((f) => !q || f.name.toLowerCase().includes(q));
-  }, [files, activeWorkspaceId, currentFolderId, search]);
+      .filter((f) => !q || f.name.toLowerCase().includes(q) || artifacts.some((artifact) => artifact.primarySource.documentId === f.id && artifact.name.toLowerCase().includes(q)));
+  }, [files, artifacts, activeWorkspaceId, currentFolderId, search]);
 
   const handleDropOnFolder = useCallback(
     (targetFolder: WorkspaceFolder, payload: DragPayload) => {
@@ -396,9 +414,13 @@ export function WorkspacePage() {
                 <section>
                   <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
                   <div className='space-y-1'>
-                    {visibleFiles.map((file) => (
-                      <FileRow key={file.id} file={file} onMove={() => setMapFile(file)} />
-                    ))}
+                    {visibleFiles.map((file) => {
+                      const query = search.trim().toLowerCase();
+                      const sourceMatches = file.name.toLowerCase().includes(query);
+                      const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
+                      const linkedArtifacts = allLinkedArtifacts.filter((artifact) => !query || sourceMatches || artifact.name.toLowerCase().includes(query));
+                      return <FileRow key={file.id} file={file} artifacts={linkedArtifacts} totalArtifactCount={allLinkedArtifacts.length} forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0} onMove={() => setMapFile(file)} />;
+                    })}
                   </div>
                 </section>
               )}
@@ -801,7 +823,8 @@ function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexing
   );
 }
 
-function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) {
+function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }: { file: WorkspaceFile; artifacts: WorkspaceArtifact[]; totalArtifactCount: number; forceExpanded: boolean; onMove: () => void }) {
+  const { t } = useModuleTranslation('workspace');
   const Icon = getItemIcon(file);
   const isConverting = file.type === 'url' && file.status === 'processing';
   const canWrite = useCanWriteWorkspace();
@@ -810,6 +833,15 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const [isReindexing, setIsReindexing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [expanded, setExpanded] = useState(forceExpanded);
+
+  useEffect(() => {
+    if (forceExpanded) setExpanded(true);
+  }, [forceExpanded]);
+
+  useEffect(() => {
+    if (artifacts.some((artifact) => artifact.status === 'queued' || artifact.status === 'generating')) setExpanded(true);
+  }, [artifacts]);
 
   const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
   const getDownloadUrl = useWorkspaceStore((s) => s.getDownloadUrl);
@@ -834,8 +866,8 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
     if (!viewable) return;
     // `file.path` is the Ceph object key persisted on the WorkspaceDocument.
     // openFileViewer signs it directly via the path-signer endpoint.
-    openFileViewer(file.workspaceId, file.id, file.path ?? '', file.name, file.mimeType);
-  }, [file.id, file.mimeType, file.name, file.path, file.workspaceId, viewable]);
+    openFileViewer(file.workspaceId, file.id, file.path ?? '', file.name, file.mimeType, { canWriteWorkspace: canWrite });
+  }, [canWrite, file.id, file.mimeType, file.name, file.path, file.workspaceId, viewable]);
 
   const handleDownload = useCallback(async () => {
     setIsDownloading(true);
@@ -866,7 +898,7 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
   const handleDelete = useCallback(async () => {
     setIsDeleting(true);
     try {
-      await deleteDocument(file.workspaceId, file.id);
+      await deleteDocument(file.workspaceId, file.id, totalArtifactCount > 0);
       setConfirmDeleteOpen(false);
       toast.success(`${file.name} supprimé`);
       await refreshPageData();
@@ -875,29 +907,40 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteDocument, file.id, file.name, file.workspaceId, refreshPageData]);
+  }, [deleteDocument, file.id, file.name, file.workspaceId, refreshPageData, totalArtifactCount]);
+
+  const primaryContent = <>
+    <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
+    <div className='min-w-0 flex-1 flex items-center gap-2'>
+      {isConverting ? (
+        <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+          <Loader2 className='h-3.5 w-3.5 animate-spin' />
+        </span>
+      ) : (
+        <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
+      )}
+      <span className='truncate text-sm'>{file.name}</span>
+      {totalArtifactCount > 0 && <span className='text-xs text-muted-foreground'>{t('artifacts.count', { count: totalArtifactCount })}</span>}
+    </div>
+    <span className='hidden md:inline text-xs text-muted-foreground tabular-nums whitespace-nowrap'>{formatBytes(file.size)}</span>
+  </>;
 
   return (
     <>
-      <div draggable={canWrite} onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} className={cn('group flex items-center gap-4 rounded-md py-2 pl-2 pr-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}>
-        <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
-
-        <div className='min-w-0 flex-1 flex items-center gap-2'>
-          {isConverting ? (
-            <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
-              <Loader2 className='h-3.5 w-3.5 animate-spin' />
-            </span>
-          ) : (
-            <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
-          )}
-          <span className='truncate text-sm'>{file.name}</span>
-        </div>
-
-        <span className='hidden md:inline text-xs text-muted-foreground tabular-nums whitespace-nowrap'>{formatBytes(file.size)}</span>
+      <div
+        draggable={canWrite}
+        onDragStart={handleDragStart}
+        onDragEnd={() => setIsDragging(false)}
+        className={cn('group flex items-center gap-4 rounded-md py-2 pl-2 pr-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}
+      >
+        {artifacts.length > 0 ? <button type='button' onClick={() => setExpanded((value) => !value)} aria-label={expanded ? t('artifacts.collapse') : t('artifacts.expand')}><ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} /></button> : <span className='w-4' />}
+        {viewable
+          ? <button type='button' className='flex min-w-0 flex-1 cursor-pointer items-center gap-4 text-left' onClick={handleView}>{primaryContent}</button>
+          : <div className='flex min-w-0 flex-1 items-center gap-4'>{primaryContent}</div>}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className='rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-background group-hover:opacity-100' onPointerDown={(e) => e.stopPropagation()}>
+            <button className='rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-background group-hover:opacity-100'>
               <MoreVertical className='h-4 w-4' />
             </button>
           </DropdownMenuTrigger>
@@ -932,28 +975,32 @@ function FileRow({ file, onMove }: { file: WorkspaceFile; onMove: () => void }) 
         </DropdownMenu>
       </div>
 
-      <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} isDeleting={isDeleting} onConfirm={handleDelete} />
+      {expanded && artifacts.map((artifact) => <WorkspaceArtifactRow key={artifact.id} artifact={artifact} canWrite={canWrite} onChanged={refreshPageData} />)}
+
+      <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} linkedArtifactCount={totalArtifactCount} isDeleting={isDeleting} onConfirm={handleDelete} />
     </>
   );
 }
 
-function ConfirmDeleteFileDialog({ open, onOpenChange, fileName, isDeleting, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; fileName: string; isDeleting: boolean; onConfirm: () => void | Promise<void> }) {
+function ConfirmDeleteFileDialog({ open, onOpenChange, fileName, linkedArtifactCount, isDeleting, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; fileName: string; linkedArtifactCount: number; isDeleting: boolean; onConfirm: () => void | Promise<void> }) {
+  const { t } = useModuleTranslation('workspace');
   return (
     <Dialog open={open} onOpenChange={(o) => !isDeleting && onOpenChange(o)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Supprimer le fichier</DialogTitle>
+          <DialogTitle>{t('artifacts.sourceDeleteTitle')}</DialogTitle>
           <DialogDescription>
-            Voulez-vous vraiment supprimer <span className='font-medium text-foreground'>{fileName}</span> ? Cette action est irréversible.
+            {linkedArtifactCount > 0 && <span className='mb-2 block font-medium text-destructive'>{t('artifacts.sourceDeleteWarning', { count: linkedArtifactCount })}</span>}
+            {t('artifacts.sourceDeleteDescription', { name: fileName })}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)} disabled={isDeleting}>
-            Annuler
+            {t('artifacts.cancel')}
           </Button>
           <Button variant='destructive' onClick={onConfirm} disabled={isDeleting} className='gap-1.5'>
             {isDeleting ? <Loader2 className='h-4 w-4 animate-spin' /> : <Trash2 className='h-4 w-4' />}
-            Supprimer
+            {linkedArtifactCount > 0 ? t('artifacts.deleteSourceAndFlows') : t('artifacts.deleteSource')}
           </Button>
         </DialogFooter>
       </DialogContent>

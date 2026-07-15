@@ -69,9 +69,21 @@ export const API_ENDPOINTS = {
   adminWorkspaceUploadSettings: {
     base: '/admin/workspace-settings/uploads',
   },
+  workspaceArtifacts: {
+    list: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts`,
+    configuration: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts/configuration`,
+    decisionFlows: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts/decision-flows`,
+    byId: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}`,
+    clone: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}/clone`,
+    retry: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}/retry`,
+  },
   adminWorkspaceEvidenceSearchSettings: {
     base: '/admin/workspace-settings/evidence-search',
     connectors: '/admin/workspace-settings/evidence-search/connectors',
+  },
+  adminWorkspaceTransformationSettings: {
+    base: '/admin/workspace-settings/transformations',
+    agents: '/admin/workspace-settings/transformations/agents',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
