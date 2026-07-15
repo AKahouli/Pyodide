@@ -152,6 +152,10 @@ export interface WorkyTask {
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
   blockerReason: string | null;
+  /** The step's output / manager answer (plan_steps.result via Electric). */
+  result: string | null;
+  /** Why the step is blocked (plan_steps.blocked_reason via Electric). */
+  blockedReason: string | null;
   theoreticalDeadlineAt: string | null;
   startedAt: string | null;
   completedAt: string | null;

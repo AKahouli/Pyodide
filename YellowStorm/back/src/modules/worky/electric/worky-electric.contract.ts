@@ -19,4 +19,11 @@ export interface PgPlanStepRow {
   ordinal: number;
   status: string;
   description: string;
+  result?: string | null;
+  blocked_reason?: string | null;
+  kind?: string;
+  question?: string;
+  depends_on?: string; // comma-joined step_ids
+  wave?: number;
+  agent?: string;
 }

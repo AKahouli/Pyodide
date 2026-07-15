@@ -40,6 +40,14 @@ export class WorkyTask extends Document {
   @Prop({ type: Number, default: null })
   ordinal?: number | null;
 
+  /** plan_steps.result (Electric source) — the step's output / manager answer. */
+  @Prop({ type: String, default: null })
+  result?: string | null;
+
+  /** plan_steps.blocked_reason (Electric source) — why the step is blocked. */
+  @Prop({ type: String, default: null })
+  blockedReason?: string | null;
+
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 200 })
   title!: string;
 

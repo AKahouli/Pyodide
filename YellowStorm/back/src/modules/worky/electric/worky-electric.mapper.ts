@@ -93,6 +93,8 @@ export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record
       ordinal: row.ordinal,
       lane,
       executionState: laneToExecState(lane),
+      result: row.result ?? null,
+      blockedReason: row.blocked_reason ?? null,
     },
     event: {
       type: terminal ? 'task.completed' : 'task.updated',

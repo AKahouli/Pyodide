@@ -59,6 +59,8 @@ const baseTask = {
   actionCategory: 'internal_analysis' as const,
   dependsOn: [],
   blockerReason: null,
+  result: null,
+  blockedReason: null,
   theoreticalDeadlineAt: null,
   startedAt: null,
   completedAt: null,
