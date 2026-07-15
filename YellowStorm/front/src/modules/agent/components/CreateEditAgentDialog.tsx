@@ -178,7 +178,6 @@ export function CreateEditAgentDialog({
             connectors: agent.connectors || [],
             connectorActionSelections: agent.connectorActionSelections || [],
             isActive: agent.isActive,
-            isDefaultForType: agent.isDefaultForType || false,
             enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
             max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
             guardrails: normalizeGuardrails(agent.guardrails),
@@ -355,20 +354,6 @@ export function CreateEditAgentDialog({
                         {errors.agentType && (
                           <p className="text-xs text-destructive">{errors.agentType.message}</p>
                         )}
-                      </div>
-
-                      {/* Default for Type */}
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label>{t('createEdit.fields.defaultForType')}</Label>
-                          <p className="text-xs text-muted-foreground">
-                            {t('createEdit.fields.defaultForTypeDescription')}
-                          </p>
-                        </div>
-                        <Switch
-                          checked={watch("isDefaultForType")}
-                          onCheckedChange={(checked) => setValue("isDefaultForType", checked)}
-                        />
                       </div>
 
                       <div className="flex items-center justify-between">

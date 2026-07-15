@@ -68,8 +68,6 @@
   "createEdit.fields.slugHelper": "Initialized from the name. You can edit it.",
   "createEdit.fields.agentType": "Agent Type",
   "createEdit.fields.agentTypePlaceholder": "Select agent type",
-  "createEdit.fields.defaultForType": "Default for this type",
-  "createEdit.fields.defaultForTypeDescription": "Make this the default agent for its type. Only one per type.",
   "createEdit.fields.temporaryChildAgents": "Temporary child agents",
   "createEdit.fields.temporaryChildAgentsDescription": "Allow this agent to create temporary child agents when it needs more evidence or verification.",
   "createEdit.fields.maxTemporaryChildAgents": "Maximum temporary child agents",

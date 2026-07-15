@@ -50,7 +50,6 @@ describe('AgentFormSchema', () => {
       agentType: '',
       role: '',
       isActive: true,
-      isDefaultForType: false,
       enable_temporary_child_agents: false,
       max_temporary_child_agents: 4,
     });

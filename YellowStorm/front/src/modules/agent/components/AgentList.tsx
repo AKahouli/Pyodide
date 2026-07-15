@@ -59,7 +59,6 @@ export function AgentList() {
           connectors: data.connectors,
           deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
-          isDefaultForType: data.isDefaultForType,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
         });
@@ -81,7 +80,6 @@ export function AgentList() {
           connectors: data.connectors,
           deploymentSettings: data.deploymentSettings,
           isActive: data.isActive,
-          isDefaultForType: data.isDefaultForType,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
         });
