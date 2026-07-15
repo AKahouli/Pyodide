@@ -2,10 +2,12 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkyStreamService } from './services/worky-stream.service';
+import { WorkyElectricConsumerService } from './services/worky-electric-consumer.service';
 import { WorkyIdempotencyService } from './services/worky-idempotency.service';
 import { WorkyEventService } from './services/worky-event.service';
 import { WorkyAuditService } from './services/worky-audit.service';
 import { WorkyRuntimeClient } from './services/worky-runtime.client';
+import { WorkyOrchestratorGrpcClientService } from './services/worky-orchestrator.grpc-client.service';
 import { WorkyRuntimeDispatchService } from './services/worky-runtime-dispatch.service';
 import { WorkyPlanDeltaService } from './services/worky-plan-delta.service';
 import { WorkyPlanningService } from './services/worky-planning.service';
@@ -116,9 +118,19 @@ import {
   WorkyMemoryEntry,
   WorkyMemoryEntrySchema,
 } from './schemas/worky-memory.schema';
+import {
+  WorkyElectricCursor,
+  WorkyElectricCursorSchema,
+} from './schemas/worky-electric-cursor.schema';
+import {
+  WorkyPlanProjection,
+  WorkyPlanProjectionSchema,
+} from './schemas/worky-plan-projection.schema';
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
 import workyConfig from '../../config/worky.config';
+import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
+import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { LoggerModule } from '../logger';
@@ -145,6 +157,8 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
 @Module({
   imports: [
     ConfigModule.forFeature(workyConfig),
+    ConfigModule.forFeature(workyOrchestratorConfig),
+    ConfigModule.forFeature(workyOrchestratorSecurityConfig),
     LoggerModule,
     AuthorizationModule,
     AgentTypeModule,
@@ -174,6 +188,8 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       { name: WorkyAuditEvent.name, schema: WorkyAuditEventSchema },
       { name: WorkyMemoryProposal.name, schema: WorkyMemoryProposalSchema },
       { name: WorkyMemoryEntry.name, schema: WorkyMemoryEntrySchema },
+      { name: WorkyElectricCursor.name, schema: WorkyElectricCursorSchema },
+      { name: WorkyPlanProjection.name, schema: WorkyPlanProjectionSchema },
       // Re-registered here so WorkyStreamService can inject them directly
       // without pulling in AgentModule/WorkspaceModule's full transitive
       // dependency graph. Nest reuses the same Mongoose model instance via DI.
@@ -202,10 +218,12 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
   ],
   providers: [
     WorkyStreamService,
+    WorkyElectricConsumerService,
     WorkyIdempotencyService,
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyOrchestratorGrpcClientService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
@@ -236,6 +254,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyOrchestratorGrpcClientService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,

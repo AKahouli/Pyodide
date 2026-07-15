@@ -12,18 +12,30 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyPlanningService } from '../services/worky-planning.service';
+import { WorkyStreamService } from '../services/worky-stream.service';
+import { WorkyOrchestratorGrpcClientService } from '../services/worky-orchestrator.grpc-client.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
+import { LoggerService } from '../../logger';
+import { ModelsService } from '../../models/models.service';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
 @UseGuards(WorkyStreamAccessGuard)
 @Controller('worky/streams')
 export class WorkyMessageController {
-  constructor(private readonly planning: WorkyPlanningService) {}
+  constructor(
+    private readonly planning: WorkyPlanningService,
+    private readonly streamService: WorkyStreamService,
+    private readonly orchestrator: WorkyOrchestratorGrpcClientService,
+    private readonly models: ModelsService,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(WorkyMessageController.name);
+  }
 
   @Post(':id/messages')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -36,19 +48,41 @@ export class WorkyMessageController {
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
-    // Kick the turn off; the SSE channel `/worky/streams/{id}/events`
-    // surfaces each frame to the owner. We do not await the terminal —
-    // the turn is fire-and-forget from the controller's perspective, so
-    // the HTTP request returns 202 immediately and the UI streams
-    // assistant tokens / kanban updates as they arrive.
-    this.planning.startTurn({
+    const { aiSessionId, managerModelId } = await this.streamService.ensureKickoffContext(
       streamId,
-      userId: user._id.toString(),
-      content: dto.content,
-      triggerKind: 'owner_message',
-      managerModelIdOverride: dto.managerModelId ?? null,
-      workerModelIdOverride: dto.workerModelId ?? null,
+      user._id.toString(),
+    );
+    // Resolve the Manager model with the same priority chain used by
+    // planning turns: per-turn override → stream's persistent field →
+    // admin default. RunTask treats `model` as optional, but we always
+    // resolve a concrete model so the orchestrator never falls back to
+    // its own default unexpectedly.
+    const override = dto.managerModelId?.trim();
+    let model = override || managerModelId || null;
+    if (!model) {
+      model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
+    }
+    // Fire-and-forget kickoff. The manager writes task/message rows into
+    // its Postgres; the Electric consumer mirrors them into Mongo and
+    // re-emits over the SSE channel `/worky/streams/{id}/events`.
+    this.logger.log('[worky-orchestrator] RunTask kickoff', {
+      streamId,
+      aiSid: aiSessionId,
+      model,
+      contentLength: dto.content?.length,
+      idempotencyKey: saved.id,
     });
+    void this.orchestrator
+      .runTask(user._id.toString(), aiSessionId, dto.content, {
+        model: model ?? undefined,
+        idempotencyKey: saved.id,
+      })
+      .catch((err) =>
+        this.logger.error('[worky-orchestrator] RunTask kickoff failed', {
+          streamId,
+          error: (err as Error).message,
+        }),
+      );
     return { ...saved, turnStarted: true };
   }
 

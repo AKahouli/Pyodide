@@ -47,7 +47,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const setMessages = useWorkyStore((s) => s.setMessages);
   const setPendingClarifications = useWorkyStore((s) => s.setPendingClarifications);
   const appendMessage = useWorkyStore((s) => s.appendMessage);
-  const appendAssistantToken = useWorkyStore((s) => s.appendAssistantToken);
   const resetAssistantText = useWorkyStore((s) => s.resetAssistantText);
   const setStreaming = useWorkyStore((s) => s.setStreaming);
   const setLastDeltaToast = useWorkyStore((s) => s.setLastDeltaToast);
@@ -97,12 +96,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           };
           if (m.id) appendMessage(m);
           if (m.role === 'manager') resetAssistantText();
-          break;
-        }
-        case 'assistant_token': {
-          setStreaming(true);
-          const text = String((event.data as { text?: string }).text ?? '');
-          if (text) appendAssistantToken(text);
           break;
         }
         case 'plan.delta.applied': {
@@ -229,7 +222,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   }, [
     streamId,
     appendMessage,
-    appendAssistantToken,
     qc,
     resetAssistantText,
     setLastDeltaToast,

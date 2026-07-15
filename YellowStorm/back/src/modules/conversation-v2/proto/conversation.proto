@@ -50,6 +50,8 @@ message GetSessionResponse {
 message StopSessionRequest  { string user_id = 1; string session_id = 2; }
 message StopSessionResponse {}
 
+message WorkyResponse { string session_id = 1; bool accepted = 2; }
+
 message ChatRequest {
   string user_id    = 1;
   string session_id = 2;
@@ -57,20 +59,29 @@ message ChatRequest {
   optional string event_id = 4;
   optional int64  timestamp = 5;
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
-  ConnectorRepo connector_repo = 7;
-  repeated Skill skills = 8;   // skills selected by the user, injected into the agent prompt
+  repeated Skill  skills    = 8;   // skills selected by the user, injected into the agent prompt
   repeated ConnectorBinding connectors = 9;   // selected connectors (MCP servers); auth already resolved by YellowMind
 }
 
-// Identifies a repository scoped under a connector. When present on a
-// ChatRequest, tools bound to that connector SHOULD operate within this
-// repository context rather than prompting the user for a target.
-message ConnectorRepo {
-  string connector_id = 1;
-  string connector_name = 2;
-  string repo_id = 3;
-  string repo_name = 4;
-  string repo_url = 5;
+// --- Skills (Agent Skills pattern / progressive disclosure) ---
+// Same shape as v1 (chatbot.proto) so YellowMind can reuse findByIdsForGrpc().
+message Skill {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string instructions = 4;
+  string license = 5;
+  string compatibility = 6;
+  map<string, string> metadata = 7;
+  repeated string allowed_tools = 8;
+  repeated SkillFile files = 9;
+}
+
+message SkillFile {
+  string path = 1;
+  string kind = 2;
+  string mime_type = 3;
+  string content = 4;
 }
 
 // --- Connectors (remote MCP servers exposed as agent tools) ---
@@ -223,5 +234,5 @@ message FileInfo {
   string id = 1;
   string name = 2;
   string content_type = 3;
-  string url = 4;
+  string path = 4;
 }

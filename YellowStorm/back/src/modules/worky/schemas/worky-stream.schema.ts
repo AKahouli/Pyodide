@@ -57,6 +57,15 @@ export class WorkyStream extends Document {
   @Prop({ type: String, default: null, trim: true, maxlength: 256 })
   workerModelId?: string | null;
 
+  /**
+   * AgentOrchestrator session id for this stream. Created via the gRPC
+   * `CreateSession` RPC when the stream is created, and used as the
+   * `session_id` on every `RunTask` kickoff and as the Electric shape
+   * scope key (`session_id`) the manager writes task rows under.
+   */
+  @Prop({ type: String, default: null, index: true })
+  aiSessionId?: string | null;
+
   @Prop({ type: Types.ObjectId, ref: 'WorkyGovernancePolicy', default: null })
   governancePolicyRef?: Types.ObjectId | null;
 
