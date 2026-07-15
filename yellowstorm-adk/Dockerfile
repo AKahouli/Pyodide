@@ -33,10 +33,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Keep /tmp valid for dpkg triggers
 RUN set -eux; mkdir -p /tmp; chmod 1777 /tmp
 
+# CI runner's bridge network blocks port 80; switch mirrors to HTTPS.
+RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list
+
 # Build deps
 RUN set -eux; \
-    apt-get update; \
-    apt-get install --no-install-recommends -y \
+    apt-get -o Acquire::Retries=3 update; \
+    apt-get -o Acquire::Retries=3 install --no-install-recommends -y \
       ca-certificates \
       python${PYTHON_VERSION} \
       python${PYTHON_VERSION}-dev \
@@ -128,9 +131,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN set -eux; mkdir -p /tmp; chmod 1777 /tmp
 
+# CI runner's bridge network blocks port 80; switch mirrors to HTTPS.
+RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list
+
 RUN set -eux; \
-    apt-get update; \
-    apt-get install --no-install-recommends -y \
+    apt-get -o Acquire::Retries=3 update; \
+    apt-get -o Acquire::Retries=3 install --no-install-recommends -y \
       ca-certificates \
       python${PYTHON_VERSION} \
       ffmpeg \
