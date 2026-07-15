@@ -333,8 +333,22 @@ class TestAgentRunner:
         mock_event.content.parts[0].function_response = None
         mock_event.content.parts[0].function_call = MagicMock()
         mock_event.content.parts[0].function_call.name = "test_function"
+        mock_event.content.parts[0].function_call.id = "call-1"
         mock_event.content.parts[0].function_call.args = {"arg1": "value1"}
         mock_event.is_final_response.return_value = False
+
+        # Matching function response transitions the same tool component.
+        mock_response_event = MagicMock()
+        mock_response_event.content = MagicMock()
+        mock_response_event.content.parts = [MagicMock()]
+        mock_response_event.content.parts[0].text = None
+        mock_response_event.content.parts[0].function_call = None
+        mock_response_event.content.parts[0].function_response = MagicMock()
+        mock_response_event.content.parts[0].function_response.name = "test_function"
+        mock_response_event.content.parts[0].function_response.id = "call-1"
+        mock_response_event.content.parts[0].function_response.is_error = False
+        mock_response_event.content.parts[0].function_response.response = {}
+        mock_response_event.is_final_response.return_value = False
 
         # Mock final event
         mock_final_event = MagicMock()
@@ -348,6 +362,7 @@ class TestAgentRunner:
         # Mock Runner class
         async def mock_run_async(*args, **kwargs):
             yield mock_event
+            yield mock_response_event
             yield mock_final_event
 
         mock_runner_instance = MagicMock()
@@ -355,7 +370,9 @@ class TestAgentRunner:
 
         with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance), \
              patch.object(agent_runner, '_handle_function_call', new_callable=AsyncMock) as mock_handle_func, \
-             patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock) as mock_handle_final:
+             patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock) as mock_handle_final, \
+             patch.object(agent_runner, '_handle_ui_tool_response', new_callable=AsyncMock, return_value=False), \
+             patch.object(agent_runner, '_handle_structured_tool_response', new_callable=AsyncMock):
             mock_handle_final.return_value = "Final response"
 
             result = await agent_runner._run_standard_agent(
@@ -375,6 +392,33 @@ class TestAgentRunner:
 
             mock_handle_func.assert_called_once()
             assert result[0] == "Final response"
+            tool_events = [
+                call.kwargs
+                for call in mock_streaming_formatter.format_component_event.call_args_list
+                if call.kwargs["component_type"] == "tool_info"
+            ]
+            assert tool_events == [
+                {
+                    "agent_id": "agent_123",
+                    "component_type": "tool_info",
+                    "component_data": {
+                        "title": "test_function",
+                        "status": "running",
+                        "params": '{"arg1": "value1"}',
+                    },
+                    "message_id": "session_123",
+                    "component_id": "tool-call-1",
+                    "action": "add",
+                },
+                {
+                    "agent_id": "agent_123",
+                    "component_type": "tool_info",
+                    "component_data": {"title": "test_function", "status": "completed"},
+                    "message_id": "session_123",
+                    "component_id": "tool-call-1",
+                    "action": "update",
+                },
+            ]
 
     @pytest.mark.asyncio
     async def test_run_html_agent_success(self):

@@ -364,6 +364,8 @@ class AgentRunner:
         cot_steps = []                    # ordered list of tool title strings
         cot_component_id = str(uuid.uuid4())
         cot_sent = False
+        pending_tool_components_by_call_id: Dict[str, str] = {}
+        pending_tool_components_by_name: Dict[str, List[str]] = {}
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -517,6 +519,28 @@ class AgentRunner:
                                 tool_name=func_name,
                                 args=dict(part.function_call.args),
                                 status="requested",
+                            )
+
+                        if q:
+                            tool_args = dict(part.function_call.args or {})
+                            raw_call_id = getattr(part.function_call, "id", None)
+                            call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
+                            tool_component_id = f"tool-{call_id}"
+                            pending_tool_components_by_call_id[call_id] = tool_component_id
+                            pending_tool_components_by_name.setdefault(func_name, []).append(tool_component_id)
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="tool_info",
+                                    component_data={
+                                        "title": func_name,
+                                        "status": "running",
+                                        "params": json.dumps(tool_args, default=str, sort_keys=True),
+                                    },
+                                    message_id=session_id,
+                                    component_id=tool_component_id,
+                                    action="add",
+                                )
                             )
 
                         # Chain-of-thought: append this tool title as a step
@@ -678,6 +702,38 @@ class AgentRunner:
 
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
+
+                        if q:
+                            raw_call_id = getattr(part.function_response, "id", None)
+                            response_call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+                            tool_component_id = pending_tool_components_by_call_id.pop(response_call_id, None) if response_call_id else None
+                            if tool_component_id:
+                                pending_for_name = pending_tool_components_by_name.get(func_name, [])
+                                if tool_component_id in pending_for_name:
+                                    pending_for_name.remove(tool_component_id)
+                            else:
+                                pending_for_name = pending_tool_components_by_name.get(func_name, [])
+                                tool_component_id = pending_for_name.pop(0) if pending_for_name else None
+                                if tool_component_id:
+                                    for call_id, pending_component_id in list(pending_tool_components_by_call_id.items()):
+                                        if pending_component_id == tool_component_id:
+                                            pending_tool_components_by_call_id.pop(call_id)
+                                            break
+
+                            if tool_component_id:
+                                await q.put(
+                                    self.streaming_formatter.format_component_event(
+                                        agent_id=agent_id,
+                                        component_type="tool_info",
+                                        component_data={
+                                            "title": func_name,
+                                            "status": "completed" if success else "failed",
+                                        },
+                                        message_id=session_id,
+                                        component_id=tool_component_id,
+                                        action="update",
+                                    )
+                                )
 
                         if q and await self._handle_ui_tool_response(
                             func_name,

@@ -275,4 +275,14 @@ describe('component-mapper choice extraction', () => {
     expect(result.type).toBe('choice');
     expect(result.data).toMatchObject({ questionId: 'q1', selectionMode: 'multiple', submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 } });
   });
+
+  it('maps tool arguments and terminal status from the toolInfo proto component', () => {
+    expect(extractComponentData({
+      id: 'tool-1',
+      tool_info: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
+    })).toEqual({
+      type: 'toolInfo',
+      data: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
+    });
+  });
 });

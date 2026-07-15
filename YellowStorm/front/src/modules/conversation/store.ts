@@ -28,7 +28,7 @@ interface CachedStreamingState {
  * Used both by the buffer flush callback (current conversation) and by direct
  * cache updates (background conversations).
  */
-function applyChunksToComponents(
+export function applyChunksToComponents(
   components: StreamingComponent[],
   chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>,
 ): StreamingComponent[] {
@@ -248,6 +248,16 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'chainOfThought':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
+    case 'toolInfo':
+      // Terminal tool updates only include status. Retain the arguments from
+      // the initial event so the live debug pane matches persisted history.
+      return {
+        ...existing,
+        ...incoming,
+        title: (incoming.title as string) || (existing.title as string) || '',
+        status: (incoming.status as string) || (existing.status as string) || 'running',
+        params: (incoming.params as string) || (existing.params as string) || '',
+      };
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)
       // and chartData is the actual array of data points

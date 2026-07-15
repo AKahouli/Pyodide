@@ -40,6 +40,19 @@ describe('LoadingIndicator', () => {
     expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
   });
 
+  it('replaces chain tool names with their dedicated debug panes', () => {
+    render(<LoadingIndicator isComplete components={[
+      { id: 'thoughts', type: 'chainOfThought', data: { steps: ['search_documents'] } },
+      { id: 'tool', type: 'toolInfo', data: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' } },
+    ] as never} />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.queryByText('search_documents')).not.toBeInTheDocument();
+    expect(screen.getByText('Search Documents')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Search Documents'));
+    expect(screen.getByText(/contract/)).toBeInTheDocument();
+  });
+
   it('keeps completed activity available without an active live status', () => {
     render(<LoadingIndicator isComplete components={[{ id: 'thoughts', type: 'chainOfThought', data: { steps: ['Reviewed the request'] } }] as never} />);
 

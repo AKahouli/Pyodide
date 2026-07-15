@@ -22,11 +22,17 @@ function formatDebugData(data: Record<string, unknown>): string {
 }
 
 function getStreamDetails(components: readonly MessageComponent[]): StreamDetail[] {
+  const toolNames = new Set(
+    components
+      .filter((component) => component.type === 'toolInfo' && typeof component.data.title === 'string')
+      .map((component) => component.data.title as string),
+  );
+
   return components.flatMap<StreamDetail>((component): StreamDetail[] => {
     if (component.type === 'chainOfThought') {
       const steps = component.data.steps;
       return Array.isArray(steps)
-        ? steps.filter((step): step is string => typeof step === 'string' && step.trim().length > 0).map((label) => ({ type: 'thought' as const, label }))
+        ? steps.filter((step): step is string => typeof step === 'string' && step.trim().length > 0 && !toolNames.has(step)).map((label) => ({ type: 'thought' as const, label }))
         : [];
     }
 
