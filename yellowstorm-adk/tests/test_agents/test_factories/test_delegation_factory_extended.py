@@ -149,3 +149,42 @@ class TestDelegationFactoryExtended:
         assert result == "done"
         kwargs = factory._execute_agent_with_error_handling.await_args.kwargs
         assert kwargs["image_input"] is not None
+
+    @pytest.mark.asyncio
+    async def test_delegate_execution_runs_required_temporary_child_first(self):
+        factory = _factory()
+        factory.agent_repository.get_agent_by_name.return_value = {
+            "id": "search-1",
+            "name": "SearchAgent",
+            "description": "Search",
+            "prompt": "Search prompt",
+            "tools": [{"name": "search"}],
+            "agent_params": {
+                "enable_temporary_child_agents": "true",
+                "max_temporary_child_agents": "2",
+            },
+        }
+        factory._helper.normalize_agent_name.return_value = "search_agent"
+        factory.agent_repository.get_agent_id_by_name.return_value = "search-1"
+        mock_agent = MagicMock()
+        mock_agent.instruction = "Parent instruction"
+        mock_agent.tools = []
+        factory._create_agent_with_error_handling = AsyncMock(return_value=(mock_agent, MagicMock()))
+        factory._execute_agent_with_error_handling = AsyncMock(
+            side_effect=["child evidence", "parent result"]
+        )
+
+        with patch("src.smart_rag.agents.factories.delegation_factory.langfuse_client") as mock_lf:
+            mock_lf.span.return_value = MagicMock()
+            delegate = factory.make_delegate_function("SearchAgent", AsyncMock(), False, MagicMock())
+            result = await delegate("parent task", "expected output")
+
+        assert result == "parent result"
+        assert mock_agent.tools
+        assert len(mock_agent.tools) == 1
+        assert mock_agent.tools[0].__name__ == "create_temporary_child_agent"
+        assert factory._execute_agent_with_error_handling.await_count == 2
+        child_call, parent_call = factory._execute_agent_with_error_handling.await_args_list
+        assert "required first temporary-child pass" in child_call.args[2]
+        assert "<required_temporary_child_result>" in parent_call.args[2]
+        assert "child evidence" in parent_call.args[2]

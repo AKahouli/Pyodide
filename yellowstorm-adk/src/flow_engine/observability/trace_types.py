@@ -13,6 +13,8 @@ class ToolTraceItem:
     status: str | None = None
     duration_ms: int | None = None
     error: str | None = None
+    agent_name: str | None = None
+    agent_role: str | None = None
 
 
 @dataclass(slots=True)

@@ -7,6 +7,7 @@ from typing import Optional
 from openai import AsyncOpenAI
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 
 logger = get_logger("api.smart_rag.SimpleCompletion")
 app_settings = get_settings()
@@ -62,7 +63,7 @@ class SimpleCompletionService:
             request_params = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
+                "temperature": normalize_temperature_for_model(model, temperature),
             }
 
             # Add optional parameters if provided

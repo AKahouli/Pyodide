@@ -54,6 +54,8 @@ class TraceCollector:
         status: str,
         duration_ms: int | None,
         error: str | None = None,
+        agent_name: str | None = None,
+        agent_role: str | None = None,
     ) -> None:
         call_index = self._next_call_index
         self._next_call_index += 1
@@ -66,6 +68,8 @@ class TraceCollector:
                 status=status,
                 duration_ms=duration_ms,
                 error=redact_string(error, MAX_OUTPUT_SUMMARY_LENGTH) if error else None,
+                agent_name=redact_string(agent_name, MAX_OUTPUT_SUMMARY_LENGTH) if agent_name else None,
+                agent_role=agent_role,
             )
         )
 
@@ -88,7 +92,7 @@ class TraceCollector:
         elif log_empty and not self._tool_trace and self._llm_prompt_trace:
             logger.warning("No tool trace captured: execution had LLM prompts but no tool calls")
         payload: dict[str, Any] = {
-            "tool_trace": [asdict(item) for item in self._tool_trace],
+            "tool_trace": [_tool_trace_item_to_dict(item) for item in self._tool_trace],
             "llm_prompt_trace": [asdict(item) for item in self._llm_prompt_trace],
             "trace_metadata": {
                 "tool_trace_count": len(self._tool_trace),
@@ -105,3 +109,12 @@ def _sum_optional(left: int | None, right: int | None) -> int | None:
     if left is None and right is None:
         return None
     return int(left or 0) + int(right or 0)
+
+
+def _tool_trace_item_to_dict(item: ToolTraceItem) -> dict[str, Any]:
+    payload = asdict(item)
+    if payload.get("agent_name") is None:
+        payload.pop("agent_name", None)
+    if payload.get("agent_role") is None:
+        payload.pop("agent_role", None)
+    return payload

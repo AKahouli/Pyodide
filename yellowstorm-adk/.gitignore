@@ -7,7 +7,7 @@
 tmp/
 sbx-06
 .qodo
-
+/eval
 ############################
 # Environment variables
 ############################

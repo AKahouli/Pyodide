@@ -1196,6 +1196,8 @@ export interface AgentResponse {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1230,6 +1232,8 @@ export interface CreateAgentRequest {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1250,6 +1254,8 @@ export interface UpdateAgentRequest {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

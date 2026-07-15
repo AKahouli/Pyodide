@@ -229,6 +229,19 @@ class TestSimpleCompletionService:
             assert call_kwargs["temperature"] == temp
 
     @pytest.mark.asyncio
+    async def test_create_completion_normalizes_gpt5_temperature(self, simple_completion_service, mock_openai_client):
+        """GPT-5 model groups reject temperature values other than 1."""
+        result = await simple_completion_service.create_completion(
+            message="Test message",
+            model="gpt-5.4-nano",
+            temperature=0.0,
+        )
+
+        assert result == "This is a test response from the assistant."
+        call_kwargs = mock_openai_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 1
+
+    @pytest.mark.asyncio
     async def test_create_completion_with_long_message(self, simple_completion_service, mock_openai_client):
         """Test completion with a very long message."""
         long_message = "This is a test message. " * 100  # 2500+ characters

@@ -111,6 +111,85 @@ def test_trace_collector_omits_observed_intent_key_when_set_to_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_step_with_tools_records_child_tool_calls_by_child_name(monkeypatch) -> None:
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.temporary_child_summary import (
+        pop_temporary_child_summary,
+        record_temporary_child_start,
+    )
+
+    class _Response:
+        def __init__(self, content: str, tool_calls=None) -> None:
+            self.model = "gpt-4o-mini"
+            self.usage = type("Usage", (), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})()
+            self.choices = [
+                type("Choice", (), {"message": {"content": content, "tool_calls": tool_calls or []}})()
+            ]
+
+    class _Tool:
+        name = "search"
+        description = "search"
+        args_schema = None
+
+        async def ainvoke(self, _args):
+            return "search result"
+
+    session_id = "flow-child-tool-call-test"
+    child_name = "Research Agent:flow_tmp_1"
+    pop_temporary_child_summary(session_id)
+    record_temporary_child_start(
+        session_id=session_id,
+        parent="Research Agent",
+        child=child_name,
+        task_description="task",
+    )
+    responses = [
+        _Response(
+            "",
+            [{
+                "id": "call-search",
+                "type": "function",
+                "function": {"name": "search", "arguments": '{"query":"revenue"}'},
+            }],
+        ),
+        _Response("Done."),
+    ]
+
+    async def fake_acompletion(**_kwargs):
+        return responses.pop(0)
+
+    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", fake_acompletion)
+    collector = TraceCollector()
+    trace_update_count = 0
+
+    def record_trace_update() -> None:
+        nonlocal trace_update_count
+        trace_update_count += 1
+
+    output = await run_step_with_tools(
+        model_id="gpt-4o-mini",
+        system_prompt="system",
+        user_msg="user",
+        tools=[_Tool()],
+        agent_role="temporary_child",
+        agent_name=child_name,
+        summary_session_id=session_id,
+        trace_collector=collector,
+        on_trace_update=record_trace_update,
+    )
+
+    summary = pop_temporary_child_summary(session_id)
+    tool_calls = summary["children"][0]["tool_calls"]
+    payload = collector.build_payload()
+    assert output == "Done."
+    assert [call["status"] for call in tool_calls] == ["requested", "completed"]
+    assert {call["child"] for call in tool_calls} == {child_name}
+    assert payload["tool_trace"][0]["agent_name"] == child_name
+    assert payload["tool_trace"][0]["agent_role"] == "temporary_child"
+    assert trace_update_count >= 1
+
+
+@pytest.mark.asyncio
 async def test_emit_events_forwards_node_trace_update_payload() -> None:
     from src.flow_engine.runtime.events import emit_events
 
