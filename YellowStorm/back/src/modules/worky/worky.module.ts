@@ -7,6 +7,7 @@ import { WorkyIdempotencyService } from './services/worky-idempotency.service';
 import { WorkyEventService } from './services/worky-event.service';
 import { WorkyAuditService } from './services/worky-audit.service';
 import { WorkyRuntimeClient } from './services/worky-runtime.client';
+import { WorkyOrchestratorGrpcClientService } from './services/worky-orchestrator.grpc-client.service';
 import { WorkyRuntimeDispatchService } from './services/worky-runtime-dispatch.service';
 import { WorkyPlanDeltaService } from './services/worky-plan-delta.service';
 import { WorkyPlanningService } from './services/worky-planning.service';
@@ -128,6 +129,8 @@ import {
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
 import workyConfig from '../../config/worky.config';
+import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
+import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { LoggerModule } from '../logger';
@@ -155,6 +158,8 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
 @Module({
   imports: [
     ConfigModule.forFeature(workyConfig),
+    ConfigModule.forFeature(workyOrchestratorConfig),
+    ConfigModule.forFeature(workyOrchestratorSecurityConfig),
     LoggerModule,
     AuthorizationModule,
     AgentTypeModule,
@@ -220,6 +225,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyOrchestratorGrpcClientService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
@@ -250,6 +256,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyEventService,
     WorkyAuditService,
     WorkyRuntimeClient,
+    WorkyOrchestratorGrpcClientService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
