@@ -416,6 +416,7 @@ async function openCitationSource(
   const { downloadUrl } = await getArtifactDownloadUrl(objectKey, displayName);
   openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
     displayMode,
+    closeOnOutsideClick: displayMode === 'floating',
     page,
     highlightText: c.highlightText || c.pageContent || undefined,
     highlightBBox: c.highlightBBox || c.blockBBox,
@@ -1121,7 +1122,10 @@ const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filena
 
       const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
       const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
-      openFileViewerFromUrl(downloadUrl, filename, mimeType, { displayMode: fileViewerDisplayMode });
+      openFileViewerFromUrl(downloadUrl, filename, mimeType, {
+        displayMode: fileViewerDisplayMode,
+        closeOnOutsideClick: fileViewerDisplayMode === 'floating',
+      });
     } catch (error: unknown) {
       console.error('Failed to open artifact:', error);
 
