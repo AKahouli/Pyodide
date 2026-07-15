@@ -7,17 +7,17 @@ import type { MessageComponent } from '../types';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
-  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; params?: string };
+  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown> };
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-function formatParameters(params: string): string {
+function formatDebugData(data: Record<string, unknown>): string {
   try {
-    return JSON.stringify(JSON.parse(params), null, 2);
+    return JSON.stringify(data, null, 2) || '{}';
   } catch {
-    return params;
+    return String(data);
   }
 }
 
@@ -37,7 +37,7 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
         type: 'tool' as const,
         title: formatLabel(title),
         status: status === 'completed' || status === 'failed' ? status : 'running',
-        ...(typeof component.data.params === 'string' && component.data.params.trim() ? { params: component.data.params } : {}),
+        data: component.data,
       }];
     }
 
@@ -108,19 +108,15 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
                 <span className='break-words'>{detail.label}</span>
               </div>
             ) : (
-              <div key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
-                <div className='flex items-center gap-2 text-sm font-medium text-foreground'>
+              <details key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
+                <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
                   <Wrench className='size-3.5 text-primary' aria-hidden='true' />
                   <span className='min-w-0 flex-1 break-words'>{detail.title || t('stream.activity.toolFallback')}</span>
                   <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
-                </div>
-                {detail.params && (
-                  <details className='mt-2 text-xs'>
-                    <summary className='cursor-pointer text-muted-foreground hover:text-foreground'>{t('stream.activity.parameters')}</summary>
-                    <pre className='mt-2 max-h-32 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatParameters(detail.params)}</pre>
-                  </details>
-                )}
-              </div>
+                </summary>
+                <p className='mt-2 text-xs text-muted-foreground'>{t('stream.activity.debugData')}</p>
+                <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
+              </details>
             ))}
             <p className='text-xs text-muted-foreground'>{t('stream.activity.sensitiveNotice')}</p>
           </div>

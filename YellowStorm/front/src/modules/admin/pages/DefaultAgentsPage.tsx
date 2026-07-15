@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { getAdminAgents, createAdminAgent, deleteAdminAgent } from '../api';
-import { updateAgent } from '@/modules/agent/api';
+import { updateDefaultAgent } from '@/modules/agent/api';
 import type { AgentResponse, AgentListResponse } from '../types';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
@@ -81,7 +81,7 @@ export function DefaultAgentsPage() {
     setSaving(true);
     try {
       if (editingAgent) {
-        await updateAgent(editingAgent.id, {
+        await updateDefaultAgent(editingAgent.id, {
           name: data.name,
           slug: data.slug,
           agentType: data.agentType,
@@ -98,7 +98,6 @@ export function DefaultAgentsPage() {
           connectors: data.connectors,
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
-          isDefaultForType: data.isDefaultForType,
           guardrails: data.guardrails,
           deploymentSettings: data.deploymentSettings,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
@@ -125,7 +124,6 @@ export function DefaultAgentsPage() {
           connectors: data.connectors,
           connectorActionSelections: data.connectorActionSelections,
           isActive: data.isActive,
-          isDefaultForType: data.isDefaultForType,
           guardrails: data.guardrails,
           deploymentSettings: data.deploymentSettings,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
@@ -149,7 +147,7 @@ export function DefaultAgentsPage() {
 
   const handleToggleActive = async (agent: AgentResponse) => {
     try {
-      const updated = await updateAgent(agent.id, { isActive: !agent.isActive });
+      const updated = await updateDefaultAgent(agent.id, { isActive: !agent.isActive });
       setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       showSuccess(updated.isActive ? t('defaultAgents.toasts.statusActivated.title') : t('defaultAgents.toasts.statusDeactivated.title'), {
         description: t(updated.isActive ? 'defaultAgents.toasts.statusActivated.description' : 'defaultAgents.toasts.statusDeactivated.description', { name: updated.name }),

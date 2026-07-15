@@ -391,7 +391,6 @@ export class AgentService {
       ),
       guardrails: dto.guardrails,
       deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
-      deploymentSettings: dto.deploymentSettings,
       enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
       max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: true,

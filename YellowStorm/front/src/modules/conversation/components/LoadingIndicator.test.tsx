@@ -21,7 +21,7 @@ describe('LoadingIndicator', () => {
         components={[
           { id: 'reasoning', type: 'reasoning', data: { content: 'Never show this raw prompt' } },
           { id: 'thoughts', type: 'chainOfThought', data: { steps: ['Reviewing the document'] } },
-          { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', status: 'running', params: '{"workspaceId":"workspace-1"}' } },
+          { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', status: 'running', args: { workspaceId: 'workspace-1' }, params: '{"secret":"value"}' } },
         ] as never}
       />,
     );
@@ -34,8 +34,9 @@ describe('LoadingIndicator', () => {
     expect(screen.getByText('Activate Skill')).toBeInTheDocument();
     expect(screen.queryByText('workspace-1')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('stream.activity.parameters'));
+    fireEvent.click(screen.getByText('Activate Skill'));
     expect(screen.getByText(/workspace-1/)).toBeInTheDocument();
+    expect(screen.getByText(/secret/)).toBeInTheDocument();
     expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
   });
 

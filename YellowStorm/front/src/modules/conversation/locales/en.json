@@ -228,7 +228,7 @@
   "stream.activity.completedDescription": "Review the steps and tool parameters",
   "stream.activity.details": "Activity ({{count}})",
   "stream.activity.detailsAria": "Show stream activity details",
-  "stream.activity.parameters": "Tool parameters",
+  "stream.activity.debugData": "Debug data",
   "stream.activity.toolFallback": "Tool",
   "stream.activity.sensitiveNotice": "Tool parameters can contain sensitive information.",
   "stream.activity.toolStatus.running": "Running",

@@ -228,7 +228,7 @@
   "stream.activity.completedDescription": "Consultez les étapes et les paramètres de l'outil",
   "stream.activity.details": "Activité ({{count}})",
   "stream.activity.detailsAria": "Afficher les détails de l'activité du flux",
-  "stream.activity.parameters": "Paramètres de l'outil",
+  "stream.activity.debugData": "Données de débogage",
   "stream.activity.toolFallback": "Outil",
   "stream.activity.sensitiveNotice": "Les paramètres de l'outil peuvent contenir des informations sensibles.",
   "stream.activity.toolStatus.running": "En cours",
