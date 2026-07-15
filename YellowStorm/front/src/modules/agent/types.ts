@@ -21,6 +21,8 @@ export interface Agent {
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   /** True when the agent has the "smart-memory" connector. */
   hasSmartMemory?: boolean;
   isDefault: boolean;
@@ -509,6 +511,8 @@ export interface CreateAgentData {
   isActive?: boolean;
   isDefaultForType?: boolean;
   deploymentSettings?: AgentDeploymentSettings;
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
 }
 
 export interface UpdateAgentData {
@@ -531,4 +535,6 @@ export interface UpdateAgentData {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
 }

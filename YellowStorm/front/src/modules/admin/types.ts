@@ -1203,6 +1203,8 @@ export interface AgentResponse {
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1237,6 +1239,8 @@ export interface CreateAgentRequest {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
@@ -1259,6 +1263,8 @@ export interface UpdateAgentRequest {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  enable_temporary_child_agents?: boolean;
+  max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;

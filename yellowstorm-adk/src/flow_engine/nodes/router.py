@@ -22,6 +22,7 @@ from src.flow_engine.nodes.router_conditions import (
     choose_deterministic_label,
 )
 from src.flow_engine.state import ExecutionState
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -114,7 +115,7 @@ async def run_router(
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": user_msg},
                 ],
-                temperature=0.1,
+                temperature=normalize_temperature_for_model(DEFAULT_MODEL, 0.1),
                 max_tokens=50,
                 stream=False,
             )

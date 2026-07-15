@@ -24,6 +24,13 @@ from src.smart_rag.messaging import StreamingFormatter, MessageTransformer
 from src.smart_rag.engines.traditional import EventExtractor
 from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamConfig
 from src.smart_rag.playbook_dir.execute_manager import PlaybookManagerExecutor
+from src.smart_rag.agents.tools.temporary_child_agent import (
+    TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
+    append_required_temporary_child_context,
+    build_required_temporary_child_task,
+    make_temporary_child_agent_tool,
+    should_enable_temporary_child_agent_tool,
+)
 from src.smart_rag.infrastructure.session.citation_manager import (
     clone_citation_manager_state,
     get_citation_manager,
@@ -41,6 +48,20 @@ AGENT_MODE_PREFIX = "Agent_mode_"
 
 logger = get_logger("api.smart_rag.playbook_dir.execute_step")
 settings = get_settings()
+
+
+class _PlaybookTemporaryChildTeam:
+    def __init__(
+        self,
+        config: Any,
+        agent_helper: AgentHelper,
+        delegation_factory: AgentDelegationFactory,
+        citation_manager: Any,
+    ):
+        self.config = config
+        self.agent_helper = agent_helper
+        self.delegation_factory = delegation_factory
+        self.citation_manager = citation_manager
 
 
 class PlaybookStepExecutor:
@@ -498,11 +519,42 @@ class PlaybookStepExecutor:
                     "error": error_msg
                 }
 
+            task_description = request.taskDescription
+            if should_enable_temporary_child_agent_tool(agent_config):
+                temporary_child_team = _PlaybookTemporaryChildTeam(
+                    config_obj,
+                    self.agent_helper,
+                    delegation_factory,
+                    citation_manager,
+                )
+                agent.instruction = (
+                    f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
+                )
+                temporary_child_tool = make_temporary_child_agent_tool(
+                    temporary_child_team,
+                    agent_config,
+                    delegation_span,
+                )
+                agent.tools = [temporary_child_tool]
+                logger.info(
+                    "[TEMP CHILD] Playbook tool attached agent=%s session=%s",
+                    agent_config.get("id") or agent_config.get("name"),
+                    temp_session_id,
+                )
+                required_child_result = await temporary_child_tool(
+                    build_required_temporary_child_task(task_description),
+                    expected_output,
+                )
+                task_description = append_required_temporary_child_context(
+                    task_description,
+                    required_child_result,
+                )
+
             # Use delegation_factory to execute agent with error handling
             new_result = await delegation_factory._execute_agent_with_error_handling(
                 agent=agent,
                 agent_config=agent_config,
-                task_description=request.taskDescription,
+                task_description=task_description,
                 expected_output=expected_output,
                 task_order=str(request.order),
                 delegation_span=delegation_span,

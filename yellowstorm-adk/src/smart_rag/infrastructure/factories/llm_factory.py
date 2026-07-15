@@ -14,6 +14,7 @@ from src.middleware.correlation import get_user_label
 from src.logger.logging import get_logger
 import os
 from typing import Dict, Any
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 
 if TYPE_CHECKING:
     from google.adk.models.lite_llm import LiteLlm
@@ -23,6 +24,12 @@ logger = get_logger("api.smart_rag.llm_factory")
 app_settings = get_settings()
 os.environ["OLLAMA_API_BASE"] = app_settings.OLLAMA_API_BASE_URL
 os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
+
+
+def _temperature_for_model(model_name: str, temperature: float | None) -> float:
+    requested_temperature = temperature if temperature is not None else 0.0
+    normalized = normalize_temperature_for_model(model_name, requested_temperature)
+    return 0.0 if normalized is None else normalized
 
 class LLMFactory:
     """Factory class for creating LLM instances with different configurations.
@@ -60,6 +67,7 @@ class LLMFactory:
             from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
+            model_temperature = _temperature_for_model(model_name, temperature)
 
             # Create new LLM instance
             if "ollama" in model_name.lower():
@@ -101,6 +109,7 @@ class LLMFactory:
             from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
+            model_temperature = _temperature_for_model(model_name, temperature)
 
             # Create new LLM instance
             if "ollama" in model_name.lower():
@@ -143,6 +152,7 @@ class LLMFactory:
             from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
+            model_temperature = _temperature_for_model(model_name, temperature)
             # Create new LLM instance
             if "ollama" in model_name.lower():
                 llm = LiteLlm(

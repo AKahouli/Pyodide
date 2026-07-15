@@ -181,7 +181,8 @@ export function CreateEditAgentDialog({
             connectors: agent.connectors || [],
             connectorActionSelections: agent.connectorActionSelections || [],
             isActive: agent.isActive,
-            isDefaultForType: agent.isDefaultForType || false,
+            enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
+            max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
             guardrails: normalizeGuardrails(agent.guardrails),
             deploymentSettings: {
               ...defaultFormValues.deploymentSettings,
@@ -363,18 +364,36 @@ export function CreateEditAgentDialog({
                         )}
                       </div>
 
-                      {/* Default for Type */}
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
-                          <Label>{t('createEdit.fields.defaultForType')}</Label>
+                          <Label>{t('createEdit.fields.temporaryChildAgents')}</Label>
                           <p className="text-xs text-muted-foreground">
-                            {t('createEdit.fields.defaultForTypeDescription')}
+                            {t('createEdit.fields.temporaryChildAgentsDescription')}
                           </p>
                         </div>
                         <Switch
-                          checked={watch("isDefaultForType")}
-                          onCheckedChange={(checked) => setValue("isDefaultForType", checked)}
+                          checked={watch("enable_temporary_child_agents")}
+                          onCheckedChange={(checked) => setValue("enable_temporary_child_agents", checked)}
                         />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-max-temporary-child-agents">
+                          {t('createEdit.fields.maxTemporaryChildAgents')}
+                        </Label>
+                        <Input
+                          id="user-agent-max-temporary-child-agents"
+                          type="number"
+                          min={1}
+                          max={8}
+                          {...register("max_temporary_child_agents", { valueAsNumber: true })}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {t('createEdit.fields.maxTemporaryChildAgentsDescription')}
+                        </p>
+                        {errors.max_temporary_child_agents && (
+                          <p className="text-xs text-destructive">{errors.max_temporary_child_agents.message}</p>
+                        )}
                       </div>
 
                       {/* Role */}

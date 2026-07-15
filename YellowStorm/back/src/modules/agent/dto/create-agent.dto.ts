@@ -200,4 +200,16 @@ export class CreateAgentDto {
   @ValidateNested()
   @Type(() => AgentDeploymentSettingsDto)
   deploymentSettings?: AgentDeploymentSettingsDto;
+
+  @ApiPropertyOptional({ description: 'Allow this agent to create temporary child agents', default: false })
+  @IsOptional()
+  @IsBoolean()
+  enable_temporary_child_agents?: boolean;
+
+  @ApiPropertyOptional({ description: 'Maximum temporary child agents this agent may create', default: 4, minimum: 1, maximum: 8 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(8)
+  max_temporary_child_agents?: number;
 }

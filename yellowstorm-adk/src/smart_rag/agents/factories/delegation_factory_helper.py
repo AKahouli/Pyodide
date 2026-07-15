@@ -495,6 +495,7 @@ def create_search_agent_with_tools(
         logical_search_only=logical_search_only,
         deep_search=deep_search,
         render_chart_tool=_is_tool_enabled(tools_config, "render_chart"),
+        skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
     )
 
     # Store toolkit for source handling

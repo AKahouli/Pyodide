@@ -616,9 +616,10 @@ function AgentsTab({ programId, scopeId, overview }: Readonly<{ programId: strin
         connectors: data.connectors,
         connectorActionSelections: data.connectorActionSelections,
         isActive: data.isActive,
-        isDefaultForType: data.isDefaultForType,
         guardrails: data.guardrails,
         deploymentSettings: data.deploymentSettings,
+        enable_temporary_child_agents: data.enable_temporary_child_agents,
+        max_temporary_child_agents: data.max_temporary_child_agents,
       });
       setEditingAgent(null);
     } catch (error) {
@@ -732,9 +733,10 @@ function GuardrailsTab({ overview }: Readonly<{ overview: GovernanceScopeOvervie
         connectors: data.connectors,
         connectorActionSelections: data.connectorActionSelections,
         isActive: data.isActive,
-        isDefaultForType: data.isDefaultForType,
         guardrails: data.guardrails,
         deploymentSettings: data.deploymentSettings,
+        enable_temporary_child_agents: data.enable_temporary_child_agents,
+        max_temporary_child_agents: data.max_temporary_child_agents,
       });
       setEditingAgent(null);
     } catch (error) {
