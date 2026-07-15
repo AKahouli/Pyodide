@@ -83,6 +83,29 @@ export class WorkyTaskService {
     return lanes;
   }
 
+  /**
+   * DEBUG: count tasks for a stream, matching streamId as BOTH an ObjectId
+   * and a raw string (via the native driver, bypassing Mongoose casting).
+   * Reveals whether the Electric consumer stored streamId with a type that
+   * the ObjectId-typed board query can't match.
+   */
+  async countByStream(streamId: string): Promise<string> {
+    const coll = this.tasks.collection;
+    let asObjectId = -1;
+    let asString = -1;
+    try {
+      asObjectId = await coll.countDocuments({ streamId: new Types.ObjectId(streamId) });
+    } catch {
+      /* noop */
+    }
+    try {
+      asString = await coll.countDocuments({ streamId } as Record<string, unknown>);
+    } catch {
+      /* noop */
+    }
+    return `objectId=${asObjectId} string=${asString}`;
+  }
+
   /** Resolve the current taskIds by clientTaskId mapping for one stream. */
   async findByIdInternal(taskId: string): Promise<WorkyTaskDocument | null> {
     return this.tasks.findById(taskId).exec();
