@@ -81,8 +81,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const branches = message.questionMessageId ? branchCache.get(message.questionMessageId) : undefined;
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
   const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
+  const hasPersistedActivity = message.components?.some((component) => component.type === 'chainOfThought' || component.type === 'toolInfo') ?? false;
 
-  if (!isUser && Array.isArray(chatMessage.content) && chatMessage.content.length === 0) return null;
+  if (!isUser && Array.isArray(chatMessage.content) && chatMessage.content.length === 0 && !hasPersistedActivity) return null;
 
   return (
     <div className='group/msg'>
@@ -90,6 +91,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={isStreaming}>
         {isUser && isEditing ? <EditableUserMessage message={message} conversationId={conversationId} /> : <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />}
       </MessageProvider>
+      {!isUser && <LoadingIndicator isComplete components={message.components || []} />}
       {isUser && !isEditing && <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
       {message.conversationType === 'ai' && <MessageActions message={message} isLastAiMessage={isLastAiMessage} conversationId={conversationId} />}

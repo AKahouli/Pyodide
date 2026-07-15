@@ -38,4 +38,12 @@ describe('LoadingIndicator', () => {
     expect(screen.getByText(/workspace-1/)).toBeInTheDocument();
     expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
   });
+
+  it('keeps completed activity available without an active live status', () => {
+    render(<LoadingIndicator isComplete components={[{ id: 'thoughts', type: 'chainOfThought', data: { steps: ['Reviewed the request'] } }] as never} />);
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('Reviewed the request')).toBeInTheDocument();
+  });
 });

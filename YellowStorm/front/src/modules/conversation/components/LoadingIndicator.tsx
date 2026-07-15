@@ -45,7 +45,7 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
   });
 }
 
-export function LoadingIndicator({ activity = 'thinking', components = [] }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[] }>) {
+export function LoadingIndicator({ activity = 'thinking', components = [], isComplete = false }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[]; isComplete?: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const [isOpen, setIsOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -62,9 +62,12 @@ export function LoadingIndicator({ activity = 'thinking', components = [] }: Rea
   };
 
   useEffect(() => {
+    if (isComplete) return;
     const timer = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isComplete]);
+
+  if (isComplete && details.length === 0) return null;
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className='mx-2 mb-2 shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4'>
@@ -75,10 +78,19 @@ export function LoadingIndicator({ activity = 'thinking', components = [] }: Rea
           <Sparkles className='size-4 animate-pulse text-primary motion-reduce:animate-none' />
         </span>
         <div className='min-w-0 flex-1'>
-          <div role='status' aria-live='polite' aria-atomic='true'>
-            <p className='truncate text-sm font-medium text-foreground'>{labels[activity]}</p>
-          </div>
-          <p className='text-xs text-muted-foreground' aria-hidden='true'>{t('stream.activity.elapsed', { seconds: elapsedSeconds })}</p>
+          {isComplete ? (
+            <>
+              <p className='truncate text-sm font-medium text-foreground'>{t('stream.activity.completed')}</p>
+              <p className='text-xs text-muted-foreground'>{t('stream.activity.completedDescription')}</p>
+            </>
+          ) : (
+            <>
+              <div role='status' aria-live='polite' aria-atomic='true'>
+                <p className='truncate text-sm font-medium text-foreground'>{labels[activity]}</p>
+              </div>
+              <p className='text-xs text-muted-foreground' aria-hidden='true'>{t('stream.activity.elapsed', { seconds: elapsedSeconds })}</p>
+            </>
+          )}
         </div>
         {details.length > 0 && (
             <CollapsibleTrigger className='inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted' aria-label={t('stream.activity.detailsAria')}>

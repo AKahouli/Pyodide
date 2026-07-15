@@ -224,6 +224,8 @@
   "stream.activity.usingTools": "Traitement de votre demande",
   "stream.activity.responding": "Préparation de la réponse",
   "stream.activity.elapsed": "Traitement depuis {{seconds}} s",
+  "stream.activity.completed": "Résumé de l'activité",
+  "stream.activity.completedDescription": "Consultez les étapes et les paramètres de l'outil",
   "stream.activity.details": "Activité ({{count}})",
   "stream.activity.detailsAria": "Afficher les détails de l'activité du flux",
   "stream.activity.parameters": "Paramètres de l'outil",
