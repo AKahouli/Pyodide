@@ -9,6 +9,7 @@ describe('WorkyBoardController', () => {
   const makeController = (overrides: { pending?: any[]; board?: Record<string, any[]> } = {}) => {
     const taskService = {
       projectForBoard: jest.fn().mockResolvedValue(overrides.board ?? {}),
+      countByStream: jest.fn().mockResolvedValue('objectId=0 string=0'),
     } as any;
     const pending = overrides.pending ?? [
       {
