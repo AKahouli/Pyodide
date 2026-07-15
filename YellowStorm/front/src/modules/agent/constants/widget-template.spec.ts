@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { buildWidgetSnippet } from './widget-template';
+import { buildWidgetCdnSnippet, buildWidgetRuntimeSource, buildWidgetSnippet } from './widget-template';
+
+describe('buildWidgetCdnSnippet', () => {
+  it('returns a one-line script tag with only the token in the URL', () => {
+    const snippet = buildWidgetCdnSnippet({
+      embedHandle: 'embed-token',
+      cdnBaseUrl: 'http://localhost:5173',
+    });
+
+    expect(snippet).toBe(
+      '<script src="http://localhost:5173/widget-embed.js?token=embed-token" async></script>',
+    );
+  });
+
+  it('URL-encodes the token in the script src', () => {
+    const snippet = buildWidgetCdnSnippet({
+      embedHandle: 't&ok',
+      cdnBaseUrl: 'http://localhost:5173',
+    });
+    expect(snippet).toContain('token=t%26ok');
+    expect(snippet).not.toContain('data-api');
+    expect(snippet).not.toContain('data-token');
+  });
+});
+
+describe('buildWidgetRuntimeSource', () => {
+  it('bakes the API base and reads token from the script URL', () => {
+    const source = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
+    expect(source).toContain('document.currentScript');
+    expect(source).toContain('widget-embed\\.js');
+    expect(source).toContain('var __apiBase="http://localhost:3000/api/v1"');
+    expect(source).toContain('__ysParam("token")');
+    expect(source).toContain('payload.agentId');
+    expect(source).toContain('/widget/chat');
+    expect(source).not.toContain('data-api');
+    expect(source).not.toContain('<script>');
+  });
+});
 
 describe('buildWidgetSnippet', () => {
   function messageActionRuntime(navigatorMock: unknown, windowMock: Record<string, unknown>) {
@@ -198,8 +235,16 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('--ys-panel-height');
     expect(snippet).toContain('ys-widget-position-left');
     expect(snippet).toContain('--ys-panel-radius');
-    expect(snippet).toContain('@media (max-width:480px)');
-    expect(snippet).toContain('#ys-widget-panel,:host(.ys-widget-position-left) #ys-widget-panel{position:fixed;bottom:0');
+    expect(snippet).toContain('@media (max-width:900px)');
+    expect(snippet).toContain('ys-mobile-open');
+    expect(snippet).toContain('ys-mobile-sheet');
+    expect(snippet).toContain(':host(.ys-mobile-open) #ys-widget-root');
+    expect(snippet).toContain('width:100%!important;height:100%!important');
+    expect(snippet).toContain('function pinStickyLauncher()');
+    expect(snippet).toContain('startStickyPinLoop');
+    expect(snippet).toContain('getPageScroll');
+    expect(snippet).toContain('position","absolute"');
+    expect(snippet).toContain('requestAnimationFrame(tick)');
   });
 
   it('uses the configured header foreground for header actions', () => {
@@ -273,7 +318,7 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('ys-setting-dark');
     expect(snippet).toContain('ys-setting-size');
     expect(snippet).toContain('ys-setting-tts');
-    expect(snippet).toContain('ys_widget_preferences:\"+AGENT_ID');
+    expect(snippet).toContain('ys_widget_preferences:"+(AGENT_ID||YS_EMBED_HANDLE)');
     expect(snippet).toContain('function applyWidgetPrefs()');
     expect(snippet).toContain('function setAccessibilityPanel(open)');
     expect(snippet).toContain('darkColors={background:"#111827"');
