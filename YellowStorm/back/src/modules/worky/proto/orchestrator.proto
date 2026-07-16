@@ -136,6 +136,7 @@ message ConnectorBinding {
   map<string, string> auth_headers = 5;    // ready-to-use HTTP headers
   map<string, string> auth_env     = 6;    // env vars for stdio transports
   repeated ConnectorAction actions = 7;    // enabled actions of this connector
+  string mcp_server_config_json = 8;
 }
 
 message ConnectorAction {

@@ -33,6 +33,7 @@ export interface IGrpcConnector {
   mcp_server_url: string;
   auth_headers: Record<string, string>;
   auth_env: Record<string, string>;
+  mcp_server_config_json: string;
   actions: IGrpcConnectorAction[];
 }
 

@@ -2,7 +2,6 @@
 
 Owns the read-model connection pool, initializes the companion_ai schema, builds
 the OrchestratorService + servicer, and (when enabled) runs the MCP task poller.
-Gated by ORCHESTRATOR_ENABLED so the rest of the app is unaffected when off.
 """
 from __future__ import annotations
 

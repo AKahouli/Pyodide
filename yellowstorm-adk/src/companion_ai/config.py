@@ -16,7 +16,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class OrchestratorSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    ORCHESTRATOR_ENABLED: bool = False
     ORCHESTRATOR_MAX_CONCURRENCY: int = 4
     ORCHESTRATOR_PLANNER_MODEL: str = "gpt-5.4-mini"
 

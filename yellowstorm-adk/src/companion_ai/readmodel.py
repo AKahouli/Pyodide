@@ -52,7 +52,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 status         TEXT NOT NULL DEFAULT 'pending',
                 kind           TEXT NOT NULL DEFAULT 'execute',   -- execute | ask
                 question       TEXT,          -- for kind = ask
-                description    TEXT,
+                title          TEXT,          -- short label for the UI card
+                description    TEXT,          -- full instruction / detail
                 depends_on     TEXT,          -- comma-joined step ids
                 agent          TEXT,
                 result         TEXT,
@@ -60,7 +61,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, step_id)
             )""")
-        for col, typ in (("kind", "TEXT NOT NULL DEFAULT 'execute'"), ("question", "TEXT")):
+        for col, typ in (("kind", "TEXT NOT NULL DEFAULT 'execute'"),
+                         ("question", "TEXT"), ("title", "TEXT")):
             await con.execute(
                 f'ALTER TABLE {_q(schema,"plan_steps")} ADD COLUMN IF NOT EXISTS {col} {typ}')
         await con.execute(f"""
@@ -130,19 +132,19 @@ class ReadModel:
             """, session_id, plan_id, title, goal, status)
 
     async def upsert_steps(self, session_id: str,
-                           steps: List[Tuple[str, int, int, str, str, str, str, str, str]]) -> None:
-        """steps: (step_id, ordinal, wave, status, kind, question, description,
-        depends_on, agent)."""
+                           steps: List[Tuple[str, int, int, str, str, str, str, str, str, str]]) -> None:
+        """steps: (step_id, ordinal, wave, status, kind, question, title,
+        description, depends_on, agent)."""
         async with self._pool.acquire() as con:
             await con.executemany(f"""
                 INSERT INTO {_q(self._schema,'plan_steps')}
-                    (session_id,step_id,ordinal,wave,status,kind,question,description,depends_on,agent)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    (session_id,step_id,ordinal,wave,status,kind,question,title,description,depends_on,agent)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                 ON CONFLICT (session_id,step_id) DO UPDATE
                   SET ordinal=EXCLUDED.ordinal, wave=EXCLUDED.wave,
                       kind=EXCLUDED.kind, question=EXCLUDED.question,
-                      description=EXCLUDED.description, depends_on=EXCLUDED.depends_on,
-                      updated_at=now()
+                      title=EXCLUDED.title, description=EXCLUDED.description,
+                      depends_on=EXCLUDED.depends_on, updated_at=now()
             """, [(session_id, *s) for s in steps])
 
     async def set_step_status(self, session_id: str, step_id: str, status: str, *,

@@ -208,6 +208,7 @@ export class ConnectorService {
         mcp_server_url: connector.mcpServerUrl || '',
         auth_headers: authHeaders,
         auth_env: authEnv,
+        mcp_server_config_json: JSON.stringify(connector.mcpServerConfig || {}),
         actions,
       });
     }

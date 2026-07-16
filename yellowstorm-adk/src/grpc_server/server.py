@@ -119,21 +119,23 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
         logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
 
-    # Agent Orchestrator (parallel multi-agent). Gated by ORCHESTRATOR_ENABLED.
+    # Agent Orchestrator (parallel multi-agent) — always registered.
     orchestrator_runtime = None
-    from src.companion_ai.config import get_orchestrator_settings
-    if get_orchestrator_settings().ORCHESTRATOR_ENABLED:
-        try:
-            from src.grpc_generated import orchestrator_pb2_grpc as orch_grpc
-            from src.companion_ai.bootstrap import OrchestratorRuntime
+    try:
+        from src.grpc_generated import orchestrator_pb2_grpc as orch_grpc
+        from src.companion_ai.bootstrap import OrchestratorRuntime
 
-            orchestrator_runtime = await OrchestratorRuntime().start()
-            orch_grpc.add_AgentOrchestratorServicer_to_server(
-                orchestrator_runtime.servicer, server)
-            logger.info("[gRPC] AgentOrchestratorServicer registered")
-        except Exception as e:
-            logger.error(f"[gRPC] Failed to start Agent Orchestrator: {e}", exc_info=True)
-            orchestrator_runtime = None
+        orchestrator_runtime = await OrchestratorRuntime().start()
+        orch_grpc.add_AgentOrchestratorServicer_to_server(
+            orchestrator_runtime.servicer, server)
+        from src.grpc_generated import orchestrator_pb2 as orch_pb
+        svc = orch_pb.DESCRIPTOR.services_by_name["AgentOrchestrator"]
+        logger.info("[gRPC] AgentOrchestratorServicer registered: %s [%s]",
+                    svc.full_name,
+                    ", ".join(m.name for m in svc.methods))
+    except Exception as e:
+        logger.error(f"[gRPC] Failed to start Agent Orchestrator: {e}", exc_info=True)
+        orchestrator_runtime = None
 
     # Bind the server to port. Secure by default (TLS); plaintext only under the
     # explicit GRPC_ALLOW_INSECURE opt-out (server_credentials is None then).
