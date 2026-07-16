@@ -258,6 +258,74 @@ export class WidgetChatService {
     return { downloadUrl };
   }
 
+  async getCitationFile(params: {
+    source: string;
+    fileName?: string;
+    workspaceId?: string;
+    agentKnowledgeBaseIds: string[];
+  }): Promise<{ buffer: Buffer; displayName: string; mimeType: string }> {
+    const { source, fileName, workspaceId, agentKnowledgeBaseIds } = params;
+
+    if (!this.documentService.isAvailable()) {
+      throw new ServiceUnavailableException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Document storage is currently unavailable',
+      );
+    }
+
+    const objectKey = source.trim();
+    if (!objectKey) {
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation has no file identifier',
+      );
+    }
+
+    const workspaceIds = workspaceId ? [workspaceId] : agentKnowledgeBaseIds;
+    if (workspaceIds.length === 0) {
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation source document not found in storage',
+      );
+    }
+
+    const displayName = fileName || objectKey.split('/').pop() || 'document';
+    const blobPath = await this.resolveCitationBlobPath(objectKey, displayName, workspaceIds);
+    if (!blobPath) {
+      throw new NotFoundException(
+        ErrorCode.WIDGET_CITATION_NOT_FOUND,
+        'Citation source document not found in storage',
+      );
+    }
+
+    const buffer = await this.documentService.download(blobPath);
+    return {
+      buffer,
+      displayName,
+      mimeType: this.resolveCitationMimeType(displayName),
+    };
+  }
+
+  private resolveCitationMimeType(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const map: Record<string, string> = {
+      pdf: 'application/pdf',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      svg: 'image/svg+xml',
+      bmp: 'image/bmp',
+      txt: 'text/plain',
+      md: 'text/markdown',
+      html: 'text/html',
+      htm: 'text/html',
+      csv: 'text/csv',
+    };
+    return map[ext] || 'application/octet-stream';
+  }
+
   /**
    * Resolves a citation to a readable blob path using existing workspace APIs:
    * storage-prefix ACL via getStorageContext, legacy filename lookup via

@@ -7,7 +7,7 @@ import { RateLimit } from '@modules/rate-limiter';
 import { LoggerService } from '@modules/logger';
 import { WidgetTokenGuard } from '../guards/widget-token.guard';
 import { WidgetChatService } from '../services/widget-chat.service';
-import { WidgetSendMessageDto, WidgetCreateSessionDto, WidgetCitationUrlDto } from '../dto/widget-chat.dto';
+import { WidgetSendMessageDto, WidgetCreateSessionDto, WidgetCitationUrlDto, WidgetCitationFileQueryDto } from '../dto/widget-chat.dto';
 import { WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
 
 interface WidgetRequest extends Request {
@@ -127,6 +127,37 @@ export class WidgetChatController {
       workspaceId: dto.workspaceId,
       agentKnowledgeBaseIds: (req.widgetAgent?.knowledgeBases || []).map(String),
     });
+  }
+
+  @Get('citation-file')
+  @Public()
+  @SkipMaintenance()
+  @WidgetDeploymentMode('embed')
+  @UseGuards(WidgetTokenGuard)
+  @RateLimit({ limit: 60, windowMs: 60000, keyPrefix: 'widget-citation-file' })
+  async citationFile(
+    @Query() query: WidgetCitationFileQueryDto,
+    @Req() req: WidgetRequest,
+    @Res() res: Response,
+  ): Promise<void> {
+    this.logger.log('Widget GET /citation-file', {
+      agentId: req.widgetAgentId,
+      source: query.source,
+      origin: req.headers.origin,
+    });
+
+    const file = await this.widgetChatService.getCitationFile({
+      source: query.source,
+      fileName: query.fileName,
+      workspaceId: query.workspaceId,
+      agentKnowledgeBaseIds: (req.widgetAgent?.knowledgeBases || []).map(String),
+    });
+
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.displayName)}"`);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(file.buffer);
   }
 
   @Get('stream')
