@@ -287,7 +287,7 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('function _ysFocusableElements()');
     expect(snippet).toContain('function _ysFocusFirst()');
     expect(snippet).toContain('if(input&&!input.disabled){input.focus();return;}');
-    expect(snippet).toContain('textarea,[tabindex]');
+    expect(snippet).toContain('textarea,iframe,[tabindex]');
     expect(snippet).toContain('el.tabIndex!==-1');
     expect(snippet).toContain('if(e.key===\"Tab\"&&isOpen)');
     expect(snippet).toContain('shadow.activeElement');
@@ -350,25 +350,25 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('ys-comp-citation-badge');
     expect(snippet).toContain('data-ys-page');
     expect(snippet).toContain('data-ys-highlight');
-    expect(snippet).not.toContain('ys-file-viewer-quote');
-    expect(snippet).not.toContain('ys-file-viewer-quote-mark');
+    expect(snippet).toContain('ys-file-viewer-quote');
+    expect(snippet).toContain('ys-file-viewer-quote-mark');
     expect(snippet).toContain('_ysBuildPdfPreviewUrl');
-    expect(snippet).not.toContain('pdf-citation-viewer.html');
+    expect(snippet).toContain('pdf-citation-viewer.html');
+    expect(snippet).toContain('_ysPdfSearchQuery');
     expect(snippet).toContain('"page="');
+    expect(snippet).toContain('"search="');
+    expect(snippet).toContain('phrase=true');
     expect(snippet).toContain('view=FitH');
-    expect(snippet).toContain('ys-file-viewer-pdf');
-    expect(snippet).toContain('ys-file-viewer-pdf-fallback');
-    expect(snippet).toContain('Open PDF in a new tab');
+    expect(snippet).toContain('ys-quote-pulse');
     expect(snippet).toContain('CITATION_URL_API_URL');
     expect(snippet).toContain('_ysStreamSessionId===SESSION_ID');
   });
 
-  it('builds PDF citation preview URLs with page fragments only', () => {
+  it('builds PDF citation viewer URLs with page and highlight query', () => {
     const snippet = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
-    expect(snippet).toContain('_ysBuildPdfPreviewUrl');
-    expect(snippet).toContain('view=FitH');
-    expect(snippet).toContain('toolbar=1');
-    expect(snippet).not.toContain('pdf-citation-viewer.html');
-    expect(snippet).not.toContain('&q=');
+    expect(snippet).toContain('pdf-citation-viewer.html?');
+    expect(snippet).toContain('&page=');
+    expect(snippet).toContain('&q=');
+    expect(snippet).toContain('_ysWidgetCdnOrigin');
   });
 });
