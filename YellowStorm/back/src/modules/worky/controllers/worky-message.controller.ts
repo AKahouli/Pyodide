@@ -22,6 +22,7 @@ import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
 import { ModelsService } from '../../models/models.service';
 import { ConnectorService } from '../../connector/connector.service';
+import { ConfigService } from '@nestjs/config';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class WorkyMessageController {
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly models: ModelsService,
     private readonly connectorService: ConnectorService,
+    private readonly config: ConfigService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyMessageController.name);
@@ -80,6 +82,26 @@ export class WorkyMessageController {
           found.map((c) => c!.id),
           user._id.toString(),
         );
+        // v1 parity (AgentService.buildConnectorBindings): code-interpreter /
+        // linkup are shared-key `streamable_http` connectors (not per-user
+        // OAuth), so findByIdsForGrpc leaves their auth_headers empty. Inject
+        // the shared MCP gateway bearer token for any streamable_http binding
+        // that has no Authorization header.
+        const mcpKey = this.config.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
+        if (mcpKey) {
+          for (const b of connectors as Array<{
+            mcp_transport_type?: string;
+            auth_headers?: Record<string, string>;
+          }>) {
+            if (String(b.mcp_transport_type ?? '') === 'streamable_http' && !b.auth_headers?.Authorization) {
+              b.auth_headers = { ...(b.auth_headers ?? {}), Authorization: `Bearer ${mcpKey}` };
+            }
+          }
+        } else {
+          this.logger.warn(
+            '[worky-orchestrator] MCP_LOGICAL_SEARCH_API_KEY not set — streamable_http connectors go out with no auth',
+          );
+        }
       }
     } catch (err) {
       this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
