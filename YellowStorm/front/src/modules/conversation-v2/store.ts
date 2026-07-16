@@ -497,18 +497,27 @@ export const useConversationV2Store = create<State & Actions>()(
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl }) =>
-        set({ deployStatus, deployedUrl }, false, 'setDeployState'),
+        set(
+          (s) => ({
+            deployStatus,
+            deployedUrl,
+            ...(deployedUrl && s.applicationComponent
+              ? { applicationComponent: { ...s.applicationComponent, url: deployedUrl } }
+              : {}),
+          }),
+          false,
+          'setDeployState',
+        ),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
           const r = await conversationV2Api.deploySession(id);
-          set(
-            { deployStatus: r.deployStatus, deployedUrl: r.deployedUrl },
-            false,
-            'deploy/done',
-          );
+          get().setDeployState({
+            deployStatus: r.deployStatus,
+            deployedUrl: r.deployedUrl,
+          });
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
@@ -566,7 +575,12 @@ export const useConversationV2Store = create<State & Actions>()(
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
       replayEvents: (events) => {
-        const applicationComponent = deriveApplicationComponent(events);
+        const pushedApplication = deriveApplicationComponent(events);
+        const deployedUrl = get().deployedUrl;
+        const applicationComponent =
+          pushedApplication && deployedUrl
+            ? { ...pushedApplication, url: deployedUrl }
+            : pushedApplication;
         set(
           {
             events: dedupeReplayEvents(events),

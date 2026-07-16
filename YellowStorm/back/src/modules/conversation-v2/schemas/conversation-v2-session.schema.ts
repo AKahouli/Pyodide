@@ -54,7 +54,7 @@ export class ConversationV2Session extends Document {
 
   // App-deployment ("Publish") state. 'idle' until the user publishes; the
   // actual deploy (taking the session's app live on a public URL) is performed
-  // by Manus over the gRPC Deploy RPC. deployedUrl/lastDeployedAt hold the
+  // through the configured app-builder service. deployedUrl/lastDeployedAt hold the
   // result so the header can show "Update" + the live URL after a reload.
   @Prop({
     type: String,

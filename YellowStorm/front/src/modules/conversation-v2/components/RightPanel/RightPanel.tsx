@@ -6,7 +6,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
-// import { DeployControls } from './DeployControls'; // Publish hidden until deploy works
+import { DeployControls } from './DeployControls';
 
 export function RightPanel() {
   const { t } = useConversationV2Translation();
@@ -75,8 +75,7 @@ export function RightPanel() {
           </span>
         )}
         <div className='flex shrink-0 items-center gap-1'>
-          {/* Publish button temporarily hidden — deploy isn't working yet.
-              Restore <DeployControls /> (and its import) once it does. */}
+          {hasPreview && <DeployControls />}
           <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
             <XIcon className='size-4' />
           </Button>

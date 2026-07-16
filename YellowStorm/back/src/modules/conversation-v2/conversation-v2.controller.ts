@@ -38,6 +38,7 @@ import { EmailService } from '@modules/email';
 import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 
 interface AuthUser { id: string; }
 
@@ -55,6 +56,7 @@ export class ConversationV2Controller {
     private readonly workspaceService: WorkspaceService,
     private readonly config: ConfigService,
     private readonly email: EmailService,
+    private readonly deployment: ConversationV2DeployService,
   ) {}
 
   @Post('sessions')
@@ -352,35 +354,26 @@ export class ConversationV2Controller {
     // Mark in-flight first so a reload mid-deploy resumes the loader state.
     await this.sessions.setDeployState(user.id, id, { deployStatus: 'deploying' });
 
-    let result: { url: string; deployedAt: number } | null;
+    let deployedUrl: string;
     try {
-      result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
+      const result = await this.deployment.deploy(user.id, pointer.aiSessionId);
+      deployedUrl = result.url;
     } catch (err) {
       await this.sessions
         .setDeployState(user.id, id, { deployStatus: 'error' })
         .catch(() => undefined);
-      this.translateGrpcError(err);
+      throw err;
     }
 
-    // Manus doesn't implement Deploy yet (UNIMPLEMENTED → null). Revert to idle
-    // and signal it's not available — once Manus ships the RPC this returns a
-    // real URL and the happy path below runs unchanged.
-    if (!result) {
-      await this.sessions
-        .setDeployState(user.id, id, { deployStatus: 'idle' })
-        .catch(() => undefined);
-      throw new ServiceUnavailableException('Deployment is not available yet');
-    }
-
-    const lastDeployedAt = new Date(result.deployedAt * 1000);
+    const lastDeployedAt = new Date();
     await this.sessions.setDeployState(user.id, id, {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
       lastDeployedAt,
     });
     return {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
       lastDeployedAt: lastDeployedAt.toISOString(),
     };
   }

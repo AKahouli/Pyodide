@@ -52,4 +52,6 @@ export default registerAs('conversationV2', () => ({
     process.env.CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS || '120000',
     10,
   ),
+  appBuilderDeployBaseUrl: process.env.APP_BUILDER_DEPLOY_BASE_URL,
+  appBuilderDeployToken: process.env.APP_BUILDER_DEPLOY_TOKEN,
 }));

@@ -24,11 +24,12 @@ export function ApplicationComponentView({ url, title }: ApplicationComponentVie
   return (
     <WebPreview defaultUrl={url} className='size-full rounded-none border-0 bg-transparent'>
       <WebPreviewNavigation>
-        {/* Show the human-friendly title in the address bar (fall back to the
-            URL when untitled). `title={url}` keeps the real URL on hover, and
-            the button below still opens the actual URL. The iframe itself reads
-            the URL from WebPreview context, so this display-only swap is safe. */}
-        <WebPreviewUrl readOnly value={title || url} title={url} />
+        {title && (
+          <span className='max-w-40 shrink-0 truncate text-sm font-medium' title={title}>
+            {title}
+          </span>
+        )}
+        <WebPreviewUrl readOnly value={url} title={url} />
         <WebPreviewNavigationButton
           tooltip='Open in new tab'
           onClick={() => window.open(url, '_blank', 'noreferrer')}

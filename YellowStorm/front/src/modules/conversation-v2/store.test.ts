@@ -191,4 +191,45 @@ describe('useConversationV2Store', () => {
     expect(evs).toHaveLength(1);
     expect((evs[0] as any).event_id).toBe('r1');
   });
+
+  it('setDeployState replaces the active application preview URL', () => {
+    useConversationV2Store.getState().handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'Generated app',
+      url: 'https://preview.example/app',
+    });
+
+    useConversationV2Store.getState().setDeployState({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+    });
+
+    expect(useConversationV2Store.getState().applicationComponent).toEqual({
+      title: 'Generated app',
+      url: 'https://deployed.example/app',
+    });
+  });
+
+  it('replayEvents restores the deployed URL over the original preview URL', () => {
+    useConversationV2Store.setState({
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+    });
+
+    useConversationV2Store.getState().replayEvents([
+      {
+        type: 'application_component',
+        event_id: 'app-1',
+        timestamp: 1,
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    ]);
+
+    expect(useConversationV2Store.getState().applicationComponent?.url).toBe(
+      'https://deployed.example/app',
+    );
+  });
 });

@@ -13,6 +13,7 @@ import { EmailService } from '@modules/email';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
@@ -35,6 +36,7 @@ describe('ConversationV2Controller', () => {
     getByShareToken: jest.fn(),
     rename: jest.fn(),
     setShared: jest.fn(),
+    setDeployState: jest.fn(),
     softDelete: jest.fn(),
   };
 
@@ -70,6 +72,7 @@ describe('ConversationV2Controller', () => {
   };
 
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
+  const mockDeployment = { deploy: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -84,6 +87,7 @@ describe('ConversationV2Controller', () => {
         { provide: WorkspaceService, useValue: mockWorkspaceService },
         { provide: ConfigService, useValue: mockConfig },
         { provide: EmailService, useValue: mockEmail },
+        { provide: ConversationV2DeployService, useValue: mockDeployment },
       ],
     }).compile();
     controller = module.get(ConversationV2Controller);
@@ -96,6 +100,7 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockWorkspaceDocuments),
       ...Object.values(mockWorkspaceService),
       ...Object.values(mockEventStore),
+      ...Object.values(mockDeployment),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
   });
@@ -255,6 +260,32 @@ describe('ConversationV2Controller', () => {
       success: true,
     });
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
+  });
+
+  it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {
+    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'conversation-1' });
+    mockSessions.setDeployState.mockResolvedValue({});
+    mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://deployed.example/app' });
+
+    const result = await controller.deploySession({ id: 'user-1' }, 'session-1');
+
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('user-1', 'conversation-1');
+    expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
+      1,
+      'user-1',
+      'session-1',
+      { deployStatus: 'deploying' },
+    );
+    expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
+      2,
+      'user-1',
+      'session-1',
+      expect.objectContaining({
+        deployStatus: 'deployed',
+        deployedUrl: 'https://deployed.example/app',
+      }),
+    );
+    expect(result.deployedUrl).toBe('https://deployed.example/app');
   });
 
   // --- GET /share/v2/:token ---

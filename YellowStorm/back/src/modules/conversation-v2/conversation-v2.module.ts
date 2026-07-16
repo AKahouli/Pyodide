@@ -12,6 +12,7 @@ import { ConversationV2ShareService } from './services/conversation-v2-share.ser
 import { ConversationV2EventStoreService } from './services/conversation-v2-event-store.service';
 import { ConversationV2StreamGatewayService } from './services/conversation-v2-stream-gateway.service';
 import { ConversationV2StreamService } from './services/conversation-v2-stream.service';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
@@ -47,7 +48,7 @@ import {
     ]),
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
-  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2NameGeneratorService],
+  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2NameGeneratorService, ConversationV2DeployService],
   exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard],
 })
 export class ConversationV2Module {}
