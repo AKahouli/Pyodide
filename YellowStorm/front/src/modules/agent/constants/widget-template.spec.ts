@@ -353,9 +353,22 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('ys-file-viewer-quote');
     expect(snippet).toContain('ys-file-viewer-quote-mark');
     expect(snippet).toContain('_ysBuildPdfPreviewUrl');
+    expect(snippet).toContain('pdf-citation-viewer.html');
+    expect(snippet).toContain('_ysPdfSearchQuery');
     expect(snippet).toContain('"page="');
     expect(snippet).toContain('"search="');
+    expect(snippet).toContain('phrase=true');
+    expect(snippet).toContain('view=FitH');
+    expect(snippet).toContain('ys-quote-pulse');
     expect(snippet).toContain('CITATION_URL_API_URL');
     expect(snippet).toContain('_ysStreamSessionId===SESSION_ID');
+  });
+
+  it('builds PDF citation viewer URLs with page and highlight query', () => {
+    const snippet = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
+    expect(snippet).toContain('pdf-citation-viewer.html?');
+    expect(snippet).toContain('&page=');
+    expect(snippet).toContain('&q=');
+    expect(snippet).toContain('_ysWidgetCdnOrigin');
   });
 });

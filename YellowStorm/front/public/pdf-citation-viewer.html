@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citation PDF</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f1f5f9;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --mark: rgba(250, 204, 21, 0.55);
+      --mark-active: rgba(245, 158, 11, 0.72);
+      --ring: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    #status {
+      padding: 14px 16px;
+      color: var(--muted);
+    }
+    #status.error { color: #b91c1c; }
+    #toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+    }
+    #toolbar strong { font-size: 12px; }
+    #toolbar span { color: var(--muted); font-size: 12px; }
+    #scroll {
+      height: calc(100% - 41px);
+      overflow: auto;
+      padding: 16px;
+      scroll-behavior: smooth;
+    }
+    .page-wrap {
+      position: relative;
+      width: fit-content;
+      max-width: 100%;
+      margin: 0 auto 18px;
+      background: #fff;
+      box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+    }
+    canvas { display: block; max-width: 100%; height: auto; }
+    .hl {
+      position: absolute;
+      background: var(--mark);
+      border-radius: 2px;
+      pointer-events: none;
+      mix-blend-mode: multiply;
+    }
+    .hl.active {
+      background: var(--mark-active);
+      box-shadow: 0 0 0 2px var(--ring);
+      animation: pulse 1.2s ease-in-out 2;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 2px var(--ring); }
+      50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.35); }
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar" hidden>
+    <strong id="pageLabel">PDF</strong>
+    <span id="matchLabel"></span>
+  </div>
+  <div id="status">Loading PDF…</div>
+  <div id="scroll" hidden></div>
+
+  <script type="module">
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+
+    const params = new URLSearchParams(window.location.search);
+    const fileUrl = params.get('file') || '';
+    const pageParam = Number.parseInt(params.get('page') || '', 10);
+    const query = (params.get('q') || '').trim().replace(/\s+/g, ' ');
+
+    const statusEl = document.getElementById('status');
+    const scrollEl = document.getElementById('scroll');
+    const toolbarEl = document.getElementById('toolbar');
+    const pageLabelEl = document.getElementById('pageLabel');
+    const matchLabelEl = document.getElementById('matchLabel');
+
+    function setError(message) {
+      statusEl.hidden = false;
+      statusEl.className = 'error';
+      statusEl.textContent = message;
+      scrollEl.hidden = true;
+      toolbarEl.hidden = true;
+    }
+
+    function normalize(text) {
+      return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function buildSearchNeedle(raw) {
+      const clean = normalize(raw);
+      if (!clean) return '';
+      if (clean.length <= 90) return clean;
+      const words = clean.split(' ');
+      const out = [];
+      for (let i = 0; i < words.length; i += 1) {
+        out.push(words[i]);
+        if (out.join(' ').length >= 70) break;
+      }
+      return out.join(' ');
+    }
+
+    function itemRect(item, viewport) {
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+      const fontHeight = Math.hypot(tx[2], tx[3]);
+      const left = tx[4];
+      const top = tx[5] - fontHeight;
+      const width = item.width * viewport.scale;
+      const height = fontHeight;
+      return {
+        left,
+        top,
+        width: Math.max(width, 2),
+        height: Math.max(height, 2),
+      };
+    }
+
+    function findMatchRanges(haystack, needle) {
+      if (!haystack || !needle) return [];
+      const ranges = [];
+      let from = 0;
+      while (from < haystack.length) {
+        const idx = haystack.indexOf(needle, from);
+        if (idx < 0) break;
+        ranges.push({ start: idx, end: idx + needle.length });
+        from = idx + Math.max(1, needle.length);
+        if (ranges.length >= 8) break;
+      }
+      return ranges;
+    }
+
+    async function renderPage(pdf, pageNumber, needle, active) {
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.35 });
+      const wrap = document.createElement('div');
+      wrap.className = 'page-wrap';
+      wrap.dataset.page = String(pageNumber);
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.width = '100%';
+      wrap.appendChild(canvas);
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      const highlights = [];
+      if (needle) {
+        const textContent = await page.getTextContent();
+        const items = textContent.items.filter((item) => typeof item.str === 'string');
+        let haystack = '';
+        const map = [];
+        for (let i = 0; i < items.length; i += 1) {
+          const raw = String(items[i].str || '');
+          const str = normalize(raw);
+          if (!str && !items[i].hasEOL) continue;
+          if (haystack && !haystack.endsWith(' ') && str) haystack += ' ';
+          const start = haystack.length;
+          haystack += str;
+          if (str) {
+            map.push({ start, end: haystack.length, item: items[i] });
+          }
+          if (items[i].hasEOL && !haystack.endsWith(' ')) haystack += ' ';
+        }
+        const ranges = findMatchRanges(haystack, needle);
+        for (let r = 0; r < ranges.length; r += 1) {
+          const range = ranges[r];
+          for (let m = 0; m < map.length; m += 1) {
+            const entry = map[m];
+            if (entry.end <= range.start || entry.start >= range.end) continue;
+            const rect = itemRect(entry.item, viewport);
+            const mark = document.createElement('div');
+            mark.className = 'hl' + (active && r === 0 ? ' active' : '');
+            mark.style.left = `${(rect.left / viewport.width) * 100}%`;
+            mark.style.top = `${(rect.top / viewport.height) * 100}%`;
+            mark.style.width = `${(rect.width / viewport.width) * 100}%`;
+            mark.style.height = `${(rect.height / viewport.height) * 100}%`;
+            wrap.appendChild(mark);
+            if (active && r === 0) highlights.push(mark);
+          }
+        }
+      }
+
+      scrollEl.appendChild(wrap);
+      return { wrap, highlights };
+    }
+
+    async function main() {
+      if (!fileUrl) {
+        setError('Missing PDF file URL.');
+        return;
+      }
+
+      try {
+        const loadingTask = pdfjsLib.getDocument({
+          url: fileUrl,
+          withCredentials: false,
+          isEvalSupported: false,
+        });
+        const pdf = await loadingTask.promise;
+        const needle = buildSearchNeedle(query);
+        const targetPage = Number.isFinite(pageParam) && pageParam >= 1
+          ? Math.min(pageParam, pdf.numPages)
+          : 1;
+
+        statusEl.hidden = true;
+        toolbarEl.hidden = false;
+        scrollEl.hidden = false;
+        pageLabelEl.textContent = `Page ${targetPage} / ${pdf.numPages}`;
+
+        const pagesToRender = new Set([targetPage]);
+        if (targetPage > 1) pagesToRender.add(targetPage - 1);
+        if (targetPage < pdf.numPages) pagesToRender.add(targetPage + 1);
+
+        let activeHighlights = [];
+        const ordered = Array.from(pagesToRender).sort((a, b) => a - b);
+        for (const pageNumber of ordered) {
+          const result = await renderPage(pdf, pageNumber, needle, pageNumber === targetPage);
+          if (pageNumber === targetPage) activeHighlights = result.highlights;
+        }
+
+        const focusEl = activeHighlights[0] || scrollEl.querySelector(`[data-page="${targetPage}"]`);
+        if (focusEl) {
+          requestAnimationFrame(() => {
+            focusEl.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          });
+        }
+
+        if (needle) {
+          matchLabelEl.textContent = activeHighlights.length
+            ? 'Cited text highlighted'
+            : 'Cited text not found on this page — showing target page';
+        } else {
+          matchLabelEl.textContent = 'Opened at cited page';
+        }
+      } catch (error) {
+        const message = error && error.message ? error.message : 'Could not open PDF';
+        setError(
+          `${message}. If this persists, open the document in a new tab (CORS may block in-widget preview).`,
+        );
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
