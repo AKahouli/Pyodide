@@ -359,6 +359,9 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('data-ys-highlight');
     expect(snippet).toContain('_ysRenderPdfInline');
     expect(snippet).toContain('_ysLoadPdfJs');
+    expect(snippet).toContain('_ysBuildCitationFileUrl');
+    expect(snippet).toContain('_ysFetchCitationFileBytes');
+    expect(snippet).toContain('CITATION_FILE_API_URL');
     expect(snippet).toContain('pdfjs-dist@4.10.38');
     expect(snippet).toContain('_ysPdfSearchQuery');
     expect(snippet).toContain('ys-pdf-hl');
@@ -369,12 +372,14 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).not.toContain('pdf-citation-viewer.html');
   });
 
-  it('renders PDFs inline with page and highlight search (no iframe)', () => {
+  it('renders PDFs inline via API proxy (no iframe, no direct S3 fetch)', () => {
     const snippet = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
     expect(snippet).toContain('_ysRenderPdfInline');
     expect(snippet).toContain('_ysPdfRunSearch');
     expect(snippet).toContain('ys-pdf-toolbar');
-    expect(snippet).not.toContain('pdf-citation-viewer.html');
+    expect(snippet).toContain('CITATION_FILE_API_URL');
+    expect(snippet).toContain('getDocument({data:pdfData');
     expect(snippet).not.toContain('createElement("iframe")');
+    expect(snippet).not.toContain('pdf-citation-viewer.html');
   });
 });
