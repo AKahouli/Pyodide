@@ -155,7 +155,7 @@ class TestRunnerResponseHandlers:
         queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handle_render_chart_response_success(self):
+    async def test_handle_ui_tool_response_emits_chart(self):
         runner = _runner()
         function_response = MagicMock()
         function_response.id = "chart-1"
@@ -166,20 +166,56 @@ class TestRunnerResponseHandlers:
         }
         queue = AsyncMock()
         runner.streaming_formatter.format_component_event.return_value = {"type": "chart"}
-        await runner._handle_render_chart_response(
-            function_response, "agent-1", "sess-1", queue
+        handled = await runner._handle_ui_tool_response(
+            "render_chart", function_response, "agent-1", "sess-1", queue
         )
+        assert handled is True
         queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handle_render_chart_response_error_skips_emit(self):
+    async def test_handle_ui_tool_response_rejects_invalid_chart(self):
         runner = _runner()
         function_response = MagicMock()
         function_response.response = {"error": True, "details": "bad data"}
         queue = AsyncMock()
-        await runner._handle_render_chart_response(
-            function_response, "agent-1", "sess-1", queue
+        handled = await runner._handle_ui_tool_response(
+            "render_chart", function_response, "agent-1", "sess-1", queue
         )
+        assert handled is True
+        queue.put.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handle_ui_tool_response_emits_choice(self):
+        runner = _runner()
+        function_response = MagicMock()
+        function_response.id = "choice-1"
+        function_response.response = {
+            "schemaVersion": 1,
+            "status": "ready",
+            "options": [{"id": "one"}, {"id": "two"}],
+        }
+        queue = AsyncMock()
+        runner.streaming_formatter.format_component_event.return_value = {"type": "choice"}
+
+        handled = await runner._handle_ui_tool_response(
+            "present_choices", function_response, "agent-1", "sess-1", queue
+        )
+
+        assert handled is True
+        queue.put.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_ui_tool_response_rejects_invalid_choice(self):
+        runner = _runner()
+        function_response = MagicMock()
+        function_response.response = {"schemaVersion": 2, "status": "ready", "options": []}
+        queue = AsyncMock()
+
+        handled = await runner._handle_ui_tool_response(
+            "present_choices", function_response, "agent-1", "sess-1", queue
+        )
+
+        assert handled is True
         queue.put.assert_not_awaited()
 
     @pytest.mark.asyncio

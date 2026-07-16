@@ -52,13 +52,12 @@ class TestAgentFactory:
         # Assert
         # The method should not call extract_chatbot_name_and_clean_prompt for basic create_agent
         mock_prompt_processor.extract_chatbot_name_and_clean_prompt.assert_not_called()
-        # render_chart is always added, so the agent always uses the parallel-tool LLM
-        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with("test-chatbot", 0.0, max_completion_tokens=20000)
+        mock_llm_factory.create_no_tool_calls_llm.assert_called_once_with("test-chatbot", 0.0, max_completion_tokens=20000)
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
-        assert agent.model == "parallel_llm"
+        assert agent.model == "no_tool_llm"
         assert "Test prompt" in agent.instruction
-        assert agent.tools == [render_chart]
+        assert agent.tools == []
 
     def test_create_agent_with_calculator(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating an agent with calculator tool."""
@@ -75,9 +74,21 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # calculator + always-added render_chart
-        assert len(agent.tools) == 2
+        assert len(agent.tools) == 1
         assert agent.tools[0] == calculator
+
+    def test_create_agent_with_render_chart(self, agent_factory, mock_llm_factory):
+        agent = agent_factory.create_agent(
+            name="TestAgent",
+            prompt="Test prompt",
+            chatbot_name="test-chatbot",
+            render_chart_tool=True,
+        )
+
+        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with(
+            "test-chatbot", 0.0, max_completion_tokens=20000
+        )
+        assert agent.tools == [render_chart]
 
     def test_create_agent_with_search_tools(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating an agent with search tools."""
@@ -102,8 +113,7 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # render_chart is prepended before the search tools
-        assert agent.tools == [render_chart] + mock_tools
+        assert agent.tools == mock_tools
 
     def test_create_agent_with_mcp_toolset(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating an agent with MCP toolset."""
@@ -122,8 +132,7 @@ class TestAgentFactory:
         assert isinstance(agent, Agent)
         assert agent.name == "TestAgent"
         assert agent.model == "parallel_llm"
-        # render_chart is always added before the MCP toolset
-        assert agent.tools == [render_chart, mock_mcp_toolset]
+        assert agent.tools == [mock_mcp_toolset]
 
     def test_create_agent_with_connectors_wires_image_callbacks(
         self, agent_factory, mock_llm_factory
@@ -326,6 +335,25 @@ class TestAgentFactory:
         assert agent.name == "SearchAgent"
         assert toolkit == mock_toolkit
         assert "Search prompt" in instruction
+
+    def test_create_logical_search_agent_with_render_chart_uses_tool_model(
+        self, agent_factory, mock_llm_factory
+    ):
+        agent, _, _ = agent_factory.create_search_agent(
+            doc_tree=None,
+            brain_tree=None,
+            brain_ids=["id1"],
+            vectorstore_name="test_store",
+            prompt="Search prompt",
+            chatbot_name="search-chatbot",
+            logical_search_only=True,
+            render_chart_tool=True,
+        )
+
+        mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with(
+            "search-chatbot", temperature=0, max_completion_tokens=20000
+        )
+        assert agent.tools == [render_chart]
 
     def test_create_manager_agent(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating a manager agent."""

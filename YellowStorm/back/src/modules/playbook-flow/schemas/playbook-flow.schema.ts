@@ -252,6 +252,7 @@ export const FlowSchema = SchemaFactory.createForClass(Flow);
 
 FlowSchema.index({ ownerId: 1, updatedAt: -1 });
 FlowSchema.index({ ownerId: 1, name: 1 }, { unique: true });
+FlowSchema.index({ 'nodes.metadata.toolBindings.connectorId': 1 });
 
 FlowSchema.set('toJSON', {
   virtuals: true,

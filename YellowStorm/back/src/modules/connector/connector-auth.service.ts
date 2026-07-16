@@ -125,19 +125,19 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
         const credential = credentialId
           ? await this.credentialService.findByIdRaw(credentialId, userId)
           : connector.connectorId
-            ? await this.credentialService.findActiveByConnectorId(connector.connectorId)
+            ? await this.credentialService.findActiveByConnectorId(connector.connectorId, userId)
             : null;
         if (!credential || credential.status !== 'active') {
           this.logger.warn('Credential not found or not active', {
             credentialId,
             connectorId: connector.connectorId,
           });
-          return empty;
+          return this.buildStaticHeaderAuth(config);
         }
         const token = credential.authPayload?.token as string | undefined;
         if (!token) {
           this.logger.warn('Credential has no token in authPayload', { credentialId });
-          return empty;
+          return this.buildStaticHeaderAuth(config);
         }
         return this.buildAuthMaterial(strategy, token, config);
       } catch (error) {
@@ -160,7 +160,7 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
   ): { headers: Record<string, string>; env: Record<string, string> } {
     if (strategy === 'http_header_bearer') {
       const headerName = (config.headerName as string) || 'Authorization';
-      const headerPrefix = (config.headerPrefix as string) || 'Bearer ';
+      const headerPrefix = typeof config.headerPrefix === 'string' ? config.headerPrefix : 'Bearer ';
       return {
         headers: { [headerName]: `${headerPrefix}${token}` },
         env: {},
@@ -190,5 +190,21 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
       headers: { Authorization: `Bearer ${token}` },
       env: {},
     };
+  }
+
+  private buildStaticHeaderAuth(config: Record<string, unknown>): { headers: Record<string, string>; env: Record<string, string> } {
+    if (config.strategy !== 'http_header_bearer') {
+      return { headers: {}, env: {} };
+    }
+
+    const headerValue = typeof config.headerPrefix === 'string' ? config.headerPrefix.trim() : '';
+    if (!headerValue) {
+      return { headers: {}, env: {} };
+    }
+
+    const headerName = typeof config.headerName === 'string' && config.headerName.trim()
+      ? config.headerName
+      : 'Authorization';
+    return { headers: { [headerName]: headerValue }, env: {} };
   }
 }

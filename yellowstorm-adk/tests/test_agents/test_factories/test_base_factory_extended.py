@@ -56,6 +56,19 @@ class TestBaseFactoryExtended:
         assert agent.name == "DiagramAgent"
         assert agent.model == "no_tool_llm"
 
+    def test_html_diagram_agent_preserves_omitted_temperature(self, agent_factory):
+        agent_factory.create_agent(
+            name="DiagramAgent",
+            prompt="Create a diagram",
+            chatbot_name="gpt-5.4-mini",
+            html_design=True,
+            temperature=None,
+        )
+
+        agent_factory.llm_factory.create_no_tool_calls_llm.assert_any_call(
+            "gpt-5.4-mini", temperature=None
+        )
+
     def test_create_agent_with_in_memory_tool(self, agent_factory):
         mock_tools = [MagicMock()]
         with patch.object(
@@ -86,7 +99,7 @@ class TestBaseFactoryExtended:
             )
         dataviz.assert_called_once()
         assert isinstance(agent, Agent)
-        assert len(agent.tools) >= 3
+        assert len(agent.tools) == 2
 
     def test_create_agent_with_code_interpreter(self, agent_factory):
         with patch(
@@ -115,4 +128,4 @@ class TestBaseFactoryExtended:
                 html_design=True,
             )
         assert isinstance(agent, Agent)
-        assert len(agent.tools) >= 2
+        assert len(agent.tools) == 1

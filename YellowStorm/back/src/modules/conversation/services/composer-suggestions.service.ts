@@ -125,7 +125,7 @@ export class ComposerSuggestionsService {
    * Resolve the model to use for suggestions.
    * Priority: 1) agent's configured model (llmModel), 2) default system model
    */
-  private async resolveModel(agent: IAgentResponse): Promise<string> {
+  private async resolveModel(agent: IAgentResponse): Promise<{ model: string; omitTemperature: boolean }> {
     // Use agent's model if configured
     if (agent.model) {
       this.logger.debug('Using agent-configured model for composer suggestions', {
@@ -133,7 +133,11 @@ export class ComposerSuggestionsService {
         agentName: agent.name,
         agentModel: agent.model,
       });
-      return agent.model;
+      const configuredModel = await this.modelsService.findById(agent.model);
+      return {
+        model: agent.model,
+        omitTemperature: configuredModel?.omitTemperature ?? false,
+      };
     }
 
     // Fallback to default model
@@ -144,7 +148,7 @@ export class ComposerSuggestionsService {
       agentName: agent.name,
       defaultModel: modelName,
     });
-    return modelName;
+    return { model: modelName, omitTemperature: defaultModel?.omitTemperature ?? false };
   }
 
   async fetchSuggestions(partialText: string, agentId?: string): Promise<ComposerSuggestionsAdkResult> {
@@ -163,7 +167,8 @@ export class ComposerSuggestionsService {
     // Get agent and build prompt
     const agent = await this.getAgentForComposer(agentId);
     const agentPrompt = await this.buildAgentPrompt(agent);
-    const model = await this.resolveModel(agent);
+    const resolvedModel = await this.resolveModel(agent);
+    const model = resolvedModel.model;
 
     if (!model) {
       throw new BadGatewayException('Composer suggestions model is not configured');
@@ -192,7 +197,12 @@ export class ComposerSuggestionsService {
     try {
       const { data } = await axios.post<{ status: string; content: string }>(
         `${adkUrl}/chatbots/chat_completion`,
-        { message, model, temperature: 0, max_tokens: 10000 },
+        {
+          message,
+          model,
+          temperature: resolvedModel.omitTemperature ? null : 0,
+          max_tokens: 10000,
+        },
         {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
           timeout: 60_000,

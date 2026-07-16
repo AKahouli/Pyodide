@@ -7,7 +7,7 @@ export class MessageComponentSchema {
   @Prop({ type: String })
   id?: string;
 
-  @Prop({ type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought'] })
+  @Prop({ type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] })
   type!: string;
 
   @Prop({ type: Object, required: true })
@@ -39,7 +39,7 @@ export class Message extends Document {
   @Prop({
     type: [new MongooseSchema({
       id: String,
-      type: { type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought'] },
+      type: { type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] },
       data: { type: MongooseSchema.Types.Mixed, required: true },
     }, { _id: false })],
     default: undefined,
@@ -112,6 +112,12 @@ export class Message extends Document {
   // Request tracking for log correlation
   @Prop({ type: String })
   requestId?: string;
+
+  @Prop({ type: Object, default: undefined })
+  guardrailDecision?: Record<string, unknown>;
+
+  @Prop({ type: Object, default: undefined })
+  interaction?: Record<string, unknown>;
 
   createdAt!: Date;
   updatedAt!: Date;

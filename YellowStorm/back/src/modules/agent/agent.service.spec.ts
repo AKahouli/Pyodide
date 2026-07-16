@@ -27,6 +27,18 @@ describe('AgentService connector skill inheritance', () => {
     updatedAt: new Date(),
   });
 
+  const defaultGuardrails = {
+    promptInjection: {
+      inputGuardrailEnabled: false,
+      outputGuardrailEnabled: false,
+      toolCallGuardrailEnabled: false,
+      inputClassifierPrompt: 'input policy',
+      outputClassifierPrompt: 'output policy',
+      toolCallClassifierPrompt: 'tool policy',
+      blockMessage: 'I cannot follow this instruction.',
+    },
+  };
+
   const createService = () => {
     const agentModel = {
       find: jest.fn(),
@@ -89,7 +101,6 @@ describe('AgentService connector skill inheritance', () => {
           inputGuardrailEnabled: false,
           outputGuardrailEnabled: false,
           toolCallGuardrailEnabled: false,
-          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
           toolCallClassifierPrompt: 'tool policy',
@@ -139,6 +150,19 @@ describe('AgentService connector skill inheritance', () => {
     });
   };
 
+  it('preserves deployment modes for widget-only updates', () => {
+    const { service } = createService();
+
+    const settings = (service as any).normalizeDeploymentSettings(
+      { widget: { layout: { desktopWidth: 480, desktopHeight: 720 } } },
+      { embedEnabled: true, restEnabled: true, widget: {} },
+    );
+
+    expect(settings.embedEnabled).toBe(true);
+    expect(settings.restEnabled).toBe(true);
+    expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
+  });
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService } = createService();
     const streamAgent: IAgentForStream = {
@@ -155,18 +179,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],
@@ -217,6 +230,7 @@ describe('AgentService connector skill inheritance', () => {
       enable_temporary_child_agents: 'true',
       max_temporary_child_agents: '6',
     }));
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -236,18 +250,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
@@ -309,18 +312,7 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
@@ -433,7 +425,7 @@ describe('AgentService connector skill inheritance', () => {
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -472,12 +464,13 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -520,6 +513,8 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
+    expect(result[0].agent_params?.params.temperature).toBeUndefined();
   });
 
   describe('canWriteAgent', () => {

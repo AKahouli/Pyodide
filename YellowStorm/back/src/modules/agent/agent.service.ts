@@ -10,7 +10,7 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
+import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
@@ -29,6 +29,7 @@ import {
   normalizeAdminGuardrailsSettings,
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
+import { normalizeWidgetSettings } from './constants/widget-default-settings';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -109,7 +110,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
       enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
       max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: false,
@@ -180,11 +181,10 @@ export class AgentService {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    if (agent.isDefault) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
-    }
-
     const isOwner = agent.createdBy.toString() === userId;
+    if (agent.isDefault) {
+      return this.toResponse(agent);
+    }
     let shareInfo: ISharedAgentInfo | undefined;
     if (!isOwner) {
       // Non-owners may read the agent only if it was shared with them.
@@ -287,6 +287,9 @@ export class AgentService {
         dto.connectorActionSelections,
       );
     }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -377,7 +380,7 @@ export class AgentService {
       llmModel: dto.model,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
-      knowledgeBases: [],
+      knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
@@ -387,7 +390,7 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
       enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
       max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: true,
@@ -537,8 +540,9 @@ export class AgentService {
       updateData.llmModel = dto.model || '';
       delete updateData.model;
     }
-    // Strip knowledgeBases for default agents
-    delete updateData.knowledgeBases;
+    if (dto.knowledgeBases) {
+      updateData.knowledgeBases = dto.knowledgeBases.map((id) => new Types.ObjectId(id));
+    }
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
@@ -556,6 +560,9 @@ export class AgentService {
         dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
         dto.connectorActionSelections,
       );
+    }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
     }
 
     const updated = await this.agentModel
@@ -753,14 +760,14 @@ export class AgentService {
         .map((a) => a.model || fallbackModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>(); // modelId → proxy alias (e.g., "gpt-4.1")
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, m.id);
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
         }
       }
     }
@@ -814,7 +821,8 @@ export class AgentService {
       });
 
       const effectiveModelId = agent.model || fallbackModelId || '';
-      const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const resolvedModel = modelMap.get(effectiveModelId);
+      const proxyModel = resolvedModel?.model || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
@@ -880,6 +888,9 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+            ...(resolvedModel?.omitTemperature
+              ? { omit_temperature: 'true' }
+              : { temperature: String(agent.temperature) }),
           },
         },
         connectorIds: effectiveConnectorIds,
@@ -970,13 +981,13 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, m.id);
+        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
       }
     }
 
@@ -1021,7 +1032,8 @@ export class AgentService {
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
-        const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const resolvedModel = modelMap.get(effectiveModelId);
+        const proxyModel = resolvedModel?.model || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -1066,6 +1078,9 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              ...(resolvedModel?.omitTemperature
+                ? { omit_temperature: 'true' }
+                : { temperature: String(agent.temperature) }),
             },
           },
           connector_bindings: connectorBindings,
@@ -1493,6 +1508,45 @@ export class AgentService {
   // Private mapping helpers
   // ==========================================
 
+  private normalizeDeploymentSettings(settings?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
+  }, existing?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
+  }): { embedEnabled: boolean; restEnabled: boolean; widget: ReturnType<typeof normalizeWidgetSettings> } {
+    return {
+      embedEnabled: settings?.embedEnabled ?? existing?.embedEnabled ?? false,
+      restEnabled: settings?.restEnabled ?? existing?.restEnabled ?? false,
+      widget: normalizeWidgetSettings((settings?.widget ?? existing?.widget) as Parameters<typeof normalizeWidgetSettings>[0]),
+    };
+  }
+
+  async listActiveDefaultAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
+    const agents = await this.agentModel
+      .find({ isDefault: true, isActive: true })
+      .populate('agentType', 'name')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return agents.map((agent) => {
+      const agentType = agent.agentType as unknown as { name?: string } | undefined;
+      return { id: agent._id.toString(), name: agent.name, description: agent.description || undefined, agentTypeName: agentType?.name, model: agent.llmModel };
+    });
+  }
+
+  async assertActiveDefaultAgent(agentId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
+    }
+    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true, isActive: true }).select('_id').lean().exec();
+    if (!agent) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
+    }
+  }
+
   private toResponse(
     doc: AgentDocument | Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
@@ -1548,6 +1602,9 @@ export class AgentService {
       deploymentSettings: {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
+        widget: normalizeWidgetSettings(
+          (d.deploymentSettings as { widget?: Parameters<typeof normalizeWidgetSettings>[0] } | undefined)?.widget,
+        ),
       },
       enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
       max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
@@ -1621,6 +1678,7 @@ export class AgentService {
       isDefaultForType: (d.isDefaultForType as boolean) || false,
     };
   }
+
 
   private resolveEffectiveSkills(
     agent: IAgentForStream,
@@ -1843,12 +1901,13 @@ export class AgentService {
     if (userId) {
       for (const binding of bindings) {
         const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+        if (connector?.authSourceType && connector.authSourceType !== 'none') {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
               connectedAppKey: connector.connectedAppKey,
               runtimeAuthConfig: connector.runtimeAuthConfig || {},
+              connectorId: connector.id,
             });
             binding.auth_headers = auth.headers;
             binding.auth_env = auth.env;

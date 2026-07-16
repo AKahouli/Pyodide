@@ -39,13 +39,10 @@ export interface Agent {
   shareInfo?: SharedAgentInfo;
 }
 
-export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
-
 export interface PromptInjectionGuardrailsConfig {
   inputGuardrailEnabled: boolean;
   outputGuardrailEnabled: boolean;
   toolCallGuardrailEnabled: boolean;
-  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
   toolCallClassifierPrompt: string;
@@ -59,6 +56,145 @@ export interface AgentGuardrails {
 export interface AgentDeploymentSettings {
   embedEnabled: boolean;
   restEnabled: boolean;
+  widget: AgentWidgetSettings;
+}
+
+export type WidgetThemePreset =
+  | 'yellowstorm-modern'
+  | 'public-service-light'
+  | 'pold-magenta'
+  | 'neutral-blue'
+  | 'high-contrast-light'
+  | 'dark-modern';
+
+export type WidgetAccessibilityProfile =
+  | 'standard'
+  | 'low-vision'
+  | 'high-contrast-light'
+  | 'high-contrast-dark'
+  | 'cognitive-comfort'
+  | 'motor-assistance'
+  | 'low-stimulation';
+
+export interface WidgetAccessibilitySettings {
+  enabled: boolean;
+  showSettingsButton: boolean;
+  defaultProfile: WidgetAccessibilityProfile;
+  availableProfiles: WidgetAccessibilityProfile[];
+  allowTextResize: boolean;
+  allowLineSpacing: boolean;
+  allowLetterSpacing: boolean;
+  allowFontSelection: boolean;
+  allowLinkUnderlining: boolean;
+  allowHighContrast: boolean;
+  allowCustomAccessibleColors: boolean;
+  allowMotionControl: boolean;
+  allowLargeTargets: boolean;
+  allowSimplifiedMode: boolean;
+  allowEnhancedFocus: boolean;
+  enforceMinimumContrast: boolean;
+  minimumTextContrastRatio: number;
+  minimumUiContrastRatio: number;
+  voiceInput: { enabled: boolean; language: string; continuous: boolean; interimResults: boolean; autoPunctuation: boolean; autoSend: false; stopAfterSilenceMs: number; retainAudio: false };
+  readAloud: { enabled: boolean; autoPlay: false; defaultRate: number; highlightCurrentSentence: boolean; readSourcesByDefault: boolean };
+  screenReader: { announceStreaming: boolean; announcementIntervalMs: number; announceChoices: boolean; announceSources: boolean; announceCompletion: boolean };
+  keyboard: { shortcutsEnabled: boolean; microphoneShortcut: string; accessibilityPanelShortcut: string; readAloudShortcut: string };
+}
+
+export interface WidgetSuggestion {
+  id: string;
+  label: string;
+  prompt: string;
+  icon?: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export interface AgentWidgetSettings {
+  version: 1;
+  appSourceName: string;
+  identity: {
+    organizationName: string;
+    assistantTitle: string;
+    assistantSubtitle: string;
+    avatarMode: 'initials' | 'icon' | 'none';
+    avatarInitials: string;
+  };
+  launcher: {
+    label: string;
+    mobileLabel: string;
+    variant: 'pill' | 'circle';
+    position: 'bottom-right' | 'bottom-left';
+    showUnreadBadge: boolean;
+    showIntroTooltip: boolean;
+    introTooltipText: string;
+  };
+  theme: {
+    preset: WidgetThemePreset;
+    customEnabled: boolean;
+    colors: Record<string, string | undefined>;
+    radius: 'sm' | 'md' | 'lg' | 'xl';
+    density: 'comfortable' | 'compact';
+  };
+  layout: {
+    desktopWidth: 360 | 400 | 480;
+    desktopHeight: 520 | 620 | 720;
+  };
+  content: {
+    greetingTitle: string;
+    greetingBody: string;
+    suggestions: WidgetSuggestion[];
+    privacyNotice: string;
+    footerText: string;
+    footerLinks: Array<{ label: string; url: string }>;
+  };
+  labels: {
+    inputPlaceholder: string;
+    sendButton: string;
+    closeButton: string;
+    optionsButton: string;
+    newConversation: string;
+    copyTranscript: string;
+    copyMessage: string;
+    downloadTranscript: string;
+    transcriptCopied: string;
+    messageCopied: string;
+    transcriptDownloaded: string;
+    emptyTranscript: string;
+    errorGeneric: string;
+    errorReset: string;
+    typing: string;
+    sourcesUsedSingular: string;
+    sourcesUsedPlural: string;
+    choiceSubmit: string;
+    choiceDismiss: string;
+    choiceDismissed: string;
+    choiceDismissMessage: string;
+    choiceOtherLabel: string;
+    choiceSendError: string;
+    choiceWaitForReply: string;
+    accessibilitySettings: string;
+    accessibilitySettingsTitle: string;
+    accessibilitySettingsDescription: string;
+    accessibilityProfile: string;
+    accessibilityClose: string;
+    accessibilityReset: string;
+    microphoneStart: string;
+    microphoneUnavailable: string;
+    microphoneListening: string;
+    readAloud: string;
+    stopReading: string;
+    readAloudUnavailable: string;
+  };
+  behavior: {
+    defaultOpen: boolean;
+    persistVisitorId: boolean;
+    allowTranscriptCopy: boolean;
+    allowTranscriptDownload: boolean;
+    allowNewConversation: boolean;
+    requirePrivacyNotice: boolean;
+  };
+  accessibility: WidgetAccessibilitySettings;
 }
 
 export type AgentPermissionLevel = 'read' | 'write';

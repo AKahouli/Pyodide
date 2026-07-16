@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class ConnectorRepoDto {
@@ -23,6 +23,24 @@ class ConnectorRepoDto {
   @IsOptional()
   @IsString()
   repoUrl?: string;
+}
+
+export class ChoiceSelectionDto {
+  @IsString() @Matches(/^[A-Za-z0-9._-]+$/) @MaxLength(64) optionId!: string;
+  @IsString() @MaxLength(160) label!: string;
+  @IsOptional() @IsString() @MaxLength(200) value?: string;
+}
+
+export class ChoiceInteractionDto {
+  @IsIn(['choice']) type!: 'choice';
+  @IsString() @MaxLength(128) componentId!: string;
+  @IsString() @MaxLength(100) questionId!: string;
+  @IsMongoId() sourceMessageId!: string;
+  @IsIn(['single', 'multiple']) selectionMode!: 'single' | 'multiple';
+  @IsArray() @ArrayMaxSize(10) @ArrayUnique((item: ChoiceSelectionDto) => item.optionId) @ValidateNested({ each: true }) @Type(() => ChoiceSelectionDto) selectedOptions!: ChoiceSelectionDto[];
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(2000) customAnswer?: string;
+  @IsOptional() @IsBoolean() dismissed?: boolean;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(1000) displayText?: string;
 }
 
 export class SendMessageDto {
@@ -86,4 +104,10 @@ export class SendMessageDto {
   @IsArray()
   @IsMongoId({ each: true })
   skillIds?: string[];
+
+  @ApiPropertyOptional({ type: ChoiceInteractionDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChoiceInteractionDto)
+  interaction?: ChoiceInteractionDto;
 }

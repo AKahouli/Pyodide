@@ -1,0 +1,12 @@
+import { Button } from '@/components/ui/button';
+import { useModuleTranslation } from '@/modules/localization';
+import type { KnowledgeRecommendation } from '../../types';
+
+const automaticallyApplicable = new Set<KnowledgeRecommendation['type']>(['schedule_review', 'reindex']);
+
+export function KnowledgeRecommendationCard({ recommendation, sourceLabel, showSourceLabel = true, pending, onDecision, onApply, onOpenSource }: Readonly<{ recommendation: KnowledgeRecommendation; sourceLabel: string; showSourceLabel?: boolean; pending: boolean; onDecision: (action: 'accept' | 'reject') => void; onApply: () => void; onOpenSource?: () => void }>): JSX.Element {
+  const { t } = useModuleTranslation('governance');
+  const applyLabel = recommendation.type === 'schedule_review' ? t('knowledge.recommendation.apply.schedule_review') : t('knowledge.recommendation.apply.reindex');
+  const reviewDays = Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30);
+  return <article className='grid gap-2 rounded-xl border p-3'><div className='flex flex-wrap items-center justify-between gap-2'><div>{showSourceLabel && <p className='text-xs font-medium text-primary'>{sourceLabel}</p>}<h4 className='text-sm font-medium'>{t(`knowledge.recommendation.type.${recommendation.type}`)}</h4></div><span className='rounded-full bg-muted px-2 py-1 text-xs'>{t(`knowledge.priority.${recommendation.priority}`)} · {t(`knowledge.recommendation.status.${recommendation.status}`)}</span></div><p className='text-sm'>{recommendation.reason}</p><p className='text-xs text-muted-foreground'>{recommendation.impactSummary}</p>{recommendation.type === 'schedule_review' && recommendation.status === 'accepted' && <p className='rounded-md bg-muted/50 p-2 text-xs text-muted-foreground'>{t('knowledge.recommendation.scheduleExplanation', { days: reviewDays })}</p>}<div className='flex flex-wrap gap-2'>{recommendation.status === 'proposed' && <><Button type='button' size='sm' disabled={pending} onClick={() => onDecision('accept')}>{t('knowledge.recommendation.accept')}</Button><Button type='button' size='sm' variant='outline' disabled={pending} onClick={() => onDecision('reject')}>{t('knowledge.recommendation.reject')}</Button></>}{recommendation.status === 'accepted' && automaticallyApplicable.has(recommendation.type) && <Button type='button' size='sm' disabled={pending} onClick={onApply}>{applyLabel}</Button>}{onOpenSource && <Button type='button' size='sm' variant='ghost' onClick={onOpenSource}>{t('knowledge.openSource')}</Button>}</div></article>;
+}

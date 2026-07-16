@@ -438,16 +438,22 @@ export class UserService {
       .exec();
   }
 
-  /**
-   * Search active users by email prefix (case-insensitive).
-   * Returns minimal user info for sharing/autocomplete purposes.
-   */
+  /** Search active users by name or email (case-insensitive). */
   async searchUsers(params: SearchUsersParams): Promise<UserSearchResult[]> {
     const { query, excludeUserId, limit = 10 } = params;
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 3) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Search query must contain at least 3 characters');
 
-    const emailRegex = new RegExp(`^${escapeRegex(query)}`, 'i');
+    const searchRegex = new RegExp(escapeRegex(normalizedQuery), 'i');
 
-    const filter: Record<string, unknown> = { email: emailRegex, status: UserStatus.ACTIVE };
+    const filter: Record<string, unknown> = {
+      status: UserStatus.ACTIVE,
+      $or: [
+        { email: searchRegex },
+        { 'profile.firstName': searchRegex },
+        { 'profile.lastName': searchRegex },
+      ],
+    };
     if (excludeUserId) {
       filter._id = { $ne: new Types.ObjectId(excludeUserId) };
     }

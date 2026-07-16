@@ -149,9 +149,11 @@ export async function getDocument(
 export async function deleteDocument(
   workspaceId: string,
   docId: string,
+  cascadeArtifacts = false,
 ): Promise<void> {
   await apiClient.delete(
     API_ENDPOINTS.workspaceDocuments.byId(workspaceId, docId),
+    { params: cascadeArtifacts ? { cascadeArtifacts: true } : undefined },
   );
 }
 
@@ -764,12 +766,13 @@ export async function validateUrl(
  * Add a website link as a workspace document
  */
 export async function addLink(
-  workspaceId: string,
-  url: string,
+    workspaceId: string,
+    url: string,
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
 ): Promise<WorkspaceDocument> {
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.link(workspaceId),
-    { url },
+      { url, ...options },
   );
   return response.data.data;
 }
@@ -777,10 +780,15 @@ export async function addLink(
 /**
  * Add multiple website links as workspace documents
  */
-export async function addLinks(workspaceId: string, urls: string[]): Promise<WorkspaceDocument[]> {
+export async function addLinks(workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean }): Promise<WorkspaceDocument[]> {
   const response = await apiClient.post<ApiResponse<WorkspaceDocument[]>>(
     API_ENDPOINTS.workspaceDocuments.links(workspaceId),
-    { urls },
+      { urls, ...options },
   );
+  return response.data.data;
+}
+
+export async function checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<{ url: string; normalizedUrl: string; exists: boolean }> }> {
+  const response = await apiClient.post<ApiResponse<{ results: Array<{ url: string; normalizedUrl: string; exists: boolean }> }>>(API_ENDPOINTS.workspaceDocuments.checkUrls(workspaceId), { urls });
   return response.data.data;
 }

@@ -1607,7 +1607,7 @@ class DynamicGraphBuilder:
                     model_name = agent.get("model") or "gpt-5.4-mini"
                     nonlocal components, tool_trace, llm_prompt_trace
                     agent_params = agent.get("agent_params") or {}
-                    temperature = float(agent_params.get("temperature", 0.7))
+                    temperature = None if agent_params.get("omit_temperature") == "true" else float(agent_params.get("temperature", 0.7))
                     output_mode = _determine_output_mode(current_task_for_execution)
                     components = []
                     tool_trace = []
@@ -2306,7 +2306,7 @@ class DynamicGraphBuilder:
         model_name: str,
         system_prompt: str,
         user_prompt: str,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         prompt_trace: Optional[List[Dict[str, Any]]] = None,
         stage: str = "llm_call",
         on_progress=None,
@@ -2324,7 +2324,7 @@ class DynamicGraphBuilder:
             base_url=settings.LITELLM_API_BASE_URL,
             api_key=settings.LITELLM_API_SECRET_KEY,
             model=model_name,
-            temperature=temperature,
+            **({"temperature": temperature} if temperature is not None else {}),
             model_kwargs={"user": get_user()},
         )
         _append_prompt_trace(

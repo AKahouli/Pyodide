@@ -93,6 +93,12 @@ import type {
   UpdateConnectorCategoryRequest,
   WorkspaceUploadSettingsResponse,
   UpdateWorkspaceUploadSettingsRequest,
+  WorkspaceEvidenceSearchSettingsResponse,
+  UpdateWorkspaceEvidenceSearchSettingsRequest,
+  WorkspaceEvidenceSearchConnectorOption,
+  WorkspaceTransformationSettingsResponse,
+  UpdateWorkspaceTransformationSettingsRequest,
+  WorkspaceTransformationAgentOption,
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
@@ -933,10 +939,11 @@ export async function inspectMcp(
   serverConfig?: Record<string, unknown>,
   connectedAppKey?: string,
   runtimeAuthConfig?: Record<string, unknown>,
+  connectorId?: string,
 ): Promise<McpInspectResult> {
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.inspect,
-    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig },
+    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId },
   );
   return response.data.data;
 }
@@ -1147,6 +1154,36 @@ export async function updateAdminWorkspaceUploadSettings(
     API_ENDPOINTS.adminWorkspaceUploadSettings.base,
     data,
   );
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceEvidenceSearchSettings(): Promise<WorkspaceEvidenceSearchSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceEvidenceSearchSettingsResponse>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceEvidenceSearchConnectors(): Promise<WorkspaceEvidenceSearchConnectorOption[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceEvidenceSearchConnectorOption[]>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.connectors);
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceEvidenceSearchSettings(data: UpdateWorkspaceEvidenceSearchSettingsRequest): Promise<WorkspaceEvidenceSearchSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceEvidenceSearchSettingsResponse>>(API_ENDPOINTS.adminWorkspaceEvidenceSearchSettings.base, data);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceTransformationSettings(): Promise<WorkspaceTransformationSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminWorkspaceTransformationAgents(): Promise<WorkspaceTransformationAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceTransformationAgentOption[]>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.agents);
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceTransformationSettings(data: UpdateWorkspaceTransformationSettingsRequest): Promise<WorkspaceTransformationSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base, data);
   return response.data.data;
 }
 

@@ -104,6 +104,7 @@ interface FileViewerActions {
   openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
+  updatePdfState: (tabId: string, currentPage: number, pageCount: number) => void;
   minimize: () => void;
   restore: () => void;
   closeViewer: () => void;
@@ -208,6 +209,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           mimeType,
           url: '', // Will be filled when loaded
           isLoading: true,
+          canWriteWorkspace: options?.canWriteWorkspace,
         };
 
         const resolvedMode = resolveDisplayMode(options?.displayMode);
@@ -327,6 +329,12 @@ export const useFileViewerStore = create<FileViewerStore>()(
 
       setActiveTab: (tabId) => {
         set({ activeTabId: tabId, pendingNavigation: null });
+      },
+
+      updatePdfState: (tabId, currentPage, pageCount) => {
+        set((state) => ({
+          tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, currentPage, pageCount } : tab),
+        }));
       },
 
       minimize: () => {

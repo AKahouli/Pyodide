@@ -20,6 +20,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -56,7 +57,7 @@ import {
   clearDefaultModel,
   syncModels,
 } from '../api';
-import type { AdminModelResponse, AdminModelsListResponse } from '../types';
+import type { AdminModelResponse, AdminModelsListResponse, ModelType } from '../types';
 import { MODEL_TYPES } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
@@ -107,6 +108,13 @@ function sortModels(models: AdminModelResponse[]): AdminModelResponse[] {
   });
 }
 
+function normalizeModel(model: AdminModelResponse): AdminModelResponse {
+  return {
+    ...model,
+    types: Array.isArray(model.types) ? model.types : model.type ? [model.type] : [],
+  };
+}
+
 export function ModelsPage() {
   const { t } = useModuleTranslation('admin');
   const { t: tCommon } = useModuleTranslation('common');
@@ -123,7 +131,8 @@ export function ModelsPage() {
     name: '',
     providers: '',
     chefSlug: '',
-    type: '',
+    types: [] as ModelType[],
+    omitTemperature: false,
   });
 
   const fetchModels = async () => {
@@ -132,7 +141,7 @@ export function ModelsPage() {
 
     try {
       const data: AdminModelsListResponse = await getAllModels();
-      setModels(sortModels(data.models));
+      setModels(sortModels(data.models.map(normalizeModel)));
     } catch (err) {
       setError(err instanceof Error ? err.message : t('models.errors.load'));
     } finally {
@@ -166,7 +175,7 @@ export function ModelsPage() {
     try {
       const updated = await updateModel(model.id, { isActive: !model.isActive });
       setModels((prev) =>
-        sortModels(prev.map((m) => (m.id === updated.id ? updated : m)))
+        sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
       );
       toast.success(updated.isActive ? t('models.toasts.enabled.title') : t('models.toasts.disabled.title'), {
         description: t(updated.isActive ? 'models.toasts.enabled.description' : 'models.toasts.disabled.description', { name: updated.name }),
@@ -184,7 +193,7 @@ export function ModelsPage() {
         // Clear default
         const updated = await clearDefaultModel(model.id);
         setModels((prev) =>
-          sortModels(prev.map((m) => (m.id === updated.id ? updated : m)))
+          sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
         );
         toast.success(t('models.toasts.defaultCleared.title'), {
           description: t('models.toasts.defaultCleared.description', { name: updated.name }),
@@ -218,7 +227,8 @@ export function ModelsPage() {
       name: model.name,
       providers: model.providers.join(', '),
       chefSlug: model.chefSlug,
-      type: model.type ?? '',
+      types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
+      omitTemperature: model.omitTemperature,
     });
     setShowEditDialog(true);
   };
@@ -243,11 +253,12 @@ export function ModelsPage() {
         chef,
         chefSlug,
         providers,
-        ...(editFormData.type ? { type: editFormData.type } : {}),
+        types: editFormData.types,
+        omitTemperature: editFormData.omitTemperature,
       });
 
       setModels((prev) =>
-        sortModels(prev.map((m) => (m.id === updated.id ? updated : m)))
+        sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
       );
 
       toast.success(t('models.toasts.editSuccess.title'), {
@@ -372,8 +383,10 @@ export function ModelsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        {model.type ? (
-                          <Badge variant="secondary">{model.type}</Badge>
+                        {model.types.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {model.types.map((type) => <Badge key={type} variant="secondary">{type}</Badge>)}
+                          </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">
                             {t('models.table.typeUnset')}
@@ -476,24 +489,24 @@ export function ModelsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="type">{t('models.edit.fields.type')}</Label>
-                <Select
-                  value={editFormData.type}
-                  onValueChange={(value) =>
-                    setEditFormData((prev) => ({ ...prev, type: value }))
-                  }
-                >
-                  <SelectTrigger id="type">
-                    <SelectValue placeholder={t('models.edit.fields.selectType')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODEL_TYPES.map((modelType) => (
-                      <SelectItem key={modelType} value={modelType}>
-                        {modelType}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>{t('models.edit.fields.type')}</Label>
+                <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+                  {MODEL_TYPES.map((modelType) => (
+                    <Label key={modelType} htmlFor={`type-${modelType}`} className="flex items-center gap-2 font-normal">
+                      <Checkbox
+                        id={`type-${modelType}`}
+                        checked={editFormData.types.includes(modelType)}
+                        onCheckedChange={(checked) => setEditFormData((prev) => ({
+                          ...prev,
+                          types: checked === true
+                            ? [...prev.types, modelType]
+                            : prev.types.filter((type) => type !== modelType),
+                        }))}
+                      />
+                      {modelType}
+                    </Label>
+                  ))}
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {t('models.edit.fields.typeHelper')}
                 </p>
@@ -537,6 +550,21 @@ export function ModelsPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {t('models.edit.fields.primaryProviderHelper')}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="omitTemperature" className="flex items-center gap-2 font-normal">
+                  <Checkbox
+                    id="omitTemperature"
+                    checked={editFormData.omitTemperature}
+                    onCheckedChange={(checked) =>
+                      setEditFormData((prev) => ({ ...prev, omitTemperature: checked === true }))
+                    }
+                  />
+                  {t('models.edit.fields.omitTemperature')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('models.edit.fields.omitTemperatureHelper')}
                 </p>
               </div>
             </div>

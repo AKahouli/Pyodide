@@ -1,0 +1,4 @@
+.decision-flow-canvas .react-flow__node-default {
+  background: var(--card);
+  color: var(--card-foreground);
+}

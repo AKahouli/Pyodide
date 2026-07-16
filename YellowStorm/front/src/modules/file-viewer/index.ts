@@ -23,7 +23,14 @@ export function openFileViewer(
   path: string,
   fileName: string,
   mimeType: string,
-  options?: FileOpenOptions,
+  options?: {
+    page?: number;
+    highlightText?: string;
+    highlightBBox?: HighlightBBox;
+    displayMode?: DisplayMode;
+    spreadsheet?: SpreadsheetNavigationOptions;
+    canWriteWorkspace?: boolean;
+  },
 ) {
   return useFileViewerStore.getState().openFile(workspaceId, docId, path, fileName, mimeType, options);
 }

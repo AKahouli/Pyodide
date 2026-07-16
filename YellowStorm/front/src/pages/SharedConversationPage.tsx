@@ -5,7 +5,7 @@ import { ChatConversation, ChatConversationContent, ChatMessageBubble } from '@/
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Button } from '@/components/ui/button';
 import { viewPublicShare } from '@/modules/conversation/api';
-import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { mapConversationComponentsToContentParts } from '@/modules/conversation/utils';
 import type { PublicShareViewResponse, PublicShareMessage } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -14,13 +14,14 @@ function ShareMessageBubble({ message, index }: { message: PublicShareMessage; i
     if (!message) return null;
     const isUser = message.conversationType === 'user';
 
-    let content: string | ReturnType<typeof mapComponentsToContentParts>;
+    let content: string | ReturnType<typeof mapConversationComponentsToContentParts>;
     if (isUser) {
       content = message.content || '';
     } else {
       // For AI messages, try components first, fall back to content string
-      const parts = mapComponentsToContentParts(message.components || []);
-      content = parts.length > 0 ? parts : message.content || '';
+      content = message.components !== undefined
+        ? mapConversationComponentsToContentParts(message.components)
+        : message.content || '';
     }
 
     return {
@@ -31,7 +32,7 @@ function ShareMessageBubble({ message, index }: { message: PublicShareMessage; i
     } as const;
   }, [message, index]);
 
-  if (!chatMessage) return null;
+  if (!chatMessage || (chatMessage.role === 'assistant' && Array.isArray(chatMessage.content) && chatMessage.content.length === 0)) return null;
 
   return (
     <MessageProvider isLastAiMessage={false} isStreaming={false}>

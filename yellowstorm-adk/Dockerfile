@@ -83,16 +83,14 @@ RUN set -eux; \
 RUN set -eux; \
     "${VENV_PATH}/bin/pip" install pip-audit safety bandit
 
-# -----------------------------------------------------------------------------
-# gRPC: copy proto + generate code
-# -----------------------------------------------------------------------------
-COPY --chown=azureuser:azureuser grpc /build/grpc
-RUN set -eux; \
-    "${VENV_PATH}/bin/python" /build/grpc/generate_proto.py
-
 # App code
 COPY --chown=azureuser:azureuser src /build/src
 COPY --chown=azureuser:azureuser main.py /build/main.py
+
+# Generate after copying src so checked-in stale bindings cannot overwrite it.
+COPY --chown=azureuser:azureuser grpc /build/grpc
+RUN set -eux; \
+    "${VENV_PATH}/bin/python" /build/grpc/generate_proto.py
 
 # Security reports
 RUN set -eux; \

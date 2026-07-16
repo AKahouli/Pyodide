@@ -107,6 +107,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
           deploymentSettings: data.deploymentSettings,
+          guardrails: data.guardrails,
         };
         if (editingAgent) {
           await updateAgent(editingAgent.id, payload);

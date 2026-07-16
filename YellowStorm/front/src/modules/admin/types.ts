@@ -4,7 +4,11 @@
 
 import type { LucideIcon } from 'lucide-react';
 import type { ModuleTranslationKey } from '@/modules/localization';
-import type { AgentConnectorActionSelection } from '@/modules/agent/types';
+import type {
+  AgentConnectorActionSelection,
+  AgentDeploymentSettings,
+  AgentGuardrails,
+} from '@/modules/agent/types';
 
 export interface AdminMenuItem {
   id: string;
@@ -17,13 +21,10 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
-export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
-
 export interface PromptInjectionGuardrailsConfig {
   inputGuardrailEnabled: boolean;
   outputGuardrailEnabled: boolean;
   toolCallGuardrailEnabled: boolean;
-  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
   toolCallClassifierPrompt: string;
@@ -928,8 +929,10 @@ export interface AdminModelResponse {
   litellmModel: string;
   providers: string[];
   type: string;
+  types: string[];
   isActive: boolean;
   isDefault: boolean;
+  omitTemperature: boolean;
 }
 
 export interface AdminModelsListResponse {
@@ -957,7 +960,9 @@ export interface UpdateModelRequest {
   chefSlug?: string;
   providers?: string[];
   type?: string;
+  types?: ModelType[];
   isActive?: boolean;
+  omitTemperature?: boolean;
 }
 
 export interface SyncModelsResponse {
@@ -1196,6 +1201,8 @@ export interface AgentResponse {
   disabledSkills?: string[];
   connectors?: string[];
   connectorActionSelections?: AgentConnectorActionSelection[];
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
   isDefault: boolean;
@@ -1236,6 +1243,8 @@ export interface CreateAgentRequest {
   max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface UpdateAgentRequest {
@@ -1258,6 +1267,8 @@ export interface UpdateAgentRequest {
   max_temporary_child_agents?: number;
   isActive?: boolean;
   isDefaultForType?: boolean;
+  guardrails?: AgentGuardrails;
+  deploymentSettings?: AgentDeploymentSettings;
 }
 
 export interface AgentQueryParams {
@@ -1626,6 +1637,13 @@ export interface WorkspaceUploadSettingsResponse {
 export interface UpdateWorkspaceUploadSettingsRequest {
   allowedExtensions: string[];
 }
+
+export interface WorkspaceEvidenceSearchSettingsResponse { connectorId: string | null; updatedAt?: string; }
+export interface UpdateWorkspaceEvidenceSearchSettingsRequest { connectorId: string | null; }
+export interface WorkspaceEvidenceSearchConnectorOption { id: string; name: string; }
+export interface WorkspaceTransformationSettingsResponse { decisionFlowAgentId: string | null; updatedAt?: string; }
+export interface UpdateWorkspaceTransformationSettingsRequest { decisionFlowAgentId: string | null; }
+export interface WorkspaceTransformationAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
 // ===== Team Auto-Builder =====
 

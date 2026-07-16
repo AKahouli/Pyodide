@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles } from "lucide-react";
 
 
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { Label } from "@/components/ui/label";
 
@@ -34,6 +35,9 @@ import { createWidgetToken } from "@/modules/agent/api";
 import { WidgetRestApiPanel } from "./WidgetRestApiPanel";
 
 import { IntegrationSnippetPanel } from "./IntegrationSnippetPanel";
+import { WidgetSettingsPane } from './deployment/WidgetSettingsPane';
+import { DEFAULT_WIDGET_SETTINGS, mergeWidgetSettings } from '../constants/widget-default-settings';
+import type { AgentDeploymentSettings } from '../types';
 
 
 
@@ -49,15 +53,18 @@ interface AgentDeploymentSectionProps {
 
   agentName?: string;
 
-  value: { embedEnabled: boolean; restEnabled: boolean };
+  value: AgentDeploymentSettings;
 
-  onChange: (value: { embedEnabled: boolean; restEnabled: boolean }) => void;
+  onChange: (value: AgentDeploymentSettings) => void;
+
+  readOnly?: boolean;
+
 
 }
 
 
 
-export function AgentDeploymentSection({ agentId, agentName = "", value, onChange }: AgentDeploymentSectionProps) {
+export function AgentDeploymentSection({ agentId, agentName = "", value, onChange, readOnly = false }: AgentDeploymentSectionProps) {
 
   const { t } = useModuleTranslation("agent");
 
@@ -68,6 +75,9 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
   const [isCopied, setIsCopied] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isEmbedDialogOpen, setIsEmbedDialogOpen] = useState(false);
+
+  const [openPanes, setOpenPanes] = useState<ReadonlyArray<"embed" | "rest">>([]);
 
   const isEmbedEnabled = value.embedEnabled;
 
@@ -83,7 +93,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
       setEmbedSnippet(
 
-        buildWidgetSnippet(id, name, token, `${apiBase}/widget/chat`, `${apiBase}/widget/stream`),
+        buildWidgetSnippet({ agentId: id, embedHandle: token, apiBaseUrl: apiBase }),
 
       );
 
@@ -109,9 +119,23 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
   }, [agentId]);
 
-  const setEmbedEnabled = (embedEnabled: boolean) => onChange({ ...value, embedEnabled });
+  const widgetSettings = mergeWidgetSettings(value.widget ?? DEFAULT_WIDGET_SETTINGS);
 
-  const setRestEnabled = (restEnabled: boolean) => onChange({ ...value, restEnabled });
+  const setEmbedEnabled = (embedEnabled: boolean) => {
+    if (readOnly) return;
+    onChange({ ...value, widget: widgetSettings, embedEnabled });
+  };
+
+  const setRestEnabled = (restEnabled: boolean) => {
+    if (readOnly) return;
+    onChange({ ...value, widget: widgetSettings, restEnabled });
+  };
+
+  const isPaneOpen = (pane: "embed" | "rest") => openPanes.includes(pane);
+
+  const togglePane = (pane: "embed" | "rest") => {
+    setOpenPanes((current) => (current.includes(pane) ? current.filter((item) => item !== pane) : [...current, pane]));
+  };
 
 
 
@@ -123,9 +147,9 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
 
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (mode: "embed" | "rest") => {
 
-    if (!agentId) {
+    if (readOnly || !agentId) {
 
       showWarning(t("createEdit.fields.deploymentRequiresAgent"));
 
@@ -137,11 +161,13 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
     try {
 
-      const result = await createWidgetToken(agentId);
+       const result = await createWidgetToken(agentId);
 
-      applyGenerated(agentId, agentName, result.token);
+       applyGenerated(agentId, agentName, result.token);
 
-      setIsCopied(false);
+       setIsCopied(false);
+
+       if (mode === "embed") setIsEmbedDialogOpen(true);
 
       showSuccess(t("createEdit.fields.deploymentGenerated"));
 
@@ -197,18 +223,26 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
 
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <div
           className={cn(
-            "space-y-3 rounded-md border p-4",
+            "rounded-md border",
             isEmbedEnabled ? "border-primary bg-primary/5" : "border-border",
           )}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeEmbed")}</p>
-              <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeEmbedHint")}</p>
-            </div>
+          <div className="flex items-start justify-between gap-4 p-4">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              aria-expanded={isPaneOpen("embed")}
+              onClick={() => togglePane("embed")}
+            >
+              <span className="space-y-1">
+                <span className="block text-sm font-medium">{t("createEdit.fields.deploymentModeEmbed")}</span>
+                <span className="block text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeEmbedHint")}</span>
+              </span>
+              <ChevronDown className={cn("mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform", isPaneOpen("embed") && "rotate-180")} />
+            </button>
             <Switch
               data-testid="embed-deployment-switch"
               aria-label={t("createEdit.fields.deploymentModeEmbed")}
@@ -218,31 +252,48 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
             />
           </div>
 
-          {isEmbedEnabled && !agentId && (
-            <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-              {t("createEdit.fields.deploymentRequiresAgent")}
-            </p>
-          )}
+          {isPaneOpen("embed") && (
+            <div className="space-y-3 border-t px-4 pb-4 pt-3">
+              {isEmbedEnabled && !agentId && (
+                <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+                  {t("createEdit.fields.deploymentRequiresAgent")}
+                </p>
+              )}
 
-          {isEmbedEnabled && agentId && (
-            <Button type="button" size="sm" onClick={() => void handleGenerate()} disabled={isGenerating}>
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-              {t("createEdit.actions.generateDeploymentSnippet")}
-            </Button>
+              {isEmbedEnabled && agentId && (
+                <Button type="button" size="sm" onClick={() => void handleGenerate("embed")} disabled={readOnly || isGenerating}>
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  {t("createEdit.actions.generateDeploymentSnippet")}
+                </Button>
+              )}
+
+              {isEmbedEnabled && (
+                <WidgetSettingsPane value={widgetSettings} onChange={(widget) => onChange({ ...value, widget })} />
+              )}
+
+            </div>
           )}
         </div>
 
         <div
           className={cn(
-            "space-y-3 rounded-md border p-4",
+            "rounded-md border",
             isRestEnabled ? "border-primary bg-primary/5" : "border-border",
           )}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">{t("createEdit.fields.deploymentModeRest")}</p>
-              <p className="text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeRestHint")}</p>
-            </div>
+          <div className="flex items-start justify-between gap-4 p-4">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              aria-expanded={isPaneOpen("rest")}
+              onClick={() => togglePane("rest")}
+            >
+              <span className="space-y-1">
+                <span className="block text-sm font-medium">{t("createEdit.fields.deploymentModeRest")}</span>
+                <span className="block text-xs text-muted-foreground">{t("createEdit.fields.deploymentModeRestHint")}</span>
+              </span>
+              <ChevronDown className={cn("mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform", isPaneOpen("rest") && "rotate-180")} />
+            </button>
             <Switch
               data-testid="rest-deployment-switch"
               aria-label={t("createEdit.fields.deploymentModeRest")}
@@ -252,36 +303,47 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
             />
           </div>
 
-          {isRestEnabled && !agentId && (
-            <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-              {t("createEdit.fields.deploymentRequiresAgent")}
-            </p>
-          )}
+          {isPaneOpen("rest") && (
+            <div className="space-y-3 border-t px-4 pb-4 pt-3">
+              {isRestEnabled && !agentId && (
+                <p className="rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+                  {t("createEdit.fields.deploymentRequiresAgent")}
+                </p>
+              )}
 
-          {isRestEnabled && agentId && (
-            <Button type="button" size="sm" onClick={() => void handleGenerate()} disabled={isGenerating}>
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-              {t("createEdit.actions.generateDeploymentSnippet")}
-            </Button>
+              {isRestEnabled && agentId && (
+                <Button type="button" size="sm" onClick={() => void handleGenerate("rest")} disabled={readOnly || isGenerating}>
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  {t("createEdit.actions.generateDeploymentSnippet")}
+                </Button>
+              )}
+
+              {isRestEnabled && hasRest && restSpec && <WidgetRestApiPanel spec={restSpec} />}
+            </div>
           )}
         </div>
       </div>
 
-      {isEmbedEnabled && hasEmbed && (
-        <IntegrationSnippetPanel
-          title={t("createEdit.fields.deploymentSnippet")}
-          hint={t("createEdit.fields.deploymentSnippetHint")}
-          badge="HTML"
-          lines={embedLines}
-          isCopied={isCopied}
-          copyLabel={t("createEdit.actions.copyDeploymentSnippet")}
-          copiedLabel={t("createEdit.actions.deploymentSnippetCopiedShort")}
-          onCopy={() => void handleCopyEmbed()}
-        />
-      )}
-
-      {isRestEnabled && hasRest && restSpec && <WidgetRestApiPanel spec={restSpec} />}
-
+      <Dialog open={isEmbedDialogOpen} onOpenChange={setIsEmbedDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t("createEdit.fields.deploymentSnippet")}</DialogTitle>
+            <DialogDescription>{t("createEdit.fields.deploymentSnippetDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          {hasEmbed && (
+            <IntegrationSnippetPanel
+              title={t("createEdit.fields.deploymentSnippet")}
+              hint={t("createEdit.fields.deploymentSnippetHint")}
+              badge="HTML"
+              lines={embedLines}
+              isCopied={isCopied}
+              copyLabel={t("createEdit.actions.copyDeploymentSnippet")}
+              copiedLabel={t("createEdit.actions.deploymentSnippetCopiedShort")}
+              onCopy={() => void handleCopyEmbed()}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
 
   );

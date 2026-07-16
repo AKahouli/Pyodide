@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronLeft, MoreHorizontal, ShieldCheck, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Copy, MoreHorizontal, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -9,6 +9,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateGovernanceProgram, useCreateGovernanceScope, useDeleteGovernanceProgram, useGovernancePrograms, useGovernanceUiStore } from '@/modules/governance';
+import { createGovernanceProgramClonePayload } from '../clone-payloads';
 import { GovernanceCockpit } from './GovernanceCockpit';
 import { GovernanceScopeLifecycleShell } from './GovernanceScopeLifecycleShell';
 import type { TabKey } from './GovernanceScopeWorkspace';
@@ -70,6 +71,20 @@ export function GovernancePage(): JSX.Element {
     });
   };
 
+  const handleCloneProgram = () => {
+    if (!selectedProgram) return;
+    createProgram.mutate(
+      createGovernanceProgramClonePayload(selectedProgram, t('programs.copySuffix')),
+      {
+        onSuccess: (program) => {
+          setSelectedProgramId(program.id);
+          setSelectedScopeId(null);
+        },
+        onError: (error) => showError(t('programs.cloneError'), { description: parseApiError(error).message }),
+      },
+    );
+  };
+
   return (
     <main className='flex h-full w-full overflow-auto bg-background p-4 md:p-6'>
       <div className='mx-auto flex w-full max-w-7xl flex-col gap-5'>
@@ -88,7 +103,7 @@ export function GovernancePage(): JSX.Element {
 
           <Button type='button' variant='outline' size='sm' onClick={() => setProgramDialogOpen(true)}>{t('programs.create')}</Button>
           {selectedProgram && (
-            <ProgramActionsMenu deleteLabel={t('programs.delete')} deleteConfirmTitle={t('programs.deleteConfirmTitle')} deleteConfirmBody={t('programs.deleteConfirmBody', { name: selectedProgram.name })} deleteCancel={t('scopeShell.settings.deleteCancel')} actionsLabel={t('programs.actions')} isDeleting={deleteProgram.isPending} onDelete={handleDeleteProgram} />
+            <ProgramActionsMenu cloneLabel={t('programs.clone')} deleteLabel={t('programs.delete')} deleteConfirmTitle={t('programs.deleteConfirmTitle')} deleteConfirmBody={t('programs.deleteConfirmBody', { name: selectedProgram.name })} deleteCancel={t('scopeShell.settings.deleteCancel')} actionsLabel={t('programs.actions')} isCloning={createProgram.isPending} isDeleting={deleteProgram.isPending} onClone={handleCloneProgram} onDelete={handleDeleteProgram} />
           )}
 
           <DropdownMenu>
@@ -142,7 +157,7 @@ export function GovernancePage(): JSX.Element {
   );
 }
 
-function ProgramActionsMenu({ deleteLabel, deleteConfirmTitle, deleteConfirmBody, deleteCancel, actionsLabel, isDeleting, onDelete }: Readonly<{ deleteLabel: string; deleteConfirmTitle: string; deleteConfirmBody: string; deleteCancel: string; actionsLabel: string; isDeleting: boolean; onDelete: () => void }>): JSX.Element {
+function ProgramActionsMenu({ cloneLabel, deleteLabel, deleteConfirmTitle, deleteConfirmBody, deleteCancel, actionsLabel, isCloning, isDeleting, onClone, onDelete }: Readonly<{ cloneLabel: string; deleteLabel: string; deleteConfirmTitle: string; deleteConfirmBody: string; deleteCancel: string; actionsLabel: string; isCloning: boolean; isDeleting: boolean; onClone: () => void; onDelete: () => void }>): JSX.Element {
   return (
     <AlertDialog>
       <DropdownMenu>
@@ -152,6 +167,9 @@ function ProgramActionsMenu({ deleteLabel, deleteConfirmTitle, deleteConfirmBody
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end'>
+          <DropdownMenuItem onSelect={onClone} disabled={isCloning}>
+            <Copy className='h-4 w-4' />{cloneLabel}
+          </DropdownMenuItem>
           <AlertDialogTrigger asChild>
             <DropdownMenuItem className='text-destructive focus:text-destructive' onSelect={(event) => event.preventDefault()}>
               <Trash2 className='h-4 w-4' />{deleteLabel}

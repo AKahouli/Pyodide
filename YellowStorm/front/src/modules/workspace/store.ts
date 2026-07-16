@@ -9,8 +9,10 @@ import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import * as workspaceApi from './api';
 import * as pageApi from './page-api';
+import * as artifactApi from './artifact-api';
 import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
+import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import type {
@@ -46,6 +48,7 @@ import type {
   CreateWorkspaceFolderInput,
   UpdateWorkspaceFolderInput,
   StartClassificationRunInput,
+  WorkspaceArtifact,
 } from './types';
 
 /**
@@ -175,9 +178,11 @@ interface WorkspaceState {
   pageSearch: string;
   pageFolders: WorkspaceFolder[];
   pageFiles: WorkspaceFile[];
+  pageArtifacts: WorkspaceArtifact[];
   pageWorkspaceLoadedFor: string | null;
   loadingPageFolders: boolean;
   loadingPageFiles: boolean;
+  loadingPageArtifacts: boolean;
   lastClassificationRun: ClassificationRun | null;
   isRunningClassification: boolean;
 
@@ -218,7 +223,7 @@ interface WorkspaceActions {
   setCurrentFolderId: (folderId: string | null) => void;
   fetchAllFolders: (workspaceId: string) => Promise<void>;
   searchDocuments: (query: string) => Promise<void>;
-  deleteDocument: (workspaceId: string, docId: string) => Promise<void>;
+  deleteDocument: (workspaceId: string, docId: string, cascadeArtifacts?: boolean) => Promise<void>;
   bulkDeleteDocuments: (workspaceId: string, docIds: string[]) => Promise<BulkDeleteResult>;
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
@@ -288,14 +293,15 @@ interface WorkspaceActions {
   navigateToPageFolder: (folderId: string | null) => void;
   setPageSearch: (value: string) => void;
   refreshPageData: () => Promise<void>;
+  refreshWorkspaceArtifacts: () => Promise<void>;
   createPageFolder: (input: CreateWorkspaceFolderInput) => Promise<WorkspaceFolder | null>;
   updatePageFolder: (id: string, input: UpdateWorkspaceFolderInput) => Promise<void>;
   deletePageFolder: (id: string) => Promise<void>;
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
-  addPageLink: (workspaceId: string, url: string) => Promise<void>;
-  addPageLinks: (workspaceId: string, urls: string[]) => Promise<void>;
+  addPageLink: (workspaceId: string, url: string, options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
+  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -381,9 +387,11 @@ const initialState: WorkspaceState = {
   pageSearch: '',
   pageFolders: [],
   pageFiles: [],
+  pageArtifacts: [],
   pageWorkspaceLoadedFor: null,
   loadingPageFolders: false,
   loadingPageFiles: false,
+  loadingPageArtifacts: false,
   lastClassificationRun: null,
   isRunningClassification: false,
 
@@ -806,9 +814,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         await get().fetchDocuments(get().selectedWorkspaceId || '', 1);
       },
 
-      deleteDocument: async (workspaceId, docId) => {
+      deleteDocument: async (workspaceId, docId, cascadeArtifacts = false) => {
         try {
-          await workspaceApi.deleteDocument(workspaceId, docId);
+          await workspaceApi.deleteDocument(workspaceId, docId, cascadeArtifacts);
 
           // Invalidate cache and refresh documents
           get().invalidateDocumentCache();
@@ -1768,6 +1776,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           pageSearch: '',
           pageFolders: workspaceId !== previous ? [] : get().pageFolders,
           pageFiles: workspaceId !== previous ? [] : get().pageFiles,
+          pageArtifacts: workspaceId !== previous ? [] : get().pageArtifacts,
           pageWorkspaceLoadedFor: workspaceId !== previous ? null : get().pageWorkspaceLoadedFor,
           lastClassificationRun: null,
           localRules: workspaceId !== previous ? [] : get().localRules,
@@ -1801,22 +1810,39 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       refreshPageData: async () => {
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId) return;
-        set({ loadingPageFolders: true, loadingPageFiles: true });
+        set({ loadingPageFolders: true, loadingPageFiles: true, loadingPageArtifacts: true });
         try {
-          const [folders, files] = await Promise.all([
+          const [folders, files, artifacts] = await Promise.all([
             pageApi.listFolders(workspaceId),
             pageApi.listFiles(workspaceId),
+            dataRoomFeatures.decisionFlowArtifactsEnabled ? artifactApi.listWorkspaceArtifacts(workspaceId) : Promise.resolve([]),
           ]);
           set({
             pageFolders: folders,
             pageFiles: files,
+            pageArtifacts: artifacts,
             pageWorkspaceLoadedFor: workspaceId,
             loadingPageFolders: false,
             loadingPageFiles: false,
+            loadingPageArtifacts: false,
           });
         } catch (err) {
-          set({ loadingPageFolders: false, loadingPageFiles: false });
+          set({ loadingPageFolders: false, loadingPageFiles: false, loadingPageArtifacts: false });
           toast.error(getApiErrorMessage(err, 'Impossible de charger le workspace'));
+        }
+      },
+
+      refreshWorkspaceArtifacts: async () => {
+        if (!dataRoomFeatures.decisionFlowArtifactsEnabled) return;
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        set({ loadingPageArtifacts: true });
+        try {
+          const pageArtifacts = await artifactApi.listWorkspaceArtifacts(workspaceId);
+          set({ pageArtifacts, loadingPageArtifacts: false });
+        } catch (err) {
+          set({ loadingPageArtifacts: false });
+          toast.error(getApiErrorMessage(err, 'Impossible de charger les flux de décision'));
         }
       },
 
@@ -1938,15 +1964,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
-      addPageLink: async (workspaceId, url) => {
-        await workspaceApi.addLink(workspaceId, url);
+      addPageLink: async (workspaceId, url, options) => {
+        await workspaceApi.addLink(workspaceId, url, options);
         // The link doc is created server-side in a "processing" state; reload so
         // it appears immediately. Live status flows via the existing indexing SSE.
         await get().refreshPageData();
       },
 
-      addPageLinks: async (workspaceId, urls) => {
-        await workspaceApi.addLinks(workspaceId, urls);
+      addPageLinks: async (workspaceId, urls, options) => {
+        await workspaceApi.addLinks(workspaceId, urls, options);
         await get().refreshPageData();
       },
 
