@@ -162,12 +162,19 @@ export class ConnectorService {
       let authHeaders: Record<string, string> = {};
       let authEnv: Record<string, string> = {};
 
-      if (userId && connector.authSourceType === 'connected_app' && connector.connectedAppKey) {
+      // Resolve runtime auth for BOTH connected_app (per-user OAuth) and
+      // credential (a saved per-connector credential — the default source).
+      // The old guard only handled connected_app, so credential connectors
+      // (e.g. code-interpreter, linkup) went out with empty auth_headers.
+      // resolveRuntimeAuth branches on authSourceType; pass connectorId so its
+      // credential branch can find the active saved credential.
+      if (userId && connector.authSourceType && connector.authSourceType !== 'none') {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
-            connectedAppKey: connector.connectedAppKey,
+            connectedAppKey: connector.connectedAppKey || '',
             runtimeAuthConfig: connector.runtimeAuthConfig || {},
+            connectorId: connector.id,
           });
           authHeaders = auth.headers;
           authEnv = auth.env;

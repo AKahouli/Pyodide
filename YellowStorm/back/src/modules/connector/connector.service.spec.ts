@@ -576,6 +576,33 @@ describe('ConnectorService findByIdsForGrpc', () => {
     });
   });
 
+  it('resolves auth for a credential-source connector, passing connectorId', async () => {
+    const doc = {
+      _id: new Types.ObjectId(),
+      name: 'Code Interpreter',
+      authSourceType: 'credential',
+      connectedAppKey: '',
+      runtimeAuthConfig: { strategy: 'http_header_bearer' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://ci/mcp',
+      actions: [{ key: 'run', label: 'Run', isEnabled: true }],
+      isActive: true,
+    };
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer SAVED' }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const service = buildService(doc, auth);
+
+    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+
+    expect(auth.resolveRuntimeAuth).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ authSourceType: 'credential', connectorId: doc._id.toString() }),
+    );
+    expect(binding.auth_headers).toEqual({ Authorization: 'Bearer SAVED' });
+  });
+
   it('drops connectors that have no enabled action', async () => {
     const doc = {
       _id: new Types.ObjectId(),
