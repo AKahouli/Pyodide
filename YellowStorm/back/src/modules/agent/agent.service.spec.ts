@@ -581,4 +581,51 @@ describe('AgentService connector skill inheritance', () => {
       expect(responses[0].hasSmartMemory).toBe(false);
     });
   });
+
+  it('uses current connector schemas and removes stale fixed parameters for playbook runtime', async () => {
+    const { service, connectorService, skillService } = createService();
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'connector-1',
+      name: 'Search',
+      slug: 'search',
+      authSourceType: 'none',
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.com/mcp',
+      mcpServerConfig: {},
+      referencedSkillIds: [],
+      actions: [{
+        key: 'search',
+        label: 'Search',
+        description: '',
+        parameterSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' }, limit: { type: 'number' } },
+          additionalProperties: false,
+        },
+        isEnabled: true,
+      }],
+    }]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildGrpcConnectorRuntimeForPlaybook(userId, [{
+      connectorId: 'connector-1',
+      isEnabled: true,
+      actions: [{ actionKey: 'search', isEnabled: true }],
+      fixedParams: { limit: 10, removedArg: 'stale' },
+    }]);
+
+    expect(result.connector_bindings).toEqual([
+      expect.objectContaining({
+        fixed_params: { limit: 10 },
+        actions: [expect.objectContaining({
+          action_key: 'search',
+          parameter_schema: {
+            type: 'object',
+            properties: { query: { type: 'string' }, limit: { type: 'number' } },
+            additionalProperties: false,
+          },
+        })],
+      }),
+    ]);
+  });
 });

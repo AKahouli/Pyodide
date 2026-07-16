@@ -648,7 +648,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const resourceArtifactKind = getResourceArtifactKind(payload);
     let portId = resolveHitPortId();
 
-    if (!portId) {
+    if (resourceKind === 'document' && nodeDataActions?.updateNodeData) {
+      const newPort = createCompatibleInputPort(payload.name || payload.id, resourceArtifactKind);
+      nodeDataActions.updateNodeData(id, { inputPorts: [...inputPorts, newPort] });
+      portId = newPort.id;
+    } else if (!portId) {
       const compatiblePorts = inputPorts.filter((port) => port.artifactKind === resourceArtifactKind);
       if (compatiblePorts.length === 1) {
         portId = compatiblePorts[0].id;

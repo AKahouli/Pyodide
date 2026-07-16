@@ -22,6 +22,7 @@ import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
+import { filterConnectorFixedParams } from '../connector/utils/connector-fixed-params.util';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
 import {
@@ -1163,6 +1164,23 @@ export class AgentService {
     }
 
     const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
+    for (const [connectorId, fixedParams] of fixedParamsByConnectorId) {
+      const connector = connectorsMap.get(connectorId);
+      if (!connector) continue;
+
+      const allowedActionKeys = actionKeysByConnectorId.get(connectorId);
+      const selectedActions = (connector.actions || [])
+        .filter((action) => action.isEnabled !== false)
+        .filter((action) => !allowedActionKeys || allowedActionKeys.has(action.key))
+        .map((action) => ({
+          key: action.key,
+          parameterSchema: action.parameterSchema || {},
+        }));
+      fixedParamsByConnectorId.set(
+        connectorId,
+        filterConnectorFixedParams(fixedParams, selectedActions),
+      );
+    }
     const connectorBindings = await this.buildConnectorBindings(
       connectorsMap,
       uniqueConnectorIds,
