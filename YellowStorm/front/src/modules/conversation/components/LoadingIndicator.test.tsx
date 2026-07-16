@@ -4,9 +4,17 @@ import { LoadingIndicator, StreamingCursor } from './LoadingIndicator';
 
 describe('LoadingIndicator', () => {
   it('renders loader container', () => {
-    render(<LoadingIndicator activity='usingTools' />);
+    const { container } = render(<LoadingIndicator activity='usingTools' />);
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
+    const spinner = container.querySelector('.animate-spin');
+    expect(spinner).toBeInTheDocument();
+    expect(spinner).not.toHaveClass('motion-reduce:animate-none');
+  });
+
+  it('uses a static completion icon after streaming ends', () => {
+    const { container } = render(<LoadingIndicator isComplete components={[{ id: 'thoughts', type: 'chainOfThought', data: { steps: ['Reviewed the request'] } }] as never} />);
+    expect(container.querySelector('.animate-spin')).not.toBeInTheDocument();
   });
 
   it('renders streaming cursor', () => {

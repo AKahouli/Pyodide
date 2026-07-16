@@ -25,8 +25,10 @@ export class GovernanceTemporalCandidateService {
     if (version.technicalStatus !== 'ready') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only a ready source version can be analyzed.');
     const { connectorId } = await this.settings.getSettings();
     if (!connectorId) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Select an evidence-search connector before starting analysis.');
+    const retried = await this.jobs.retryLatestFailedForVersion(versionId, connectorId, actorId);
+    if (retried) return retried;
     const inputHash = createHash('sha256').update(JSON.stringify({ versionId, contentHash: version.contentHash ?? null, indexingAttemptId: version.indexingAttemptId ?? null, connectorId })).digest('hex');
-    return this.jobs.enqueue({ programId, sourceId, sourceVersionId: versionId, connectorId, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
+    return this.jobs.enqueue({ programId, sourceId, sourceVersionId: versionId, connectorId, requestedByUserId: actorId, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
   }
 
   async decide(actorId: string, actorEmail: string, programId: string, sourceId: string, versionId: string, recordId: string, input: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }) {

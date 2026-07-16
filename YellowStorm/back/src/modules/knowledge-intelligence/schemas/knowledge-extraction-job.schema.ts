@@ -11,6 +11,7 @@ export class KnowledgeExtractionJob {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', required: true, index: true }) sourceId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', required: true, index: true }) sourceVersionId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Connector', required: true, index: true }) connectorId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true }) requestedByUserId?: Types.ObjectId;
   @Prop({ required: true, enum: ['technical_metadata', 'temporal_extraction', 'metadata_enrichment'], index: true }) jobType!: KnowledgeExtractionJobType;
   @Prop({ required: true, enum: ['pending', 'running', 'completed', 'failed', 'cancelled'], default: 'pending', index: true }) status!: KnowledgeExtractionJobStatus;
   @Prop({ required: true, maxlength: 128 }) inputHash!: string;

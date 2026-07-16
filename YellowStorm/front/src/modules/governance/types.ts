@@ -287,6 +287,7 @@ export interface GovernanceMetric {
 
 export interface GovernanceScopeOverview {
   scope: GovernanceScope;
+  authorization: { canApprove: boolean };
   readiness: Omit<GovernanceReadiness, 'deploymentId'>;
   knowledge: {
     sharedSources: GovernanceSource[];

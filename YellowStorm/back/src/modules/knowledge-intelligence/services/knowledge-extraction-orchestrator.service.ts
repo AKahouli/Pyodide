@@ -9,6 +9,7 @@ export interface EnqueueKnowledgeExtractionJobInput {
   sourceId: string;
   sourceVersionId: string;
   connectorId: string;
+  requestedByUserId: string;
   jobType: KnowledgeExtractionJobType;
   inputHash: string;
   engineVersion: string;
@@ -23,7 +24,7 @@ export class KnowledgeExtractionOrchestratorService {
     try {
       return await this.jobModel.findOneAndUpdate(
         identity,
-        { $setOnInsert: { programId: new Types.ObjectId(input.programId), sourceId: new Types.ObjectId(input.sourceId), sourceVersionId: new Types.ObjectId(input.sourceVersionId), connectorId: new Types.ObjectId(input.connectorId), jobType: input.jobType, inputHash: input.inputHash, engineVersion: input.engineVersion, status: 'pending', attempts: 0 } },
+        { $setOnInsert: { programId: new Types.ObjectId(input.programId), sourceId: new Types.ObjectId(input.sourceId), sourceVersionId: new Types.ObjectId(input.sourceVersionId), connectorId: new Types.ObjectId(input.connectorId), requestedByUserId: new Types.ObjectId(input.requestedByUserId), jobType: input.jobType, inputHash: input.inputHash, engineVersion: input.engineVersion, status: 'pending', attempts: 0 } },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       ).exec();
     } catch (error) {
@@ -32,6 +33,17 @@ export class KnowledgeExtractionOrchestratorService {
       if (!existing) throw error;
       return existing;
     }
+  }
+
+  async retryLatestFailedForVersion(sourceVersionId: string, connectorId: string, requestedByUserId: string): Promise<KnowledgeExtractionJobDocument | null> {
+    return this.jobModel.findOneAndUpdate(
+      { sourceVersionId: new Types.ObjectId(sourceVersionId), connectorId: new Types.ObjectId(connectorId), status: 'failed' },
+      {
+        $set: { status: 'pending', attempts: 0, requestedByUserId: new Types.ObjectId(requestedByUserId) },
+        $unset: { error: 1, startedAt: 1, completedAt: 1, leaseExpiresAt: 1, leaseToken: 1, nextAttemptAt: 1 },
+      },
+      { new: true, sort: { createdAt: -1 } },
+    ).exec();
   }
 
   async markRunning(jobId: string): Promise<KnowledgeExtractionJobDocument | null> {
@@ -50,7 +62,11 @@ export class KnowledgeExtractionOrchestratorService {
   }
 
   async markCompleted(jobId: string, leaseToken: string): Promise<KnowledgeExtractionJobDocument | null> {
-    return this.setClaimedStatus(jobId, leaseToken, 'completed', { completedAt: new Date(), leaseExpiresAt: undefined, leaseToken: undefined, error: undefined });
+    return this.jobModel.findOneAndUpdate(
+      { _id: jobId, status: 'running', leaseToken },
+      { $set: { status: 'completed', completedAt: new Date() }, $unset: { leaseExpiresAt: 1, leaseToken: 1, error: 1, nextAttemptAt: 1 } },
+      { new: true },
+    ).exec();
   }
 
   async markFailed(jobId: string, leaseToken: string, error: string, attempts = 1): Promise<KnowledgeExtractionJobDocument | null> {

@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { KnowledgeExtractionOrchestratorService } from './knowledge-extraction-orchestrator.service';
 
 describe('KnowledgeExtractionOrchestratorService', () => {
-  const input = { programId: new Types.ObjectId().toString(), sourceId: new Types.ObjectId().toString(), sourceVersionId: new Types.ObjectId().toString(), connectorId: new Types.ObjectId().toString(), jobType: 'technical_metadata' as const, inputHash: 'hash-1', engineVersion: 'technical-metadata-v1' };
+  const input = { programId: new Types.ObjectId().toString(), sourceId: new Types.ObjectId().toString(), sourceVersionId: new Types.ObjectId().toString(), connectorId: new Types.ObjectId().toString(), requestedByUserId: new Types.ObjectId().toString(), jobType: 'technical_metadata' as const, inputHash: 'hash-1', engineVersion: 'technical-metadata-v1' };
 
   it('upserts an idempotent pending job using the version input identity', async () => {
     const job = { id: 'job-1' };
@@ -13,8 +13,25 @@ describe('KnowledgeExtractionOrchestratorService', () => {
 
     expect(model.findOneAndUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ jobType: 'technical_metadata', inputHash: 'hash-1', engineVersion: 'technical-metadata-v1' }),
-      expect.objectContaining({ $setOnInsert: expect.objectContaining({ status: 'pending', attempts: 0 }) }),
+      expect.objectContaining({ $setOnInsert: expect.objectContaining({ status: 'pending', attempts: 0, requestedByUserId: new Types.ObjectId(input.requestedByUserId) }) }),
       expect.objectContaining({ upsert: true, new: true }),
+    );
+  });
+
+  it('resets the latest failed job with the current authorization principal', async () => {
+    const job = { id: 'job-1', status: 'pending' };
+    const model = { findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(job) })) };
+    const service = new KnowledgeExtractionOrchestratorService(model as never);
+
+    await expect(service.retryLatestFailedForVersion(input.sourceVersionId, input.connectorId, input.requestedByUserId)).resolves.toBe(job);
+
+    expect(model.findOneAndUpdate).toHaveBeenCalledWith(
+      { sourceVersionId: new Types.ObjectId(input.sourceVersionId), connectorId: new Types.ObjectId(input.connectorId), status: 'failed' },
+      {
+        $set: expect.objectContaining({ status: 'pending', attempts: 0, requestedByUserId: new Types.ObjectId(input.requestedByUserId) }),
+        $unset: expect.objectContaining({ error: 1, leaseToken: 1, nextAttemptAt: 1 }),
+      },
+      { new: true, sort: { createdAt: -1 } },
     );
   });
 

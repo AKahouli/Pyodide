@@ -10,12 +10,12 @@ const MAX_RESULTS = 20;
 export class LogicalSearchEvidenceService {
   constructor(private readonly runtime: ConnectorMcpRuntimeService) {}
 
-  async search(input: { connectorId: string; workspaceId: string; documentId: string; sourceVersionId: string; fileName: string }): Promise<SourceValidityEvidence[]> {
+  async search(input: { connectorId: string; workspaceId: string; authorizationUserId: string; documentId: string; sourceVersionId: string; fileName: string }): Promise<SourceValidityEvidence[]> {
     const { connectorId } = input;
     const queries = ['effective start date publication date', 'expiry deadline valid until review duration'];
     const evidence: SourceValidityEvidence[] = [];
     for (const query of queries) {
-      const response = await this.callSearch(connectorId, query, input.workspaceId);
+      const response = await this.callSearch(connectorId, query, input.workspaceId, input.authorizationUserId);
       for (const row of this.collectObjects(response.value).slice(0, MAX_RESULTS)) {
         const fileName = this.readString(row, ['file_name', 'fileName', 'filename', 'name']);
         if (!fileName || fileName.trim().toLocaleLowerCase() !== input.fileName.trim().toLocaleLowerCase()) continue;
@@ -30,12 +30,12 @@ export class LogicalSearchEvidenceService {
     return Array.from(new Map(evidence.map((item) => [item.id, item])).values());
   }
 
-  private async callSearch(connectorId: string, query: string, workspaceId: string) {
+  private async callSearch(connectorId: string, query: string, workspaceId: string, authorizationUserId: string) {
     try {
-      return await this.runtime.callTool({ connectorId, workspaceId, toolName: 'search_relevant_documents', allowedTools: SEARCH_TOOLS, arguments: { query, workspace_id: workspaceId, top_k: 10 }, authoritativeHeaders: { 'Workspace-Id': workspaceId, 'X-Deep-Search': 'true', 'X-mistral': 'false' } });
+      return await this.runtime.callTool({ connectorId, workspaceId, authorizationUserId, toolName: 'search_relevant_documents', allowedTools: SEARCH_TOOLS, arguments: { query, workspace_id: workspaceId, top_k: 10 }, authoritativeHeaders: { 'Workspace-Id': workspaceId, 'X-Deep-Search': 'true', 'X-mistral': 'false' } });
     } catch (error) {
       if (!(error instanceof BadRequestException) || !String(error.message).includes('does not expose')) throw error;
-      return this.runtime.callTool({ connectorId, workspaceId, toolName: 'search', allowedTools: SEARCH_TOOLS, arguments: { query, workspace_id: workspaceId }, authoritativeHeaders: { 'Workspace-Id': workspaceId, 'X-Deep-Search': 'true', 'X-mistral': 'false' } });
+      return this.runtime.callTool({ connectorId, workspaceId, authorizationUserId, toolName: 'search', allowedTools: SEARCH_TOOLS, arguments: { query, workspace_id: workspaceId }, authoritativeHeaders: { 'Workspace-Id': workspaceId, 'X-Deep-Search': 'true', 'X-mistral': 'false' } });
     }
   }
 

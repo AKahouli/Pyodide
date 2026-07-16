@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Sparkles, Wrench } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles, Wrench } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConversationStreamActivity } from '../utils';
@@ -79,9 +79,12 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className='mx-2 mb-2 shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4'>
       <div className='flex min-w-0 items-center gap-3 px-1'>
         <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          <span className='absolute inset-0 animate-ping rounded-full bg-primary/25 motion-reduce:animate-none' />
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
-          <Sparkles className='size-4 animate-pulse text-primary motion-reduce:animate-none' />
+          {isComplete ? (
+            <Sparkles className='size-4 text-primary' />
+          ) : (
+            <Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />
+          )}
         </span>
         <div className='min-w-0 flex-1'>
           {isComplete ? (

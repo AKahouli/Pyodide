@@ -14,6 +14,7 @@ const SENSITIVE_HEADER_PATTERN = /authorization|api[-_]?key|token|secret|cookie/
 export interface ConnectorMcpToolCallInput {
   connectorId: string;
   workspaceId: string;
+  authorizationUserId: string;
   toolName: string;
   arguments: Record<string, unknown>;
   allowedTools: readonly string[];
@@ -55,9 +56,9 @@ export class ConnectorMcpRuntimeService {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector does not allow this read operation.');
     }
 
-    const executionUserId = connector.createdBy.toString();
-    await this.workspaceShares.assertUserHasAccess(executionUserId, [input.workspaceId]);
-    const resolvedAuth = await this.auth.resolveRuntimeAuth(executionUserId, {
+    await this.workspaceShares.assertUserHasAccess(input.authorizationUserId, [input.workspaceId]);
+    const credentialOwnerUserId = connector.createdBy.toString();
+    const resolvedAuth = await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
       authSourceType: connector.authSourceType,
       connectedAppKey: connector.connectedAppKey,
       runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
@@ -67,7 +68,7 @@ export class ConnectorMcpRuntimeService {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector has no usable background credential.');
     }
 
-    const dynamicHeaders = await this.auth.resolveDynamicHeaders(executionUserId, connector.dynamicHeaders ?? []);
+    const dynamicHeaders = await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []);
     const headers = {
       ...this.safeConfiguredHeaders(connector.mcpServerConfig),
       ...resolvedAuth.headers,

@@ -48,15 +48,16 @@ export class GovernanceTemporalIntelligenceWorkerService {
       const source = await this.sources.findById(job.sourceId).exec();
       if (!version || !source || source.isArchived || source.currentCandidateVersionId?.toString() !== version._id.toString() || version.technicalStatus !== 'ready' || ['rejected', 'superseded'].includes(version.lifecycleStatus)) throw new Error('The extraction target is no longer the current ready source version.');
       if (!version.workspaceId || !version.documentId) throw new Error('The source version is not bound to a workspace document.');
+      if (!job.requestedByUserId) throw new Error('This legacy extraction job has no authorization principal. Start evidence search again.');
       const document = await this.documents.findOne({ _id: version.documentId, workspaceId: version.workspaceId }).lean().exec();
       this.assertIdentity(version, document);
       if (job.jobType === 'technical_metadata') {
         if (!await this.jobs.heartbeat(job._id.toString(), leaseToken)) throw new Error('The extraction job lease was lost.');
         version.extractedMetadata = { ...version.extractedMetadata, fileName: document.originalName, mimeType: document.mimeType, fileSize: document.size, technicalMetadataExtractedAt: new Date() };
         await version.save();
-        await this.jobs.enqueue({ programId: job.programId.toString(), sourceId: job.sourceId.toString(), sourceVersionId: job.sourceVersionId.toString(), connectorId: job.connectorId.toString(), jobType: 'temporal_extraction', inputHash: createHash('sha256').update(`${job.inputHash}:${document.originalName}`).digest('hex'), engineVersion: 'temporal-regex-v1' });
+        await this.jobs.enqueue({ programId: job.programId.toString(), sourceId: job.sourceId.toString(), sourceVersionId: job.sourceVersionId.toString(), connectorId: job.connectorId.toString(), requestedByUserId: job.requestedByUserId.toString(), jobType: 'temporal_extraction', inputHash: createHash('sha256').update(`${job.inputHash}:${document.originalName}`).digest('hex'), engineVersion: 'temporal-regex-v1' });
       } else {
-        const rawEvidence = await this.search.search({ connectorId: job.connectorId.toString(), workspaceId: version.workspaceId.toString(), documentId: version.documentId.toString(), sourceVersionId: version._id.toString(), fileName: document.originalName });
+        const rawEvidence = await this.search.search({ connectorId: job.connectorId.toString(), workspaceId: version.workspaceId.toString(), authorizationUserId: job.requestedByUserId.toString(), documentId: version.documentId.toString(), sourceVersionId: version._id.toString(), fileName: document.originalName });
         if (!await this.jobs.heartbeat(job._id.toString(), leaseToken)) throw new Error('The extraction job lease was lost.');
         const extracted = this.extractor.extract(rawEvidence);
         const validation = this.validator.validateSet(extracted.map((item) => item.candidate), { evidence: extracted.map((item) => item.evidence), reviewFrequencyDays: version.validity.reviewFrequencyDays });

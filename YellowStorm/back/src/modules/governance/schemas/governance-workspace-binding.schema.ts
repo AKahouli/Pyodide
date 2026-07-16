@@ -21,3 +21,13 @@ export const GovernanceWorkspaceBindingSchema = SchemaFactory.createForClass(Gov
 GovernanceWorkspaceBindingSchema.index({ programId: 1, workspaceId: 1 }, { unique: true });
 GovernanceWorkspaceBindingSchema.index({ programId: 1, scopeIds: 1 });
 GovernanceWorkspaceBindingSchema.index({ workspaceId: 1, enabled: 1 });
+GovernanceWorkspaceBindingSchema.set('toJSON', {
+  virtuals: true,
+  transform: (_document, returned) => {
+    const serialized = returned as unknown as Record<string, unknown>;
+    serialized.id = serialized._id?.toString();
+    delete serialized._id;
+    delete serialized.__v;
+    return serialized;
+  },
+});

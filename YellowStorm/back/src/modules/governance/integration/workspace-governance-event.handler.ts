@@ -69,7 +69,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
       const isCurrentCandidate = source.currentCandidateVersionId?.toString() === updatedVersion._id.toString();
       if (status === 'ready' && acceptedAttempt && isCurrentCandidate && !['rejected', 'superseded'].includes(updatedVersion.lifecycleStatus) && updatedVersion.technicalStatus === 'ready' && this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) {
         const { connectorId } = await this.evidenceSettings.getSettings();
-        if (connectorId) await this.intelligence.enqueue({ programId, sourceId: source._id.toString(), sourceVersionId: updatedVersion._id.toString(), connectorId, jobType: 'technical_metadata', inputHash: createHash('sha256').update(JSON.stringify({ sourceVersionId: updatedVersion._id.toString(), documentId: updatedVersion.documentId?.toString(), contentHash: updatedVersion.contentHash, indexingAttemptId: updatedVersion.indexingAttemptId ?? null, connectorId })).digest('hex'), engineVersion: 'technical-metadata-v1' });
+        if (connectorId) await this.intelligence.enqueue({ programId, sourceId: source._id.toString(), sourceVersionId: updatedVersion._id.toString(), connectorId, requestedByUserId: binding.createdBy.toString(), jobType: 'technical_metadata', inputHash: createHash('sha256').update(JSON.stringify({ sourceVersionId: updatedVersion._id.toString(), documentId: updatedVersion.documentId?.toString(), contentHash: updatedVersion.contentHash, indexingAttemptId: updatedVersion.indexingAttemptId ?? null, connectorId })).digest('hex'), engineVersion: 'technical-metadata-v1' });
       }
       } catch (error) {
         this.logger.error('Failed to process workspace event for governance binding', {
