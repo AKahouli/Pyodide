@@ -340,7 +340,7 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('root.style.setProperty("--ys-panel-height","1080px")');
   });
 
-  it('wires citation badges to signed URLs and PDF page fragments', () => {
+  it('wires citation badges to signed URLs and inline PDF rendering', () => {
     const snippet = buildWidgetSnippet({
       agentId: 'agent-id',
       embedHandle: 'embed-token',
@@ -357,25 +357,24 @@ describe('buildWidgetSnippet', () => {
     expect(snippet).toContain('ys-comp-citation-badge');
     expect(snippet).toContain('data-ys-page');
     expect(snippet).toContain('data-ys-highlight');
-    expect(snippet).toContain('ys-file-viewer-quote');
-    expect(snippet).toContain('ys-file-viewer-quote-mark');
-    expect(snippet).toContain('_ysBuildPdfPreviewUrl');
-    expect(snippet).toContain('pdf-citation-viewer.html');
+    expect(snippet).toContain('_ysRenderPdfInline');
+    expect(snippet).toContain('_ysLoadPdfJs');
+    expect(snippet).toContain('pdfjs-dist@4.10.38');
     expect(snippet).toContain('_ysPdfSearchQuery');
-    expect(snippet).toContain('"page="');
-    expect(snippet).toContain('"search="');
-    expect(snippet).toContain('phrase=true');
-    expect(snippet).toContain('view=FitH');
+    expect(snippet).toContain('ys-pdf-hl');
     expect(snippet).toContain('ys-quote-pulse');
     expect(snippet).toContain('CITATION_URL_API_URL');
     expect(snippet).toContain('_ysStreamSessionId===SESSION_ID');
+    expect(snippet).not.toContain('createElement("iframe")');
+    expect(snippet).not.toContain('pdf-citation-viewer.html');
   });
 
-  it('builds PDF citation viewer URLs with page and highlight query', () => {
+  it('renders PDFs inline with page and highlight search (no iframe)', () => {
     const snippet = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
-    expect(snippet).toContain('pdf-citation-viewer.html?');
-    expect(snippet).toContain('&page=');
-    expect(snippet).toContain('&q=');
-    expect(snippet).toContain('_ysWidgetCdnOrigin');
+    expect(snippet).toContain('_ysRenderPdfInline');
+    expect(snippet).toContain('_ysPdfRunSearch');
+    expect(snippet).toContain('ys-pdf-toolbar');
+    expect(snippet).not.toContain('pdf-citation-viewer.html');
+    expect(snippet).not.toContain('createElement("iframe")');
   });
 });
