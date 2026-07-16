@@ -7,6 +7,7 @@ describe('WorkyMessageController', () => {
   let orchestrator: { runTask: jest.Mock };
   let models: { getDefaultModel: jest.Mock; getModelIdentifier: jest.Mock };
   let connectorService: { findBySlug: jest.Mock; findByIdsForGrpc: jest.Mock };
+  let config: { get: jest.Mock };
   let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock };
 
   beforeEach(() => {
@@ -34,6 +35,9 @@ describe('WorkyMessageController', () => {
         .fn()
         .mockResolvedValue([{ connector_id: 'c1' }, { connector_id: 'c2' }]),
     };
+    config = {
+      get: jest.fn().mockReturnValue(''),
+    };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -47,6 +51,7 @@ describe('WorkyMessageController', () => {
       orchestrator as any,
       models as any,
       connectorService as any,
+      config as any,
       logger as any,
     );
   });
@@ -87,6 +92,27 @@ describe('WorkyMessageController', () => {
         connectors: [{ connector_id: 'c1' }, { connector_id: 'c2' }],
       }),
     );
+  });
+
+  it('injects the shared MCP bearer token for keyless streamable_http connectors (v1 parity)', async () => {
+    planning.appendOwnerMessage.mockResolvedValue({ id: 'm1', content: 'hi', createdAt: 'now' });
+    streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz', managerModelId: null });
+    config.get.mockReturnValue('mcp-secret');
+    connectorService.findByIdsForGrpc.mockResolvedValue([
+      { connector_id: 'c1', mcp_transport_type: 'streamable_http', auth_headers: {} },
+      { connector_id: 'c2', mcp_transport_type: 'stdio', auth_headers: {} },
+      { connector_id: 'c3', mcp_transport_type: 'streamable_http', auth_headers: { Authorization: 'Bearer existing' } },
+    ]);
+    const user = { _id: { toString: () => 'user-1' } } as any;
+
+    await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
+
+    const sent = orchestrator.runTask.mock.calls[0][3].connectors as Array<{
+      auth_headers: Record<string, string>;
+    }>;
+    expect(sent[0].auth_headers.Authorization).toBe('Bearer mcp-secret'); // keyless streamable_http → injected
+    expect(sent[1].auth_headers.Authorization).toBeUndefined(); // stdio → untouched
+    expect(sent[2].auth_headers.Authorization).toBe('Bearer existing'); // already authed → untouched
   });
 
   it('sends no connectors and still kicks off when connector resolution fails', async () => {
