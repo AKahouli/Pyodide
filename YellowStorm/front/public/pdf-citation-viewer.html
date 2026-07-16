@@ -1,61 +1,135 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Citation PDF</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f1f5f9;
-      --ink: #0f172a;
-      --muted: #64748b;
+      color-scheme: dark;
+      --bg: #2b2b2b;
+      --bar: #1f1f1f;
+      --ink: #f3f4f6;
+      --muted: #9ca3af;
       --mark: rgba(250, 204, 21, 0.55);
-      --mark-active: rgba(245, 158, 11, 0.72);
+      --mark-active: rgba(245, 158, 11, 0.75);
       --ring: #f59e0b;
+      --btn: #374151;
+      --btn-hover: #4b5563;
+      --input: #111827;
+      --border: #4b5563;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
+      width: 100%;
       height: 100%;
+      overflow: hidden;
       background: var(--bg);
       color: var(--ink);
       font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
     }
     #status {
-      padding: 14px 16px;
+      padding: 16px;
       color: var(--muted);
     }
-    #status.error { color: #b91c1c; }
+    #status.error { color: #fca5a5; }
+    #app {
+      display: none;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+    }
     #toolbar {
-      position: sticky;
-      top: 0;
-      z-index: 2;
+      flex: 0 0 auto;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      background: #fff;
-      border-bottom: 1px solid #e2e8f0;
-      box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bar);
+      border-bottom: 1px solid #111;
+      min-width: 0;
     }
-    #toolbar strong { font-size: 12px; }
-    #toolbar span { color: var(--muted); font-size: 12px; }
+    #searchForm {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+    }
+    #searchIcon {
+      flex: 0 0 auto;
+      color: var(--muted);
+      display: inline-flex;
+    }
+    #searchInput {
+      flex: 1;
+      min-width: 0;
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--input);
+      color: var(--ink);
+      padding: 0 10px;
+      font: inherit;
+      outline: none;
+    }
+    #searchInput:focus {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+    }
+    .tb-btn {
+      flex: 0 0 auto;
+      height: 34px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--btn);
+      color: var(--ink);
+      padding: 0 10px;
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tb-btn:hover { background: var(--btn-hover); }
+    .tb-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .tb-btn.icon {
+      width: 34px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #matchMeta {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 3.5rem;
+      text-align: center;
+    }
     #scroll {
-      height: calc(100% - 41px);
+      flex: 1 1 auto;
+      min-height: 0;
       overflow: auto;
-      padding: 16px;
+      padding: 16px 12px 24px;
+      background: var(--bg);
       scroll-behavior: smooth;
     }
     .page-wrap {
       position: relative;
-      width: fit-content;
-      max-width: 100%;
+      width: 100%;
+      max-width: 920px;
       margin: 0 auto 18px;
       background: #fff;
-      box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     }
-    canvas { display: block; max-width: 100%; height: auto; }
+    .page-wrap canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
     .hl {
       position: absolute;
       background: var(--mark);
@@ -66,21 +140,40 @@
     .hl.active {
       background: var(--mark-active);
       box-shadow: 0 0 0 2px var(--ring);
-      animation: pulse 1.2s ease-in-out 2;
+      animation: pulse 1.1s ease-in-out 2;
     }
     @keyframes pulse {
       0%, 100% { box-shadow: 0 0 0 2px var(--ring); }
       50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.35); }
     }
+    @media (max-width: 640px) {
+      #toolbar { flex-wrap: wrap; }
+      #matchMeta { min-width: 2.75rem; }
+      .tb-btn:not(.icon) { padding: 0 8px; }
+    }
   </style>
 </head>
 <body>
-  <div id="toolbar" hidden>
-    <strong id="pageLabel">PDF</strong>
-    <span id="matchLabel"></span>
+  <div id="status">Chargement du PDF…</div>
+  <div id="app">
+    <div id="toolbar">
+      <form id="searchForm" autocomplete="off">
+        <span id="searchIcon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+        </span>
+        <input id="searchInput" type="search" name="q" placeholder="Rechercher dans le PDF…" />
+        <button class="tb-btn" type="submit" id="searchBtn">Rechercher</button>
+        <button class="tb-btn" type="button" id="clearBtn">✕ Effacer</button>
+      </form>
+      <span id="matchMeta">0/0</span>
+      <button class="tb-btn icon" type="button" id="prevBtn" aria-label="Résultat précédent" title="Précédent">▲</button>
+      <button class="tb-btn icon" type="button" id="nextBtn" aria-label="Résultat suivant" title="Suivant">▼</button>
+    </div>
+    <div id="scroll"></div>
   </div>
-  <div id="status">Loading PDF…</div>
-  <div id="scroll" hidden></div>
 
   <script type="module">
     import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
@@ -91,35 +184,50 @@
     const params = new URLSearchParams(window.location.search);
     const fileUrl = params.get('file') || '';
     const pageParam = Number.parseInt(params.get('page') || '', 10);
-    const query = (params.get('q') || '').trim().replace(/\s+/g, ' ');
+    const initialQuery = (params.get('q') || '').trim().replace(/\s+/g, ' ');
 
     const statusEl = document.getElementById('status');
+    const appEl = document.getElementById('app');
     const scrollEl = document.getElementById('scroll');
-    const toolbarEl = document.getElementById('toolbar');
-    const pageLabelEl = document.getElementById('pageLabel');
-    const matchLabelEl = document.getElementById('matchLabel');
+    const searchForm = document.getElementById('searchForm');
+    const searchInput = document.getElementById('searchInput');
+    const clearBtn = document.getElementById('clearBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const matchMeta = document.getElementById('matchMeta');
+
+    /** @type {import('pdfjs-dist').PDFDocumentProxy | null} */
+    let pdfDoc = null;
+    /** @type {Array<{ page: number, el: HTMLElement }>} */
+    let matches = [];
+    let activeIndex = -1;
+    let currentNeedle = '';
 
     function setError(message) {
       statusEl.hidden = false;
       statusEl.className = 'error';
       statusEl.textContent = message;
-      scrollEl.hidden = true;
-      toolbarEl.hidden = true;
+      appEl.style.display = 'none';
     }
 
     function normalize(text) {
-      return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      return String(text || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
     }
 
     function buildSearchNeedle(raw) {
       const clean = normalize(raw);
       if (!clean) return '';
-      if (clean.length <= 90) return clean;
+      if (clean.length <= 120) return clean;
       const words = clean.split(' ');
       const out = [];
       for (let i = 0; i < words.length; i += 1) {
         out.push(words[i]);
-        if (out.join(' ').length >= 70) break;
+        if (out.join(' ').length >= 90) break;
       }
       return out.join(' ');
     }
@@ -129,13 +237,12 @@
       const fontHeight = Math.hypot(tx[2], tx[3]);
       const left = tx[4];
       const top = tx[5] - fontHeight;
-      const width = item.width * viewport.scale;
-      const height = fontHeight;
+      const width = (item.width || 0) * viewport.scale;
       return {
         left,
         top,
         width: Math.max(width, 2),
-        height: Math.max(height, 2),
+        height: Math.max(fontHeight, 2),
       };
     }
 
@@ -148,30 +255,42 @@
         if (idx < 0) break;
         ranges.push({ start: idx, end: idx + needle.length });
         from = idx + Math.max(1, needle.length);
-        if (ranges.length >= 8) break;
+        if (ranges.length >= 40) break;
       }
       return ranges;
     }
 
-    async function renderPage(pdf, pageNumber, needle, active) {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 1.35 });
-      const wrap = document.createElement('div');
-      wrap.className = 'page-wrap';
-      wrap.dataset.page = String(pageNumber);
+    function fitScale(page) {
+      const base = page.getViewport({ scale: 1 });
+      const available = Math.max(280, scrollEl.clientWidth - 24);
+      const scale = Math.min(2.2, available / base.width);
+      return Math.max(1.05, scale);
+    }
 
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.width = '100%';
-      wrap.appendChild(canvas);
+    function clearHighlights() {
+      scrollEl.querySelectorAll('.hl').forEach((node) => node.remove());
+      matches = [];
+      activeIndex = -1;
+      matchMeta.textContent = '0/0';
+      prevBtn.disabled = true;
+      nextBtn.disabled = true;
+    }
 
-      await page.render({ canvasContext: context, viewport }).promise;
+    function updateMatchUi() {
+      const total = matches.length;
+      const current = total ? activeIndex + 1 : 0;
+      matchMeta.textContent = `${current}/${total}`;
+      prevBtn.disabled = total < 2;
+      nextBtn.disabled = total < 2;
+      scrollEl.querySelectorAll('.hl.active').forEach((el) => el.classList.remove('active'));
+      if (activeIndex >= 0 && matches[activeIndex]) {
+        matches[activeIndex].el.classList.add('active');
+        matches[activeIndex].el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }
+    }
 
-      const highlights = [];
-      if (needle) {
-        const textContent = await page.getTextContent();
+    function applyHighlightsForPage(wrap, page, viewport, needle) {
+      return page.getTextContent().then((textContent) => {
         const items = textContent.items.filter((item) => typeof item.str === 'string');
         let haystack = '';
         const map = [];
@@ -182,37 +301,108 @@
           if (haystack && !haystack.endsWith(' ') && str) haystack += ' ';
           const start = haystack.length;
           haystack += str;
-          if (str) {
-            map.push({ start, end: haystack.length, item: items[i] });
-          }
+          if (str) map.push({ start, end: haystack.length, item: items[i] });
           if (items[i].hasEOL && !haystack.endsWith(' ')) haystack += ' ';
         }
+
         const ranges = findMatchRanges(haystack, needle);
+        const pageNumber = Number(wrap.dataset.page);
         for (let r = 0; r < ranges.length; r += 1) {
           const range = ranges[r];
+          let firstMark = null;
           for (let m = 0; m < map.length; m += 1) {
             const entry = map[m];
             if (entry.end <= range.start || entry.start >= range.end) continue;
             const rect = itemRect(entry.item, viewport);
             const mark = document.createElement('div');
-            mark.className = 'hl' + (active && r === 0 ? ' active' : '');
+            mark.className = 'hl';
             mark.style.left = `${(rect.left / viewport.width) * 100}%`;
             mark.style.top = `${(rect.top / viewport.height) * 100}%`;
             mark.style.width = `${(rect.width / viewport.width) * 100}%`;
             mark.style.height = `${(rect.height / viewport.height) * 100}%`;
             wrap.appendChild(mark);
-            if (active && r === 0) highlights.push(mark);
+            if (!firstMark) firstMark = mark;
           }
+          if (firstMark) matches.push({ page: pageNumber, el: firstMark });
         }
-      }
+      });
+    }
 
+    async function renderPage(pageNumber) {
+      const page = await pdfDoc.getPage(pageNumber);
+      const scale = fitScale(page);
+      const viewport = page.getViewport({ scale });
+      const wrap = document.createElement('div');
+      wrap.className = 'page-wrap';
+      wrap.dataset.page = String(pageNumber);
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d', { alpha: false });
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      wrap.appendChild(canvas);
       scrollEl.appendChild(wrap);
-      return { wrap, highlights };
+
+      await page.render({ canvasContext: context, viewport, intent: 'display' }).promise;
+      if (currentNeedle) {
+        await applyHighlightsForPage(wrap, page, viewport, currentNeedle);
+      }
+      return wrap;
+    }
+
+    async function renderAllPages() {
+      scrollEl.innerHTML = '';
+      clearHighlights();
+      const wraps = [];
+      for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
+        wraps.push(await renderPage(pageNumber));
+      }
+      if (currentNeedle && matches.length) {
+        activeIndex = 0;
+        // Prefer first match on requested page when possible.
+        if (Number.isFinite(pageParam) && pageParam >= 1) {
+          const idx = matches.findIndex((m) => m.page === pageParam);
+          if (idx >= 0) activeIndex = idx;
+        }
+        updateMatchUi();
+      } else if (Number.isFinite(pageParam) && pageParam >= 1) {
+        const target = scrollEl.querySelector(`[data-page="${Math.min(pageParam, pdfDoc.numPages)}"]`);
+        if (target) {
+          requestAnimationFrame(() => {
+            target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          });
+        }
+        matchMeta.textContent = '0/0';
+      } else {
+        matchMeta.textContent = '0/0';
+      }
+      return wraps;
+    }
+
+    async function runSearch(rawQuery, { jump = true } = {}) {
+      currentNeedle = buildSearchNeedle(rawQuery);
+      searchInput.value = rawQuery || '';
+      await renderAllPages();
+      if (!jump) return;
+      if (matches.length) {
+        activeIndex = 0;
+        if (Number.isFinite(pageParam) && pageParam >= 1) {
+          const idx = matches.findIndex((m) => m.page === pageParam);
+          if (idx >= 0) activeIndex = idx;
+        }
+        updateMatchUi();
+      }
+    }
+
+    function goMatch(delta) {
+      if (!matches.length) return;
+      activeIndex = (activeIndex + delta + matches.length) % matches.length;
+      updateMatchUi();
     }
 
     async function main() {
       if (!fileUrl) {
-        setError('Missing PDF file URL.');
+        setError('URL du PDF manquante.');
         return;
       }
 
@@ -222,49 +412,40 @@
           withCredentials: false,
           isEvalSupported: false,
         });
-        const pdf = await loadingTask.promise;
-        const needle = buildSearchNeedle(query);
-        const targetPage = Number.isFinite(pageParam) && pageParam >= 1
-          ? Math.min(pageParam, pdf.numPages)
-          : 1;
+        pdfDoc = await loadingTask.promise;
 
         statusEl.hidden = true;
-        toolbarEl.hidden = false;
-        scrollEl.hidden = false;
-        pageLabelEl.textContent = `Page ${targetPage} / ${pdf.numPages}`;
+        appEl.style.display = 'flex';
+        searchInput.value = initialQuery;
+        currentNeedle = buildSearchNeedle(initialQuery);
 
-        const pagesToRender = new Set([targetPage]);
-        if (targetPage > 1) pagesToRender.add(targetPage - 1);
-        if (targetPage < pdf.numPages) pagesToRender.add(targetPage + 1);
+        await renderAllPages();
 
-        let activeHighlights = [];
-        const ordered = Array.from(pagesToRender).sort((a, b) => a - b);
-        for (const pageNumber of ordered) {
-          const result = await renderPage(pdf, pageNumber, needle, pageNumber === targetPage);
-          if (pageNumber === targetPage) activeHighlights = result.highlights;
-        }
-
-        const focusEl = activeHighlights[0] || scrollEl.querySelector(`[data-page="${targetPage}"]`);
-        if (focusEl) {
-          requestAnimationFrame(() => {
-            focusEl.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-          });
-        }
-
-        if (needle) {
-          matchLabelEl.textContent = activeHighlights.length
-            ? 'Cited text highlighted'
-            : 'Cited text not found on this page — showing target page';
-        } else {
-          matchLabelEl.textContent = 'Opened at cited page';
-        }
+        let resizeTimer = 0;
+        window.addEventListener('resize', () => {
+          window.clearTimeout(resizeTimer);
+          resizeTimer = window.setTimeout(() => {
+            runSearch(searchInput.value, { jump: false });
+          }, 180);
+        });
       } catch (error) {
-        const message = error && error.message ? error.message : 'Could not open PDF';
+        const message = error && error.message ? error.message : 'Impossible d’ouvrir le PDF';
         setError(
-          `${message}. If this persists, open the document in a new tab (CORS may block in-widget preview).`,
+          `${message}. Si le problème continue, ouvrez le document dans un nouvel onglet (CORS éventuel).`,
         );
       }
     }
+
+    searchForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      runSearch(searchInput.value);
+    });
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      runSearch('');
+    });
+    prevBtn.addEventListener('click', () => goMatch(-1));
+    nextBtn.addEventListener('click', () => goMatch(1));
 
     main();
   </script>
