@@ -29,12 +29,19 @@ describe('buildWidgetRuntimeSource', () => {
     const source = buildWidgetRuntimeSource({ apiBaseUrl: 'http://localhost:3000/api/v1' });
     expect(source).toContain('document.currentScript');
     expect(source).toContain('widget-embed\\.js');
-    expect(source).toContain('var __apiBase="http://localhost:3000/api/v1"');
+    expect(source).toContain('__ysResolveApiBase("http://localhost:3000/api/v1")');
     expect(source).toContain('__ysParam("token")');
     expect(source).toContain('payload.agentId');
     expect(source).toContain('/widget/chat');
     expect(source).not.toContain('data-api');
     expect(source).not.toContain('<script>');
+  });
+
+  it('defaults to the frontend production API placeholder for env.sh injection', () => {
+    const source = buildWidgetRuntimeSource();
+    expect(source).toContain('__ysResolveApiBase("MY_APP_VITE_API_URL")');
+    expect(source).toContain('function __ysResolveApiBase');
+    expect(source).not.toContain('__ysResolveApiBase("http://localhost:3000/api/v1")');
   });
 });
 

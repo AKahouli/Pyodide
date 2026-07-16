@@ -577,14 +577,16 @@ export function buildWidgetRuntimeSource(params?: { apiBaseUrl?: string }): stri
     'WIDGET_HTML_PLACEHOLDER',
     stringifyForScript(widgetHtml),
   );
-  const apiBase = (params?.apiBaseUrl || 'http://localhost:3000/api/v1').replace(/\/$/, '');
+  // Same production placeholder as src/lib/api/config.ts — env.sh replaces it at deploy.
+  const apiBase = (params?.apiBaseUrl || 'MY_APP_VITE_API_URL').replace(/\/$/, '');
   const bootstrap = [
     'var __ysScript=document.currentScript;',
     'if(!__ysScript){var __ysScripts=document.getElementsByTagName("script");for(var __ysI=__ysScripts.length-1;__ysI>=0;__ysI--){var __ysCand=__ysScripts[__ysI];if(__ysCand&&__ysCand.src&&/widget-embed\\.js(?:\\?|$)/i.test(__ysCand.src)){__ysScript=__ysCand;break;}}}',
     'function __ysAttr(name,fallback){var v=__ysScript&&__ysScript.getAttribute?__ysScript.getAttribute(name):null;return(v==null||v==="")?(fallback||""):v;}',
     'var __ysQuery=null;try{if(__ysScript&&__ysScript.src)__ysQuery=new URL(__ysScript.src).searchParams;}catch(_e){}',
     'function __ysParam(name){var fromAttr=__ysAttr(name);if(fromAttr)return fromAttr;return(__ysQuery&&__ysQuery.get(name))||"";}',
-    'var __apiBase=' + stringifyForScript(apiBase) + ';',
+    'function __ysResolveApiBase(baked){var b=String(baked||"").replace(/\\/$/,"");if(b&&b.indexOf("MY_APP_")!==0)return b;try{if(__ysScript&&__ysScript.src){var origin=new URL(__ysScript.src).origin;if(/^https?:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d+)?$/i.test(origin))return"http://localhost:3000/api/v1";return origin+"/api/v1";}}catch(_e){}return"http://localhost:3000/api/v1";}',
+    'var __apiBase=__ysResolveApiBase(' + stringifyForScript(apiBase) + ');',
     'var YS_EMBED_HANDLE=__ysParam("data-token")||__ysParam("token");',
     'var AGENT_ID="";',
     'var AGENT_NAME="AI Assistant";',

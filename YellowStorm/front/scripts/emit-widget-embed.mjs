@@ -2,10 +2,12 @@
  * Emits the YellowStorm chat widget runtime to the frontend public CDN asset
  * served at {appOrigin}/widget-embed.js.
  *
- * API base resolution:
- * - VITE_API_URL (when provided)
- * - production/CI fallback placeholder: MY_APP_VITE_API_URL
- * - local dev fallback: http://localhost:3000/api/v1
+ * API base resolution (same pattern as the SPA in src/lib/api/config.ts):
+ * - VITE_API_URL when explicitly provided (local override only)
+ * - otherwise MY_APP_VITE_API_URL — replaced at container start by env.sh
+ *
+ * Never bake http://localhost:3000 into the committed public asset: that breaks
+ * production when the file is deployed as-is.
  *
  * Customer snippets only pass ?token=…
  *
@@ -27,12 +29,7 @@ function resolveApiBaseUrl() {
     return explicit.replace(/\/$/, '');
   }
 
-  const isProdLike = process.env.NODE_ENV === 'production' || process.env.CI === 'true';
-  if (isProdLike) {
-    return 'MY_APP_VITE_API_URL';
-  }
-
-  return 'http://localhost:3000/api/v1';
+  return 'MY_APP_VITE_API_URL';
 }
 
 const apiBaseUrl = resolveApiBaseUrl();
