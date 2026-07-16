@@ -42,7 +42,10 @@ RUN useradd -ms /bin/bash azureuser \
     && chown -R azureuser /usr/src/app
     
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation
+COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation/proto
+COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversation-v2/proto
+COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-flow/proto
+COPY --from=build /app/src/modules/agent/proto ./dist/modules/agent/proto
 COPY --from=build /app/node_modules ./node_modules
 COPY package.json ./
 
