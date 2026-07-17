@@ -70,8 +70,10 @@ def test_the_node_factory_builds_await_reply_from_the_step_kind():
 def _service():
     rm = MagicMock(
         set_step_status=AsyncMock(), set_waiting=AsyncMock(), set_session_status=AsyncMock(),
-        upsert_plan=AsyncMock(), add_message=AsyncMock(),
-        outstanding_interrupts=AsyncMock(return_value=[]))
+        upsert_plan=AsyncMock(), upsert_steps=AsyncMock(), add_message=AsyncMock(),
+        outstanding_interrupts=AsyncMock(return_value=[]),
+        register_mail_wait=AsyncMock(), cancel_mail_waits=AsyncMock(),
+        bind_mail_wait_interrupt=AsyncMock())
     svc = OrchestratorService(MagicMock(), rm, planner_model="m")
     return svc, rm
 
@@ -122,6 +124,55 @@ def test_a_plan_parked_only_on_mail_does_not_complete():
     assert plan.step("m").status is Status.BLOCKED
 
 
+# --- the wait lifecycle: minted at projection, bound at park ----------------
+
+def test_the_token_is_minted_before_any_mail_could_be_sent():
+    """It cannot be minted when the step parks: by then the send step has run and
+    the mail is gone. Projection is the last moment before that."""
+    svc, rm = _service()
+    asyncio.run(svc._project_plan("s1", _plan(), "u1"))
+
+    rm.register_mail_wait.assert_awaited_once()
+    kw = rm.register_mail_wait.await_args.kwargs
+    assert (kw["session_id"], kw["step_id"], kw["user_id"]) == ("s1", "m", "u1")
+    assert rm.register_mail_wait.await_args.args[0].startswith("YW-")
+    # Unbound: there is no interrupt to resume until the step actually parks.
+    assert kw.get("interrupt_id") is None
+    # Only the await_reply step gets one — not the ask step.
+    assert rm.register_mail_wait.await_count == 1
+
+
+def test_a_new_plan_drops_the_previous_plans_waits():
+    """A reply to a superseded plan's mail has nowhere to go, and leaving the
+    wait open holds a mailbox subscription for work nobody is doing."""
+    svc, rm = _service()
+    asyncio.run(svc._project_plan("s1", _plan(), "u1"))
+    rm.cancel_mail_waits.assert_awaited_once_with("s1")
+
+
+def test_a_plan_with_no_await_step_registers_nothing():
+    svc, rm = _service()
+    plan = Plan(id="p", title="t", goal="g", steps=[Step(id="a", kind="execute")])
+    asyncio.run(svc._project_plan("s1", plan, "u1"))
+    rm.register_mail_wait.assert_not_awaited()
+
+
+def test_parking_binds_the_interrupt_so_the_wait_becomes_deliverable():
+    svc, rm = _service()
+    interrupts = [("mail:plan@1/m@1", "m")]
+    rm.outstanding_interrupts.return_value = interrupts
+    asyncio.run(svc._finalize("s1", _plan(), interrupts))
+    rm.bind_mail_wait_interrupt.assert_awaited_once_with("s1", "m", "mail:plan@1/m@1")
+
+
+def test_an_ask_step_parking_binds_no_mail_wait():
+    svc, rm = _service()
+    interrupts = [("ask:plan@1/q@1", "q")]
+    rm.outstanding_interrupts.return_value = interrupts
+    asyncio.run(svc._finalize("s1", _plan(), interrupts))
+    rm.bind_mail_wait_interrupt.assert_not_awaited()
+
+
 if __name__ == "__main__":
     test_await_reply_parks_then_resumes_with_the_reply_body()
     test_only_a_chat_answerable_interrupt_is_an_ask()
@@ -129,4 +180,9 @@ if __name__ == "__main__":
     test_a_mail_wait_never_becomes_the_sessions_chat_interrupt()
     test_an_ask_alongside_a_mail_wait_is_the_one_the_chat_answers()
     test_a_plan_parked_only_on_mail_does_not_complete()
+    test_the_token_is_minted_before_any_mail_could_be_sent()
+    test_a_new_plan_drops_the_previous_plans_waits()
+    test_a_plan_with_no_await_step_registers_nothing()
+    test_parking_binds_the_interrupt_so_the_wait_becomes_deliverable()
+    test_an_ask_step_parking_binds_no_mail_wait()
     print("ok")

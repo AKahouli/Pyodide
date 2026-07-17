@@ -88,12 +88,18 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
         # Internal (not published to Electric): which step is waiting on which
         # email reply. The token travels in the outbound mail and comes back on
         # the reply; this is what turns it into (session, step, interrupt).
+        #
+        # Two-phase, because the token has to exist before the mail goes out but
+        # the interrupt id only exists once the step parks: the row is written at
+        # plan projection with interrupt_id NULL, and bound when the step blocks.
+        # A reply that beats the parking finds an unbound row and is not
+        # deliverable — see claim_mail_wait.
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'mail_waits')} (
                 token           TEXT PRIMARY KEY,
                 session_id      TEXT NOT NULL,
                 step_id         TEXT NOT NULL,
-                interrupt_id    TEXT NOT NULL,
+                interrupt_id    TEXT,           -- NULL until the step parks
                 user_id         TEXT NOT NULL,
                 mailbox_app_key TEXT,
                 expected_from   TEXT,
@@ -253,11 +259,16 @@ class ReadModel:
         return got is not None
 
     async def register_mail_wait(self, token: str, *, session_id: str, step_id: str,
-                                 interrupt_id: str, user_id: str,
+                                 user_id: str, interrupt_id: Optional[str] = None,
                                  mailbox_app_key: Optional[str] = None,
                                  expected_from: Optional[str] = None,
                                  expires_at=None) -> None:
-        """Record that `step_id` is parked until a reply carrying `token` arrives."""
+        """Record that `step_id` will wait for a reply carrying `token`.
+
+        Written at plan projection, before the mail is sent — the token has to be
+        in the outbound mail, and by the time the step parks the mail is long
+        gone. `interrupt_id` is unknown until then, so it is bound later by
+        bind_mail_wait_interrupt."""
         async with self._pool.acquire() as con:
             await con.execute(f"""
                 INSERT INTO {_q(self._schema,'mail_waits')}
@@ -268,9 +279,27 @@ class ReadModel:
             """, token, session_id, step_id, interrupt_id, user_id, mailbox_app_key,
                  expected_from, expires_at)
 
+    async def bind_mail_wait_interrupt(self, session_id: str, step_id: str,
+                                       interrupt_id: str) -> None:
+        """The step parked: from here its wait is deliverable."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET interrupt_id=$3 "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id, interrupt_id)
+
+    async def mail_token_for(self, session_id: str, step_id: str) -> Optional[str]:
+        """The token to stamp into the mail this step is waiting on a reply to."""
+        async with self._pool.acquire() as con:
+            return await con.fetchval(
+                f"SELECT token FROM {_q(self._schema,'mail_waits')} "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
+
     async def claim_mail_wait(self, token: str) -> Optional[dict]:
         """Atomically claim the wait for `token`: the row if this delivery is the
-        first to match it, None if unknown, already matched, expired or cancelled.
+        first to match it, None if unknown, already matched, expired, cancelled —
+        or not yet parked, since there is no interrupt to resume before then.
 
         Atomic because Graph retries a notification it thinks failed, and a
         duplicate must not resume the step twice — the second resume would answer
@@ -280,7 +309,7 @@ class ReadModel:
         async with self._pool.acquire() as con:
             row = await con.fetchrow(f"""
                 UPDATE {_q(self._schema,'mail_waits')} SET status='matched'
-                WHERE token=$1 AND status='waiting'
+                WHERE token=$1 AND status='waiting' AND interrupt_id IS NOT NULL
                 RETURNING *
             """, token)
         return dict(row) if row else None

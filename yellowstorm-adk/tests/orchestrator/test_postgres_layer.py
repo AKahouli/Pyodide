@@ -155,8 +155,8 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     await readmodel.init_schema(pool, SCHEMA)
     token = mail_token.mint()
     await rm.register_mail_wait(token, session_id="s1", step_id="m", user_id="u1",
-                                interrupt_id="mail:plan@1/m@1",
                                 expected_from="rabeb@example.com")
+    await rm.bind_mail_wait_interrupt("s1", "m", "mail:plan@1/m@1")
 
     # Ten concurrent deliveries of the same notification; exactly one wins.
     claims = await asyncio.gather(*[rm.claim_mail_wait(token) for _ in range(10)])
@@ -182,6 +182,7 @@ async def test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool):
                                 interrupt_id="mail:1", expires_at=past)
     await rm.register_mail_wait(fresh, session_id="s2", step_id="m2", user_id="u",
                                 interrupt_id="mail:2", expires_at=future)
+    assert await rm.mail_token_for("s2", "m2") == fresh
 
     expired = await rm.expire_mail_waits()
     assert [e["token"] for e in expired] == [stale], "only the past-due wait should expire"
@@ -192,6 +193,24 @@ async def test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool):
     await rm.cancel_mail_waits("s2")
     assert await rm.claim_mail_wait(fresh) is None, "a cancelled wait must not resolve"
     print("ok  mail wait: expiry and cancellation remove it from the waiting set")
+
+
+async def test_a_reply_that_beats_the_parking_is_not_deliverable(pool):
+    """The token exists from plan projection, but until the step actually parks
+    there is no interrupt to resume. A reply arriving in that window must not be
+    consumed — it would be claimed, marked matched, and resume nothing."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s3", step_id="m", user_id="u")
+
+    assert await rm.mail_token_for("s3", "m") == token, "the send step must find its token"
+    assert await rm.claim_mail_wait(token) is None, "unparked wait must not be claimable"
+
+    await rm.bind_mail_wait_interrupt("s3", "m", "mail:plan_s3@1/m@1")
+    won = await rm.claim_mail_wait(token)
+    assert won is not None and won["interrupt_id"] == "mail:plan_s3@1/m@1"
+    print("ok  mail wait: deliverable only once the step has parked")
 
 
 async def main():
@@ -205,6 +224,7 @@ async def main():
         await test_outstanding_interrupts_are_tracked_per_step(pool)
         await test_a_reply_claims_its_wait_exactly_once(pool)
         await test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool)
+        await test_a_reply_that_beats_the_parking_is_not_deliverable(pool)
         print("\nall postgres-layer tests passed")
     finally:
         async with pool.acquire() as con:

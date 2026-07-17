@@ -873,6 +873,24 @@ reply arrives → extract(subject, body) → token → DeliverMailReply(token, b
         <code>(session_id, step_id)</code> is what it resolves to, unique across every open session.
       </p>
       <p>
+        The wait is written in two phases, and the ordering is what forces it. The token has to be
+        <em>in</em> the mail, so it must exist before the send step runs — but the step that waits on
+        the reply only parks <em>after</em> that. By the time there is an interrupt id to resume, the
+        mail is long gone. So the row is written at plan projection with the token and no interrupt,
+        and the interrupt is bound when the step actually blocks:
+      </p>
+      <pre><code>project plan  → mint token, register wait   (interrupt_id NULL — nothing to resume yet)
+send step     → stamps the token into subject + body
+await step    → parks → bind_mail_wait_interrupt → now deliverable
+reply         → claim → resume</code></pre>
+      <p>
+        A reply that beats the parking finds an unbound row and is <em>not</em> claimable — being
+        claimed would mark it matched and resume nothing, losing the reply for good. Closing that
+        window is what the catch-up query is for. A fresh plan on the session cancels the previous
+        plan's waits: a reply to a superseded plan's mail has nowhere to go, and leaving the wait
+        open would hold a mailbox subscription (and its renewals) for work nobody is doing.
+      </p>
+      <p>
         <code>claim_mail_wait</code> is a single atomic <code>UPDATE … WHERE status='waiting'
         RETURNING *</code>, the same claim-once shape as <code>run_idempotency</code>. Graph retries
         any notification it thinks failed, so duplicate deliveries are routine, not an edge case —

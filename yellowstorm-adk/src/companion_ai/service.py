@@ -31,7 +31,7 @@ from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.genai import types
 
-from . import graph, hitl, nodes, scheduler
+from . import graph, hitl, mail_token, nodes, scheduler
 from .plan import Plan, Status, Step
 from .readmodel import ReadModel
 
@@ -214,7 +214,7 @@ class OrchestratorService:
 
         # STEP 7 — project the plan and its pending steps, so the client can
         # render the whole card before any step has run.
-        await self._project_plan(session_id, plan)
+        await self._project_plan(session_id, plan, user_id)
 
         # STEP 8 — connectors → executor tools, plan → ADK Workflow.
         factory = nodes.make_llm_node_factory(
@@ -392,6 +392,11 @@ class OrchestratorService:
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "blocked", blocked_reason=step.blocked_reason,
                 interrupt_id=interrupt_id))
+            if not hitl.is_ask(interrupt_id):
+                # The step is parked now, so its wait becomes deliverable: the
+                # token was minted at projection but had no interrupt to resume.
+                await self._project(self._rm and self._rm.bind_mail_wait_interrupt(
+                    session_id, step_id, interrupt_id))
             if hitl.is_ask(interrupt_id):
                 # Surface the ask-the-user question in the chat. A mail wait has
                 # nothing to ask the owner — it is waiting on the outside world.
@@ -459,7 +464,7 @@ class OrchestratorService:
         # which the API rejects when no tools are provided).
         return nodes.build_llm(self._planner_model, with_tools=False, temperature=0.0)
 
-    async def _project_plan(self, session_id: str, plan: Plan) -> None:
+    async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, "running"))
         rows = [(s.id, i, s.wave, s.status.value, s.kind, s.question or "",
@@ -468,6 +473,31 @@ class OrchestratorService:
                  ",".join(s.depends_on), s.agent or "")
                 for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
+        await self._register_mail_waits(session_id, plan, user_id)
+
+    async def _register_mail_waits(self, session_id: str, plan: Plan, user_id: str) -> None:
+        """Mint a routing token for every step that will wait on a reply, before
+        any mail goes out.
+
+        It has to happen here and not when the step parks: the token travels in
+        the outbound mail, which the step it belongs to only waits on *after* the
+        send step already ran. So the row is written now, unbound, and the
+        interrupt id is bound when the step actually blocks.
+
+        This plan supersedes whatever the session was waiting on, so its old
+        waits are dropped — a reply to a superseded plan's mail has nowhere left
+        to go, and leaving it would hold a mailbox subscription open for work
+        nobody is doing.
+        """
+        if self._rm is None:
+            return
+        awaiting = [s for s in plan.steps if s.kind == "await_reply"]
+        await self._project(self._rm.cancel_mail_waits(session_id))
+        for step in awaiting:
+            token = mail_token.mint()
+            await self._project(self._rm.register_mail_wait(
+                token, session_id=session_id, step_id=step.id, user_id=user_id))
+            logger.info("[worky] 7. mail wait registered session=%s step=%s", session_id, step.id)
 
     async def _apply_event(self, session_id: str, plan: Plan, ev, name_to_step: dict, started: set) -> None:
         """STEP 9 (per event) — one ADK node event → one step status → one row
