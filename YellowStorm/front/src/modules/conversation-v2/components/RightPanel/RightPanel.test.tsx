@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { RightPanel } from './RightPanel';
 import { useConversationV2Store } from '../../store';
@@ -64,6 +64,34 @@ describe('RightPanel', () => {
     const deployButton = screen.getByRole('button', { name: /publishing/i });
     expect(deployButton).toBeDisabled();
     expect(deployButton).not.toHaveTextContent(/publish/i);
+  });
+
+  it('replaces the iframe URL when deployment returns the live URL', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    });
+    render(<RightPanel />);
+
+    expect(screen.getByTitle('Preview')).toHaveAttribute(
+      'src',
+      'https://preview.example/app',
+    );
+    act(() => {
+      useConversationV2Store.getState().setDeployState({
+        deployStatus: 'deployed',
+        deployedUrl: 'https://apps.example/app-1',
+      });
+    });
+
+    expect(screen.getByTitle('Preview')).toHaveAttribute(
+      'src',
+      'https://apps.example/app-1',
+    );
+    expect(screen.getByDisplayValue('https://apps.example/app-1')).toBeInTheDocument();
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {
