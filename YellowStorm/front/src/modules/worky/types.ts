@@ -36,6 +36,7 @@ export type WorkyBoardLane =
   | 'running'
   | 'review'
   | 'blocked'
+  | 'failed'
   | 'done';
 
 export type WorkyAssigneeType = 'ephemeral_ai_agent' | 'human_agent' | 'unassigned';
