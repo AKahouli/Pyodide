@@ -30,6 +30,7 @@ interface State {
    *  in flight (drives the header button's loader). */
   deployStatus: DeployStatus;
   deployedUrl: string | null;
+  lastDeployedAt: string | null;
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -131,7 +132,11 @@ interface Actions {
   hydrateSelectedModelForSession: (sessionId: string) => void;
   setWorkspaceIds: (ids: string[]) => void;
   /** Apply deploy state hydrated from getSession (on session load/switch). */
-  setDeployState: (state: { deployStatus: DeployStatus; deployedUrl: string | null }) => void;
+  setDeployState: (state: {
+    deployStatus: DeployStatus;
+    deployedUrl: string | null;
+    lastDeployedAt?: string | null;
+  }) => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
@@ -170,6 +175,7 @@ const initial: State = {
   workspaceIds: [],
   deployStatus: 'idle',
   deployedUrl: null,
+  lastDeployedAt: null,
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -311,6 +317,7 @@ function freshViewState(): Partial<State> {
     workspaceIds: [],
     deployStatus: 'idle',
     deployedUrl: null,
+    lastDeployedAt: null,
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -496,11 +503,12 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
-      setDeployState: ({ deployStatus, deployedUrl }) =>
+      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
           (s) => ({
             deployStatus,
             deployedUrl,
+            ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
             ...(deployedUrl && s.applicationComponent
               ? { applicationComponent: { ...s.applicationComponent, url: deployedUrl } }
               : {}),
@@ -520,6 +528,7 @@ export const useConversationV2Store = create<State & Actions>()(
           get().setDeployState({
             deployStatus: r.deployStatus,
             deployedUrl: r.deployedUrl,
+            lastDeployedAt: r.lastDeployedAt,
           });
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');

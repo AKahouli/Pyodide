@@ -18,6 +18,7 @@ export function RightPanel() {
     jumpToLive,
     streaming,
     applicationComponent,
+    lastDeployedAt,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -28,6 +29,7 @@ export function RightPanel() {
       jumpToLive: s.jumpToLive,
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
+      lastDeployedAt: s.lastDeployedAt,
       setRightPanelView: s.setRightPanelView,
     })),
   );
@@ -86,7 +88,7 @@ export function RightPanel() {
           // Key on the URL so a newly-pushed preview remounts the iframe on the
           // new address (WebPreview reads defaultUrl only on mount).
           <ApplicationComponentView
-            key={applicationComponent!.url}
+            key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
             url={applicationComponent!.url}
             title={applicationComponent!.title}
           />

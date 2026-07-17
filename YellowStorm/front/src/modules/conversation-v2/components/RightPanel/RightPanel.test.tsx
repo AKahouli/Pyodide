@@ -84,6 +84,7 @@ describe('RightPanel', () => {
       useConversationV2Store.getState().setDeployState({
         deployStatus: 'deployed',
         deployedUrl: 'https://apps.example/app-1',
+        lastDeployedAt: '2026-07-17T10:00:00.000Z',
       });
     });
 
@@ -92,6 +93,33 @@ describe('RightPanel', () => {
       'https://apps.example/app-1',
     );
     expect(screen.getByDisplayValue('https://apps.example/app-1')).toBeInTheDocument();
+  });
+
+  it('remounts the iframe when redeploy keeps the same URL', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://apps.example/app-1',
+      },
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-1',
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+    });
+    const { container } = render(<RightPanel />);
+    const firstIframe = container.querySelector('iframe');
+
+    act(() => {
+      useConversationV2Store.getState().setDeployState({
+        deployStatus: 'deployed',
+        deployedUrl: 'https://apps.example/app-1',
+        lastDeployedAt: '2026-07-17T10:05:00.000Z',
+      });
+    });
+
+    const secondIframe = container.querySelector('iframe');
+    expect(secondIframe).not.toBe(firstIframe);
+    expect(secondIframe).toHaveAttribute('src', 'https://apps.example/app-1');
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {

@@ -231,6 +231,9 @@ describe('useConversationV2Store', () => {
     await useConversationV2Store.getState().deploy();
 
     expect(deploySpy).toHaveBeenCalledWith('session-1', 'Generated app');
+    expect(useConversationV2Store.getState().lastDeployedAt).toBe(
+      '2026-07-17T10:00:00.000Z',
+    );
   });
 
   it('replayEvents restores the deployed URL over the original preview URL', () => {
