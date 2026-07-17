@@ -143,10 +143,10 @@ export const conversationV2Api = {
    * finishes with the live URL. The button shows a loader while this is in
    * flight. Re-invoking redeploys (the "Update" action).
    */
-  async deploySession(sessionId: string): Promise<DeployState> {
+  async deploySession(sessionId: string, title?: string): Promise<DeployState> {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
-      {},
+      { title: title || undefined },
       // Deploys can take minutes (build + publish). The backend waits up to
       // 3 min on the app-builder, so outlive that instead of the global 30s.
       { timeout: 200_000 },

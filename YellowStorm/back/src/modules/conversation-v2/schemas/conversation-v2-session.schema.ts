@@ -66,6 +66,9 @@ export class ConversationV2Session extends Document {
   @Prop({ type: String, default: null })
   deployedUrl!: string | null;
 
+  @Prop({ type: String, default: null })
+  deployedAppTitle!: string | null;
+
   @Prop({ type: Date, default: null })
   lastDeployedAt!: Date | null;
 

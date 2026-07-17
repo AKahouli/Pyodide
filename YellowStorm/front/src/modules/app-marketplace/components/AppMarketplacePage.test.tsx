@@ -1,12 +1,21 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DeployedApp } from '../types';
 
 const listDeployedAppsMock = vi.hoisted(() => vi.fn());
+const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
-  appMarketplaceApi: { listDeployedApps: listDeployedAppsMock },
+  appMarketplaceApi: {
+    listDeployedApps: listDeployedAppsMock,
+    removeApp: removeAppMock,
+  },
+}));
+
+vi.mock('@/lib/notifications', () => ({
+  showSuccess: vi.fn(),
+  showError: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => ({
@@ -59,6 +68,19 @@ describe('AppMarketplacePage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /card\.conversation/i }));
 
     expect(navigateMock).toHaveBeenCalledWith('/conversation-v2/session-1');
+  });
+
+  it('removes a card after delete confirmation', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+    removeAppMock.mockResolvedValueOnce(undefined);
+    render(<AppMarketplacePage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /card\.delete/i }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /card\.delete/i }));
+
+    await waitFor(() => expect(screen.queryByText('Generated app')).not.toBeInTheDocument());
+    expect(removeAppMock).toHaveBeenCalledWith('session-1');
   });
 
   it('shows the empty state when no app is deployed', async () => {

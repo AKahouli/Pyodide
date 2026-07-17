@@ -56,6 +56,7 @@ export class ConversationV2SessionService {
       deletedAt: null,
       deployStatus: 'idle',
       deployedUrl: null,
+      deployedAppTitle: null,
       lastDeployedAt: null,
       workspaceIds,
       eventSequence: 0,
@@ -106,12 +107,15 @@ export class ConversationV2SessionService {
     const docs = await this.model
       .find({ ownerId, deletedAt: null, deployStatus: 'deployed', deployedUrl: { $ne: null } })
       .sort({ lastDeployedAt: -1 })
-      .select('title deployedUrl lastDeployedAt')
+      .select('title deployedAppTitle deployedUrl lastDeployedAt')
       .lean()
       .exec();
     return docs.map((doc) => ({
       sessionId: doc._id.toString(),
-      title: (doc.title as string | undefined) ?? '',
+      title:
+        (doc.deployedAppTitle as string | undefined) ??
+        (doc.title as string | undefined) ??
+        '',
       deployedUrl: doc.deployedUrl as string,
       lastDeployedAt: doc.lastDeployedAt ? new Date(doc.lastDeployedAt).toISOString() : null,
     }));
@@ -184,6 +188,7 @@ export class ConversationV2SessionService {
     patch: {
       deployStatus?: ConversationV2DeployStatus;
       deployedUrl?: string | null;
+      deployedAppTitle?: string | null;
       lastDeployedAt?: Date | null;
     },
   ) {
@@ -192,6 +197,31 @@ export class ConversationV2SessionService {
       .findOneAndUpdate(
         { _id: new Types.ObjectId(id), ownerId, deletedAt: null },
         { $set: patch },
+        { new: true },
+      )
+      .lean()
+      .exec();
+  }
+
+  /** Remove a deployed app from Marketplace without deleting its conversation. */
+  async removeDeployedApp(ownerId: string, id: string) {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.model
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(id),
+          ownerId,
+          deletedAt: null,
+          deployStatus: 'deployed',
+        },
+        {
+          $set: {
+            deployStatus: 'idle',
+            deployedUrl: null,
+            deployedAppTitle: null,
+            lastDeployedAt: null,
+          },
+        },
         { new: true },
       )
       .lean()

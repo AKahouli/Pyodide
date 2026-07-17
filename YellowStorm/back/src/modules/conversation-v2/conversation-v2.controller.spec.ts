@@ -38,6 +38,7 @@ describe('ConversationV2Controller', () => {
     setShared: jest.fn(),
     setDeployState: jest.fn(),
     listDeployedApps: jest.fn(),
+    removeDeployedApp: jest.fn(),
     softDelete: jest.fn(),
   };
 
@@ -286,12 +287,28 @@ describe('ConversationV2Controller', () => {
     expect(mockSessions.listDeployedApps).toHaveBeenCalledWith('user-1');
   });
 
+  it('DELETE /apps/:id removes only the deployed app state', async () => {
+    mockSessions.removeDeployedApp.mockResolvedValueOnce({});
+
+    await expect(
+      controller.removeDeployedApp({ id: 'user-1' }, 'session-1'),
+    ).resolves.toBeUndefined();
+    expect(mockSessions.removeDeployedApp).toHaveBeenCalledWith('user-1', 'session-1');
+  });
+
   it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'conversation-1' });
+    mockSessions.getOne.mockResolvedValueOnce({
+      aiSessionId: 'conversation-1',
+      title: 'Conversation title',
+    });
     mockSessions.setDeployState.mockResolvedValue({});
     mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://deployed.example/app' });
 
-    const result = await controller.deploySession({ id: 'user-1' }, 'session-1');
+    const result = await controller.deploySession(
+      { id: 'user-1' },
+      'session-1',
+      { title: 'Generated app' },
+    );
 
     expect(mockDeployment.deploy).toHaveBeenCalledWith('user-1', 'conversation-1');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
@@ -307,6 +324,7 @@ describe('ConversationV2Controller', () => {
       expect.objectContaining({
         deployStatus: 'deployed',
         deployedUrl: 'https://deployed.example/app',
+        deployedAppTitle: 'Generated app',
       }),
     );
     expect(result.deployedUrl).toBe('https://deployed.example/app');

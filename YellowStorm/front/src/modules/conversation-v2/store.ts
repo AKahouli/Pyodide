@@ -513,7 +513,10 @@ export const useConversationV2Store = create<State & Actions>()(
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
-          const r = await conversationV2Api.deploySession(id);
+          const r = await conversationV2Api.deploySession(
+            id,
+            get().applicationComponent?.title,
+          );
           get().setDeployState({
             deployStatus: r.deployStatus,
             deployedUrl: r.deployedUrl,

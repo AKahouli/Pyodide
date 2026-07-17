@@ -37,7 +37,7 @@ export function ApplicationComponentView({ url, title }: ApplicationComponentVie
           <ExternalLinkIcon className='size-4' />
         </WebPreviewNavigationButton>
       </WebPreviewNavigation>
-      <WebPreviewBody src={url} />
+      <WebPreviewBody key={url} src={url} />
     </WebPreview>
   );
 }

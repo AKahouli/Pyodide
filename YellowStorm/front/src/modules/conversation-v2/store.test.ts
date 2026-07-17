@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationV2Store } from './store';
+import { conversationV2Api } from './api';
 
 describe('useConversationV2Store', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     useConversationV2Store.getState().reset();
   });
 
@@ -210,6 +212,25 @@ describe('useConversationV2Store', () => {
       title: 'Generated app',
       url: 'https://deployed.example/app',
     });
+  });
+
+  it('deploy sends the application component title to the backend', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', 'Generated app');
   });
 
   it('replayEvents restores the deployed URL over the original preview URL', () => {

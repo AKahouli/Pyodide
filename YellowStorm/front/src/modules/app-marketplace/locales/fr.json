@@ -13,6 +13,12 @@
     "untitled": "Application sans titre",
     "deployedAt": "Déployée le {{date}}",
     "open": "Ouvrir l'application",
-    "conversation": "Accéder à la conversation"
+    "conversation": "Accéder à la conversation",
+    "delete": "Supprimer",
+    "deleteTitle": "Retirer l'application du Marketplace ?",
+    "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
+    "cancel": "Annuler",
+    "deleteSuccess": "Application retirée du Marketplace.",
+    "deleteError": "Impossible de retirer l'application."
   }
 }

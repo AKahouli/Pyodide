@@ -33,6 +33,7 @@ import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { ListSessionsDto } from './dto/list-sessions.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
+import { DeployAppDto } from './dto/deploy-app.dto';
 import { ShareDeployDto } from './dto/share-deploy.dto';
 import { EmailService } from '@modules/email';
 import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
@@ -144,6 +145,16 @@ export class ConversationV2Controller {
   }> {
     const items = await this.sessions.listDeployedApps(user.id);
     return { items };
+  }
+
+  @Delete('apps/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeDeployedApp(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<void> {
+    const removed = await this.sessions.removeDeployedApp(user.id, id);
+    if (!removed) throw new NotFoundException('Deployed app not found');
   }
 
   @Get('sessions/:id')
@@ -351,6 +362,7 @@ export class ConversationV2Controller {
   async deploySession(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @Body() body: DeployAppDto,
   ): Promise<{
     deployStatus: string;
     deployedUrl: string | null;
@@ -378,6 +390,7 @@ export class ConversationV2Controller {
     await this.sessions.setDeployState(user.id, id, {
       deployStatus: 'deployed',
       deployedUrl,
+      deployedAppTitle: body.title?.trim() || pointer.title || null,
       lastDeployedAt,
     });
     return {

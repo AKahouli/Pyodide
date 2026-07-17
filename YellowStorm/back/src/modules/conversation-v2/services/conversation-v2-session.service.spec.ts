@@ -42,7 +42,8 @@ describe('ConversationV2SessionService', () => {
           Promise.resolve([
             {
               _id: id,
-              title: 'Generated app',
+              title: 'Conversation title',
+              deployedAppTitle: 'Generated app',
               deployedUrl: 'https://apps.example/app-1',
               lastDeployedAt: new Date('2026-07-17T10:00:00.000Z'),
             },
@@ -67,7 +68,36 @@ describe('ConversationV2SessionService', () => {
       deployedUrl: { $ne: null },
     });
     expect(sort).toHaveBeenCalledWith({ lastDeployedAt: -1 });
-    expect(select).toHaveBeenCalledWith('title deployedUrl lastDeployedAt');
+    expect(select).toHaveBeenCalledWith(
+      'title deployedAppTitle deployedUrl lastDeployedAt',
+    );
+  });
+
+  it('removeDeployedApp clears deployment state without deleting the conversation', async () => {
+    const id = '507f1f77bcf86cd799439011';
+    findOneAndUpdate.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve({ _id: id }) }),
+    });
+
+    await svc.removeDeployedApp('u1', id);
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        _id: new Types.ObjectId(id),
+        ownerId: 'u1',
+        deletedAt: null,
+        deployStatus: 'deployed',
+      },
+      {
+        $set: {
+          deployStatus: 'idle',
+          deployedUrl: null,
+          deployedAppTitle: null,
+          lastDeployedAt: null,
+        },
+      },
+      { new: true },
+    );
   });
 
   it('list filters by owner, excludes soft-deleted, sorts desc by lastEventAt', async () => {

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
 import type { DeployedApp } from '../types';
+import { DeleteDeployedAppButton } from './DeleteDeployedAppButton';
 
 interface DeployedAppCardProps {
   app: DeployedApp;
@@ -70,6 +71,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
               </TooltipTrigger>
               <TooltipContent>{t('card.conversation')}</TooltipContent>
             </Tooltip>
+            <DeleteDeployedAppButton sessionId={app.sessionId} />
           </div>
         </TooltipProvider>
       </CardContent>

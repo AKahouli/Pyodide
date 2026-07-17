@@ -9,4 +9,8 @@ export const appMarketplaceApi = {
     );
     return res.data.data.items;
   },
+  /** Remove an app from Marketplace without deleting its conversation. */
+  async removeApp(sessionId: string): Promise<void> {
+    await apiClient.delete(`/conversation-v2/apps/${sessionId}`);
+  },
 };
