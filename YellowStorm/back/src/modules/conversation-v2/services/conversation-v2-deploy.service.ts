@@ -39,7 +39,7 @@ const FALLBACK_DEPLOY_TOKEN =
 
 // App-builder deployments can take a long time (build + publish); give the
 // upstream up to 3 minutes before aborting the request.
-const DEPLOY_TIMEOUT_MS = 3 * 60 * 1000;
+const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const INITIAL_STATUS_DELAY_MS = 20 * 1000;
 const STATUS_POLL_INTERVAL_MS = 15 * 1000;
 
