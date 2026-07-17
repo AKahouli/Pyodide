@@ -12,6 +12,10 @@ const FALLBACK_DEPLOY_BASE_URL = 'https://sandbox-v2.yellowsys.org/';
 const FALLBACK_DEPLOY_TOKEN =
   '4130522f186a5b617fa886e760ca7492b8084dee93dc024614e48c6af9b007a4';
 
+// App-builder deployments can take a long time (build + publish); give the
+// upstream up to 3 minutes before aborting the request.
+const DEPLOY_TIMEOUT_MS = 3 * 60 * 1000;
+
 /**
  * Deploys a conversation application through the configured app-builder service.
  */
@@ -41,8 +45,15 @@ export class ConversationV2DeployService {
           user_id: userId,
           conversation_id: conversationId,
         }),
+        signal: AbortSignal.timeout(DEPLOY_TIMEOUT_MS),
       });
     } catch (error) {
+      if ((error as Error).name === 'TimeoutError') {
+        this.logger.error(
+          `App-builder deployment timed out after ${DEPLOY_TIMEOUT_MS / 1000}s`,
+        );
+        throw new ServiceUnavailableException('Deployment service timed out');
+      }
       this.logger.error(`App-builder deployment request failed: ${(error as Error).message}`);
       throw new ServiceUnavailableException('Deployment service is unavailable');
     }

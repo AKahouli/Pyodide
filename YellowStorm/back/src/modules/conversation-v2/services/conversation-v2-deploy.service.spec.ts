@@ -60,6 +60,27 @@ describe('ConversationV2DeployService', () => {
     );
   });
 
+  it('rejects with a timeout error when the app-builder does not answer in time', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'));
+
+    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
+      'Deployment service timed out',
+    );
+  });
+
+  it('fails immediately on a network error without waiting for the timeout', async () => {
+    jest.spyOn(global, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const startedAt = Date.now();
+    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
+      'Deployment service is unavailable',
+    );
+    // Errors must short-circuit; only a silent upstream waits the full 3 min.
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+  });
+
   it('rejects an unsuccessful app-builder response', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(new Response(null, { status: 502 }));
 

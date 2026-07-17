@@ -147,6 +147,9 @@ export const conversationV2Api = {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
       {},
+      // Deploys can take minutes (build + publish). The backend waits up to
+      // 3 min on the app-builder, so outlive that instead of the global 30s.
+      { timeout: 200_000 },
     );
     return res.data.data;
   },
